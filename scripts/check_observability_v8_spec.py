@@ -31,10 +31,40 @@ def _read(path: Path) -> str:
         raise SpecError(f"cannot read {path}: {exc}") from exc
 
 
+def _non_fenced_lines(text: str) -> tuple[list[str], bool]:
+    """Return CommonMark-style content lines and whether all fences close."""
+    lines: list[str] = []
+    fence_char = ""
+    fence_length = 0
+    for line in text.splitlines():
+        candidate = line.lstrip(" ")
+        indent = len(line) - len(candidate)
+        marker_char = candidate[:1]
+        marker_length = 0
+        if indent <= 3 and marker_char in {"`", "~"}:
+            marker_length = len(candidate) - len(candidate.lstrip(marker_char))
+        if not fence_char:
+            if marker_length >= 3:
+                fence_char = marker_char
+                fence_length = marker_length
+                continue
+            lines.append(line)
+            continue
+        if (
+            marker_char == fence_char
+            and marker_length >= fence_length
+            and not candidate[marker_length:].strip()
+        ):
+            fence_char = ""
+            fence_length = 0
+    return lines, not fence_char
+
+
 def _decision_rows(path: Path) -> dict[str, str]:
     rows: dict[str, str] = {}
     duplicates: list[str] = []
-    for line in _read(path).splitlines():
+    lines, _ = _non_fenced_lines(_read(path))
+    for line in lines:
         match = DECISION_ROW.match(line)
         if not match:
             continue
@@ -52,7 +82,8 @@ def _decision_rows(path: Path) -> dict[str, str]:
 def _trace_rows(path: Path) -> dict[str, tuple[str, str]]:
     rows: dict[str, tuple[str, str]] = {}
     duplicates: list[str] = []
-    for line in _read(path).splitlines():
+    lines, _ = _non_fenced_lines(_read(path))
+    for line in lines:
         match = TRACE_ROW.match(line)
         if not match:
             continue
@@ -88,9 +119,10 @@ def _check_markdown(package: Path) -> list[str]:
     errors: list[str] = []
     for path in sorted(package.glob("*.md")):
         text = _read(path)
-        if text.count("```") % 2:
+        lines, balanced = _non_fenced_lines(text)
+        if not balanced:
             errors.append(f"{path.name}: unbalanced fenced code blocks")
-        for target in MARKDOWN_LINK.findall(text):
+        for target in MARKDOWN_LINK.findall("\n".join(lines)):
             target = target.strip().split("#", 1)[0]
             if not target or "://" in target or target.startswith("mailto:"):
                 continue

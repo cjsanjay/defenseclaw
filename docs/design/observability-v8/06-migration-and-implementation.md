@@ -123,7 +123,7 @@ rest.
 | `otel.logs.emit_individual_findings: true` | Add an OTLP log route that includes `security.finding`; `false`/absent does not automatically route individual finding logs |
 | `otel.destinations[]` | `observability.destinations[]` with `kind: otlp`; selected signals come from generated `send`/advanced routes and per-signal endpoint/path details become `signal_overrides` |
 | Named `local-observability` OTLP destination | Preserve its name, endpoint/protocol/TLS and local-network intent; include logs/traces/metrics and every `local-observability-v1` family unless explicit v7 policy was narrower, in which case preserve it and report partial dashboard capability |
-| Loopback/RFC1918 local-observability endpoint | Materialize `network_safety.allow_private_networks: true` on that destination only, with the required warning/audit; never create a process-wide private-network bypass |
+| Loopback/RFC1918 local-observability endpoint | Preserve an explicit `network_safety.allow_private_networks` value. When absent, materialize `true` only for the named local-observability destination that requires the private endpoint, with the required warning/audit; never overwrite explicit `false` or create a process-wide private-network bypass |
 | Galileo batch delay | Preserve an explicit operator delay. If the source merely inherited the v7 5,000 ms default, materialize the v8 `galileo-rich-v2` preset value of 1,000 ms and disclose the preset-default change in the upgrade summary |
 | OTel span filters | Equivalent bucket/source/event routes plus the versioned destination compatibility profile where mapping is exact; otherwise explicit migration warning with before/after eligible families |
 | Top-level `audit_db` | `observability.local.path` |

@@ -352,16 +352,21 @@ only:
   persistent lint/doctor capacity warning explaining that event, evidence, and
   retained judge-body history are unbounded by age.
 
-Both database paths are restart-required, must differ from each other and every
+Both database paths are restart-required and must differ from each other and every
 other configured file after lexical normalization and canonical/real-path
-resolution (including existing symlink targets), and must initialize successfully.
-Validation rejects `..`, symlink, hard-link/inode, or other aliases that make the
-two database roles or another configured file collide. Failure of `audit.db` is
-the mandatory local-durability startup failure; `judge_bodies.db` remains a
-separate forensic store for judge responses outside ordinary canonical logs and is
-governed by the independent guardrail judge-body retention setting. Local log
-redaction resolves from bucket policy, configured global policy, and the catalog
-default and may resolve to `none`.
+resolution (including existing symlink targets). Validation rejects `..`, symlink,
+hard-link/inode, or other aliases that make the two database roles or another
+configured file collide. `audit.db` always initializes and any initialization or
+write-capability failure is a mandatory local-durability startup failure.
+`judge_bodies.db` is initialized when `guardrail.retain_judge_bodies` is effective
+true or an upgrade/cutover has legacy judge bodies to process; failure in either
+case fails startup or the required upgrade before serving. When capture is disabled
+and no cutover work exists, the path is still validated but the gateway need not
+open the database. The guardrail Boolean controls whether new raw bodies are
+captured; the one shared `observability.local.retention_days` value controls the age
+of retained event, evidence, and judge-body history. Local log redaction resolves
+from bucket policy, configured global policy, and the catalog default and may
+resolve to `none`.
 
 The effective view exposes a generated `local-sqlite` destination and catch-all log
 projection for debugging, clearly marked `generated: true`; these are not accepted

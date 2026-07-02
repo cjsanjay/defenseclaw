@@ -244,7 +244,10 @@ These are four independent literal identifiers. The envelope `schema_version` an
 each span's `family_schema_version` remain separate versions and are not members of
 this tuple. The four profile members cannot be overridden independently in config;
 changing one creates a new semantic-profile ID. Registry validation fails if this
-tuple and `semconv.lock.yaml` disagree.
+tuple's upstream-pinned OTel core, GenAI, and OpenInference members disagree with
+`semconv.lock.yaml`. The DefenseClaw-owned trace-schema and Galileo compatibility
+profile IDs are validated against their registry entries instead of being invented
+as upstream lock members.
 
 ## 6. Generated Public Artifacts
 

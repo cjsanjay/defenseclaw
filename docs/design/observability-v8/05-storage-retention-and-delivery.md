@@ -29,6 +29,13 @@ logs and normalized projections may describe trace/metric health.
 - The gateway MUST open the database, apply append-only migrations, verify required
   pragmas and write capability, and initialize the reaper before reporting ready.
 - Failure to initialize the built-in SQLite store causes startup failure.
+- When judge-body capture is enabled, or a required legacy judge-body cutover has
+  work to process, `judge_bodies.db` MUST also initialize and prove write capability
+  before the gateway serves; failure aborts startup or the required upgrade. When
+  capture is disabled and no cutover work exists, its validated path need not be
+  opened. Capture enablement remains distinct from age: the shared
+  `observability.local.retention_days` policy is the only retention-age source for
+  event, evidence, and judge-body history.
 - V8 schema migrations are additive and MUST leave the database readable by the
   immediately previous supported release: do not drop/rename a previous column or
   table, change an existing column's wire meaning, or require the previous binary

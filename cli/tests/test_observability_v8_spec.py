@@ -24,7 +24,11 @@ def _run(package: Path = PACKAGE) -> subprocess.CompletedProcess[str]:
 
 
 def _copy_package(tmp_path: Path) -> Path:
-    target = tmp_path / "observability-v8"
+    repository = tmp_path / "repository"
+    target = repository / "docs" / "design" / "observability-v8"
+    repository.mkdir()
+    shutil.copy2(ROOT / "spec.md", repository / "spec.md")
+    target.parent.mkdir(parents=True)
     shutil.copytree(PACKAGE, target)
     return target
 
@@ -64,3 +68,35 @@ def test_observability_v8_spec_detects_broken_package_link(tmp_path: Path) -> No
 
     assert result.returncode == 1
     assert "README.md: missing linked path 'not-present.md'" in result.stderr
+
+
+def test_observability_v8_spec_ignores_rows_and_links_in_fences(tmp_path: Path) -> None:
+    package = _copy_package(tmp_path)
+    path = package / "README.md"
+    path.write_text(
+        path.read_text(encoding="utf-8")
+        + "\n```markdown\n"
+        + "| D-001 | illustrative duplicate |\n"
+        + "| P-999 | illustrative contract | illustrative test |\n"
+        + "[illustrative missing link](not-present.md)\n"
+        + "```\n",
+        encoding="utf-8",
+    )
+
+    result = _run(package)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_observability_v8_spec_detects_unclosed_tilde_fence(tmp_path: Path) -> None:
+    package = _copy_package(tmp_path)
+    path = package / "README.md"
+    path.write_text(
+        path.read_text(encoding="utf-8") + "\n~~~yaml\nunclosed: true\n",
+        encoding="utf-8",
+    )
+
+    result = _run(package)
+
+    assert result.returncode == 1
+    assert "README.md: unbalanced fenced code blocks" in result.stderr

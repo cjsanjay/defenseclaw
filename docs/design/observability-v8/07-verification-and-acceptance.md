@@ -352,6 +352,9 @@ and prove their projected outputs contain no prohibited canary while a parallel
 - Projection failure rollback/degraded behavior.
 - Concurrent readers and writers under WAL.
 - SQLite initialization and disk/write failure behavior.
+- Judge-body database initialization is required and fatal when capture is enabled
+  or cutover work exists, is skipped safely when capture is disabled with no
+  cutover work, and always uses the shared retention age rather than a second age.
 - Existing scan, alert, egress, activity, and judge query compatibility.
 - Mutable alert acknowledgement projection remains separate from immutable finding
   and event history. Two different commands racing from the same version yield

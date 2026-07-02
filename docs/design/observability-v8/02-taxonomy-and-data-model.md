@@ -636,9 +636,12 @@ legacy baseline.
 Legacy v7 `audit_events` rows whose `severity` was overwritten with `ACK` are read
 as compatibility evidence of acknowledgement, not as a sixth canonical severity.
 The v8 reader preserves raw `ACK` in legacy provenance, excludes it from severity
-ranking, materializes the acknowledgement projection, and reports canonical
-severity as unavailable/legacy-unknown when the original value cannot be recovered;
-it does not rewrite historical bytes or guess the lost severity.
+ranking, and materializes the acknowledgement projection. When the original value
+cannot be recovered, the compatibility read model reports
+`legacy_original_severity: unknown` and does not synthesize a canonical
+`security.finding` record, because that bucket requires a real canonical severity.
+It does not put a sentinel in the canonical `severity` field, rewrite historical
+bytes, or guess the lost severity.
 
 ## 6. Boundary Examples
 
