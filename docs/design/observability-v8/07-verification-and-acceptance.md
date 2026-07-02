@@ -156,7 +156,8 @@ Startup/reload validation MUST reject:
 - A destination mixing `send` and `routes`.
 - Concise `send` containing advanced selectors, exclusions, or route-only fields.
 - `signal_overrides` naming a signal not selected by `send`/`routes`.
-- Profile inheritance cycle.
+- Custom profile attempting to extend another custom profile; single-level
+  inheritance makes cycles unrepresentable.
 - Custom profile extending or aliasing `none`.
 - Empty effective detector groups for a `detect` mode, `credential: preserve`, or
   `preserve` on a dynamic content/reason/evidence/error/path class.

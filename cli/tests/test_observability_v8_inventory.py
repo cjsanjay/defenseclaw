@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -13,7 +14,11 @@ CHECKER = ROOT / "scripts" / "check_observability_v8_inventory.py"
 INVENTORY = ROOT / "docs" / "design" / "observability-v8" / "current-state-inventory.yaml"
 
 
-def _run(inventory: Path | None = INVENTORY) -> subprocess.CompletedProcess[str]:
+def _run(
+    inventory: Path | None = INVENTORY,
+    *,
+    env: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess[str]:
     command = [sys.executable, str(CHECKER)]
     if inventory is not None:
         command.extend(("--inventory", str(inventory)))
@@ -24,6 +29,7 @@ def _run(inventory: Path | None = INVENTORY) -> subprocess.CompletedProcess[str]
         capture_output=True,
         text=True,
         timeout=60,
+        env=env,
     )
 
 
@@ -37,7 +43,7 @@ def test_observability_v8_current_state_inventory_matches_sources() -> None:
     assert "gateway_event_types=14" in result.stdout
     assert "audit_actions=188" in result.stdout
     assert "emitted_metrics=131" in result.stdout
-    assert "schema_files=22" in result.stdout
+    assert "schema_files=23" in result.stdout
     assert "grafana_dashboard_uids=14" in result.stdout
     assert "grafana_datasource_uids=3" in result.stdout
     assert "compatibility_baseline_commits=2" in result.stdout
@@ -48,6 +54,16 @@ def test_observability_v8_inventory_uses_default_path_without_arguments() -> Non
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert "check_observability_v8_inventory: ok" in result.stdout
+
+
+def test_observability_v8_inventory_is_portable_without_git(tmp_path: Path) -> None:
+    environment = dict(os.environ)
+    environment["PATH"] = str(tmp_path)
+
+    result = _run(env=environment)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "compatibility_baseline_commits=2" in result.stdout
 
 
 def test_observability_v8_inventory_detects_untracked_action(tmp_path: Path) -> None:

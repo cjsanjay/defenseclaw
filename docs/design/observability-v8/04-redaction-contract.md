@@ -109,8 +109,9 @@ Custom profiles MUST NOT contain arbitrary regex, executable scripts, expression
 network calls, or model prompts. Unknown detector groups, field classes, or modes
 are startup errors.
 
-Profiles are resolved and cycle-checked at configuration load. Profile inheritance
-cycles and multiple inheritance are invalid.
+Profiles are resolved at configuration load. Inheritance is deliberately
+single-level: a custom profile extends one built-in redacting profile, so cycles
+and multiple inheritance are not representable.
 
 ## 5. Field Classes
 

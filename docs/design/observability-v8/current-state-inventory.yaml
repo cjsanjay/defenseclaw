@@ -558,6 +558,8 @@ classes:
     source_directory: schemas
     migration_disposition: per_item
     items:
+      - path: schemas/config/v8/defenseclaw-config.schema.json
+        migration_disposition: preserve_separate_schema
       - path: schemas/activity-event.json
         migration_disposition: import_telemetry_registry
       - path: schemas/audit-event.json

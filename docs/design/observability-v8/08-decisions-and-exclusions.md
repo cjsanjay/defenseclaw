@@ -17,7 +17,7 @@ reopened during implementation without a spec amendment.
 | D-008 | Let omitted destination policy express the full capability default; provide one concise `send` block for narrowing and explicit send/drop actions in the mutually exclusive advanced form. |
 | D-009 | Use capability-default/per-destination/simple-send or per-advanced-route profile resolution with bucket/global fallback. |
 | D-010 | Make `none` valid and default for catalog, local, and optional-destination projections; it needs no break-glass switch or warning, while policy changes remain audited. |
-| D-011 | Provide built-in redaction profiles plus composition from built-in detectors/field classes; no arbitrary regex. |
+| D-011 | Provide built-in redaction profiles plus single-level custom composition from one built-in redacting profile using built-in detectors/field classes; no custom-to-custom inheritance or arbitrary regex. |
 | D-012 | Fail closed to whole-field redaction on redaction processing failure and continue safe delivery. |
 | D-013 | Provide exactly one always-enabled implicit SQLite event-history destination backed by `audit.db`; do not require a destination or catch-all route in source YAML. The separate `judge_bodies.db` forensic database is not an event-history destination and is excluded from this exactly-one rule. |
 | D-014 | Persist every collected log to SQLite plus normalized projections. |

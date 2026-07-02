@@ -284,6 +284,8 @@ def check_legacy_anchors(
 def check_baseline_commits(
     root: Path,
     inventory_class: dict[str, Any],
+    *,
+    verify_git_ancestry: bool,
 ) -> tuple[int, list[str]]:
     items = inventory_class.get("items")
     if not isinstance(items, list) or not items:
@@ -303,6 +305,8 @@ def check_baseline_commits(
         source = _root_path(root, item.get("source"), field=f"PR #{pr}.source")
         if commit not in source.read_text(encoding="utf-8"):
             errors.append(f"compatibility_baseline_commits[PR #{pr}]: SHA absent from {source}")
+        if not verify_git_ancestry:
+            continue
         exists = subprocess.run(
             ["git", "cat-file", "-e", f"{commit}^{{commit}}"],
             cwd=root,
@@ -341,7 +345,12 @@ def compare_mapping(label: str, expected: dict[str, Any], actual: dict[str, Any]
     return errors
 
 
-def run_checks(root: Path, inventory: dict[str, Any]) -> tuple[dict[str, int], list[str]]:
+def run_checks(
+    root: Path,
+    inventory: dict[str, Any],
+    *,
+    verify_git_ancestry: bool = False,
+) -> tuple[dict[str, int], list[str]]:
     counts: dict[str, int] = {}
     errors: list[str] = []
 
@@ -424,6 +433,7 @@ def run_checks(root: Path, inventory: dict[str, Any]) -> tuple[dict[str, int], l
     counts["compatibility_baseline_commits"], baseline_errors = check_baseline_commits(
         root,
         baselines,
+        verify_git_ancestry=verify_git_ancestry,
     )
     errors.extend(baseline_errors)
     return counts, errors
@@ -438,6 +448,14 @@ def build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_INVENTORY,
         help="current-state inventory YAML",
     )
+    parser.add_argument(
+        "--verify-git-ancestry",
+        action="store_true",
+        help=(
+            "require pinned compatibility commits to exist and be ancestors of HEAD; "
+            "use only in an intentional full-history checkout"
+        ),
+    )
     return parser
 
 
@@ -447,7 +465,11 @@ def main(argv: list[str] | None = None) -> int:
     inventory_path = args.inventory.resolve()
     try:
         inventory = load_inventory(inventory_path)
-        counts, errors = run_checks(root, inventory)
+        counts, errors = run_checks(
+            root,
+            inventory,
+            verify_git_ancestry=args.verify_git_ancestry,
+        )
     except InventoryError as exc:
         print(f"check_observability_v8_inventory: invalid inventory/source: {exc}", file=sys.stderr)
         return 2

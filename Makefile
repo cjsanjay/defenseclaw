@@ -575,7 +575,7 @@ check-schemas:
 
 check-observability-v8-inventory:
 	@$(VENV)/bin/python scripts/check_observability_v8_inventory.py \
-		--inventory docs/design/observability-v8/current-state-inventory.yaml
+		--inventory docs/design/observability-v8/current-state-inventory.yaml $(if $(VERIFY_OBSERVABILITY_BASELINE_ANCESTRY),--verify-git-ancestry,)
 
 check-observability-v8-spec:
 	@$(VENV)/bin/python scripts/check_observability_v8_spec.py \
