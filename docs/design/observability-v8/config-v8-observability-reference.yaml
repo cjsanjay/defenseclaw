@@ -1,0 +1,369 @@
+# DEFENSECLAW CONFIGURATION v8 — OBSERVABILITY REFERENCE
+#
+# This file documents the complete observability surface. It is a generated
+# reference, not a recommended production file. Start from the minimal example,
+# use a setup preset, or copy only the sections you intend to change.
+#
+# ┌──────────────────────────────────────────────────────────────────────────┐
+# │ DATA FLOW                                                                │
+# │                                                                          │
+# │ producer -> bucket/signal -> collection gate                             │
+# │                                  │                                       │
+# │                                  ├-> automatic unredacted SQLite logs     │
+# │                                  └-> each optional destination            │
+# │                                        omitted policy = all capabilities │
+# │                                        concise send, or advanced routes  │
+# │                                          ├-> drop                        │
+# │                                          └-> redact -> sign -> deliver   │
+# └──────────────────────────────────────────────────────────────────────────┘
+#
+# Commands:
+#   defenseclaw config validate
+#   defenseclaw config show --effective --section observability
+#   defenseclaw config reference observability
+#   defenseclaw observability plan
+#
+# Built-in redaction profiles:
+#   none      unredacted content; catalog/local/destination default
+#   sensitive redact matched PII/secrets within strings; remove credentials
+#   content   redact entire prompt/response/tool/evidence content fields
+#   strict    allowlisted metadata only
+#
+# Omit send/routes to export every bucket and every signal the kind supports,
+# unredacted. Use concise send to narrow signals/buckets or select redaction.
+# Collected logs/traces capture registered content fields when producers report them.
+# Concise send: signals + exact buckets + redaction_profile.
+# Advanced route selectors (different fields AND; values within one field OR):
+#   buckets: [security.finding, guardrail.evaluation, "*"]
+#   sources: [ai_defense, codeguard]
+#   connectors: [codex, openclaw]
+#   actions: [block, quarantine]
+#   event_names: [finding.observed]
+#   min_severity: HIGH
+# Route actions: send (default) or drop. First matching route wins independently
+# for each destination and signal.
+
+config_version: 8
+
+observability:
+  # Optional in source. config_version 8 defaults to catalog 1. Write this only
+  # when deliberately advancing to a later reviewed catalog.
+  bucket_catalog_version: 1
+
+  # OpenTelemetry resource attributes. Values must be bounded and non-secret.
+  resource:
+    attributes:
+      service.name: defenseclaw-gateway
+      deployment.environment: production
+
+  # Process-wide trace sampling. Bucket collection is evaluated before sampling.
+  trace_policy:
+    sampler: parentbased_traceidratio
+    sampler_arg: "0.10"
+    # Shipped immutable registry profile; not an arbitrary custom schema.
+    semantic_profile: defenseclaw-genai-rich-v1
+    # Temporary old attribute aliases; all derive from the same redacted value.
+    compatibility_aliases: true
+    limits:
+      max_attributes_per_span: 128
+      max_events_per_span: 64
+      max_links_per_span: 32
+      max_attributes_per_event: 32
+      max_attribute_value_bytes: 16384
+      max_projected_span_bytes: 262144
+      max_stacktrace_bytes: 32768
+      max_message_items: 128
+
+  # Process-wide metric policy.
+  metric_policy:
+    export_interval_seconds: 60
+    temporality: delta
+
+  # OPTIONAL global overrides for buckets not explicitly listed below. Omit this
+  # block to use each bucket's versioned catalog default.
+  defaults:
+    collect:
+      logs: true
+      traces: true
+      metrics: true
+    redaction_profile: none
+
+  # Every catalog bucket is shown here with its v1 full-fidelity default. Live
+  # source files should list only overrides that narrow or redact telemetry.
+  buckets:
+    compliance.activity:
+      collect: {logs: true, traces: true, metrics: true}
+      redaction_profile: none
+    security.finding:
+      collect: {logs: true, traces: true, metrics: true}
+      redaction_profile: none
+    guardrail.evaluation:
+      collect: {logs: true, traces: true, metrics: true}
+      redaction_profile: none
+    enforcement.action:
+      collect: {logs: true, traces: true, metrics: true}
+      redaction_profile: none
+    model.io:
+      collect: {logs: true, traces: true, metrics: true}
+      redaction_profile: none
+    tool.activity:
+      collect: {logs: true, traces: true, metrics: true}
+      redaction_profile: none
+    asset.scan:
+      collect: {logs: true, traces: true, metrics: true}
+      redaction_profile: none
+    asset.lifecycle:
+      collect: {logs: true, traces: true, metrics: true}
+      redaction_profile: none
+    network.egress:
+      collect: {logs: true, traces: true, metrics: true}
+      redaction_profile: none
+    agent.lifecycle:
+      collect: {logs: true, traces: true, metrics: true}
+      redaction_profile: none
+    ai.discovery:
+      collect: {logs: true, traces: true, metrics: true}
+      redaction_profile: none
+    telemetry.ingest:
+      collect: {logs: true, traces: true, metrics: true}
+      redaction_profile: none
+    platform.health:
+      collect: {logs: true, traces: true, metrics: true}
+      redaction_profile: none
+    diagnostic:
+      collect: {logs: true, traces: true, metrics: true}
+      redaction_profile: none
+
+  # Custom profiles extend one built-in profile. No arbitrary regex/scripts.
+  # Detector catalog v1 groups:
+  #   pii         email, phone, national ID, Luhn card, policy-sensitive IP
+  #   credentials API/access token, private key, auth/cookie, connection string
+  #   secrets     secret assignment, high entropy, URL query, cloud/account ID
+  # Field-class modes: preserve, detect, whole, hash, remove.
+  redaction_profiles:
+    soc:
+      extends: sensitive
+      detectors: [pii, credentials, secrets]
+      field_classes:
+        metadata: preserve
+        identifier: preserve
+        credential: remove
+        content: detect
+        reason: detect
+        evidence: detect
+        error: detect
+        path: hash
+
+  # Existing notification-only compatibility child (not a log route):
+  # connectors:
+  #   codex:
+  #     webhooks: [] # present empty list suppresses inherited global webhooks
+  # A nonempty list uses the existing WebhookConfig item schema. Legacy
+  # connectors.*.audit_sinks is rejected after migration.
+
+  # OPTIONAL OVERRIDES: the built-in SQLite store is always present and cannot
+  # be disabled or filtered. Omit this entire block for these defaults.
+  local:
+    path: ~/.defenseclaw/audit.db
+    judge_bodies_path: ~/.defenseclaw/judge_bodies.db
+    retention_days: 90 # 0 retains forever and produces a persistent capacity warning
+
+  # OPTIONAL EXPORTS: presence defaults enabled:true. With no send/routes, an
+  # enabled destination exports every catalog bucket and all signals its kind
+  # supports, unredacted. Explicit send/routes replaces that generated default.
+  # OTLP signal transports derive from selected route signals automatically.
+  destinations:
+    # OPTIONAL: JSONL file output using advanced routes to exclude diagnostics.
+    # Presence means enabled; enabled:false retains a dormant example/policy.
+    - name: local-jsonl
+      kind: jsonl
+      enabled: false
+      path: ~/.defenseclaw/gateway.jsonl
+      rotation:
+        max_size_mb: 50
+        max_backups: 5
+        max_age_days: 30
+        compress: true
+      routes:
+        - name: omit-diagnostics
+          signals: [logs]
+          selector: {buckets: [diagnostic]}
+          action: drop
+        - name: remaining-reviewed-v1-buckets
+          signals: [logs]
+          selector: {buckets: ["*"]}
+          action: send
+          redaction_profile: sensitive
+
+    # OPTIONAL: human-readable console output.
+    - name: operator-console
+      kind: console
+      enabled: false
+      send:
+        signals: [logs]
+        buckets:
+          - compliance.activity
+          - security.finding
+          - guardrail.evaluation
+          - enforcement.action
+          - network.egress
+          - ai.discovery
+          - platform.health
+        redaction_profile: strict
+
+    # OPTIONAL: Prometheus pull endpoint; metrics only.
+    - name: prometheus
+      kind: prometheus
+      enabled: false
+      listen: 127.0.0.1:9464
+      path: /metrics
+      send:
+        signals: [metrics]
+        buckets:
+          - compliance.activity
+          - security.finding
+          - guardrail.evaluation
+          - enforcement.action
+          - network.egress
+          - ai.discovery
+          - platform.health
+
+    # OPTIONAL: Splunk HTTP Event Collector; logs only.
+    - name: splunk-production
+      kind: splunk_hec
+      enabled: false
+      endpoint: https://splunk.example.test:8088/services/collector/event
+      token_env: SPLUNK_HEC_TOKEN
+      index: main
+      source: defenseclaw
+      sourcetype: defenseclaw:event
+      tls:
+        insecure_skip_verify: false
+        ca_cert: ""
+      timeout_ms: 10000
+      # Private/local collectors require explicit reviewed opt-in. Metadata and
+      # link-local targets remain blocked even when these are true.
+      network_safety:
+        allow_private_networks: false
+        allow_cgnat: false
+      batch:
+        max_queue_size: 2048
+        max_export_batch_size: 256
+        scheduled_delay_ms: 1000
+      routes:
+        - name: security
+          signals: [logs]
+          selector:
+            buckets:
+              - compliance.activity
+              - security.finding
+              - guardrail.evaluation
+              - enforcement.action
+              - network.egress
+              - ai.discovery
+              - platform.health
+            min_severity: HIGH
+          action: send
+          redaction_profile: soc
+
+    # OPTIONAL: generic JSON or JSONL over HTTP; logs only.
+    - name: http-archive
+      kind: http_jsonl
+      enabled: false
+      endpoint: https://archive.example.test/defenseclaw
+      method: POST
+      bearer_env: ARCHIVE_BEARER_TOKEN
+      headers:
+        X-Tenant:
+          env: DEFENSECLAW_TENANT
+      tls:
+        insecure_skip_verify: false
+        ca_cert: ""
+      timeout_ms: 10000
+      network_safety:
+        allow_private_networks: false
+        allow_cgnat: false
+      batch:
+        max_queue_size: 2048
+        max_export_batch_size: 100
+        scheduled_delay_ms: 1000
+      send:
+        signals: [logs]
+        buckets: [compliance.activity]
+        redaction_profile: strict
+
+    # OPTIONAL: standard OTLP; logs, traces, and/or metrics.
+    - name: general-otel
+      kind: otlp
+      enabled: false
+      protocol: http/protobuf
+      endpoint: https://otel.example.test
+      headers:
+        Authorization:
+          env: OTEL_AUTHORIZATION
+      tls:
+        insecure: false
+        ca_cert: /etc/defenseclaw/otel-ca.pem
+      timeout_ms: 10000
+      network_safety:
+        allow_private_networks: false
+        allow_cgnat: false
+      signal_overrides:
+        logs:
+          endpoint: "" # empty inherits destination endpoint
+          path: /v1/logs
+        traces:
+          endpoint: ""
+          path: /v1/traces
+        metrics:
+          endpoint: ""
+          path: /v1/metrics
+      batch:
+        max_queue_size: 4096
+        max_export_batch_size: 512
+        scheduled_delay_ms: 5000
+      routes:
+        - name: operational-logs
+          signals: [logs]
+          selector:
+            buckets:
+              - compliance.activity
+              - security.finding
+              - guardrail.evaluation
+              - enforcement.action
+              - network.egress
+              - ai.discovery
+              - platform.health
+          action: send
+          redaction_profile: strict
+        - name: runtime-traces-and-metrics
+          signals: [traces, metrics]
+          selector:
+            buckets: [model.io, tool.activity, guardrail.evaluation]
+          action: send
+          redaction_profile: sensitive
+
+    # OPTIONAL: Galileo uses the OTLP adapter with versioned preset defaults.
+    - name: galileo
+      kind: otlp
+      preset: galileo
+      enabled: false
+      endpoint: https://api.galileo.ai/otel/traces
+      headers:
+        Galileo-API-Key:
+          env: GALILEO_API_KEY
+        project: defenseclaw
+        logstream: production
+      network_safety:
+        allow_private_networks: false
+        allow_cgnat: false
+      batch:
+        scheduled_delay_ms: 1000
+      send:
+        signals: [traces]
+        buckets:
+          - agent.lifecycle
+          - model.io
+          - tool.activity
+          - guardrail.evaluation
+        redaction_profile: sensitive

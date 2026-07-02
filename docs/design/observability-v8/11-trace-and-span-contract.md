@@ -1,0 +1,826 @@
+# Rich Trace and Span Contract
+
+## 1. Purpose
+
+This contract defines the v8 trace graph, span families, attributes, events, links,
+redaction boundary, Galileo projection, limits, versioning, and verification. Its
+goal is the richest useful telemetry that DefenseClaw can produce without turning
+traces into an unbounded content archive or a second, inconsistent audit stream.
+
+“Rich” means:
+
+- Preserve every currently useful Galileo, OpenTelemetry GenAI, OpenInference, and
+  DefenseClaw correlation field.
+- Add complete security-decision, lifecycle, timing, retry, error, provenance,
+  enforcement, retrieval, and workflow context when the producer knows it.
+- Represent missing data honestly rather than inventing zeroes or content.
+- Keep values bounded, typed, redacted, and independently projected per
+  destination.
+- Keep the full graph available to general OTLP destinations even when a vendor
+  accepts only a compatible subset.
+
+## 2. Standards and Versioning Position
+
+DefenseClaw follows, in priority order:
+
+1. Stable OpenTelemetry semantic conventions for resources, HTTP, RPC, errors,
+   exceptions, and network operations.
+2. A build-time-pinned OpenTelemetry GenAI semantic-convention profile.
+3. OpenInference compatibility attributes required by supported GenAI backends.
+4. The `defenseclaw.*` namespace for security, policy, connector, lifecycle, and
+   provenance facts not covered by a stable standard.
+
+The GenAI conventions are still evolving. DefenseClaw MUST NOT silently change
+span names, kinds, attribute names, types, or event shapes merely because a library
+dependency updates. Every release pins:
+
+- `trace_schema_version`
+- `gen_ai_semconv_profile`
+- `openinference_profile`
+- Galileo compatibility-profile version
+
+The values are emitted in instrumentation-scope/schema metadata and visible in the
+effective configuration, doctor output, and upgrade migration summary. A convention upgrade
+requires schema fixtures, compatibility aliases where promised, release notes, and
+before/after golden traces.
+
+Normative external references:
+
+- OpenTelemetry semantic conventions: <https://opentelemetry.io/docs/specs/semconv/>
+- OpenTelemetry trace conventions:
+  <https://opentelemetry.io/docs/specs/semconv/general/trace/>
+- Galileo OTel/OpenInference recommendations:
+  <https://docs.galileo.ai/sdk-api/third-party-integrations/opentelemetry-and-openinference/integration-recommendations>
+- Galileo custom spans:
+  <https://docs.galileo.ai/sdk-api/third-party-integrations/opentelemetry-and-openinference/start-galileo-span>
+
+## 3. Current Galileo Baseline That v8 Must Preserve
+
+The v7 implementation already provides substantial functionality. The migration
+MUST preserve the following semantics before adding new span families.
+
+The baseline includes merged PR #403, commit
+`9e417889c4c456bc3c7e6c160ee98c1add1094ee`. Its root/subagent identity,
+lifecycle/execution semantics, real-time operation completion, explicit
+connector-facing decisions, Agent360 dimensions, and missing-data behavior are
+normative even when the v8 registry changes their internal construction. The full
+consumer contract is `14-agent-lifecycle-and-dashboard-compatibility.md`.
+
+| Capability | Current contract to preserve |
+|---|---|
+| Transport | Traces-only OTLP HTTP/protobuf destination with Cloud or self-hosted endpoint |
+| Routing headers | API-key secret reference plus project and log-stream routing |
+| Timeliness | Bounded asynchronous export; the v7 global/default scheduled delay is 5,000 ms |
+| Supported operations | `chat`, `invoke_agent`, and `execute_tool` |
+| Standard fields | `gen_ai.operation.name`, provider, request/response model, conversation, input/output messages, token usage, finish reasons, tool name/call/arguments/result |
+| OpenInference fields | `openinference.span.kind`, `input.value`, `input.mime_type`, `output.value`, and `output.mime_type` where applicable |
+| DefenseClaw overlay | Run, agent, root/parent, session, lifecycle, execution, phase, sequence, operation, connector, tool, policy, and deployment identifiers when known |
+| Missing-data fidelity | Input/output/token `reported` indicators distinguish absent telemetry from reported zero/empty values |
+| Privacy | Persistent-sink-safe content projection rather than an ungoverned raw producer copy |
+| Trace shape | Short per-operation or per-hook-delivery traces correlated into longer sessions through stable IDs; no hours-long open session span |
+| Filtering | Schema-pinned Galileo eligibility filter that does not alter other OTLP destinations |
+| Delivery evidence | Observed/eligible/attempted/delivered/rejected/failed counters, partial-success handling, health, and exact-trace canary acknowledgement |
+
+Migration is semantic, not byte-for-byte. Legacy duplicate content aliases may be
+retained for a documented compatibility window, but they MUST be derived from the
+same destination-projected value as the canonical field and can never bypass the
+selected profile.
+
+## 4. Trace Boundary and Topology
+
+### 4.1 Bounded traces
+
+A trace represents one bounded operation, normally one inbound request, agent turn,
+hook delivery, model invocation, tool invocation, scan, or administrative action.
+It MUST NOT remain open for an entire multi-hour agent session.
+
+Long-lived continuity uses stable identifiers:
+
+- `gen_ai.conversation.id`
+- `defenseclaw.agent.root.id`
+- `defenseclaw.agent.parent.id`
+- `defenseclaw.session.root.id`
+- `defenseclaw.session.parent.id`
+- `defenseclaw.agent.lifecycle.id`
+- `defenseclaw.agent.execution.id`
+- `defenseclaw.operation.id`
+- `defenseclaw.run.id`
+
+### 4.2 Preferred agent-turn graph
+
+```text
+invoke_agent <agent>                         [agent.lifecycle]
+├── apply_guardrail <name> input             [guardrail.evaluation]
+│   ├── guardrail.regex
+│   ├── guardrail.ai_defense
+│   ├── chat <judge-model>                    [guardrail judge model call]
+│   ├── guardrail.policy
+│   └── guardrail.finalize
+├── chat <model>                              [model.io]
+│   ├── apply_guardrail <name> output
+│   └── model/tool-call events
+├── execute_tool <tool>                       [tool.activity]
+│   ├── apply_guardrail <name> tool
+│   ├── exec.approval/<approval-id>           [enforcement.action]
+│   ├── HTTP/RPC client attempt               [network.egress]
+│   └── enforcement <action>                  [enforcement.action]
+└── agent lifecycle/phase events
+```
+
+Not every connector exposes enough timing or parent context for this exact tree.
+When parenthood is known, use a parent-child edge. When work is asynchronous,
+reconstructed later, or caused by several inputs, use span links with typed
+correlation attributes rather than inventing a false parent.
+
+### 4.3 Hook and streaming behavior
+
+- Each hook delivery has a short bounded `invoke_agent` anchor. A pre-operation
+  hook starts or records the operation timestamp.
+- A matching post-operation hook completes the span using the original timestamp
+  and exports it as soon as terminal evidence is known.
+- Duplicate terminal hooks do not create duplicate completed spans.
+- Streaming model spans record first-byte/first-token timing when available and end
+  only at terminal response, cancellation, or failure.
+- Start, completion, compaction, resume, subagent, and terminal hooks remain visible
+  during long turns; export does not wait for the agent process to exit.
+- A connector `Stop` hook MAY be a model-completion fallback, but `Stop` or session
+  end is never a prerequisite for exporting a completed turn, model call, tool call,
+  approval, decision, or transition.
+- Correlation caches are bounded, expiring, and observable when an unmatched start
+  or completion is evicted.
+
+## 5. Universal Span Contract
+
+### 5.1 Required structural fields
+
+Every recording span has:
+
+| Field | Requirement |
+|---|---|
+| Trace ID and span ID | Valid OTel identifiers |
+| Parent span ID or links | Present when a real relationship is known |
+| Name | Stable low-cardinality pattern from the span-family registry |
+| Kind | Correct `INTERNAL`, `SERVER`, `CLIENT`, `PRODUCER`, or `CONSUMER` semantics |
+| Start/end timestamp | Producer-observed timestamps; end is mandatory for export |
+| Status | Follows section 11; not used as the only security-decision field |
+| Resource | Required resource schema from section 6 |
+| Instrumentation scope | Name, binary version, trace-schema version, and schema URL/profile |
+
+### 5.2 Required DefenseClaw attributes
+
+Every DefenseClaw-authored span carries:
+
+| Attribute | Meaning |
+|---|---|
+| `defenseclaw.bucket` | Exactly one primary v8 bucket |
+| `defenseclaw.span.family` | Stable family ID, independent of display span name |
+| `defenseclaw.span.family_schema_version` | Version of this registered span family; distinct from the canonical record `schema_version` |
+| `defenseclaw.source` | Producer identity |
+| `defenseclaw.connector.source` | Connector when known |
+| `defenseclaw.config.generation` | Effective immutable runtime-graph generation |
+| `defenseclaw.run.id` | Gateway/sidecar run ID when available |
+| `defenseclaw.operation.id` | Stable operation ID when available |
+| `defenseclaw.outcome` | Stable result enum when the operation ends |
+
+Empty strings are not emitted as known values. If an event contract requires a
+field but the producer did not supply it, use a separate bounded availability
+state; do not fabricate an identifier.
+
+### 5.3 Common optional correlation attributes
+
+The canonical registry supports, when known:
+
+- Request, session, turn, trace, span, agent, agent-instance, root-agent, parent-
+  agent, root-session, parent-session, lifecycle, execution, evaluation, scan,
+  finding, enforcement-action, approval, model-request/response, tool-call,
+  policy, destination, tenant, workspace, and user-principal identifiers.
+- Connector event sequence, phase, previous phase, phase code, lifecycle event,
+  lifecycle state, session source, resume state, and agent depth.
+- Safe hashes/fingerprints for content, target, policy input, or evidence where the
+  raw value is not appropriate.
+
+Identifier field classes and tenant boundaries are schema-declared. An arbitrary
+user string cannot be promoted to a safe identifier merely because it resembles an
+ID.
+
+For agent lifecycle observations, conversation, current agent, root agent, root
+session, lifecycle, execution, lifecycle event/state, and depth are required by the
+family contract. Lifecycle IDs remain stable across gateway restarts for the same
+root/subagent; execution IDs change for each start/resume attempt. Parent agent and
+session describe delegation, not OTel parentage. Phase codes `1..12` retain the
+immutable mapping in `14-agent-lifecycle-and-dashboard-compatibility.md` section
+3.3, and sequence is monotonically increasing within one execution.
+
+## 6. Resource and Scope Attributes
+
+Every exported trace resource includes:
+
+- `service.name`
+- `service.version`
+- `service.namespace`
+- `service.instance.id`
+- `deployment.environment.name` or the pinned compatible convention
+- `host.name`, `host.arch`, and `os.type` where local policy permits
+- `tenant.id` and `workspace.id` when configured
+- DefenseClaw deployment mode, connector/claw mode, instance ID, and device-public-
+  key fingerprint
+
+Secrets, home-directory paths, tokens, authorization values, and arbitrary config
+values are forbidden resource attributes. Per-session or per-user values belong on
+spans, not the process resource. A destination adapter MUST NOT falsely stamp its
+vendor preset as a process-wide resource when several destinations coexist.
+
+Resource-to-span mirroring is allowed only for a reviewed set of join keys needed by
+backends that flatten spans without resource context. The schema lists those keys;
+adapters cannot mirror arbitrary resource data.
+
+## 7. Span Family Catalog
+
+The v8 producer registry includes at least these families. Exact names and required
+attributes are machine-readable schema contracts.
+
+| Bucket | Stable family | Span-name pattern | Kind | Purpose |
+|---|---|---|---|---|
+| `agent.lifecycle` | `span.agent.invoke` | `invoke_agent {agent}` | INTERNAL or CLIENT | One bounded agent/turn/hook anchor |
+| `agent.lifecycle` | `span.agent.transition` | `agent.transition {event}` | INTERNAL | Resume, compact, subagent, terminal, and phase transitions |
+| `agent.lifecycle` | `span.workflow.run` | `workflow {workflow}` | INTERNAL | One bounded orchestration/workflow step; the stable family ID is valid in `event_names` route selectors |
+| `model.io` | `span.model.chat` | `chat {model}` | CLIENT | Model inference or completion |
+| `model.io` | `span.model.embeddings` | `embeddings {model}` | CLIENT | Embedding request when supported |
+| `tool.activity` | `span.tool.execute` | `execute_tool {tool}` | INTERNAL or CLIENT | Tool invocation and result |
+| `tool.activity` | `span.retrieval.search` | `retrieve {source}` | CLIENT or INTERNAL | Search/retrieval represented using DB and OpenInference conventions |
+| `guardrail.evaluation` | `span.guardrail.apply` | `apply_guardrail {name} {target}` | INTERNAL | Whole control execution and decision |
+| `guardrail.evaluation` | `span.guardrail.phase` | `guardrail.{phase}` | INTERNAL or CLIENT | Regex, AI Defense, judge, policy, and finalize phase |
+| `guardrail.evaluation` | `span.guardrail.judge` | `chat {judge-model}` | CLIENT | LLM judge call, also a valid GenAI chat span |
+| `enforcement.action` | `span.enforcement.apply` | `enforcement {action}` | INTERNAL or CLIENT | Block, deny, quarantine, release, redact, revoke, terminate |
+| `enforcement.action` | `span.approval.resolve` | `exec.approval/{approval-id}` | INTERNAL | Approval wait and resolution |
+| `security.finding` | `span.finding.enrich` | `finding.enrich {source}` | INTERNAL or CLIENT | Optional expensive enrichment/correlation, not every finding log |
+| `asset.scan` | `span.asset.scan` | `scan {scanner}` | INTERNAL | Whole asset scan |
+| `asset.scan` | `span.asset.scan.phase` | `scan.{phase}` | INTERNAL | Enumeration, fetch, unpack, analyze, correlate, persist |
+| `asset.lifecycle` | `span.asset.transition` | `asset.transition {transition}` | INTERNAL | Actual install/update/quarantine/release transition |
+| `network.egress` | `span.network.request` | Standard HTTP/RPC client name | CLIENT | Each outbound attempt using protocol conventions |
+| `ai.discovery` | `span.ai.discovery` | `defenseclaw.ai.discovery` | INTERNAL | Discovery scan |
+| `ai.discovery` | `span.ai.discovery.detector` | `defenseclaw.ai.discovery.detector` | INTERNAL | One detector execution |
+| `telemetry.ingest` | `span.telemetry.receive` | Standard HTTP/RPC server name | SERVER | OTLP/HEC receive boundary |
+| `telemetry.ingest` | `span.telemetry.normalize` | `telemetry.normalize {signal}` | INTERNAL | Decode, validate, normalize, and classify |
+| `platform.health` | `span.destination.export` | `telemetry.export {destination}` | CLIENT | Optional diagnostic/export attempt span; never recursively exported to itself |
+| `platform.health` | `span.config.reload` | `config.reload` | INTERNAL | Parse, validate, build, swap, and drain transaction |
+| `compliance.activity` | `span.admin.operation` | Standard server/command operation name | SERVER or INTERNAL | Authenticated administrative operation |
+| `diagnostic` | `span.diagnostic.canary` | `defenseclaw.telemetry.canary` | INTERNAL | Isolated destination-path canary |
+
+`security.finding`, health-state changes, and compliance outcomes remain logs when
+they are discrete facts. A span is added only when there is meaningful duration or
+causal structure; v8 does not create zero-duration spans merely to duplicate every
+log.
+
+## 8. Rich GenAI and Agent Attributes
+
+### 8.1 Agent/workflow spans
+
+Required when available and applicable:
+
+- `gen_ai.operation.name=invoke_agent`
+- `gen_ai.provider.name`
+- `gen_ai.agent.name`, `gen_ai.agent.type`, and `gen_ai.agent.id`
+- `gen_ai.conversation.id`
+- `openinference.span.kind=AGENT`
+- Redacted `gen_ai.input.messages` and `gen_ai.output.messages`
+- OpenInference input/output aliases for the compatibility window
+- Root/parent/session/lifecycle/execution/depth/phase/sequence/operation IDs
+- Connector, run, user-principal reference, stream mode, session source, and resume
+  indicator
+- Input/output availability states and original byte lengths
+
+Workflow spans use `openinference.span.kind=CHAIN` or the pinned equivalent and
+describe bounded orchestration such as one turn, scan pipeline, or retrieval-
+augmented step. They do not expose internal chain-of-thought or hidden reasoning.
+
+### 8.2 Model spans
+
+The model family records, when supplied:
+
+- Operation, system/provider, requested model, response model, response ID, server
+  address/port, and safe endpoint identity.
+- Request parameters: maximum tokens, temperature, top-p, choice count, output type,
+  seed, frequency penalty, presence penalty, and bounded stop reason metadata.
+- Response finish reasons.
+- Usage: input, output, total, cache-read, cache-write, and reasoning-token counts
+  when the provider explicitly reports them.
+- Streaming state, retry count, attempt number, queue time, upstream time, time to
+  first byte/token, total duration, cancellation, and timeout class.
+- Tool-call count and tool-call IDs/names without copying arguments into metadata.
+- Redacted structured input/output messages, safe byte lengths, MIME/content type,
+  hashes, and availability/redaction state.
+- Agent, conversation, request/response, evaluation, policy, and enforcement
+  correlation.
+
+A missing provider token count is omitted and marked `not_reported`; it is never
+converted into a reported zero. Cost MAY be recorded only when based on a versioned
+price catalog with currency, catalog version, and explicit estimated/actual state.
+
+### 8.3 Tool spans
+
+The tool family records:
+
+- Standard operation, tool name/type, tool-call ID, and OpenInference kind.
+- Provider class (`builtin`, `skill`, `mcp`, remote API, or connector-native), safe
+  skill/rule/catalog ID, MCP server identity, destination application, and policy ID.
+- Redacted structured arguments/result, MIME type, byte lengths, safe hashes,
+  availability/redaction state, exit code, and stable error type.
+- Requested/effective action, dangerous classification, matched rule ID (not raw
+  matched secret/pattern), approval ID/result, and enforcement-action ID/outcome.
+- Start source, retry/attempt, timeout/cancel state, and total/remote execution time.
+
+### 8.4 Retriever spans
+
+Retrieval is represented when DefenseClaw or an integrated tool can distinguish it:
+
+- `db.operation.name` or the pinned compatible key with `query`/`search`.
+- `openinference.span.kind=RETRIEVER`.
+- Data-source ID/type, collection/index name only when bounded and non-sensitive,
+  result count, top-k, score range, and duration.
+- Redacted query input and redacted/bounded document summaries or references.
+- Document IDs/hashes and ranks; no complete source document unless an explicit
+  eligible content route permits it.
+
+Retrieval performed through a tool remains primary bucket `tool.activity`; the span
+family makes the retrieval semantics queryable without adding a new v1 bucket.
+
+## 9. Security, Policy, and Enforcement Attributes
+
+### 9.1 Guardrail evaluation
+
+The outer evaluation and its phase spans carry, when known:
+
+- Evaluation ID, strategy, stage, phase, direction, target type, model/tool
+  reference, policy/rule-set ID and version, config generation, and source.
+- Detector/judge name and version, judge model/provider, cache-hit state, attempt,
+  latency, score/confidence, matched rule IDs, and finding IDs/count.
+- Decision, raw action, effective action, enforcement mode, would-block, enforced,
+  severity, outcome, failure class, and enforcement-action IDs.
+- Safe input hash/reference and redacted bounded reason/evidence summary.
+
+An LLM judge call is a child `chat` span with the full model-span contract plus
+guardrail evaluation correlation. This makes it visible to Galileo as a valid LLM
+operation while the outer guardrail span remains visible to general OTLP backends.
+
+### 9.2 Findings
+
+The span that produced a finding MAY add `security.finding.observed` events with:
+
+- Finding occurrence ID, stable rule ID, category, canonical severity, confidence,
+  target reference, safe fingerprint, and evaluation/scan ID.
+
+It MUST NOT attach full evidence, model/tool content, or a fabricated remediation.
+The authoritative finding is the linked `security.finding` log/projection.
+
+### 9.3 Enforcement and approval
+
+Enforcement spans carry action ID, requested/effective action, mode, initiator,
+target reference, evaluation/finding/policy references, outcome, failure class,
+previous/resulting state, and duration.
+
+Approval spans additionally carry approval ID, safe command name, argument count,
+redacted command/argv/cwd only when the route permits, actor/principal reference,
+auto/manual state, requested/resolved timestamps, result, reason, dangerous state,
+and tool/enforcement correlations.
+
+### 9.4 Final connector-facing hook decision
+
+The scanner/guardrail verdict and the final connector response are distinct. The
+canonical `hook_decision` records connector/event/result, raw action, effective
+action, canonical severity, mode, would-block, enforced, bounded step/latency/reason,
+evaluation ID, at most eight rule IDs, and every known agent/session/lifecycle/
+execution/operation correlation.
+
+It is emitted as a `guardrail.evaluation` durable log and as a bounded
+`hook.decision` event or equivalent registered fields on the active hook span. An
+actually imposed control also creates a separate linked `enforcement.action`
+record. It MUST NOT advance lifecycle phase/sequence a second time, invent a
+retry/recovery, or replace the full evaluation record. The next actual hook/event
+is the source of truth for what the agent did after the decision.
+
+## 10. Span Events and Links
+
+### 10.1 Event catalog
+
+Events are bounded milestones inside an operation, not a substitute for required
+logs. Initial event names include:
+
+| Event | Typical parent | Safe attributes |
+|---|---|---|
+| `model.stream.first_token` | model | elapsed time, attempt |
+| `model.retry` | model | attempt, backoff, error type |
+| `tool.flagged` | tool | rule ID, category, severity |
+| `approval.requested` | tool/enforcement | approval ID, mode |
+| `approval.resolved` | approval/tool | result, actor type, elapsed time |
+| `guardrail.decision` | agent/model/tool | evaluation ID, decision, effective action, severity, would-block, enforced |
+| `hook.decision` | active hook/agent anchor | connector, event, evaluation ID, raw/effective action, severity, mode, would-block, enforced, bounded rule IDs |
+| `security.finding.observed` | evaluation/scan | finding ID, rule ID, category, severity, fingerprint |
+| `enforcement.requested` | evaluation/tool | action ID, action, mode |
+| `enforcement.applied` | enforcement/asset | action ID, resulting state |
+| `enforcement.failed` | enforcement | action ID, failure class |
+| `content.redacted` | content-bearing span | field class, profile, detector count; no matched value |
+| `content.truncated` | any | field class, original bytes, retained bytes |
+| `exception` | failed operation | standard exception attributes after redaction |
+| `telemetry.dropped` | pipeline operation | destination, signal, bounded reason, count |
+
+Events repeat only enough security summary to interpret the waterfall. Full logs
+remain linked through IDs. Event count overflow increments a dropped-events count
+and adds one terminal overflow marker if capacity remains.
+
+### 10.2 Links
+
+Use links for:
+
+- A scan finding produced after the scan span ended.
+- An enforcement action caused by several findings/evaluations.
+- A resumed session connected to its predecessor execution.
+- An asynchronous exporter or normalization operation.
+- A reconstructed hook completion where the original parent context is no longer
+  safely available.
+
+Each link includes only bounded relation metadata such as `caused_by`, `resumes`,
+`derived_from`, or `correlates_with`. Never create a new random parent to make a
+waterfall look complete.
+
+## 11. Status, Outcome, and Errors
+
+- `defenseclaw.outcome` uses the exact canonical outcome vocabulary in
+  `02-taxonomy-and-data-model.md` section 3.2. Each span family registers its allowed
+  subset; unregistered family-specific synonyms are invalid.
+- Guardrail evaluation that successfully decides `block` is an operationally
+  successful evaluation and normally has unset/OK OTel status. Its decision fields
+  carry the block.
+- The model/tool/agent operation prevented by that decision MAY have OTel ERROR
+  status with `error.type=policy_denied` because the requested operation did not
+  complete.
+- Technical failure, timeout, invalid response, exporter rejection, and unhandled
+  exception set OTel ERROR and a stable `error.type`.
+- Cancellation intentionally requested by the caller uses outcome `cancelled`; it
+  is not automatically a technical error.
+- Error descriptions are bounded and centrally redacted. Stack traces are span
+  events only when configured for an eligible route and are never metric labels.
+- HTTP and RPC spans follow their stable protocol status rules rather than a custom
+  global `status >= 400` shortcut.
+
+This separates “the security control worked and blocked” from “the control itself
+failed.” Compatibility dashboards that relied on block-as-ERROR receive a migration
+query and, during the compatibility window, a bounded decision attribute rather
+than forcing the incorrect status forever.
+
+## 12. Content, Redaction, and Missing Data
+
+### 12.1 Destination-specific projection
+
+The canonical recording span may hold typed source values only inside the bounded
+in-process SDK lifecycle. Before each exporter sees a span, DefenseClaw creates a
+destination-owned projection and applies that route’s profile to:
+
+- Attributes.
+- Span events.
+- Link attributes.
+- Status descriptions.
+- Exception messages and stack traces.
+- GenAI/OpenInference input/output fields.
+
+No producer may call a global sink redactor before the destination fan-out, because
+that would make independent route profiles impossible. No destination may mutate the
+shared SDK span.
+
+### 12.2 Content-state attributes
+
+Every optional input/output/arguments/result body has independently safe metadata:
+
+- `reported`: whether the producer supplied it.
+- `state`: `not_reported`, `preserved`, `partially_redacted`, `whole_redacted`,
+  `truncated`, or `failed_closed`.
+- `original_bytes`: bounded integer when known.
+- `content_type`/MIME type.
+- Safe keyed hash only when policy permits correlation.
+
+For a Galileo-required input/output field whose producer did not report content,
+the projection MAY use an empty structured array (`[]`) solely to satisfy the
+backend shape, but MUST also set `reported=false` and `state=not_reported`. It MUST
+NOT invent user, assistant, tool, retrieval, or reasoning text.
+
+### 12.3 Duplicate aliases
+
+During a documented compatibility window, standard GenAI, OpenInference, and
+legacy `defenseclaw.*` content aliases may coexist. They are generated from one
+already-redacted typed value. A canary test asserts that no alias receives a less
+restrictive value. Compatibility aliases have a removal version and are visible in
+the effective trace schema.
+
+## 13. Galileo Rich Projection
+
+### 13.1 Preset contract
+
+`preset: galileo` expands to a versioned compatibility profile, initially
+`galileo-rich-v2`, while preserving operator overrides that do not weaken required
+validation. The effective view shows the expanded profile.
+
+It preserves:
+
+- Exact configured Cloud/self-hosted trace endpoint.
+- API-key secret reference and project/log-stream headers.
+- HTTP/protobuf traces only unless Galileo adds and the operator selects another
+  supported signal.
+- The `galileo-rich-v2` preset deliberately defaults `scheduled_delay_ms` to 1,000.
+  This is a v8 preset choice, not the v7 global default of 5,000 ms. An explicit v7
+  operator override is preserved by migration.
+- Independent queue, delivery health, partial-success parsing, and exact canary.
+- Route-specific redaction.
+
+### 13.2 Supported Galileo span shapes
+
+The v8 profile accepts and validates:
+
+| Shape | Discriminator | Required projection |
+|---|---|---|
+| Agent | `gen_ai.operation.name=invoke_agent` | provider, agent name, input, output, valid name/kind |
+| LLM | operation `chat`, `text_completion`, or supported pinned equivalent | provider, request model when known, input, output |
+| Tool | `gen_ai.operation.name=execute_tool` | tool name, call ID when known, arguments/result, input/output |
+| Retriever | DB operation `query` or `search`, optionally OpenInference `RETRIEVER` | input query plus bounded/redacted document output |
+| Workflow | OpenInference `CHAIN` or versioned workflow discriminator | descriptive bounded name, input, output |
+
+The current three shapes are therefore retained, and retriever/workflow spans are
+added. Agent kind is INTERNAL for in-process orchestration and CLIENT for a remote
+agent. Model and remote-tool/retrieval calls use CLIENT; local tools use INTERNAL.
+
+### 13.3 Security enrichment visible in Galileo
+
+Galileo-compatible agent, model, tool, retriever, and workflow spans retain safe
+DefenseClaw overlay attributes and bounded events for guardrail decisions, finding
+IDs, approvals, and enforcement outcomes. Full guardrail phase, policy, scan,
+network, health, and compliance spans remain available to general OTLP destinations
+even if Galileo does not classify their native shapes.
+
+LLM judge calls are valid child LLM spans and MAY be sent to Galileo when the
+`guardrail.evaluation` trace route is enabled. Their inputs/outputs follow the same
+redaction profile as every other content-bearing span and are marked as judge calls
+through DefenseClaw attributes.
+
+The preset compatibility validator is separate from bucket routing:
+
+1. Collection decides whether the span exists.
+2. The destination route decides whether Galileo is eligible to receive it.
+3. Route redaction creates the Galileo projection.
+4. The Galileo schema profile accepts or rejects that projected shape.
+5. A rejection increments `ineligible`/`schema_missing_required` counters and does
+   not affect other destinations.
+
+### 13.4 No vendor lock-in
+
+Canonical span families do not use Galileo-specific names. Galileo headers and
+optional resource projection are adapter-owned. General OTLP destinations receive
+the same standard/DefenseClaw graph without Galileo filtering. Renaming a Galileo
+destination does not disable its compatibility profile; `preset` identity, not
+destination name, selects the profile.
+
+## 14. Limits and Cardinality
+
+Rich telemetry remains bounded. The initial defaults are explicit under
+`trace_policy.limits`:
+
+| Limit | Default |
+|---|---:|
+| Attributes per span | 128 |
+| Events per span | 64 |
+| Links per span | 32 |
+| Attributes per event/link | 32 |
+| String value bytes before field policy | 16,384 |
+| Total projected span bytes | 256 KiB |
+| Stack-trace bytes | 32 KiB |
+| Message/document items | 128 |
+
+Limits must respect equal or lower SDK/collector limits. Overflow is deterministic,
+fails closed for content, retains core identity/outcome fields, and records dropped
+counts. Required Galileo shape fields take priority over optional aliases.
+
+High-cardinality IDs are allowed on traces and logs where needed for investigation,
+but not copied to metric labels. Span names never contain request, session, user,
+finding, scan, URL path, arbitrary model output, or unbounded command text. Tool,
+model, detector, scanner, and agent names are normalized and bounded before entering
+span names; the original safe value may remain as a redacted attribute.
+
+## 15. Trace Configuration Contract
+
+The complete v8 surface adds explicit trace limits and schema selection:
+
+```yaml
+observability:
+  trace_policy:
+    sampler: parentbased_traceidratio
+    sampler_arg: "0.10"
+    semantic_profile: defenseclaw-genai-rich-v1
+    compatibility_aliases: true
+    limits:
+      max_attributes_per_span: 128
+      max_events_per_span: 64
+      max_links_per_span: 32
+      max_attributes_per_event: 32
+      max_attribute_value_bytes: 16384
+      max_projected_span_bytes: 262144
+      max_stacktrace_bytes: 32768
+      max_message_items: 128
+```
+
+This is an all-knobs example. If sampler settings are omitted, explicitly collected
+traces use `parentbased_always_on`; catalog defaults collect every defined trace
+family unless a bucket/default override disables it.
+
+`semantic_profile` selects a shipped immutable schema profile; arbitrary custom
+attribute schemas are not accepted from YAML. The
+`defenseclaw-genai-rich-v1` entry in `schemas/telemetry/v8/registry.yaml` binds one
+exact tuple of `trace_schema_version`, the locked `gen_ai_semconv_profile`, the
+`openinference_profile`, and the Galileo compatibility-profile version. The
+effective view displays the resolved tuple. Operators cannot override its members
+independently; changing any member requires a new semantic-profile ID. A missing or
+mismatched lock/profile binding is a build/startup error. `compatibility_aliases` controls only
+documented old aliases and defaults to true for migrated v7 installations until
+  their removal release. It never changes the selected projection profile.
+
+Richness is primarily a schema guarantee, not hundreds of per-attribute switches.
+Operators choose which bucket traces exist, which destinations receive them, and
+which route redaction applies. Limits control bounded resource use.
+
+Assuming trace collection is enabled for the selected buckets, the Galileo
+destination becomes:
+
+```yaml
+- name: galileo
+  kind: otlp
+  preset: galileo
+  endpoint: https://api.galileo.ai/otel/traces
+  headers:
+    Galileo-API-Key: {env: GALILEO_API_KEY}
+    project: defenseclaw
+    logstream: production
+  batch:
+    scheduled_delay_ms: 1000
+  send:
+    signals: [traces]
+    buckets:
+      - agent.lifecycle
+      - model.io
+      - tool.activity
+      - guardrail.evaluation
+    redaction_profile: sensitive
+```
+
+The compiler generates the effective route and trace transport from `send`. The
+preset’s schema projection determines which selected spans Galileo can ingest.
+Effective config and `observability plan` show both route and vendor-shape
+eligibility.
+
+## 16. Sampling
+
+- Bucket collection is evaluated before span construction.
+- Parent-based sampling preserves a coherent bounded trace.
+- The sampling decision and reason are observable in safe debug/health data.
+- A route cannot resurrect an unsampled span.
+- Security findings and enforced outcomes remain durable logs even when their trace
+  is unsampled.
+- Operators needing decision-aware tail sampling should use an OTel Collector policy
+  keyed by canonical severity, outcome, error type, bucket, or guardrail decision.
+  DefenseClaw ships an example policy but does not claim local tail-sampling
+  durability.
+- Canary traces bypass normal ratio sampling only for the explicitly targeted
+  diagnostic operation and remain marked as canaries.
+
+## 17. Delivery and Health
+
+Per destination, expose bounded counters for:
+
+- observed
+- collection-disabled
+- unsampled
+- route-unmatched
+- route-dropped
+- schema-ineligible
+- redaction-failed-closed
+- queued
+- queue-dropped
+- attempted
+- delivered/collector-accepted
+- partially rejected
+- rejected
+- failed
+- retried
+
+Counts distinguish spans from batches. Health reports last success/failure time,
+last safe error class, queue utilization, dropped counts, active compatibility
+profile, schema versions, and canary acknowledgement. It never exposes a header,
+content value, status description containing content, or remote response body.
+
+## 18. Migration Requirements
+
+The v7-to-v8 migration must:
+
+1. Preserve all four existing runtime span schemas (agent, LLM, tool, approval),
+   the agent lifecycle event schema, gateway envelope correlation, and
+   `hook_decision` as input fixtures.
+2. Preserve current Galileo operation eligibility, headers, endpoint,
+   routing/delivery counters, and canary behavior. Preserve an explicit v7 batch
+   delay; when v7 used the inherited 5,000 ms default, materialize the deliberate v8
+   Galileo preset default of 1,000 ms and report that preset-default change in the
+   migration summary.
+3. Convert `span_filter` intent into v8 bucket routes plus the versioned Galileo
+   compatibility profile without broadening export silently.
+4. Preserve current conversation/current-agent/root-agent/parent-agent,
+   root/parent-session, lifecycle/execution/run/operation, lifecycle event/state,
+   phase/previous-phase/code, depth, sequence, source/resume, and user correlation.
+   Root/parent delegation remains distinct from trace parentage.
+5. Replace producer-global sink redaction with per-destination span projection.
+6. Add universal bucket/family/schema/source/config-generation fields.
+7. Add retriever/workflow schemas and guardrail/enforcement/event contracts.
+8. Mark legacy content aliases with a removal version and prove equal redaction.
+9. Provide query migrations for the corrected status/outcome semantics.
+10. Preserve completed-operation export without waiting for `Stop`, semantic
+    terminal deduplication, bounded correlation-cache behavior, and honest
+    `reported=false`/`not_reported` token, cost, input, and output state.
+11. Generate and verify `local-observability-v1` so every Agent360 Prometheus,
+    Loki, and Tempo consumer has a preserved/aliased/migrated field disposition.
+
+If an existing operator span filter cannot be represented exactly by bucket routes
+and the compatibility profile, migration emits a hard review item and shows the
+before/after eligible span families.
+
+## 19. Verification and Acceptance
+
+### 19.1 Schema completeness
+
+- Every registered span family has name/kind, bucket, required/optional attributes,
+  field classes, events, links, status rules, limits, and family schema version.
+- Build fails if an emitted attribute/event is absent from its schema or a required
+  field is no longer emitted.
+- Attribute names and types are identical across Go, Python, schemas, docs, canary,
+  and migration fixtures.
+
+### 19.2 Golden trace graphs
+
+Golden tests cover:
+
+- Allowed model call.
+- Input-blocked model call.
+- Output-blocked model call.
+- Model provider retry and timeout.
+- Streaming completion with first-token timing.
+- Tool call with approval and successful enforcement.
+- Tool denied before execution.
+- Tool execution failure.
+- Guardrail evaluation with regex, AI Defense, judge, policy, finding, and block.
+- Clean evaluation with no finding.
+- Retriever inside a workflow.
+- Agent resume, compaction, subagent, and terminal transition.
+- Root agent with nested subagents, stable lifecycle across gateway restart, new
+  execution on resume, and delegation links distinct from trace parents.
+- Long-running session where completed turn/model/tool spans and logs appear before
+  any `Stop` or session-end hook.
+- Raw block downgraded by observe mode/capability mapping, followed by an actual
+  retry/model/tool/stop event without a fabricated recovery transition.
+- Missing tokens, cost, parent, timing, input, and output with explicit not-reported
+  state rather than zero/empty fabrication.
+- Asset scan with several findings and quarantine.
+- Inbound OTLP normalization and exporter partial success.
+
+Tests assert exact parent-child/link shape, span count, IDs, names, kinds, statuses,
+events, and correlations without requiring content equality.
+
+### 19.3 Galileo compatibility
+
+- Current `chat`, `invoke_agent`, and `execute_tool` fixtures remain eligible.
+- Retriever and workflow fixtures are eligible under `galileo-rich-v2`.
+- LLM judge child spans are eligible when the guardrail route is enabled.
+- Native guardrail/policy/scan/health spans remain available to general OTLP and are
+  not silently misclassified merely to enter Galileo.
+- Missing input/output is represented as structured empty plus explicit
+  `reported=false`, never fabricated content.
+- Errors carry `error.type` and ERROR status; successful block decisions remain
+  distinguishable from control failures.
+- A Galileo schema miss increments the correct reason counter and does not affect
+  another OTLP destination.
+- Direct and runtime canaries use the same pinned schema and exact-trace
+  acknowledgement behavior.
+
+### 19.4 Privacy and robustness
+
+- The same canonical span projected to `strict`, `content`, `sensitive`, and `none`
+  optional routes produces independent expected results.
+- Sensitive canaries are absent from all aliases, events, links, error descriptions,
+  exception fields, and vendor wrappers that should not receive them.
+- A default `none` projection does not weaken another destination that explicitly
+  selects a redacting profile.
+- Oversize attributes/events fail closed and retain required identity/outcome.
+- Unicode, malformed JSON messages, fake redaction tokens, deep structures, and
+  destination serialization errors are covered.
+- Fuzzing proves projection never mutates the SDK’s shared canonical span.
+
+### 19.5 Performance
+
+- Disabled bucket traces allocate no body/event structures.
+- Rich enabled-span overhead is benchmarked for agent/model/tool/guardrail paths.
+- Projection cost scales with enabled matching destinations, not all configured
+  destinations.
+- Queue, correlation cache, event, link, and projected-byte limits remain bounded
+  under adversarial high-cardinality input.

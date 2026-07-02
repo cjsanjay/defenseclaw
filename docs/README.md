@@ -62,5 +62,6 @@ DefenseClaw is the governance layer for OpenClaw and agentic AI runtimes. It sca
 | [Sandbox Scanning](design/sandbox-scanning.md) | Sandbox scanner integration notes |
 | [Sandbox Security Analysis](design/sandbox-security-analysis.md) | Security analysis notes |
 | [Standalone Sandbox Issues](design/standalone-sandbox-issues.md) | Known issue tracking notes |
+| [Observability v8 Specification](design/observability-v8/README.md) | Unified logging, audit, OTel, routing, redaction, migration, rich trace, and dashboard compatibility contracts |
 | [Local Observability Stack Moved Notice](archive/LOCAL_OBSERVABILITY_STACK_MOVED.md) | Archived pointer from the old deploy path to the bundled stack |
 | [Webhook Notifications PR Description](archive/WEBHOOK_NOTIFICATIONS_PR_DESCRIPTION.md) | Archived PR description retained for implementation context |
