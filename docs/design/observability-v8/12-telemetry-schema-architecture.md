@@ -33,6 +33,12 @@ Relevant upstream sources:
   <https://github.com/open-telemetry/semantic-conventions>
 - OpenTelemetry GenAI registry model:
   <https://github.com/open-telemetry/semantic-conventions-genai>
+- OpenTelemetry core semantic-conventions `v1.42.0` release:
+  <https://github.com/open-telemetry/semantic-conventions/releases/tag/v1.42.0>
+- OpenTelemetry GenAI registry revision used by v8:
+  <https://github.com/open-telemetry/semantic-conventions-genai/tree/b028dceecdad117461a785c3af35315e7184e813>
+- OpenInference semantic-conventions `v0.1.30` release:
+  <https://github.com/Arize-ai/openinference/releases/tag/python-openinference-semantic-conventions-v0.1.30>
 - OpenTelemetry specification guidance that semantic-convention YAML is the source
   for generated constants:
   <https://github.com/open-telemetry/opentelemetry-specification/blob/main/specification/overview.md>
@@ -91,9 +97,9 @@ registry manifest composes three focused domain files:
 ```text
 schemas/telemetry/v8/
   registry.yaml              # manifest, versions, dependencies, group imports
-  genai.yaml                 # agent, model, tool, retrieval, workflow
-  security.yaml              # guardrail, finding, enforcement, approval
-  operations.yaml            # lifecycle, scan, network, platform, log/event/metric families
+  genai.yaml                 # GenAI groups and agent/model/tool/retrieval/workflow families
+  security.yaml              # security groups and guardrail/finding/enforcement/approval families
+  operations.yaml            # operational families, including span.destination.* and span.admin.*
   semconv.lock.yaml          # exact upstream dependency versions/digests
   examples.yaml              # valid/invalid representative records
   README.md                  # generated quick-start and ownership guide
@@ -114,11 +120,25 @@ Everything under `generated/` is reproducible and carries a generated-file heade
 CI fails on drift. Contributors normally touch one domain file for a new family;
 consumers normally open only the generated catalog or bundle.
 
+There is no separately authored trace or span-family file. Each span family from
+`11-trace-and-span-contract.md` section 7 is owned by its primary semantic domain:
+
+| Authoring file | Span-family ownership |
+|---|---|
+| `genai.yaml` | `span.agent.invoke`, `span.workflow.run`, `span.model.*`, `span.tool.*`, and `span.retrieval.*` |
+| `security.yaml` | `span.guardrail.*`, `span.enforcement.*`, `span.approval.*`, and `span.finding.*`; `span.guardrail.judge` may reference the GenAI model groups without changing ownership |
+| `operations.yaml` | `span.agent.transition`, `span.asset.*`, `span.network.*`, `span.ai.discovery.*`, `span.telemetry.*`, `span.destination.*`, `span.config.*`, `span.admin.*`, and `span.diagnostic.*` |
+
+Log and metric families follow the same primary-domain rule. Reusable groups may
+be referenced across files, but a family definition has exactly one authoring
+owner. `registry.yaml` composes the three sets into the versioned trace profile.
+
 ### 4.2 OTel registry compatibility
 
-The registry SHOULD use the OpenTelemetry semantic-convention registry model and
-OTel Weaver-compatible groups/references where practical. DefenseClaw extensions
-are limited to namespaced metadata required by this product:
+The registry MUST use the OpenTelemetry semantic-convention registry model and
+OTel Weaver-compatible groups/references wherever they represent the required
+contract. DefenseClaw extensions are limited to namespaced metadata required by
+this product:
 
 - `bucket`
 - `field_class`
@@ -133,8 +153,20 @@ If upstream Weaver cannot preserve an extension, the compiler keeps it in a
 namespaced `x-defenseclaw-*` block rather than forking the meaning of an upstream
 field.
 
-The lock file pins the exact OTel general and GenAI registry releases/commits and
-OpenInference profile. Builds do not fetch mutable `main` definitions.
+The v8 lock was reviewed against the authoritative upstream repositories on
+2026-07-02 and pins these immutable revisions:
+
+| Dependency | Version/profile | Immutable revision |
+|---|---|---|
+| OpenTelemetry core semantic conventions | `v1.42.0` | `ae3a98640194ed405c4c797281502e4d3bd258b3` |
+| OpenTelemetry GenAI semantic conventions | `otel-genai-b028dceecdad117461a785c3af35315e7184e813` | `b028dceecdad117461a785c3af35315e7184e813` |
+| OpenInference semantic conventions | `openinference-semantic-conventions-v0.1.30` | `789d41974c08a9a13147977f28ef4142a07e2106` |
+
+The core `v1.42.0` release moved `gen_ai.*` ownership to the dedicated GenAI
+repository. That repository had no release tag for this snapshot, so v8 uses its
+full commit as the profile identifier rather than a mutable branch name. Builds do
+not fetch mutable `main` definitions, and a tag moving to a different commit fails
+lock validation.
 
 ## 5. Registry Composition Model
 
@@ -143,7 +175,7 @@ into every span schema.
 
 ### 5.1 Reusable groups
 
-Initial groups are:
+The v8 reusable groups are:
 
 | Group | Contents |
 |---|---|
@@ -193,16 +225,26 @@ groups:
       compatibility_profiles: [openinference-v1, galileo-rich-v2]
 ```
 
-The exact syntax is finalized with the schema compiler, but the semantic rules in
-this document are normative.
+The compiler's concrete YAML grammar MUST encode these semantic rules and MUST NOT
+weaken them. Grammar-only refinements do not reopen the reviewed family ownership,
+group composition, version, privacy, or compatibility decisions.
 
 The registry manifest also owns immutable semantic-profile bindings. The
-`defenseclaw-genai-rich-v1` profile resolves exactly one
-`trace_schema_version`, locked OTel GenAI semantic-convention profile,
-OpenInference profile, and Galileo compatibility-profile version. Those four
-members cannot be overridden independently in config; changing one creates a new
-profile ID. Registry validation fails if the manifest tuple and
-`semconv.lock.yaml` disagree.
+`defenseclaw-genai-rich-v1` entry is exactly:
+
+```yaml
+id: defenseclaw-genai-rich-v1
+trace_schema_version: defenseclaw-trace-v1
+gen_ai_semconv_profile: otel-genai-b028dceecdad117461a785c3af35315e7184e813
+openinference_profile: openinference-semantic-conventions-v0.1.30
+galileo_compatibility_profile: galileo-rich-v2
+```
+
+These are four independent literal identifiers. The envelope `schema_version` and
+each span's `family_schema_version` remain separate versions and are not members of
+this tuple. The four profile members cannot be overridden independently in config;
+changing one creates a new semantic-profile ID. Registry validation fails if this
+tuple and `semconv.lock.yaml` disagree.
 
 ## 6. Generated Public Artifacts
 
@@ -232,10 +274,13 @@ each family it exposes:
 - Required/conditional/optional attributes.
 - Type, stability, owner, field class, sensitivity, and cardinality.
 - Allowed events/links.
-- Compatibility profiles.
-- Dashboard consumers, normalized Prometheus names/labels/buckets, and Loki/Tempo
-  query fields for `local-observability-v1`.
+- Compatibility-profile identifiers and links to their generated manifests.
 - Introduced/deprecated/removed versions.
+
+The portable catalog MUST NOT contain dashboard consumers, datasource or dashboard
+UIDs, normalized Prometheus names/labels/buckets, Loki/Tempo query fields, or
+dashboard-query aliases. Those consumer-specific mappings live only in
+`compatibility/local-observability.json`.
 
 ### 6.3 Human reference
 
@@ -262,11 +307,13 @@ small generated standalone set is acceptable for:
 - A downstream system that cannot resolve `$ref` into the bundle.
 
 `compatibility/local-observability.json` is generated because it is a consumer
-manifest rather than a canonical family schema. It binds registry fields to the
-exact metric normalization, bounded labels, histogram buckets, Loki JSON fields,
-Tempo attributes, datasource/dashboard UIDs, and aliases consumed by the bundled
-dashboards. The dashboard checker parses every query and fails when its dependency
-is absent from this manifest.
+manifest rather than a canonical family schema. It is the only generated registry
+artifact that binds registry fields to the exact metric normalization, bounded
+labels, histogram buckets, Loki JSON fields, Tempo attributes,
+datasource/dashboard UIDs, and aliases consumed by the bundled dashboards. The
+portable catalog may link to this manifest by compatibility-profile ID but does not
+copy its mappings. The dashboard checker parses every query and fails when its
+dependency is absent from this manifest.
 
 ## 7. Standard Base Plus DefenseClaw Overlay
 
@@ -364,17 +411,23 @@ The system tracks:
 - Config schema version.
 - Bucket catalog version.
 - Telemetry registry version.
-- Individual family schema version.
+- Trace semantic-profile schema version (`trace_schema_version`).
+- Individual family schema version (`family_schema_version`, emitted on spans as
+  `defenseclaw.span.family_schema_version`).
 - Upstream OTel general semantic-convention version.
 - Upstream OTel GenAI profile version.
 - OpenInference compatibility-profile version.
 - Destination compatibility-profile version.
 
 These are not collapsed into one `schema_version` integer. The canonical record
-envelope retains `schema_version`; span-family metadata uses
-`family_schema_version`. The effective view and
-record provenance identify the relevant versions without forcing unrelated changes
-to bump every contract.
+envelope retains `schema_version`, which versions the complete record shape.
+Instrumentation-scope/schema metadata uses `trace_schema_version` for the composed
+trace contract selected by the semantic profile. Each span independently carries
+its family's `family_schema_version`. A family change does not by itself change the
+envelope version, and an envelope change does not renumber unchanged span families;
+a new composed trace profile may bind a new mix of family and dependency versions.
+The effective view and record provenance identify all relevant versions without
+forcing unrelated changes to bump every contract.
 
 ### 10.2 Change rules
 
@@ -426,7 +479,7 @@ separate `telemetry-registry-check` Make targets already exist.
 
 ## 12. Generated APIs and Builders
 
-The registry compiler SHOULD generate:
+The registry compiler MUST generate:
 
 - Go and Python constants for stable family/event/attribute IDs.
 - Typed builder validation for required fields and correct value types.

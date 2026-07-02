@@ -20,7 +20,7 @@ The reference shows all knobs without forcing operators to maintain them.
 
 ## 2. Operator Mental Model
 
-Generated configuration and documentation should use this ASCII model:
+Generated configuration and documentation MUST use this ASCII model:
 
 ```text
   PRODUCERS                  POLICY                         OUTPUTS
@@ -68,7 +68,7 @@ And this configuration-resolution model:
 
 ### 3.1 Omit defaults
 
-The default generated source file should contain only:
+The default generated source file MUST contain only:
 
 - `config_version`.
 - Only bucket collection/profile overrides selected by the operator.
@@ -76,10 +76,10 @@ The default generated source file should contain only:
 - Only custom redaction profiles actually used.
 - `local` only when path or retention differs from built-in defaults.
 
-It should not enumerate all fourteen buckets, declare a SQLite destination, create a
-local catch-all route, explicitly enable a present destination, repeat OTLP signal
-enablement, add an all-bucket/all-signal send to a destination, or copy built-in
-default values.
+It MUST NOT enumerate every bucket in the effective versioned catalog, declare a
+SQLite destination, create a local catch-all route, explicitly enable a present
+destination, repeat OTLP signal enablement, add an all-bucket/all-signal send to a
+destination, or copy built-in default values.
 
 ### 3.2 Minimal example
 
@@ -111,9 +111,11 @@ observability:
       endpoint: https://otel.example.test
 ```
 
-The compiler generates all catalog buckets plus logs, traces, and metrics. A
-logs-only destination with the same omitted policy generates logs only; Prometheus
-generates metrics only.
+The compiler generates all buckets in the effective reviewed catalog version plus
+logs, traces, and metrics. A logs-only destination with the same omitted policy
+generates logs only; Prometheus generates metrics only. Newer runtime buckets keep
+the full-fidelity, unredacted local default but do not enter that remote wildcard
+until review advances the catalog version.
 
 Collect ordinary logs only for selected buckets:
 
@@ -257,7 +259,6 @@ Lint is stricter and more advisory than validation. It reports:
 - Duplicate effective bucket entries.
 - Content buckets sent remotely and their effective projection profiles, reported as
   posture information rather than an error solely because `none` is selected.
-- Missing environment/key-store references.
 - New runtime buckets not yet reviewed under the configured catalog version.
 - Oversized source files or excessive route counts.
 
@@ -304,8 +305,19 @@ content or resolve secret values.
   services.
 - An explicit destination test resolves that destination's credentials, TLS, DNS,
   endpoint, and protocol.
-- Where the backend requires a real write, send a synthetic non-sensitive health
-  record clearly marked as a test and report its record ID.
+- The default command performs only a non-mutating protocol handshake. Where the
+  backend requires a real write, the command refuses by default and requires the
+  separate explicit `--write-probe` opt-in. With that flag, send a synthetic
+  non-sensitive probe clearly marked as a test and report its probe ID; use a
+  backend-supported dedicated test namespace/stream/index when one is available.
+- The probe bypasses ordinary collection and routing and is written directly and
+  exclusively through the named destination adapter. It MUST NOT enter SQLite
+  event history, any other destination, normal logs/traces/metrics, or dashboard
+  counts.
+- Persist a separate local-only `compliance.activity` record for the operator's
+  test attempt and outcome. It contains the destination name, probe ID, result,
+  and bounded failure class, but no credential, sensitive response body, or probe
+  body.
 - Never sample a real prompt, response, finding evidence, or tool payload for a
   connectivity test.
 - Mask credentials and sensitive response bodies in all output.
@@ -348,10 +360,24 @@ silently override routing, redaction, or collection. v8 therefore uses this mode
 Authoring presets are already materialized into source YAML and are not a runtime
 precedence layer.
 
-Allowed environment behavior:
+The only DefenseClaw-specific bootstrap environment names allowed to affect config
+discovery or config-file trust are:
 
-- `DEFENSECLAW_CONFIG`, `DEFENSECLAW_HOME`, and managed-deployment bootstrap values
-  continue selecting/trusting the source file as documented.
+| Name | Exact scope |
+|---|---|
+| `DEFENSECLAW_HOME` | Selects the data directory and therefore the default `config.yaml` location when `DEFENSECLAW_CONFIG` is absent |
+| `DEFENSECLAW_CONFIG` | Selects one explicit config source path |
+| `DEFENSECLAW_DEPLOYMENT_MODE` | May force managed-enterprise trust and write-protection checks; it does not override observability policy values |
+| `MIGRATION_DEFENSECLAW_HOME` | Upgrade-subprocess-only data-directory handoff; the normal gateway and config reload path MUST ignore it |
+
+No other DefenseClaw environment name may select a source file, weaken source trust,
+or override a non-secret v8 configuration value. Ordinary operating-system home
+resolution is not an observability-policy override. Environment names explicitly
+referenced by a secret-bearing YAML field are secret providers, not bootstrap
+inputs, and affect only that field.
+
+Allowed environment behavior otherwise is:
+
 - Secret-bearing fields resolve environment/key-store values only through an
   explicit source reference such as `{env: OTEL_AUTHORIZATION}` or `token_env`.
 - A reference name may appear in source/effective output; its resolved value must
@@ -394,7 +420,7 @@ scalar updates. v8 therefore requires:
 - Tests seed distinctive header, inline, and route comments and assert byte or node
   preservation after unrelated mutations.
 
-The live source file should contain a concise ASCII flow and discovery commands,
+The live source file MUST contain a concise ASCII flow and discovery commands,
 not hundreds of lines of dormant commented settings. The separate generated
 reference contains all knobs and extensive explanations.
 
@@ -403,13 +429,34 @@ reference contains all knobs and extensive explanations.
 - Reject duplicate keys at every mapping level.
 - Reject YAML merge keys and aliases in v8 policy files to avoid hidden precedence,
   alias expansion attacks, and mutation surprises.
-- Bound each source file to 4 MiB and the combined parsed node count to a documented
-  safe maximum.
-- Bound destination, route, profile, and map sizes.
+- Enforce the exact structural limits below before constructing an effective graph:
+
+| Source structure | Hard limit |
+|---|---:|
+| Raw bytes in one config source | 4,194,304 bytes (4 MiB) |
+| Parsed YAML nodes | 65,536 |
+| YAML nesting depth, with the document root at depth 1 | 32 |
+| Optional destinations | 64 |
+| Explicit advanced routes in one destination | 256 |
+| Explicit advanced routes across all destinations | 4,096 |
+| Custom redaction profiles | 128 |
+| Entries in any YAML mapping | 1,024 |
+
+Raw bytes are counted before decoding. The node count includes every mapping,
+sequence, mapping key, and scalar value produced by the YAML parser before defaults
+or presets expand. Depth counts mapping/sequence nesting and treats the document
+root as depth 1. These are rejection limits, not truncation targets. Aliases and
+merge keys remain forbidden, so they cannot bypass node/depth accounting. Concise
+`send` blocks and built-in preset expansion count toward effective-graph validation
+but do not consume the explicit advanced-route source quota.
 - Validation errors include source file, line, column, dotted path, received value
   class, and actionable expected values.
 - Error output masks secret-bearing fields and headers.
 - Unknown fields are errors with nearest-name suggestions.
+- Every secret reference required by an enabled destination MUST resolve during
+  startup/reload validation. A missing environment or key-store reference is a
+  hard validation error with a masked path and corrective action, never deferred
+  advisory lint.
 - `config validate` verifies both Go and Python schema parity in CI; normal operator
   execution uses the local implementation without starting the gateway.
 
@@ -500,9 +547,10 @@ With the versioned catalog and pinned non-SQLite wildcard behavior, adding a buc
 controlled medium-sized change rather than a configuration-schema redesign. The
 hard part is classification and downstream compatibility, not the enum addition.
 
-## 14. Configuration Review Gates
+## 14. Locked Configuration Assertions
 
-Before v8 implementation begins, confirm:
+The configuration review is complete. The following are implementation
+requirements and are not implementation-time choices:
 
 - Compact source/effective/reference separation.
 - Implicit local SQLite storage and generated catch-all.
@@ -514,4 +562,7 @@ Before v8 implementation begins, confirm:
 - Comment-preserving writer requirement.
 - Defaulted effective bucket catalog version and pinned optional-destination wildcard
   semantics.
-- Whether 4 MiB and the selected structural limits are appropriate.
+- The exact source byte, node, depth, destination, route, profile, and map limits
+  in section 11.
+- The exact four-name bootstrap environment allowlist in section 9; all other
+  non-secret environment overrides are outside the v8 config precedence model.

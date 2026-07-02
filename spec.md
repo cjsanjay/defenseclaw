@@ -6,7 +6,7 @@ goal_status: active
 current_phase: P0
 target_config_version: 8
 baseline_commit: fd13acedfcffc0cc431d5a72f329b56b50b22baa
-last_verified_commit: null
+last_verified_commit: b5167c2d95d72ae2b1c71813aa35fd065c8a2d63
 last_updated: 2026-07-02
 ```
 
@@ -31,8 +31,8 @@ or a plausible-looking dashboard is not completion.
 
 | Field | Value |
 |---|---|
-| Active work package | `P0-WP01` — import and track the normative package and this manifest |
-| Ready queue | `P0-WP02`, `P0-WP03` after `P0-WP01` |
+| Active work package | `P0-WP03` — decision and implementation-readiness audit |
+| Ready queue | P1 readiness analysis only; behavior changes wait for `P0-GATE` |
 | Blocked | None |
 | Next phase gate | `P0-GATE` — package tracked, baseline inventory complete, decisions reviewed |
 | Root coordinator | Primary Codex thread |
@@ -77,6 +77,7 @@ non-behavioral scaffolding, and current-state inventory.
 | [Telemetry schema architecture](docs/design/observability-v8/12-telemetry-schema-architecture.md) | Canonical registry and generated artifacts |
 | [Decision traceability](docs/design/observability-v8/13-decision-traceability.md) | Mechanical D-/S-/P- contract/test index |
 | [Agent lifecycle and dashboard compatibility](docs/design/observability-v8/14-agent-lifecycle-and-dashboard-compatibility.md) | PR #403/#412 compatibility floor and local bundle |
+| [Current-state inventory](docs/design/observability-v8/current-state-inventory.yaml) | Drift-checked v7 config, producer, schema, metric, dashboard, datasource, and pinned PR #403/#412 compatibility-baseline migration inputs |
 | [Minimal configuration](docs/design/observability-v8/config-v8-observability-minimal.yaml) | Compact authoring example |
 | [Reference configuration](docs/design/observability-v8/config-v8-observability-reference.yaml) | All-knobs generated/reference target |
 
@@ -182,9 +183,9 @@ gate must pass.
 
 | ID | Status | Owner | Depends on | Deliverable | Verification/evidence |
 |---|---|---|---|---|---|
-| `P0-WP01` | `IN_PROGRESS` | root | — | Track normative package, root manifest, docs index; remove temporary-path claims | Link/YAML/decision lint; checkpoint commit |
-| `P0-WP02` | `TODO` | unassigned | `P0-WP01` | Machine-readable inventory of current config fields, producers, schemas, metrics, dashboards, and migration disposition | Inventory completeness tests/search audit |
-| `P0-WP03` | `TODO` | unassigned | `P0-WP01` | Review D-/S- locks and P-* proposed defaults; resolve contradictions in-package | D/S/P uniqueness and traceability validation |
+| `P0-WP01` | `DONE` | root | — | Track normative package, root manifest, docs index; remove temporary-path claims | Commit `b5167c2d9`; link/YAML/decision lint passed |
+| `P0-WP02` | `DONE` | subagent, root verified | `P0-WP01` | Machine-readable inventory of current config fields, producers, schemas, metrics, dashboards, and migration disposition | 37 anchors, 14 events, 188 actions, 131 metrics, 22 schemas, 14 dashboards, 3 datasources, 2 compatibility commits; checker and 3 tests passed |
+| `P0-WP03` | `IN_PROGRESS` | subagent + root | `P0-WP01` | Review D-/S- locks and P-* proposed defaults; resolve contradictions in-package | `make check-observability-v8-spec` plus CodeRabbit review |
 | `P0-GATE` | `TODO` | root | `P0-WP01..03` | Specification approved for behavior-changing implementation | Review record and clean spec validation |
 
 ### P1 — Contracts, Configuration, and Converter
@@ -299,8 +300,8 @@ only “passed.” A relevant change invalidates old evidence.
 
 | Run ID | Date | Commit | Work package/phase | Command | Observed result | Agent |
 |---|---|---|---|---|---|---|
-| `V-0001` | 2026-07-02 | pre-branch baseline | P0 | `make check-grafana-dashboards` | 14 dashboards, 313 panels; passed | root |
-| `V-0002` | 2026-07-02 | pre-branch baseline | P0 | `uv run python -m pytest cli/tests/test_agent360_dashboard.py cli/tests/test_grafana_dashboards.py -q` | 33 passed | root |
+| `V-0001` | 2026-07-02 | `b5167c2d95d72ae2b1c71813aa35fd065c8a2d63` | P0 | `.venv/bin/python scripts/check_grafana_dashboards.py --require-packaged` | 14 dashboards, 313 panels; passed | root |
+| `V-0002` | 2026-07-02 | `b5167c2d95d72ae2b1c71813aa35fd065c8a2d63` | P0 | `uv run python -m pytest cli/tests/test_agent360_dashboard.py cli/tests/test_grafana_dashboards.py -q` | 33 passed in 0.61s | root |
 
 Final integration requires, at minimum:
 

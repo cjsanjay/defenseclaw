@@ -329,6 +329,11 @@ jobs:
       - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
           persist-credentials: false
+          # The observability-v8 inventory proves that the PR #403/#412
+          # compatibility-floor commits remain in ancestry. They are currently
+          # 17 and 9 commits behind this branch; 128 keeps ample merge/review
+          # headroom without downloading the repository's full history.
+          fetch-depth: 128
       - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
         with:
           go-version-file: go.mod

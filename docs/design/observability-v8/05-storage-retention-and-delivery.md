@@ -4,14 +4,16 @@
 
 The v8 design has three distinct storage roles:
 
-1. **Required event history** — the built-in SQLite `audit.db` store records every
-   collected log after application of the bucket/default projection profile; that
-   profile is `none` by default.
+1. **Required event history** — the one mandatory built-in SQLite event store,
+   `audit.db`, records every collected log after application of the bucket/default
+   projection profile; that profile is `none` by default.
 2. **Normalized projections** — query-oriented tables retain scan, finding,
    compliance activity, egress, and destination-health shapes required by APIs,
    CLI, TUI, dashboards, and policy workflows.
-3. **Local forensic judge bodies** — a separate SQLite database stores explicitly
-   retained raw judge responses and is never a general log-export source.
+3. **Local forensic judge bodies** — the separate SQLite `judge_bodies.db` database
+   is the authoritative v8 store for explicitly retained raw judge responses. It
+   is not an observability destination, does not satisfy the mandatory `audit.db`
+   requirement, and is never a general log-export source.
 
 SQLite does not store complete trace graphs or raw metric series. Queryable summary
 logs and normalized projections may describe trace/metric health.
@@ -20,11 +22,19 @@ logs and normalized projections may describe trace/metric health.
 
 ### 2.1 Initialization
 
-- Exactly one SQLite store is created internally; it is not listed under source
-  `destinations` and cannot be disabled.
+- Exactly one mandatory SQLite event-history store, `audit.db`, is created
+  internally; it is not listed under source `destinations` and cannot be disabled.
+  The separately opened `judge_bodies.db` forensic database described in section 4
+  is not a second event-history store or destination.
 - The gateway MUST open the database, apply append-only migrations, verify required
   pragmas and write capability, and initialize the reaper before reporting ready.
 - Failure to initialize the built-in SQLite store causes startup failure.
+- V8 schema migrations are additive and MUST leave the database readable by the
+  immediately previous supported release: do not drop/rename a previous column or
+  table, change an existing column's wire meaning, or require the previous binary
+  to understand a new table before it can open and query its existing surfaces.
+  Rollback compatibility is exercised against the actual previous binary and a v8-
+  migrated fixture, not inferred solely from successful v8 migrations.
 - Existing database migrations are never reordered or removed.
 - The SQLite path is restart-required.
 - Newly created data directories use owner-only permissions and database files use
@@ -95,6 +105,8 @@ The following query-oriented projections remain supported:
 - Legacy `findings` during compatibility reads.
 - `scan_findings` for `security.finding` detail.
 - `activity_events` for `compliance.activity` mutations.
+- Alert acknowledgement/dismissal state and operation-idempotency records keyed to
+  immutable occurrence/event IDs.
 - `network_egress_events` for `network.egress` queries.
 - `sink_health`, renamed in API vocabulary to destination health while retaining
   the table for migration compatibility.
@@ -128,13 +140,24 @@ being added.
 - v8 does not add `status: open` or update a row to resolved/reopened.
 - Repeated observations may be aggregated in queries using rule ID, target, and a
   safe fingerprint, but the logger does not silently collapse occurrences.
+- Alert acknowledgement/dismissal state lives in a separate mutable projection
+  keyed to the immutable occurrence/event. Its per-alert version and operation-ID
+  uniqueness enforce the compare-and-swap and retry contract in
+  `02-taxonomy-and-data-model.md` section 5.6. A first-seen command atomically stores
+  its idempotency result and immutable `compliance.activity` event and, only for an
+  applied transition, advances the projection. It never rewrites the finding row or
+  its severity. Projection rebuild uses the gap-free per-alert version sequence,
+  not timestamps; ambiguous or contradictory history fails closed and emits
+  mandatory projection health. Legacy `ACK` severity rows are interpreted as a
+  versioned compatibility baseline using the same section's rule.
 
 If a later case-management feature introduces mutable finding cases, it must use a
 separate table and event stream rather than changing the meaning of occurrence rows.
 
 ## 4. Judge-Body Store
 
-- `judge_bodies.db` remains a separate schema and connection pool.
+- `judge_bodies.db` remains a separate schema and connection pool and is the sole
+  authoritative store for new v8 judge-body writes.
 - Its `judge_responses` rows retain raw response bodies only when forensic retention
   is explicitly enabled by the guardrail configuration.
 - Raw judge bodies are never copied to `audit_events.payload_json`, JSONL, console,
@@ -148,6 +171,42 @@ separate table and event stream rather than changing the meaning of occurrence r
 - Because judge bodies can contain raw model output, the judge-body file must never
   be more permissive than the audit database and should be called out separately by
   doctor when permissions are unsafe.
+
+### 4.1 Legacy cutover and cleanup
+
+The legacy `audit.db.judge_responses` table becomes a read-only compatibility
+source at the writer cutover. The v8 runtime MUST NOT dual-write judge bodies: it
+does not begin serving or accept a judge-body write until the cutover below has
+completed, and every write after that point goes exclusively to `judge_bodies.db`.
+The pre-upgrade writer may remain active only before the cutover lock is acquired.
+The upgrade performs the cutover in this order:
+
+1. Initialize and migrate `judge_bodies.db` without changing the active writer.
+2. Acquire the judge-writer cutover lock so no new legacy write can race the copy.
+3. Copy legacy rows in deterministic batches, preserving stable identifiers,
+   timestamps, correlations, and body bytes. Target insertion uses the stable
+   identifier as its unique key with insert-ignore/upsert semantics, so re-running
+   a partial batch is idempotent and cannot duplicate a body.
+4. Commit and verify each target batch before marking its source rows migrated.
+5. Atomically switch the only judge-body writer to `judge_bodies.db`, then release
+   the cutover lock; only now may the v8 runtime accept judge-body writes, and from
+   this point `audit.db.judge_responses` is permanently read-only.
+6. Retain verified legacy rows only for compatibility reads until normal retention
+   or an explicit purge removes them.
+
+Compatibility reads and any authorized local forensic export read
+`judge_bodies.db` first, then add only legacy rows whose stable identifier is not
+already present; a migrated body is returned or exported once. Judge bodies are
+never included in an observability-destination export. If an authorized forensic
+operation requests export followed by purge, it MUST finish and verify the local
+export before either database is purged.
+
+Migration cleanup MUST copy, commit, and verify a row in `judge_bodies.db` before
+purging its legacy source copy. For age retention or an explicit purge that covers
+both databases, delete matching legacy copies from `audit.db` first and the
+authoritative rows from `judge_bodies.db` second. A failure between those commits
+therefore leaves, at worst, the authoritative copy pending a later purge and cannot
+make a deleted authoritative body reappear through the legacy compatibility read.
 
 ## 5. Retention Contract
 
@@ -196,6 +255,11 @@ Within scan history, delete children before parents:
 Other independent history tables may be deleted in deterministic table order.
 Foreign keys remain enabled; the implementation MUST NOT disable integrity checks to
 make retention succeed.
+
+Judge-body deletion follows the cross-database order in section 4.1: legacy
+`audit.db.judge_responses` copies first, authoritative
+`judge_bodies.db.judge_responses` rows second. Each database commits independently;
+on failure, health is degraded and the next run resumes idempotently.
 
 ### 5.4 Scheduling and batching
 

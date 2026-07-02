@@ -47,6 +47,7 @@ The terms **MUST**, **MUST NOT**, **REQUIRED**, **SHOULD**, **SHOULD NOT**, and
 | [12-telemetry-schema-architecture.md](12-telemetry-schema-architecture.md) | One OTel-compatible schema registry, standard-plus-DefenseClaw composition, generated artifacts, versioning, and migration from hand-authored schema files |
 | [13-decision-traceability.md](13-decision-traceability.md) | Mechanical mapping from every D-/S-/P- decision to its normative contracts and required verification |
 | [14-agent-lifecycle-and-dashboard-compatibility.md](14-agent-lifecycle-and-dashboard-compatibility.md) | PR #403 root/subagent lifecycle and traceability compatibility, PR #412 dashboard data contracts, local-stack signal ownership, and upgrade verification |
+| [current-state-inventory.yaml](current-state-inventory.yaml) | Machine-readable v7/current config, producer, schema, metric, dashboard, datasource, and compatibility baseline with migration dispositions |
 | [config-v8-observability-minimal.yaml](config-v8-observability-minimal.yaml) | Recommended compact starting point with explanatory ASCII banner |
 | [config-v8-observability-reference.yaml](config-v8-observability-reference.yaml) | Fully commented reference showing all observability knobs and destination kinds |
 
@@ -144,6 +145,12 @@ The terms **MUST**, **MUST NOT**, **REQUIRED**, **SHOULD**, **SHOULD NOT**, and
 36. The ordinary upgrade backs up and refreshes the mutually compatible
     DefenseClaw-owned local-observability bundle without resetting history volumes
     or requiring a second migration command.
+37. Alert acknowledgement/dismissal is mutable projection state plus immutable
+    compliance activity; it never mutates a finding/event severity or creates an
+    `ACK` severity rung.
+38. `judge_bodies.db` is the sole authoritative v8 forensic body store. Upgrade
+    performs a verified idempotent cutover and removes the runtime write fallback
+    to `audit.db`.
 
 ## Review Method
 

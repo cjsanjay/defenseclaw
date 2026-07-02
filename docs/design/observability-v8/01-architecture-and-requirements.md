@@ -200,7 +200,10 @@ local catch-all projection.
 An unspecified bucket inherits full log/trace/metric collection and `none`
 redaction. Collected logs are persisted locally unredacted. Nothing is remotely
 exported until an optional destination is enabled; an enabled destination without
-explicit policy receives every catalog bucket and all signals its kind supports.
+explicit policy receives every bucket in the effective reviewed catalog version
+and all signals its kind supports. Runtime buckets newer than that version retain
+the same full-fidelity, unredacted collection and local-persistence defaults but do
+not enter optional-destination wildcards until the catalog version is advanced.
 
 ### INV-5: Destination-local precedence
 
@@ -273,14 +276,16 @@ The mandatory floor includes only log records for:
    unredacted-delivery changes, including rejected attempts.
 2. Enforcement-state changes and actual enforced outcomes: block, deny, quarantine,
    redact, revoke, terminate, release, and approval resolution.
-3. Authentication or authorization failures at protected boundaries, classified by
+3. Alert acknowledgement or dismissal mutations, recorded as immutable
+   `compliance.activity` without changing the underlying finding/event severity.
+4. Authentication or authorization failures at protected boundaries, classified by
    the boundary being protected: administrative/operator failures are
    `compliance.activity`; inbound telemetry receiver failures are
    `telemetry.ingest`; outbound destination credential/authentication failures are
    `platform.health`.
-4. Canonical or projected schema validation failures.
-5. SQLite write, migration, corruption, and retention failures.
-6. Exporter or sink initialization failures and durable health-state transitions.
+5. Canonical or projected schema validation failures.
+6. SQLite write, migration, corruption, and retention failures.
+7. Exporter or sink initialization failures and durable health-state transitions.
 
 ### 6.2 Excluded events
 

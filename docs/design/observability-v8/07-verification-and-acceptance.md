@@ -21,7 +21,7 @@ Tests must validate outputs, not merely that functions returned no error.
 | Separate collection controls | Unit and integration tests proving disabled log/trace/metric construction stops independently |
 | Mandatory local floor | Tests for every floor event class with bucket logs disabled; built-in local row present and all optional destinations absent |
 | SQLite coverage | One-row-per-collected-log integration tests without a source SQLite destination or catch-all route |
-| Multi-destination fan-out | One event persisted locally and delivered independently to a Splunk fake and two OTLP fakes |
+| Multi-destination fan-out | One collected log persisted once to implicit local SQLite and delivered independently once to each configured optional destination: JSONL, a Splunk fake, and a general OTLP fake |
 | Capability, concise, and advanced routing | Omitted policy compiles to one all-bucket capability route; `send` compiles to one deterministic narrowing route; advanced send/drop ordering remains first-match-wins and destination-independent |
 | Selector logic | AND across fields, OR within a field, wildcard rules, absent-field behavior, severity threshold |
 | Per-destination redaction | Golden concise-send and advanced-route projections under none/sensitive/content/strict/custom profiles |
@@ -44,8 +44,8 @@ Tests must validate outputs, not merely that functions returned no error.
 | Agent lifecycle and dashboard compatibility | PR #403 root/subagent lifecycle, execution, phase, operation, decision, real-time completion, and missing-data goldens plus PR #412 metric/label/bucket/cadence, UID, query, live inventory, and source/packaged dashboard checks |
 | Push network safety | HTTP JSONL, OTLP, and Splunk tests cover every prohibited address class, guarded dialing/DNS rebinding, disabled redirects, failure isolation, and narrowly bounded private/CGNAT opt-ins |
 
-Decision-level coverage for `D-001` through `D-022`, `S-001` through `S-011`, and
-`P-001` through `P-046` is normative in `13-decision-traceability.md`; this matrix is
+Decision-level coverage for `D-001` through `D-022`, `S-001` through `S-012`, and
+`P-001` through `P-047` is normative in `13-decision-traceability.md`; this matrix is
 the requirement-level summary rather than a competing decision index.
 
 ## 3. Taxonomy Tests
@@ -87,6 +87,21 @@ Required cases:
   five-rung ladder.
 - Clean guardrail/judge `NONE` normalizes to canonical `INFO`, retains clean-decision
   semantics, validates successfully, and compares at the `INFO` route threshold.
+- Two identical finding observations create two occurrence IDs and two immutable
+  rows; query aggregation may group them but logging does not deduplicate them.
+- Finding schema rejects `status: open`. Acknowledge/dismiss updates only the
+  mutable alert projection and creates one canonical-`INFO` compliance event; the
+  finding row and severity remain byte-for-byte unchanged.
+- Acknowledgement/dismissal tests require operation ID plus expected projection
+  version and cover applied, `no_change`, stale-version `rejected`, and
+  operation-ID/payload-conflict outcomes. Exact retries return the original event ID
+  and result without changing event count, version, actor, or timestamps.
+- A legacy `ACK` severity row materializes acknowledgement state, preserves raw
+  `ACK` only as provenance, does not participate in severity ranking, and does not
+  invent the lost original severity.
+- Remediation precedence is producer value, then versioned catalog template, then
+  absent. Tests cover each branch, source/catalog provenance, and prove no advice or
+  applied-fix claim is fabricated.
 
 ### 3.3 No-duplication assertions
 
@@ -108,9 +123,11 @@ Verify:
 - Unspecified `model.io`, `tool.activity`, and `diagnostic` follow the same
   full-fidelity default rather than a hidden exception.
 - With no optional destination, nothing is remotely exported. A present enabled
-  destination with no `send`/`routes` receives all catalog buckets, unredacted, and
-  exactly its capability signals: logs for log-only kinds, metrics for Prometheus,
-  and logs/traces/metrics for general OTLP.
+  destination with no `send`/`routes` receives all buckets in the effective
+  reviewed catalog version, unredacted, and exactly its capability signals: logs
+  for log-only kinds, metrics for Prometheus, and logs/traces/metrics for general
+  OTLP. Newer runtime buckets remain collected and locally persisted under the
+  full-fidelity default but are not remotely wildcard-routed until review.
 - Bucket overrides affect only named fields and inherit the remainder.
 - Effective redaction resolves concise-send/advanced-route, then bucket, then
   configured global default, then built-in `none`.
@@ -150,6 +167,9 @@ Startup/reload validation MUST reject:
   or unsupported `network_safety` field/value.
 - Unknown trace semantic profile, incompatible compatibility-alias setting, or
   trace limit outside safe/family-required bounds.
+- Arbitrary event names outside the telemetry registry; registry-declared dotted
+  IDs and canonical snake_case lifecycle/compatibility names such as
+  `session_start` and `hook_decision` remain valid.
 - Secret reference that cannot be resolved for an enabled destination.
 - Legacy `otel`, `audit_sinks`, or `privacy.disable_redaction`.
 - Legacy `observability.connectors[*].audit_sinks` while continuing to accept the
@@ -182,8 +202,15 @@ secret values.
 - Reference YAML/Markdown/JSON Schema are generated from the same schema and CI
   detects drift.
 - `observability plan` produces an accurate bucket/signal/destination matrix.
-- `config validate` performs no network I/O; explicit destination tests use only a
-  marked synthetic non-sensitive record and mask credentials/response bodies.
+- `config validate` performs no network I/O; an explicit destination test defaults
+  to a non-mutating handshake. A backend-required write is refused unless the
+  operator supplies `--write-probe`; the resulting marked synthetic non-sensitive
+  probe uses a dedicated backend test namespace when supported, is written directly
+  and exclusively through the named adapter, and has credentials/response bodies
+  masked. The probe does not enter ordinary collection, routing, SQLite history,
+  any other destination, or dashboard counts; a separate local-only
+  `compliance.activity` record audits the test attempt and outcome without the
+  probe body.
 - Invalid source updates retain the previous runtime graph.
 - Mutating an unrelated scalar/list preserves seeded ASCII header, section comments,
   inline comments, route comments, order, style where safe, permissions, and lock
@@ -240,7 +267,7 @@ Use a table-driven fake destination suite with these minimum cases:
 |---|---|---|
 | logs-only kind, no `send`/`routes` | any collected log | deliver unredacted; traces/metrics unsupported |
 | Prometheus, no `send`/`routes` | any eligible metric | expose full metric; logs/traces unsupported |
-| general OTLP, no `send`/`routes` | any collected log/trace/metric | deliver all three signals, all catalog buckets; logs/traces use `none` |
+| general OTLP, no `send`/`routes` | any collected log/trace/metric in the effective reviewed catalog version | deliver all three signals for that version; logs/traces use `none` |
 | explicit concise `send` on OTLP | unselected bucket/signal | no delivery, proving explicit policy replaces rather than augments capability default |
 | concise `send` selects finding logs | security finding | one generated send route delivers |
 | `security.finding send`, `* drop` | security finding | send |
@@ -326,6 +353,17 @@ and prove their projected outputs contain no prohibited canary while a parallel
 - Concurrent readers and writers under WAL.
 - SQLite initialization and disk/write failure behavior.
 - Existing scan, alert, egress, activity, and judge query compatibility.
+- Mutable alert acknowledgement projection remains separate from immutable finding
+  and event history. Two different commands racing from the same version yield
+  exactly one applied `N -> N+1` transition and one stale-version rejection; a
+  controlled transaction order proves the first committed compare-and-swap wins,
+  with one immutable compliance event per first-seen operation and no finding-row
+  mutation.
+- Per-alert applied compliance events form a gap-free version sequence regardless
+  of equal or skewed timestamps. Reconciliation repairs a missing/stale projection,
+  ignores rejected and `no_change` events for state replay, preserves the legacy
+  baseline provenance, and fails closed with mandatory health on a gap, conflicting
+  version, or projection ahead of evidence.
 - No raw judge body in ordinary event/projection tables.
 - New and migrated DB files preserve required owner/managed permissions, reject
   untrusted/symlinked paths, and never widen existing permissions.
@@ -353,6 +391,12 @@ Required cases:
 - All included event/evidence tables are covered.
 - `actions`, `target_snapshots`, and schema metadata are preserved.
 - Both legacy and separate judge-response tables are reaped.
+- Judge-body migration copy is idempotent by stable ID, preserves exact body bytes
+  and correlation, and never dual-writes. V8 startup cannot fall back to writing
+  `audit.db` after cutover.
+- Authorized export completes and verifies before purge. Cross-database retention
+  deletes legacy copies first and authoritative rows second; injected failure after
+  either commit resumes safely without reappearing or duplicating a body.
 - Cancellation stops between batches.
 - Reload from 90 to 30 days affects the next asynchronous run.
 - Reload to invalid retention leaves the old policy active.
@@ -505,6 +549,12 @@ Required cases:
 
 - Valid reload swaps the graph exactly once.
 - Invalid parse/validation/exporter initialization retains the exact old graph.
+- Failure after one exporter initializes and failure inside a partially initialized
+  exporter both close that component and every acquired child resource in reverse
+  order; no worker, listener, connection, timer, or duplicate transport survives.
+- Injected teardown failure is bounded, reported through the still-active graph as
+  platform health plus mandatory compliance activity, and still does not publish
+  the rejected graph.
 - Concurrent producers see either old or new policy, never a partially built mix.
 - Removed exporter drains within deadline.
 - Changed route affects new records only; queued projected payloads retain old
@@ -521,6 +571,9 @@ Golden fixtures MUST cover:
 - Named `local-observability` destination with logs/traces/metrics, loopback/private
   endpoint intent, full `local-observability-v1` capability, and a deliberately
   narrowed fixture that preserves intent while reporting partial dashboard support.
+- Loopback/RFC1918 local destination migration materializes only the destination's
+  explicit `allow_private_networks` intent; metadata/link-local remains blocked and
+  no process-wide bypass appears.
 - Galileo preset and span filter.
 - Current resource/metrics/runtime-span/event schema set imported into the one
   registry with generated-artifact parity.
@@ -537,6 +590,9 @@ Golden fixtures MUST cover:
   unhandled connector-level `emit_otel` config field.
 - Inline and environment/key-store credential forms.
 - Already-v8 input.
+- Current valid v7 input with `config_version: 7`, an absent stamp, and numeric zero;
+  all three produce equivalent v8 semantics. Missing/zero mixed with a v8-only key
+  is rejected as ambiguous without mutation.
 - Malformed/partially migrated input.
 
 Assertions:
@@ -579,10 +635,13 @@ Assertions:
 
 ### E2E-2: Multi-destination security operations
 
-- Configure JSONL, Splunk fake, and general OTLP fake; use automatic local storage.
+- Configure three optional destinations: JSONL, a Splunk fake, and a general OTLP
+  fake; use implicit local SQLite storage.
 - Emit a high finding and successful block.
-- Verify exactly one finding/action per expected destination, correlations match,
-  redaction differs as configured, and local SQLite projections are queryable.
+- Verify each collected log is persisted once to implicit local SQLite and
+  delivered independently once to each matching optional destination. Correlations
+  match, redaction differs as configured, and local SQLite projections are
+  queryable.
 
 ### E2E-3: AI Defense source filtering
 

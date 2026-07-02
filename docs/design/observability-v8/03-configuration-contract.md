@@ -122,7 +122,8 @@ observability:
         path: hash
         error: detect
 
-  # Optional overrides for the always-on built-in SQLite store.
+  # Optional overrides for the always-on built-in SQLite event-history store
+  # and its separate judge-body forensic database.
   local:
     path: ~/.defenseclaw/audit.db
     judge_bodies_path: ~/.defenseclaw/judge_bodies.db
@@ -337,10 +338,13 @@ store. An explicitly named unknown profile is invalid.
 
 ### 4.1 Built-in local store
 
-SQLite is not an operator-authored destination. Exactly one built-in store always
-exists, receives every collected log plus floor-only records, and cannot be
-disabled or filtered. Its default projection is unredacted. The optional
-`observability.local` object exposes only:
+SQLite is not an operator-authored destination. Exactly one built-in event-history
+store, `audit.db`, always exists, receives every collected log plus floor-only
+records, and cannot be disabled or filtered. Its default projection is unredacted.
+The separate `judge_bodies.db` forensic database is not a destination, does not
+receive ordinary logs or compliance-floor records, and is not counted as a second
+built-in event-history store. The optional `observability.local` object exposes
+only:
 
 - `path`: defaults to `<data_dir>/audit.db`.
 - `judge_bodies_path`: defaults to `<data_dir>/judge_bodies.db`.
@@ -348,11 +352,16 @@ disabled or filtered. Its default projection is unredacted. The optional
   persistent lint/doctor capacity warning explaining that event, evidence, and
   retained judge-body history are unbounded by age.
 
-Both paths are restart-required, must differ from every other configured file, and
-must initialize successfully. The judge-body database remains a separate forensic
-store for judge responses outside ordinary canonical logs. Local log redaction
-resolves from bucket policy, configured global policy, and the catalog default and
-may resolve to `none`.
+Both database paths are restart-required, must differ from each other and every
+other configured file after lexical normalization and canonical/real-path
+resolution (including existing symlink targets), and must initialize successfully.
+Validation rejects `..`, symlink, hard-link/inode, or other aliases that make the
+two database roles or another configured file collide. Failure of `audit.db` is
+the mandatory local-durability startup failure; `judge_bodies.db` remains a
+separate forensic store for judge responses outside ordinary canonical logs and is
+governed by the independent guardrail judge-body retention setting. Local log
+redaction resolves from bucket policy, configured global policy, and the catalog
+default and may resolve to `none`.
 
 The effective view exposes a generated `local-sqlite` destination and catch-all log
 projection for debugging, clearly marked `generated: true`; these are not accepted
@@ -706,7 +715,16 @@ message; the old graph remains active.
 6. Stop intake to removed exporters and drain them within the shutdown deadline.
 7. Record a compliance activity outcome.
 
-If steps 1 through 4 fail, nothing is swapped and the existing graph remains active.
+If any operation before the step 5 swap fails, nothing is swapped and the existing
+graph remains active. Before returning the reload failure, the implementation MUST
+shut down every exporter and processor that initialization entered for the
+unpublished graph: successfully initialized components, the component whose
+initialization failed, and any child queue worker, connection, listener, timer, or
+other resource that either acquired before returning its error. Cleanup unwinds in
+reverse initialization order within the shutdown deadline. Teardown failure is
+reported through the still-active graph as destination/platform health and in the
+mandatory reload-failure compliance record; an initialized or partially initialized
+off-path component MUST NOT remain live after a rejected reload.
 
 ## 8. Legacy Rejection and Migration
 

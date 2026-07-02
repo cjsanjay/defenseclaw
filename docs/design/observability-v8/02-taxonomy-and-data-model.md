@@ -32,6 +32,8 @@ Example event names:
 - `destination.updated`
 - `observability.profile.changed`
 - `approval.resolved`
+- `alert.acknowledgement.requested`
+- `alert.dismissal.requested`
 - `authentication.failed`
 - `authorization.denied`
 
@@ -405,7 +407,7 @@ Every canonical record MUST carry:
 | `record_id` | Required unique occurrence ID |
 | `bucket` | Required catalog value |
 | `signal` | Required: logs, traces, or metrics |
-| `event_name` | Required stable dotted log event, trace family ID, or metric instrument ID; route selectors never depend on a rendered high-cardinality span name |
+| `event_name` | Required stable registry ID: normally a dotted log event, trace family ID, or metric instrument ID, with registry-declared canonical snake_case lifecycle/compatibility names such as `session_start` and `hook_decision` also valid; route selectors never depend on a rendered high-cardinality span name |
 | `span_name` | Trace-only OTel display/operation name derived from the registered family pattern, such as `chat {model}` |
 | `severity` | Optional for records without severity semantics |
 | `log_level` | Optional operational logging level; separate from security severity |
@@ -580,6 +582,63 @@ If case management is added later, it requires a separate specification covering
 stable deduplication fingerprints, state versus analyst disposition, concurrent
 updates, source-of-truth ownership, APIs, TUI, remote synchronization, retention,
 and transitions such as resolved and reopened.
+
+### 5.6 Alert acknowledgement is a separate projection
+
+Acknowledging or dismissing an alert does not mutate a finding occurrence,
+overwrite its canonical severity, or add a finding workflow status. The mutable
+alert acknowledgement projection stores the linked occurrence/event ID, current
+disposition (`unreviewed`, `acknowledged`, or `dismissed`), actor, timestamps, and a
+monotonically increasing per-alert `projection_version`. An absent row is
+`unreviewed` at version zero.
+
+Every acknowledgement or dismissal command MUST carry a stable `operation_id` and
+the `expected_projection_version` observed by the caller. A state-changing command
+is a compare-and-swap: it applies only when the expected version equals the stored
+version and then advances the version by exactly one. The first transaction that
+successfully commits that comparison is the winner; a concurrent command with the
+same expected version is rejected with the now-current version. Wall-clock time,
+actor identity, and lexical operation-ID order MUST NOT override commit order. A
+command that already requests the current disposition succeeds with outcome
+`no_change` and does not advance the version. Bulk operations apply this precondition
+independently to every target and report per-target outcomes; they cannot perform a
+blind last-write-wins update.
+
+The first accepted use of an operation ID creates exactly one immutable, mandatory
+`compliance.activity` event with canonical severity `INFO`. Its event name is
+`alert.acknowledgement.requested` or `alert.dismissal.requested`; its body records the
+operation ID, target occurrence/event ID, requested disposition, actor, outcome,
+expected and observed versions, and projection versions before and after. Applied,
+`no_change`, and stale-version `rejected` outcomes are all audited. The idempotency
+record, compliance event, and any projection change are committed in one SQLite
+transaction.
+
+An exact retry with the same operation ID and normalized command fingerprint MUST
+return the original outcome, event ID, and resulting version without changing the
+projection, timestamps, or event count. Reusing an operation ID with a different
+target, actor, action, expected version, or requested disposition is an idempotency
+conflict: it cannot mutate the projection or replace the original event and is
+audited as a rejected request through the ordinary request-audit path.
+
+For one alert, applied compliance events are ordered by
+`projection_version_after`, with every transition satisfying `before = N` and
+`after = N + 1`; timestamps and record IDs are not ordering authorities. Rejected
+and `no_change` events carry the version they observed but do not enter the applied
+transition sequence. The immutable event history, including a versioned baseline
+derived from legacy acknowledgement evidence, is authoritative. Reconciliation
+MUST derive expected state from that contiguous applied sequence and transactionally
+rebuild a missing or stale projection. A gap, conflicting event at one version, or
+projection state ahead of the evidence MUST produce a mandatory `platform.health`
+record, block further mutation of that alert, and never be resolved by guessing
+from timestamps. Reconciliation does not fabricate a modern operator action for a
+legacy baseline.
+
+Legacy v7 `audit_events` rows whose `severity` was overwritten with `ACK` are read
+as compatibility evidence of acknowledgement, not as a sixth canonical severity.
+The v8 reader preserves raw `ACK` in legacy provenance, excludes it from severity
+ranking, materializes the acknowledgement projection, and reports canonical
+severity as unavailable/legacy-unknown when the original value cannot be recovered;
+it does not rewrite historical bytes or guess the lost severity.
 
 ## 6. Boundary Examples
 

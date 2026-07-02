@@ -1,0 +1,641 @@
+# Machine-readable v7/current-state baseline for observability-v8 migration.
+# This is an inventory, not the v8 classification registry. Items marked
+# pending_p1_classification must receive reviewed bucket/event dispositions in P1.
+inventory_version: 1
+
+migration_disposition_categories:
+  - per_item
+  - translate_to_v8
+  - preserve_in_place
+  - preserve_notification_only
+  - materialize_then_retire_runtime_override
+  - retain_display_only
+  - pending_p1_classification
+  - import_telemetry_registry
+  - preserve_separate_schema
+  - preserve_local_observability_v1
+  - preserve_compatibility_floor
+
+classes:
+  legacy_config_anchors:
+    migration_disposition: per_item
+    items:
+      - id: otel_block
+        source: internal/config/config.go
+        matcher: literal
+        value: 'type OTelConfig struct {'
+        migration_disposition: translate_to_v8
+      - id: otel_enabled
+        source: internal/config/config.go
+        matcher: literal
+        value: 'Enabled      bool                    `mapstructure:"enabled"      yaml:"enabled"`'
+        migration_disposition: translate_to_v8
+      - id: otel_traces_policy
+        source: internal/config/config.go
+        matcher: literal
+        value: 'Traces       OTelTracePolicyConfig   `mapstructure:"traces"       yaml:"traces"`'
+        migration_disposition: translate_to_v8
+      - id: otel_logs_policy
+        source: internal/config/config.go
+        matcher: literal
+        value: 'Logs         OTelLogPolicyConfig     `mapstructure:"logs"         yaml:"logs"`'
+        migration_disposition: translate_to_v8
+      - id: otel_metrics_policy
+        source: internal/config/config.go
+        matcher: literal
+        value: 'Metrics      OTelMetricPolicyConfig  `mapstructure:"metrics"      yaml:"metrics"`'
+        migration_disposition: translate_to_v8
+      - id: otel_batch_policy
+        source: internal/config/config.go
+        matcher: literal
+        value: 'Batch        OTelBatchConfig         `mapstructure:"batch"        yaml:"batch"`'
+        migration_disposition: translate_to_v8
+      - id: otel_resource
+        source: internal/config/config.go
+        matcher: literal
+        value: 'Resource     OTelResourceConfig      `mapstructure:"resource"     yaml:"resource"`'
+        migration_disposition: translate_to_v8
+      - id: otel_destinations
+        source: internal/config/config.go
+        matcher: literal
+        value: 'Destinations []OTelDestinationConfig `mapstructure:"destinations" yaml:"destinations,omitempty"`'
+        migration_disposition: translate_to_v8
+      - id: otel_destination_preset
+        source: internal/config/config.go
+        matcher: literal
+        value: 'Preset     string               `mapstructure:"preset"      yaml:"preset,omitempty"`'
+        migration_disposition: translate_to_v8
+      - id: otel_destination_traces
+        source: internal/config/config.go
+        matcher: literal
+        value: 'Traces     OTelTracesConfig     `mapstructure:"traces"      yaml:"traces"`'
+        migration_disposition: translate_to_v8
+      - id: otel_destination_logs
+        source: internal/config/config.go
+        matcher: literal
+        value: 'Logs       OTelLogsConfig       `mapstructure:"logs"        yaml:"logs"`'
+        migration_disposition: translate_to_v8
+      - id: otel_destination_metrics
+        source: internal/config/config.go
+        matcher: literal
+        value: 'Metrics    OTelMetricsConfig    `mapstructure:"metrics"     yaml:"metrics"`'
+        migration_disposition: translate_to_v8
+      - id: otel_destination_batch
+        source: internal/config/config.go
+        matcher: literal
+        value: 'Batch      OTelBatchConfig      `mapstructure:"batch"       yaml:"batch"`'
+        migration_disposition: translate_to_v8
+      - id: otel_destination_span_filter
+        source: internal/config/config.go
+        matcher: literal
+        value: 'SpanFilter OTelSpanFilterConfig `mapstructure:"span_filter" yaml:"span_filter,omitempty"`'
+        migration_disposition: translate_to_v8
+      - id: otel_trace_sampler
+        source: internal/config/config.go
+        matcher: literal
+        value: 'Sampler    string `mapstructure:"sampler"     yaml:"sampler"`'
+        migration_disposition: translate_to_v8
+      - id: otel_trace_sampler_arg
+        source: internal/config/config.go
+        matcher: literal
+        value: 'SamplerArg string `mapstructure:"sampler_arg" yaml:"sampler_arg"`'
+        migration_disposition: translate_to_v8
+      - id: otel_logs_emit_individual_findings
+        source: internal/config/config.go
+        matcher: literal
+        value: 'EmitIndividualFindings bool `mapstructure:"emit_individual_findings" yaml:"emit_individual_findings"`'
+        migration_disposition: translate_to_v8
+      - id: otel_metrics_export_interval
+        source: internal/config/config.go
+        matcher: literal
+        value: 'ExportIntervalS int    `mapstructure:"export_interval_s" yaml:"export_interval_s"`'
+        migration_disposition: translate_to_v8
+      - id: otel_metrics_temporality
+        source: internal/config/config.go
+        matcher: literal
+        value: 'Temporality     string `mapstructure:"temporality"       yaml:"temporality"`'
+        migration_disposition: translate_to_v8
+      - id: otel_batch_scheduled_delay
+        source: internal/config/config.go
+        matcher: literal
+        value: 'ScheduledDelayMs   int `mapstructure:"scheduled_delay_ms"    yaml:"scheduled_delay_ms"`'
+        migration_disposition: translate_to_v8
+      - id: otel_resource_attributes
+        source: internal/config/config.go
+        matcher: literal
+        value: 'Attributes map[string]string `mapstructure:"attributes" yaml:"attributes"`'
+        migration_disposition: translate_to_v8
+      - id: audit_db
+        source: internal/config/config.go
+        matcher: literal
+        value: 'AuditDB string `mapstructure:"audit_db"         yaml:"audit_db"`'
+        migration_disposition: translate_to_v8
+      - id: judge_bodies_db
+        source: internal/config/config.go
+        matcher: literal
+        value: 'JudgeBodiesDB   string                     `mapstructure:"judge_bodies_db"  yaml:"judge_bodies_db,omitempty"`'
+        migration_disposition: translate_to_v8
+      - id: retain_judge_bodies
+        source: internal/config/config.go
+        matcher: literal
+        value: 'RetainJudgeBodies bool `mapstructure:"retain_judge_bodies" yaml:"retain_judge_bodies,omitempty"`'
+        migration_disposition: preserve_in_place
+      - id: top_level_audit_sinks
+        source: internal/config/config.go
+        matcher: literal
+        value: 'AuditSinks []AuditSink     `mapstructure:"audit_sinks"      yaml:"audit_sinks,omitempty"`'
+        migration_disposition: translate_to_v8
+      - id: audit_sink_splunk_hec
+        source: internal/config/sinks.go
+        matcher: literal
+        value: 'SinkKindSplunkHEC AuditSinkKind = "splunk_hec"'
+        migration_disposition: translate_to_v8
+      - id: audit_sink_otlp_logs
+        source: internal/config/sinks.go
+        matcher: literal
+        value: 'SinkKindOTLPLogs  AuditSinkKind = "otlp_logs"'
+        migration_disposition: translate_to_v8
+      - id: audit_sink_http_jsonl
+        source: internal/config/sinks.go
+        matcher: literal
+        value: 'SinkKindHTTPJSONL AuditSinkKind = "http_jsonl"'
+        migration_disposition: translate_to_v8
+      - id: top_level_webhooks
+        source: internal/config/config.go
+        matcher: literal
+        value: 'Webhooks   []WebhookConfig `mapstructure:"webhooks"         yaml:"webhooks"`'
+        migration_disposition: preserve_notification_only
+      - id: connector_audit_sinks
+        source: internal/config/sinks.go
+        matcher: literal
+        value: 'AuditSinks *[]AuditSink     `mapstructure:"audit_sinks" yaml:"audit_sinks,omitempty"`'
+        migration_disposition: translate_to_v8
+      - id: connector_webhooks
+        source: internal/config/sinks.go
+        matcher: literal
+        value: 'Webhooks   *[]WebhookConfig `mapstructure:"webhooks"     yaml:"webhooks,omitempty"`'
+        migration_disposition: preserve_notification_only
+      - id: ai_discovery_emit_otel
+        source: internal/config/config.go
+        matcher: literal
+        value: 'EmitOTel                  bool     `mapstructure:"emit_otel"                 yaml:"emit_otel"`'
+        migration_disposition: translate_to_v8
+      - id: privacy_disable_redaction
+        source: internal/config/config.go
+        matcher: literal
+        value: 'DisableRedaction bool `mapstructure:"disable_redaction" yaml:"disable_redaction,omitempty"`'
+        migration_disposition: translate_to_v8
+      - id: env_persist_judge
+        source: internal/envvars/registry.json
+        matcher: env_registry
+        value: DEFENSECLAW_PERSIST_JUDGE
+        migration_disposition: materialize_then_retire_runtime_override
+      - id: env_jsonl_disable
+        source: internal/envvars/registry.json
+        matcher: env_registry
+        value: DEFENSECLAW_JSONL_DISABLE
+        migration_disposition: materialize_then_retire_runtime_override
+      - id: env_disable_redaction
+        source: internal/envvars/registry.json
+        matcher: env_registry
+        value: DEFENSECLAW_DISABLE_REDACTION
+        migration_disposition: materialize_then_retire_runtime_override
+      - id: env_reveal_pii
+        source: internal/envvars/registry.json
+        matcher: env_registry
+        value: DEFENSECLAW_REVEAL_PII
+        migration_disposition: retain_display_only
+
+  gateway_event_types:
+    source: internal/gatewaylog/events.go
+    migration_disposition: pending_p1_classification
+    items:
+      EventVerdict: "verdict"
+      EventJudge: "judge"
+      EventLifecycle: "lifecycle"
+      EventError: "error"
+      EventDiagnostic: "diagnostic"
+      EventScan: "scan"
+      EventScanFinding: "scan_finding"
+      EventActivity: "activity"
+      EventEgress: "egress"
+      EventLLMPrompt: "llm_prompt"
+      EventLLMResponse: "llm_response"
+      EventToolInvocation: "tool_invocation"
+      EventHookDecision: "hook_decision"
+      EventAIDiscovery: "ai_discovery"
+
+  audit_actions:
+    source: internal/audit/actions.go
+    migration_disposition: pending_p1_classification
+    items:
+      ActionInit: "init"
+      ActionStop: "stop"
+      ActionReady: "ready"
+      ActionScan: "scan"
+      ActionScanStart: "scan-start"
+      ActionRescan: "rescan"
+      ActionRescanStart: "rescan-start"
+      ActionBlock: "block"
+      ActionAllow: "allow"
+      ActionWarn: "warn"
+      ActionQuarantine: "quarantine"
+      ActionRestore: "restore"
+      ActionDisable: "disable"
+      ActionEnable: "enable"
+      ActionDeploy: "deploy"
+      ActionDrift: "drift"
+      ActionNetworkEgressBlocked: "network-egress-blocked"
+      ActionNetworkEgressAllowed: "network-egress-allowed"
+      ActionGuardrailBlock: "guardrail-block"
+      ActionGuardrailWarn: "guardrail-warn"
+      ActionGuardrailAllow: "guardrail-allow"
+      ActionApprovalRequest: "approval-request"
+      ActionApprovalGranted: "approval-granted"
+      ActionApprovalDenied: "approval-denied"
+      ActionToolCall: "tool-call"
+      ActionToolResult: "tool-result"
+      ActionConfigUpdate: "config-update"
+      ActionPolicyUpdate: "policy-update"
+      ActionPolicyReload: "policy-reload"
+      ActionAction: "action"
+      ActionAckAlerts: "acknowledge-alerts"
+      ActionDismissAlerts: "dismiss-alerts"
+      ActionWebhookDelivered: "webhook-delivered"
+      ActionWebhookFailed: "webhook-failed"
+      ActionSinkFailure: "sink-failure"
+      ActionSinkRestored: "sink-restored"
+      ActionAlert: "alert"
+      ActionOTelIngestLogs: "otel.ingest.logs"
+      ActionOTelIngestMetrics: "otel.ingest.metrics"
+      ActionOTelIngestTraces: "otel.ingest.traces"
+      ActionOTelIngestMalformed: "otel.ingest.malformed"
+      ActionConnectorHook: "connector-hook"
+      ActionConnectorHookSynthetic: "connector-hook-synthetic"
+      ActionAssetPolicy: "asset-policy"
+      ActionConnectorHookTampered: "connector-hook-tampered"
+      ActionConnectorHookRepaired: "connector-hook-repaired"
+      ActionCodexNotify: "codex.notify"
+      ActionCodexNotifyAgentTurnComplete: "codex.notify.agent-turn-complete"
+      ActionCodexNotifyMalformed: "codex.notify.malformed"
+      ActionSidecarStart: "sidecar-start"
+      ActionSidecarStop: "sidecar-stop"
+      ActionSidecarConnected: "sidecar-connected"
+      ActionSidecarDisconnected: "sidecar-disconnected"
+      ActionSidecarWatcherVerdict: "sidecar-watcher-verdict"
+      ActionSidecarWatcherDisable: "sidecar-watcher-disable"
+      ActionSidecarWatcherDisablePlugin: "sidecar-watcher-disable-plugin"
+      ActionSidecarWatcherBlockMCP: "sidecar-watcher-block-mcp"
+      ActionBootstrap: "bootstrap"
+      ActionWatchStart: "watch-start"
+      ActionWatchStop: "watch-stop"
+      ActionWatcherBlock: "watcher-block"
+      ActionInstallDetected: "install-detected"
+      ActionInstallRejected: "install-rejected"
+      ActionInstallAllowed: "install-allowed"
+      ActionInstallAllowedSkipEnforce: "install-allowed-skip-enforce"
+      ActionInstallClean: "install-clean"
+      ActionInstallWarning: "install-warning"
+      ActionInstallScanError: "install-scan-error"
+      ActionInstallEnforced: "install-enforced"
+      ActionInstallBlocked: "install-blocked"
+      ActionInstallDep: "install-dep"
+      ActionGatewayReady: "gateway-ready"
+      ActionGatewaySessionMessage: "gateway-session-message"
+      ActionGatewaySessionPromptAlert: "gateway-session-prompt-alert"
+      ActionGatewaySessionError: "gateway-session-error"
+      ActionGatewayChatError: "gateway-chat-error"
+      ActionGatewayAgentStart: "gateway-agent-start"
+      ActionGatewayAgentEnd: "gateway-agent-end"
+      ActionGatewayAgentError: "gateway-agent-error"
+      ActionGatewayToolCall: "gateway-tool-call"
+      ActionGatewayToolCallBlocked: "gateway-tool-call-blocked"
+      ActionGatewayToolCallFlagged: "gateway-tool-call-flagged"
+      ActionGatewayToolCallJudgeFlagged: "gateway-tool-call-judge-flagged"
+      ActionGatewayToolResult: "gateway-tool-result"
+      ActionGatewayApprovalRequested: "gateway-approval-requested"
+      ActionGatewayApprovalDenied: "gateway-approval-denied"
+      ActionGatewayApprovalGranted: "gateway-approval-granted"
+      ActionGatewayApprovalPending: "gateway-approval-pending"
+      ActionGatewayMultiTurnInjection: "gateway-multi-turn-injection"
+      ActionGatewayDown: "gateway-down"
+      ActionGatewayRecovered: "gateway-recovered"
+      ActionGatewayDegraded: "gateway-degraded"
+      ActionToolResultPIIAlert: "tool-result-pii-alert"
+      ActionGatewayJudgeBodiesReady: "gateway.judge_bodies.ready"
+      ActionGatewayJudgeBodiesFallback: "gateway.judge_bodies.fallback"
+      ActionGatewayJudgeBodiesCloseSkipped: "gateway.judge_bodies.close_skipped"
+      ActionGatewayJudgeBodiesCloseError: "gateway.judge_bodies.close_error"
+      ActionGatewayJudgeStoreDrainTimeout: "gateway.judge_store.drain_timeout"
+      ActionGuardrailStart: "guardrail-start"
+      ActionGuardrailHealthy: "guardrail-healthy"
+      ActionGuardrailVerdict: "guardrail-verdict"
+      ActionGuardrailInspection: "guardrail-inspection"
+      ActionGuardrailOPAInspection: "guardrail-opa-inspection"
+      ActionGuardrailOPAVerdict: "guardrail-opa-verdict"
+      ActionGuardrailConfigReload: "guardrail-config-reload"
+      ActionGuardrailDegraded: "guardrail-degraded"
+      ActionGuardrailLaunder: "guardrail-launder"
+      ActionGuardrailNotifyInject: "guardrail-notify-inject"
+      ActionGuardrailToolCallParseError: "guardrail-tool-call-parse-error"
+      ActionGuardrailToolCallInspect: "guardrail-tool-call-inspect"
+      ActionGuardrailDisable: "guardrail-disable"
+      ActionGuardrailEnable: "guardrail-enable"
+      ActionGuardrailFailMode: "guardrail-fail-mode"
+      ActionGuardrailHILT: "guardrail-hilt"
+      ActionGuardrailBlockMessage: "guardrail-block-message"
+      ActionLLMJudgeResponse: "llm-judge-response"
+      ActionInspectToolConfirm: "inspect-tool-confirm"
+      ActionInspectToolBlock: "inspect-tool-block"
+      ActionInspectToolAlert: "inspect-tool-alert"
+      ActionInspectToolAllow: "inspect-tool-allow"
+      ActionInspectReveal: "inspect-reveal"
+      ActionAPIAuthFailure: "api-auth-failure"
+      ActionAPIConfigPatch: "api-config-patch"
+      ActionAPIEnforceAllow: "api-enforce-allow"
+      ActionAPIEnforceBlock: "api-enforce-block"
+      ActionAPIEnforceUnblock: "api-enforce-unblock"
+      ActionAPIMCPScan: "api-mcp-scan"
+      ActionAPIPluginDisable: "api-plugin-disable"
+      ActionAPIPluginEnable: "api-plugin-enable"
+      ActionAPIPluginScan: "api-plugin-scan"
+      ActionAPISkillDisable: "api-skill-disable"
+      ActionAPISkillEnable: "api-skill-enable"
+      ActionAPISkillFetch: "api-skill-fetch"
+      ActionAPISkillScan: "api-skill-scan"
+      ActionSinkFlushError: "sink-flush-error"
+      ActionSetupSkillScanner: "setup-skill-scanner"
+      ActionSetupMCPScanner: "setup-mcp-scanner"
+      ActionSetupGateway: "setup-gateway"
+      ActionSetupGuardrail: "setup-guardrail"
+      ActionSetupHookConnector: "setup-hook-connector"
+      ActionSetupConnectorMode: "setup-connector-mode"
+      ActionSetupRedactionToggle: "setup-redaction-toggle"
+      ActionSetupNotificationsToggle: "setup-notifications-toggle"
+      ActionSetupNotificationsSet: "setup-notifications-set"
+      ActionSetupSplunk: "setup-splunk"
+      ActionSetupObservability: "setup-observability"
+      ActionSetupLocalObservability: "setup-local-observability"
+      ActionSetupWebhook: "setup-webhook"
+      ActionDoctor: "doctor"
+      ActionUpgrade: "upgrade"
+      ActionInitGateway: "init-gateway"
+      ActionInitGuardrail: "init-guardrail"
+      ActionInitNotificationsToggle: "init-notifications-toggle"
+      ActionInitSandbox: "init-sandbox"
+      ActionInitSidecar: "init-sidecar"
+      ActionPolicyCreate: "policy-create"
+      ActionPolicyActivate: "policy-activate"
+      ActionPolicyDelete: "policy-delete"
+      ActionRegistryAdd: "registry-add"
+      ActionRegistryEdit: "registry-edit"
+      ActionRegistryRemove: "registry-remove"
+      ActionScanEnforced: "scan-enforced"
+      ActionScanFinding: "scan-finding"
+      ActionDismissAlert: "dismiss-alert"
+      ActionSkillBlock: "skill-block"
+      ActionSkillUnblock: "skill-unblock"
+      ActionSkillAllow: "skill-allow"
+      ActionSkillDisable: "skill-disable"
+      ActionSkillEnable: "skill-enable"
+      ActionSkillQuarantine: "skill-quarantine"
+      ActionSkillRestore: "skill-restore"
+      ActionPluginInstall: "plugin-install"
+      ActionPluginRemove: "plugin-remove"
+      ActionPluginBlock: "plugin-block"
+      ActionPluginAllow: "plugin-allow"
+      ActionPluginDisable: "plugin-disable"
+      ActionPluginEnable: "plugin-enable"
+      ActionPluginQuarantine: "plugin-quarantine"
+      ActionPluginRestore: "plugin-restore"
+      ActionBlockMCP: "block-mcp"
+      ActionAllowMCP: "allow-mcp"
+      ActionMCPUnblock: "mcp-unblock"
+      ActionMCPSet: "mcp-set"
+      ActionMCPSetBlocked: "mcp-set-blocked"
+      ActionMCPUnset: "mcp-unset"
+      ActionToolBlock: "tool-block"
+      ActionToolAllow: "tool-allow"
+      ActionToolUnblock: "tool-unblock"
+
+  emitted_metrics:
+    source: schemas/otel/metrics.schema.json
+    migration_disposition: import_telemetry_registry
+    items:
+      "defenseclaw.activity.diff_entries": {type: "histogram", unit: "{entry}"}
+      "defenseclaw.activity.total": {type: "counter", unit: "{activity}"}
+      "defenseclaw.admission.decisions": {type: "counter", unit: "{decision}"}
+      "defenseclaw.agent.discovery.duration": {type: "histogram", unit: "ms"}
+      "defenseclaw.agent.discovery.errors": {type: "counter", unit: "{error}"}
+      "defenseclaw.agent.discovery.installed": {type: "gauge", unit: "1"}
+      "defenseclaw.agent.discovery.runs": {type: "counter", unit: "{run}"}
+      "defenseclaw.agent.discovery.signals": {type: "counter", unit: "{signal}"}
+      "defenseclaw.agent.last_seen": {type: "gauge", unit: "s"}
+      "defenseclaw.agent.lifecycle.transitions": {type: "counter", unit: "{transition}"}
+      "defenseclaw.agent.phase.current": {type: "gauge", unit: "1"}
+      "defenseclaw.agent.phase.transitions": {type: "counter", unit: "{transition}"}
+      "defenseclaw.agent.reported_cost": {type: "gauge", unit: "USD"}
+      "defenseclaw.agent.token.usage": {type: "counter", unit: "{token}"}
+      "defenseclaw.ai.components.installs": {type: "gauge", unit: "{install}"}
+      "defenseclaw.ai.components.observations": {type: "counter", unit: "{observation}"}
+      "defenseclaw.ai.components.workspaces": {type: "gauge", unit: "{workspace}"}
+      "defenseclaw.ai.confidence.identity_score": {type: "histogram", unit: "1"}
+      "defenseclaw.ai.confidence.presence_score": {type: "histogram", unit: "1"}
+      "defenseclaw.ai.discovery.active_signals": {type: "gauge", unit: "{signal}"}
+      "defenseclaw.ai.discovery.dedupe_suppressed": {type: "counter", unit: "{signal}"}
+      "defenseclaw.ai.discovery.duration": {type: "histogram", unit: "ms"}
+      "defenseclaw.ai.discovery.errors": {type: "counter", unit: "{error}"}
+      "defenseclaw.ai.discovery.files_scanned": {type: "counter", unit: "{file}"}
+      "defenseclaw.ai.discovery.gone_signals": {type: "counter", unit: "{signal}"}
+      "defenseclaw.ai.discovery.new_signals": {type: "counter", unit: "{signal}"}
+      "defenseclaw.ai.discovery.runs": {type: "counter", unit: "{run}"}
+      "defenseclaw.ai.discovery.signals": {type: "counter", unit: "{signal}"}
+      "defenseclaw.alert.count": {type: "counter", unit: "{alert}"}
+      "defenseclaw.approval.count": {type: "counter", unit: "{request}"}
+      "defenseclaw.audit.db.errors": {type: "counter", unit: "{error}"}
+      "defenseclaw.audit.events.total": {type: "counter", unit: "{event}"}
+      "defenseclaw.audit.sink.batches.delivered": {type: "counter", unit: "{batch}"}
+      "defenseclaw.audit.sink.batches.dropped": {type: "counter", unit: "{batch}"}
+      "defenseclaw.audit.sink.circuit.state": {type: "updowncounter", unit: "1"}
+      "defenseclaw.audit.sink.delivery.latency": {type: "histogram", unit: "ms"}
+      "defenseclaw.audit.sink.failures": {type: "counter", unit: "{failure}"}
+      "defenseclaw.audit.sink.queue.depth": {type: "updowncounter", unit: "{event}"}
+      "defenseclaw.cisco.errors": {type: "counter", unit: "{error}"}
+      "defenseclaw.cisco_inspect.latency": {type: "histogram", unit: "ms"}
+      "defenseclaw.codex.notify": {type: "counter", unit: "{event}"}
+      "defenseclaw.codex.notify.malformed": {type: "counter", unit: "{event}"}
+      "defenseclaw.config.load.errors": {type: "counter", unit: "{error}"}
+      "defenseclaw.connector.hook.invocations": {type: "counter", unit: "{hook}"}
+      "defenseclaw.connector.hook.latency": {type: "histogram", unit: "ms"}
+      "defenseclaw.connector.hook.outcome": {type: "counter", unit: "{decision}"}
+      "defenseclaw.connector.hook.tokens": {type: "counter", unit: "{token}"}
+      "defenseclaw.connector.hook.unified_dispatch": {type: "counter", unit: "{invocation}"}
+      "defenseclaw.egress.events": {type: "counter", unit: "{event}"}
+      "defenseclaw.gateway.errors": {type: "counter", unit: "{error}"}
+      "defenseclaw.gateway.events.emitted": {type: "counter", unit: "{event}"}
+      "defenseclaw.gateway.forwarded_headers": {type: "counter", unit: "{header}"}
+      "defenseclaw.gateway.judge.errors": {type: "counter", unit: "{error}"}
+      "defenseclaw.gateway.judge.invocations": {type: "counter", unit: "{invocation}"}
+      "defenseclaw.gateway.judge.latency": {type: "histogram", unit: "ms"}
+      "defenseclaw.gateway.verdicts": {type: "counter", unit: "{verdict}"}
+      "defenseclaw.guardrail.cache.hits": {type: "counter", unit: "{hit}"}
+      "defenseclaw.guardrail.cache.misses": {type: "counter", unit: "{miss}"}
+      "defenseclaw.guardrail.evaluations": {type: "counter", unit: "{evaluation}"}
+      "defenseclaw.guardrail.judge.latency": {type: "histogram", unit: "ms"}
+      "defenseclaw.guardrail.latency": {type: "histogram", unit: "ms"}
+      "defenseclaw.http.auth.failures": {type: "counter", unit: "{failure}"}
+      "defenseclaw.http.rate_limit.breaches": {type: "counter", unit: "{breach}"}
+      "defenseclaw.http.request.count": {type: "counter", unit: "{request}"}
+      "defenseclaw.http.request.duration": {type: "histogram", unit: "ms"}
+      "defenseclaw.inspect.evaluations": {type: "counter", unit: "{evaluation}"}
+      "defenseclaw.inspect.latency": {type: "histogram", unit: "ms"}
+      "defenseclaw.judge.persist.batch_size": {type: "histogram", unit: "{row}"}
+      "defenseclaw.judge.persist.drops": {type: "counter", unit: "{drop}"}
+      "defenseclaw.judge.persist.queue_depth": {type: "gauge", unit: "{item}"}
+      "defenseclaw.judge.semaphore.depth": {type: "updowncounter", unit: "{slot}"}
+      "defenseclaw.judge.semaphore.drops": {type: "counter", unit: "{drop}"}
+      "defenseclaw.llm_bridge.latency": {type: "histogram", unit: "ms"}
+      "defenseclaw.openshell.exit": {type: "counter", unit: "{exit}"}
+      "defenseclaw.otel.ingest.bytes": {type: "counter", unit: "By"}
+      "defenseclaw.otel.ingest.last_seen_ts": {type: "gauge", unit: "s"}
+      "defenseclaw.otel.ingest.malformed": {type: "counter", unit: "{request}"}
+      "defenseclaw.otel.ingest.records": {type: "counter", unit: "{record}"}
+      "defenseclaw.otel.ingest.requests": {type: "counter", unit: "{request}"}
+      "defenseclaw.panics.total": {type: "counter", unit: "{panic}"}
+      "defenseclaw.policy.evaluations": {type: "counter", unit: "{evaluation}"}
+      "defenseclaw.policy.latency": {type: "histogram", unit: "ms"}
+      "defenseclaw.policy.reloads": {type: "counter", unit: "{reload}"}
+      "defenseclaw.process.uptime_seconds": {type: "gauge", unit: "s"}
+      "defenseclaw.provenance.bumps": {type: "counter", unit: "{bump}"}
+      "defenseclaw.quarantine.actions": {type: "counter", unit: "{action}"}
+      "defenseclaw.queue.depth": {type: "gauge", unit: "{item}"}
+      "defenseclaw.queue.drops": {type: "counter", unit: "{drop}"}
+      "defenseclaw.redaction.applied": {type: "counter", unit: "{redaction}"}
+      "defenseclaw.runtime.fd.in_use": {type: "gauge", unit: "{fd}"}
+      "defenseclaw.runtime.gc.pause": {type: "histogram", unit: "ns"}
+      "defenseclaw.runtime.goroutines": {type: "gauge", unit: "{goroutine}"}
+      "defenseclaw.runtime.heap.alloc": {type: "gauge", unit: "By"}
+      "defenseclaw.runtime.heap.objects": {type: "gauge", unit: "{object}"}
+      "defenseclaw.scan.count": {type: "counter", unit: "{scan}"}
+      "defenseclaw.scan.duration": {type: "histogram", unit: "ms"}
+      "defenseclaw.scan.errors": {type: "counter", unit: "{error}"}
+      "defenseclaw.scan.findings": {type: "counter", unit: "{finding}"}
+      "defenseclaw.scan.findings.by_rule": {type: "counter", unit: "{finding}"}
+      "defenseclaw.scan.findings.gauge": {type: "updowncounter", unit: "{finding}"}
+      "defenseclaw.scanner.queue.depth": {type: "updowncounter", unit: "{scan}"}
+      "defenseclaw.schema.violations": {type: "counter", unit: "{event}"}
+      "defenseclaw.slo.block.latency": {type: "histogram", unit: "ms"}
+      "defenseclaw.slo.tui.refresh": {type: "histogram", unit: "ms"}
+      "defenseclaw.sqlite.busy_retries": {type: "counter", unit: "{event}"}
+      "defenseclaw.sqlite.checkpoint.duration": {type: "histogram", unit: "ms"}
+      "defenseclaw.sqlite.db.bytes": {type: "gauge", unit: "By"}
+      "defenseclaw.sqlite.freelist_count": {type: "gauge", unit: "{page}"}
+      "defenseclaw.sqlite.page_count": {type: "gauge", unit: "{page}"}
+      "defenseclaw.sqlite.wal.bytes": {type: "gauge", unit: "By"}
+      "defenseclaw.stream.bytes_sent": {type: "histogram", unit: "By"}
+      "defenseclaw.stream.duration_ms": {type: "histogram", unit: "ms"}
+      "defenseclaw.stream.lifecycle": {type: "counter", unit: "{transition}"}
+      "defenseclaw.telemetry.destination.spans": {type: "counter", unit: "{span}"}
+      "defenseclaw.telemetry.destination.exports": {type: "counter", unit: "{span}"}
+      "defenseclaw.telemetry.exporter.errors": {type: "counter", unit: "{error}"}
+      "defenseclaw.telemetry.exporter.last_export_ts": {type: "gauge", unit: "s"}
+      "defenseclaw.tool.calls": {type: "counter", unit: "{call}"}
+      "defenseclaw.tool.duration": {type: "histogram", unit: "ms"}
+      "defenseclaw.tool.errors": {type: "counter", unit: "{error}"}
+      "defenseclaw.tui.filter.applied": {type: "counter", unit: "{filter}"}
+      "defenseclaw.watcher.errors": {type: "counter", unit: "{error}"}
+      "defenseclaw.watcher.events": {type: "counter", unit: "{event}"}
+      "defenseclaw.watcher.restarts": {type: "counter", unit: "{restart}"}
+      "defenseclaw.webhook.circuit_breaker": {type: "counter", unit: "{transition}"}
+      "defenseclaw.webhook.cooldown.suppressed": {type: "counter", unit: "{event}"}
+      "defenseclaw.webhook.dispatches": {type: "counter", unit: "{dispatch}"}
+      "defenseclaw.webhook.failures": {type: "counter", unit: "{failure}"}
+      "defenseclaw.webhook.latency": {type: "histogram", unit: "ms"}
+      "gen_ai.client.operation.duration": {type: "histogram", unit: "s"}
+      "gen_ai.client.token.usage": {type: "histogram", unit: "{token}"}
+
+  schema_files:
+    source_directory: schemas
+    migration_disposition: per_item
+    items:
+      - path: schemas/activity-event.json
+        migration_disposition: import_telemetry_registry
+      - path: schemas/audit-event.json
+        migration_disposition: import_telemetry_registry
+      - path: schemas/gateway-event-envelope.json
+        migration_disposition: import_telemetry_registry
+      - path: schemas/hook-audit-envelope.json
+        migration_disposition: import_telemetry_registry
+      - path: schemas/network-egress-event.json
+        migration_disposition: import_telemetry_registry
+      - path: schemas/otel/agent-lifecycle-event.schema.json
+        migration_disposition: import_telemetry_registry
+      - path: schemas/otel/asset-lifecycle-event.schema.json
+        migration_disposition: import_telemetry_registry
+      - path: schemas/otel/connector-telemetry-event.schema.json
+        migration_disposition: import_telemetry_registry
+      - path: schemas/otel/galileo-export-profile.schema.json
+        migration_disposition: import_telemetry_registry
+      - path: schemas/otel/metrics.schema.json
+        migration_disposition: import_telemetry_registry
+      - path: schemas/otel/resource.schema.json
+        migration_disposition: import_telemetry_registry
+      - path: schemas/otel/runtime-agent-span.schema.json
+        migration_disposition: import_telemetry_registry
+      - path: schemas/otel/runtime-alert-event.schema.json
+        migration_disposition: import_telemetry_registry
+      - path: schemas/otel/runtime-approval-span.schema.json
+        migration_disposition: import_telemetry_registry
+      - path: schemas/otel/runtime-llm-span.schema.json
+        migration_disposition: import_telemetry_registry
+      - path: schemas/otel/runtime-tool-span.schema.json
+        migration_disposition: import_telemetry_registry
+      - path: schemas/otel/scan-finding-event.schema.json
+        migration_disposition: import_telemetry_registry
+      - path: schemas/otel/scan-result-event.schema.json
+        migration_disposition: import_telemetry_registry
+      - path: schemas/registry-manifest.schema.json
+        migration_disposition: preserve_separate_schema
+      - path: schemas/scan-event.json
+        migration_disposition: import_telemetry_registry
+      - path: schemas/scan-finding-event.json
+        migration_disposition: import_telemetry_registry
+      - path: schemas/scan-result.json
+        migration_disposition: import_telemetry_registry
+
+  grafana_dashboard_uids:
+    source_directory: bundles/local_observability_stack/grafana/dashboards
+    migration_disposition: preserve_local_observability_v1
+    items:
+      bundles/local_observability_stack/grafana/dashboards/defenseclaw-activity.json: defenseclaw-activity
+      bundles/local_observability_stack/grafana/dashboards/defenseclaw-agent-360.json: defenseclaw-agent-360
+      bundles/local_observability_stack/grafana/dashboards/defenseclaw-agent-identity.json: defenseclaw-agent-identity
+      bundles/local_observability_stack/grafana/dashboards/defenseclaw-ai-discovery.json: defenseclaw-ai-discovery
+      bundles/local_observability_stack/grafana/dashboards/defenseclaw-connector-detail.json: defenseclaw-connector-detail
+      bundles/local_observability_stack/grafana/dashboards/defenseclaw-connectors.json: defenseclaw-connectors
+      bundles/local_observability_stack/grafana/dashboards/defenseclaw-findings.json: defenseclaw-findings
+      bundles/local_observability_stack/grafana/dashboards/defenseclaw-hitl.json: defenseclaw-hitl
+      bundles/local_observability_stack/grafana/dashboards/defenseclaw-overview.json: defenseclaw-overview
+      bundles/local_observability_stack/grafana/dashboards/defenseclaw-policy-decisions.json: defenseclaw-policy-decisions
+      bundles/local_observability_stack/grafana/dashboards/defenseclaw-runtime.json: defenseclaw-runtime
+      bundles/local_observability_stack/grafana/dashboards/defenseclaw-scanners.json: defenseclaw-scanners
+      bundles/local_observability_stack/grafana/dashboards/defenseclaw-security.json: defenseclaw-security
+      bundles/local_observability_stack/grafana/dashboards/defenseclaw-traffic.json: defenseclaw-traffic
+
+  grafana_datasource_uids:
+    source: bundles/local_observability_stack/grafana/provisioning/datasources/datasources.yml
+    migration_disposition: preserve_local_observability_v1
+    items:
+      prometheus: defenseclaw-prometheus
+      loki: defenseclaw-loki
+      tempo: defenseclaw-tempo
+
+  compatibility_baseline_commits:
+    migration_disposition: preserve_compatibility_floor
+    items:
+      - pull_request: 403
+        merge_commit: 9e417889c4c456bc3c7e6c160ee98c1add1094ee
+        source: docs/design/observability-v8/14-agent-lifecycle-and-dashboard-compatibility.md
+      - pull_request: 412
+        merge_commit: 94dd46c689fefbcf85b8f478249e74f3925eca49
+        source: docs/design/observability-v8/14-agent-lifecycle-and-dashboard-compatibility.md

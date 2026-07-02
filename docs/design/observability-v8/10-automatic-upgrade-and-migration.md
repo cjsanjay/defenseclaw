@@ -86,6 +86,9 @@ The conversion function MUST:
 - Treat an already valid v8 source as a no-op.
 - Accept every supported v7 shape documented in
   `06-migration-and-implementation.md`.
+- Treat an absent or numeric-zero version stamp as v7 only after the complete
+  document validates as the current v7 shape with no v8-only observability key;
+  reject an ambiguous mixed shape rather than guessing.
 - Preserve unrelated config sections and notification-only webhooks.
 - Preserve comments, key order, the ASCII operator guide, file mode, and ownership.
 - Preserve destination identity when endpoint, credentials, TLS, batching,

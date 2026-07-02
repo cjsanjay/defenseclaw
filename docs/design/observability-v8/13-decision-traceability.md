@@ -5,10 +5,11 @@
 This appendix is the mechanical index for every `D-*`, `S-*`, and `P-*` decision in
 `08-decisions-and-exclusions.md`. Each decision ID MUST occur exactly once in the
 first column and MUST point to at least one normative contract and one verification
-location. `scripts/check_schemas.py` (or a spec-lint helper it invokes) validates
-coverage, duplicate IDs, missing target documents, and IDs present in the decision
-log but absent here. An implementation PR changing a decision updates its row and
-the cited tests in the same change.
+location. `scripts/check_observability_v8_spec.py`, invoked by the repository
+`make check` gate, validates coverage, duplicate and gapped IDs, package links,
+YAML examples, and IDs present in the decision log but absent here. An
+implementation PR changing a decision updates its row and the cited tests in the
+same change.
 
 Section references are to this specification package.
 
@@ -25,16 +26,16 @@ Section references are to this specification package.
 | D-007 | 03 §§5.2-5.5 | 07 §5 ordering matrix |
 | D-008 | 03 §§2.1,5.1-5.2 | 07 §§4.3,5 |
 | D-009 | 03 §§3.3,5; 04 §2 | 07 §§5,6 |
-| D-010 | 03 §5.6; 04 §3.1 | 07 E2E-5 |
+| D-010 | 03 §§3.3,4.1,5.7; 04 §3.1 | 07 §§4.1,4.3,6.4; E2E-1 and E2E-5 |
 | D-011 | 04 §§3-7 | 07 §6 |
 | D-012 | 04 §9 | 07 §§6.3,6.4 |
-| D-013 | 03 §§2.1,4.1 | 07 §§4.1,E2E-1 |
+| D-013 | 03 §§2.1,4.1; 05 §§1-2,4 | 07 §§4.1,7; E2E-1 |
 | D-014 | 05 §§2-3 | 07 §7 |
 | D-015 | 02 §2.15; 03 §3 | 07 §§4.1,E2E-1 |
 | D-016 | 01 §6; 03 §3.2 | 07 §§2,5 |
 | D-017 | 05 §5 | 07 §§8,E2E-7 |
 | D-018 | 03 §4.1; 05 §5.1 | 07 §8 |
-| D-019 | 03 §7 | 07 §§10,E2E-8 |
+| D-019 | 03 §7 | 07 §§10,13; E2E-8, including partial-initialization teardown and leak checks |
 | D-020 | 06 §3; 10 | 07 §§11,16 |
 | D-021 | 03 §§4.2.1,5; 09 §3.3 | 07 §§4.1,4.3,E2E-5 |
 | D-022 | 01 G-14/INV-14; 11 §§3-5,18; 14 §§1-10 | 07 §§2,9.7,11,E2E-9,17; 14 §11 |
@@ -51,9 +52,10 @@ Section references are to this specification package.
 | S-006 | 02 §§2.2,2.7 | 07 §3.2 |
 | S-007 | 02 §§2.4,2.8 | 07 §3.2 |
 | S-008 | 02 §§1,3 | 07 §§2,3.1 |
-| S-009 | 02 §5.3; 05 §2 | 07 §§2,7 |
+| S-009 | 02 §5.5; 05 §3 | 07 §§2,3.2,7, including immutable repeated observations and absence of synthetic status |
 | S-010 | 02 §5; 04 §8 | 07 §§2,6 |
 | S-011 | 02 §§2.1,2.12-2.13; 01 §6.1 | 07 §3.2 |
+| S-012 | 01 §6.1; 02 §§3.2,4,5.6; 05 §§2.3-2.4,3,9 | 07 §§3.2,7,11, including legacy `ACK` reads and immutable acknowledgement/dismissal events |
 
 ## 4. Ambiguity-removal and implementation decisions
 
@@ -65,23 +67,23 @@ Section references are to this specification package.
 | P-004 | 02 §4 | 07 §§3.2,9.4 |
 | P-005 | 05 §5.1 | 07 §8 |
 | P-006 | 05 §5.4 | 07 §8 |
-| P-007 | 02 §5.3 | 07 §3.2 |
-| P-008 | 02 §5.2; 04 §8 | 07 §6 |
+| P-007 | 02 §5.5; 05 §3 | 07 §§3.2,7 repeated-observation/no-dedup cases |
+| P-008 | 02 §§5.2,5.4; 04 §8 | 07 §§2,3.2,6,7 producer/catalog/absent-remediation cases |
 | P-009 | 03 §§2.1,5.1; 09 §§2-3 | 07 §§4.3,11 |
 | P-010 | 09 §4 | 07 §4.2 |
 | P-011 | 09 §5 | 07 §4.2 |
-| P-012 | 09 §6 | 07 §§4.3,16.2 |
-| P-013 | 03 §3; 09 §7 | 07 §§4.3-4.4 |
-| P-014 | 09 §5 | 07 §4.3 |
-| P-015 | 09 §6 | 07 §4.2 |
-| P-016 | 03 §4.6; 09 §8 | 07 §§4.3,16.1 |
+| P-012 | 09 §10 | 07 §§4.3,16.2 |
+| P-013 | 03 §3; 09 §12 | 07 §§4.3-4.4 |
+| P-014 | 09 §6 | 07 §4.3 |
+| P-015 | 09 §11 | 07 §4.2 |
+| P-016 | 03 §4.6; 09 §9 | 07 §§4.3,16.1 |
 | P-017 | 06 §3.1; 10 §2 | 07 §§11,16 |
 | P-018 | 10 §§3-4 | 07 §§16.1-16.2 |
-| P-019 | 10 §6 | 07 §16.3 |
+| P-019 | 10 §5 | 07 §16.3 |
 | P-020 | 10 §§2-7 | 07 §§16.2-16.4 |
-| P-021 | 05 §2.5; 10 §6 | 07 §§7,16.3 |
+| P-021 | 05 §§2.1,2.3-2.5; 06 §7.1; 10 §5 | 07 §§7,16.3 |
 | P-022 | 10 §2 | 07 §16.3 |
-| P-023 | 06 §3.1; 10 §8 | 07 §§11,16.1 |
+| P-023 | 06 §3.1; 10 §§6-7 | 07 §§11,16.1 |
 | P-024 | 10 §4 | 07 §16.4 |
 | P-025 | 05 §6; 10 §5 | 07 §§E2E-6,16.3 |
 | P-026 | 04 §6 | 07 §§4.2-4.3,6.1 |
@@ -91,10 +93,10 @@ Section references are to this specification package.
 | P-030 | 12 §§4-6 | 07 §§2,9.6 |
 | P-031 | 11 §13; 12 §§3,7.3 | 07 §§9.1,9.6,E2E-4 |
 | P-032 | 11 §§3,7-13 | 07 §§9.1,E2E-4 |
-| P-033 | 11 §4 | 07 §§9.1,14 |
+| P-033 | 11 §§4,14 | 07 §§9.1,14 |
 | P-034 | 11 §11; 02 §3.2 | 07 §9.1 |
 | P-035 | 03 §2.1 | 07 §§4.3,5 |
-| P-036 | 09 §3 | 07 §§4.3,17 |
+| P-036 | 09 §§3,7 | 07 §§4.3,17 |
 | P-037 | 06 §5 phase 5; 12 | 07 §§9.6,17 |
 | P-038 | 04 §7.4 | 07 §6.3 |
 | P-039 | 03 §4.4.1 | 07 §§2,13 |
@@ -105,6 +107,7 @@ Section references are to this specification package.
 | P-044 | 06 §3.2; 10 §4 | 07 §§11,16 |
 | P-045 | 03 §6; 06 §§1,3.2,7.2; 14 §8.4 | 07 §§4.1,9.3,9.7,E2E-9; 14 §11 |
 | P-046 | 06 §§5-7; 12 §§6,13,17; 14 §§7-10 | 07 §§2,9.6-9.7,11,E2E-9,17; 14 §11 |
+| P-047 | 05 §4.1; 06 §§3.2,5 phase 2,7.1 | 07 §§7-8,11,16, including copy/cutover/dedup/export/purge order and fallback-removal cases |
 
 ## 5. Review use
 

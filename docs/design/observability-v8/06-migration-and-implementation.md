@@ -105,6 +105,14 @@ candidate or output.
 Normative upgrade sequencing and required-failure behavior are defined in
 `10-automatic-upgrade-and-migration.md`.
 
+“Supported v7” includes a missing or numeric-zero `config_version` when the
+complete document validates as the currently supported v7 shape and contains no
+v8-only observability key. Existing Go/Python writers commonly leave the stamp
+absent, so absence alone is not an unsupported-version error. A missing/zero stamp
+combined with v8-only keys or a shape ambiguous between versions is rejected with
+an actionable path; the migrator never guesses from one key while ignoring the
+rest.
+
 ### 3.2 Legacy mapping
 
 | v7 source | v8 target |
@@ -115,6 +123,7 @@ Normative upgrade sequencing and required-failure behavior are defined in
 | `otel.logs.emit_individual_findings: true` | Add an OTLP log route that includes `security.finding`; `false`/absent does not automatically route individual finding logs |
 | `otel.destinations[]` | `observability.destinations[]` with `kind: otlp`; selected signals come from generated `send`/advanced routes and per-signal endpoint/path details become `signal_overrides` |
 | Named `local-observability` OTLP destination | Preserve its name, endpoint/protocol/TLS and local-network intent; include logs/traces/metrics and every `local-observability-v1` family unless explicit v7 policy was narrower, in which case preserve it and report partial dashboard capability |
+| Loopback/RFC1918 local-observability endpoint | Materialize `network_safety.allow_private_networks: true` on that destination only, with the required warning/audit; never create a process-wide private-network bypass |
 | Galileo batch delay | Preserve an explicit operator delay. If the source merely inherited the v7 5,000 ms default, materialize the v8 `galileo-rich-v2` preset value of 1,000 ms and disclose the preset-default change in the upgrade summary |
 | OTel span filters | Equivalent bucket/source/event routes plus the versioned destination compatibility profile where mapping is exact; otherwise explicit migration warning with before/after eligible families |
 | Top-level `audit_db` | `observability.local.path` |

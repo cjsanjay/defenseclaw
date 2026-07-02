@@ -32,12 +32,21 @@ DefenseClaw follows, in priority order:
 
 The GenAI conventions are still evolving. DefenseClaw MUST NOT silently change
 span names, kinds, attribute names, types, or event shapes merely because a library
-dependency updates. Every release pins:
+dependency updates. The `defenseclaw-genai-rich-v1` profile is locked to exactly
+these four literal identifiers:
 
-- `trace_schema_version`
-- `gen_ai_semconv_profile`
-- `openinference_profile`
-- Galileo compatibility-profile version
+| Profile member | Literal identifier |
+|---|---|
+| `trace_schema_version` | `defenseclaw-trace-v1` |
+| `gen_ai_semconv_profile` | `otel-genai-b028dceecdad117461a785c3af35315e7184e813` |
+| `openinference_profile` | `openinference-semantic-conventions-v0.1.30` |
+| `galileo_compatibility_profile` | `galileo-rich-v2` |
+
+The GenAI identifier is an immutable commit because the authoritative dedicated
+OpenTelemetry GenAI repository has not published a release tag for that snapshot.
+`semconv.lock.yaml` additionally pins its OTel core dependency to
+`v1.42.0`/`ae3a98640194ed405c4c797281502e4d3bd258b3` and pins the OpenInference
+release tag to commit `789d41974c08a9a13147977f28ef4142a07e2106`.
 
 The values are emitted in instrumentation-scope/schema metadata and visible in the
 effective configuration, doctor output, and upgrade migration summary. A convention upgrade
@@ -47,6 +56,12 @@ before/after golden traces.
 Normative external references:
 
 - OpenTelemetry semantic conventions: <https://opentelemetry.io/docs/specs/semconv/>
+- Pinned OpenTelemetry core semantic-conventions release:
+  <https://github.com/open-telemetry/semantic-conventions/releases/tag/v1.42.0>
+- Pinned OpenTelemetry GenAI registry revision:
+  <https://github.com/open-telemetry/semantic-conventions-genai/tree/b028dceecdad117461a785c3af35315e7184e813>
+- Pinned OpenInference semantic-conventions release:
+  <https://github.com/Arize-ai/openinference/releases/tag/python-openinference-semantic-conventions-v0.1.30>
 - OpenTelemetry trace conventions:
   <https://opentelemetry.io/docs/specs/semconv/general/trace/>
 - Galileo OTel/OpenInference recommendations:
@@ -515,7 +530,7 @@ the effective trace schema.
 
 ### 13.1 Preset contract
 
-`preset: galileo` expands to a versioned compatibility profile, initially
+`preset: galileo` expands to the immutable compatibility profile
 `galileo-rich-v2`, while preserving operator overrides that do not weaken required
 validation. The effective view shows the expanded profile.
 
@@ -579,23 +594,28 @@ destination name, selects the profile.
 
 ## 14. Limits and Cardinality
 
-Rich telemetry remains bounded. The initial defaults are explicit under
-`trace_policy.limits`:
+Rich telemetry remains bounded. The v8 `trace_policy.limits` defaults and
+non-overridable hard ceilings are:
 
-| Limit | Default |
-|---|---:|
-| Attributes per span | 128 |
-| Events per span | 64 |
-| Links per span | 32 |
-| Attributes per event/link | 32 |
-| String value bytes before field policy | 16,384 |
-| Total projected span bytes | 256 KiB |
-| Stack-trace bytes | 32 KiB |
-| Message/document items | 128 |
+| Config field / limit | Default | Hard maximum |
+|---|---:|---:|
+| `max_attributes_per_span` | 128 | 256 |
+| `max_events_per_span` | 64 | 128 |
+| `max_links_per_span` | 32 | 64 |
+| `max_attributes_per_event` (also applied to link attributes) | 32 | 64 |
+| `max_attribute_value_bytes` | 16,384 bytes | 65,536 bytes |
+| `max_projected_span_bytes` | 262,144 bytes (256 KiB) | 1,048,576 bytes (1 MiB) |
+| `max_stacktrace_bytes` | 32,768 bytes (32 KiB) | 131,072 bytes (128 KiB) |
+| `max_message_items` | 128 | 512 |
 
-Limits must respect equal or lower SDK/collector limits. Overflow is deterministic,
-fails closed for content, retains core identity/outcome fields, and records dropped
-counts. Required Galileo shape fields take priority over optional aliases.
+An explicitly configured limit MUST be an integer from 1 through its hard maximum;
+omission selects the listed default. Startup/reload rejects values above a hard
+maximum instead of clamping them. Effective limits also respect any lower
+SDK/collector limit. Runtime overflow is deterministic, fails closed for content,
+retains core identity/outcome fields, and records dropped counts. Required Galileo
+shape fields take priority over optional aliases. The projected-span byte limit is
+evaluated independently on each destination projection after redaction and
+compatibility-alias generation.
 
 High-cardinality IDs are allowed on traces and logs where needed for investigation,
 but not copied to metric labels. Span names never contain request, session, user,
@@ -632,13 +652,12 @@ family unless a bucket/default override disables it.
 `semantic_profile` selects a shipped immutable schema profile; arbitrary custom
 attribute schemas are not accepted from YAML. The
 `defenseclaw-genai-rich-v1` entry in `schemas/telemetry/v8/registry.yaml` binds one
-exact tuple of `trace_schema_version`, the locked `gen_ai_semconv_profile`, the
-`openinference_profile`, and the Galileo compatibility-profile version. The
-effective view displays the resolved tuple. Operators cannot override its members
-independently; changing any member requires a new semantic-profile ID. A missing or
-mismatched lock/profile binding is a build/startup error. `compatibility_aliases` controls only
-documented old aliases and defaults to true for migrated v7 installations until
-  their removal release. It never changes the selected projection profile.
+exact tuple listed in section 2. The effective view displays those four literal
+identifiers. Operators cannot override its members independently; changing any
+member requires a new semantic-profile ID. A missing or mismatched lock/profile
+binding is a build/startup error. `compatibility_aliases` controls only documented
+old aliases and defaults to true for migrated v7 installations until their removal
+release. It never changes the selected projection profile.
 
 Richness is primarily a schema guarantee, not hundreds of per-attribute switches.
 Operators choose which bucket traces exist, which destinations receive them, and

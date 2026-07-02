@@ -19,7 +19,7 @@ reopened during implementation without a spec amendment.
 | D-010 | Make `none` valid and default for catalog, local, and optional-destination projections; it needs no break-glass switch or warning, while policy changes remain audited. |
 | D-011 | Provide built-in redaction profiles plus composition from built-in detectors/field classes; no arbitrary regex. |
 | D-012 | Fail closed to whole-field redaction on redaction processing failure and continue safe delivery. |
-| D-013 | Provide exactly one always-enabled implicit SQLite store; do not require a destination or catch-all route in source YAML. |
+| D-013 | Provide exactly one always-enabled implicit SQLite event-history destination backed by `audit.db`; do not require a destination or catch-all route in source YAML. The separate `judge_bodies.db` forensic database is not an event-history destination and is excluded from this exactly-one rule. |
 | D-014 | Persist every collected log to SQLite plus normalized projections. |
 | D-015 | Use versioned full-fidelity catalog defaults: every bucket collects every defined log/trace/metric signal and uses `none`; no remote transport starts until a destination is selected. |
 | D-016 | Provide a mandatory local compliance/security floor that bypasses collection only for SQLite. |
@@ -45,18 +45,20 @@ reopened during implementation without a spec amendment.
 | S-009 | v8 finding logs are immutable observations and do not add `status: open` or case-management transitions. |
 | S-010 | Existing producer remediation remains supported; evidence summary and remediation normalization must be deterministic and safe, not silently hallucinated. |
 | S-011 | Administrative authentication/authorization failures are `compliance.activity`; inbound telemetry authentication failures are `telemetry.ingest`; outbound destination authentication failures are `platform.health`. All are mandatory-floor logs. |
+| S-012 | Alert acknowledgement and dismissal never mutate an immutable event's canonical severity or emit noncanonical `ACK` severity. Mutable acknowledgement state lives in a separate alert-state projection keyed to the immutable record, and every acknowledgement/dismissal change emits an immutable mandatory `compliance.activity` event. Legacy acknowledgement action rows map to canonical `INFO`; historical rows whose original severity was overwritten with `ACK` remain readable with explicit legacy-acknowledged metadata and no invented original severity. |
 
 ## 3. Specification Defaults Introduced to Remove Ambiguity
 
-These were not explicit product selections in the original discussion. They are the
-spec’s proposed defaults and should be confirmed during review. If changed, update
-the affected contracts and tests before implementation.
+These defaults have been reviewed with the locked product direction and are the
+approved v8 implementation defaults. Changing one requires the specification,
+traceability target, and affected tests to change together before implementation
+diverges.
 
 | ID | Default | Rationale |
 |---|---|---|
 | P-001 | Preserve `audit_events` as the v8 event-history compatibility anchor and add canonical columns. | Minimizes API/history migration while making structured v8 queries possible. |
 | P-002 | The compiler generates the local SQLite catch-all; source YAML cannot remove or bypass it. | Enforces “every collected log is local” without operator boilerplate. |
-| P-003 | Remote queues drop the newest attempted enqueue when full. | Preserves older queued order, avoids blocking producers, and retains the canonical local record. |
+| P-003 | Remote log/trace queues drop the newest attempted enqueue when full. Prometheus has no push queue, and metric SDK reader/exporter backpressure follows the documented SDK contract. | Preserves older queued log/trace order, avoids blocking producers, retains the canonical local record, and does not invent queue semantics for pull or SDK-managed metric delivery. |
 | P-004 | Canonical security severity is `INFO < LOW < MEDIUM < HIGH < CRITICAL`. Guardrail/judge producer `NONE` maps to `INFO` while retaining clean-evaluation semantics; `WARN`/`WARNING` maps to `MEDIUM` and may retain `log_level: WARN`; ERROR maps HIGH and FATAL maps CRITICAL. | Merges the existing audit `INFO` ladder and guardrail `NONE` ladder into one comparable five-level envelope without rejecting clean evaluations or inventing a WARN rung. |
 | P-005 | Retention deletes rows strictly older than the cutoff; equality is retained. | Avoids boundary ambiguity. |
 | P-006 | Reaper starts after startup and repeats every six hours in batches of 1,000. | Balances prompt cleanup with SQLite contention. |
@@ -100,6 +102,7 @@ the affected contracts and tests before implementation.
 | P-044 | Automatic migration materializes any narrower or redacted v7 behavior instead of allowing fresh-v8 full-fidelity defaults to broaden an upgraded installation. | Makes the new default simple for new configurations without silently changing existing operators' collection, routing, or privacy posture. |
 | P-045 | Keep the real 60-second delta metric-export default; the bundled Collector converts delta sums to cumulative Prometheus series, uses one application-metric path, and Grafana advertises a Prometheus interval of at least 60 seconds. | Preserves current runtime semantics and prevents the false `No data`/zero behavior fixed by PR #412. |
 | P-046 | Generate a versioned `local-observability-v1` consumer profile from the telemetry registry and dashboard inventory, preserving Loki chronology, Prometheus aggregates, Tempo waterfall ownership, Agent360 spanmetrics dimensions, datasource/dashboard UIDs, aliases, source/packaged parity, and the immediately previous bundled query contract for one declared compatibility window. | Makes dashboards an explicit tested consumer instead of an implicit collection of fragile query strings and keeps a temporarily stale optional bundle useful after upgrade. |
+| P-047 | Make `judge_bodies.db` the sole authoritative v8 judge-body store. Upgrade copies legacy `audit.db.judge_responses` idempotently by stable ID, verifies target commits before writer cutover or source cleanup, deduplicates compatibility reads/authorized local exports with the authoritative store first, completes export before purge, purges legacy copies before authoritative rows, and removes the runtime fallback that writes new bodies to `audit.db`. | Prevents dual writes, duplicate forensic results, unverified destructive cleanup, and silent reintroduction of raw judge bodies into the mandatory event-history database. |
 
 ## 4. Explicitly Excluded Behavior
 
