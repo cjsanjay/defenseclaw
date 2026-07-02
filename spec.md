@@ -1,12 +1,12 @@
 # DefenseClaw Observability v8 — Codex Execution Manifest
 
 ```yaml
-spec_status: draft-for-implementation-review
+spec_status: approved-for-implementation
 goal_status: active
-current_phase: P0
+current_phase: P1
 target_config_version: 8
 baseline_commit: fd13acedfcffc0cc431d5a72f329b56b50b22baa
-last_verified_commit: b5167c2d95d72ae2b1c71813aa35fd065c8a2d63
+last_verified_commit: 963b1bc9fb5a564c53809a70b452e61e888f768c
 last_updated: 2026-07-02
 ```
 
@@ -31,10 +31,10 @@ or a plausible-looking dashboard is not completion.
 
 | Field | Value |
 |---|---|
-| Active work package | `P0-WP03` — decision and implementation-readiness audit |
-| Ready queue | P1 readiness analysis only; behavior changes wait for `P0-GATE` |
+| Active work package | `P1-WP01` — canonical taxonomy and current-producer classification contract |
+| Ready queue | `P1-WP02` after `P1-WP01`; `P1-WP03..04` wait for the Go schema/compiler |
 | Blocked | None |
-| Next phase gate | `P0-GATE` — package tracked, baseline inventory complete, decisions reviewed |
+| Next phase gate | `P1-GATE` — validated immutable v8 runtime plan and deterministic converter |
 | Root coordinator | Primary Codex thread |
 | Implementation branch | `codex/observability-v8-spec-implementation` from `main` |
 
@@ -54,10 +54,10 @@ document, the D-/S-/P- decision log, the traceability appendix, and acceptance t
 before changing behavior. No agent may silently reopen a locked decision, weaken a
 release gate, or create a second configuration/telemetry pipeline.
 
-The specification is presently a draft. Behavior-changing implementation begins
-only after `P0-GATE` confirms the locked D-/S- decisions and reviews the proposed
-P-* defaults. Before that gate, work is limited to tracked documentation,
-non-behavioral scaffolding, and current-state inventory.
+The specification passed `P0-GATE` at commit `963b1bc9f`. Behavior-changing
+implementation follows the phase order and locked decisions below. A later
+ambiguity requires an explicit spec amendment and traceability update; it does not
+silently return the package to draft or authorize implementation divergence.
 
 ## Normative Source Map
 
@@ -184,15 +184,15 @@ gate must pass.
 | ID | Status | Owner | Depends on | Deliverable | Verification/evidence |
 |---|---|---|---|---|---|
 | `P0-WP01` | `DONE` | root | — | Track normative package, root manifest, docs index; remove temporary-path claims | Commit `b5167c2d9`; link/YAML/decision lint passed |
-| `P0-WP02` | `DONE` | subagent, root verified | `P0-WP01` | Machine-readable inventory of current config fields, producers, schemas, metrics, dashboards, and migration disposition | 37 anchors, 14 events, 188 actions, 131 metrics, 22 schemas, 14 dashboards, 3 datasources, 2 compatibility commits; checker and 3 tests passed |
-| `P0-WP03` | `IN_PROGRESS` | subagent + root | `P0-WP01` | Review D-/S- locks and P-* proposed defaults; resolve contradictions in-package | `make check-observability-v8-spec` plus CodeRabbit review |
-| `P0-GATE` | `TODO` | root | `P0-WP01..03` | Specification approved for behavior-changing implementation | Review record and clean spec validation |
+| `P0-WP02` | `DONE` | subagent, root verified | `P0-WP01` | Machine-readable inventory of current config fields, producers, schemas, metrics, dashboards, and migration disposition | 37 anchors, 14 events, 188 actions, 131 metrics, 22 schemas, 14 dashboards, 3 datasources, 2 compatibility commits; checker and 6 tests passed at `963b1bc9f` |
+| `P0-WP03` | `DONE` | subagents + root | `P0-WP01` | Review D-/S- locks and P-* proposed defaults; resolve contradictions in-package | 81 decisions mechanically traceable; two CodeRabbit review passes raised 23 total findings, all valid findings resolved; commit `963b1bc9f` |
+| `P0-GATE` | `DONE` | root | `P0-WP01..03` | Specification approved for behavior-changing implementation | `make check`, 42 focused tests, Ruff, and diff validation passed at `963b1bc9f` |
 
 ### P1 — Contracts, Configuration, and Converter
 
 | ID | Status | Owner | Depends on | Deliverable | Verification/evidence |
 |---|---|---|---|---|---|
-| `P1-WP01` | `TODO` | unassigned | `P0-GATE` | Bucket/signal/event/severity/source/selector types and classification contract | Taxonomy/exhaustiveness tests |
+| `P1-WP01` | `IN_PROGRESS` | subagent + root | `P0-GATE` | Bucket/signal/event/severity/source/selector types and classification contract | Taxonomy/exhaustiveness tests |
 | `P1-WP02` | `TODO` | unassigned | `P1-WP01` | Go v8 schema, defaults, compiler, capabilities, routes, profiles, strict legacy rejection | Go config unit/golden tests |
 | `P1-WP03` | `TODO` | unassigned | `P1-WP02` | Python parity, comment-preserving writer, source/effective/reference generation | Python parity/comment tests |
 | `P1-WP04` | `TODO` | unassigned | `P1-WP02..03` | Deterministic v7-to-v8 converter and golden fixtures | Candidate equivalence/secrets/idempotence tests |
@@ -302,6 +302,8 @@ only “passed.” A relevant change invalidates old evidence.
 |---|---|---|---|---|---|---|
 | `V-0001` | 2026-07-02 | `b5167c2d95d72ae2b1c71813aa35fd065c8a2d63` | P0 | `.venv/bin/python scripts/check_grafana_dashboards.py --require-packaged` | 14 dashboards, 313 panels; passed | root |
 | `V-0002` | 2026-07-02 | `b5167c2d95d72ae2b1c71813aa35fd065c8a2d63` | P0 | `uv run python -m pytest cli/tests/test_agent360_dashboard.py cli/tests/test_grafana_dashboards.py -q` | 33 passed in 0.61s | root |
+| `V-0003` | 2026-07-02 | `963b1bc9fb5a564c53809a70b452e61e888f768c` | P0 | `make check` | v7 parity, 81-decision spec, current-state inventory, 14 dashboards/313 panels, Go/TS provider coverage, catalog, and upgrade manifest passed | root |
+| `V-0004` | 2026-07-02 | `963b1bc9fb5a564c53809a70b452e61e888f768c` | P0 | `.venv/bin/python -m pytest cli/tests/test_observability_v8_spec.py cli/tests/test_observability_v8_inventory.py cli/tests/test_agent360_dashboard.py cli/tests/test_grafana_dashboards.py -q` | 42 passed in 3.38s | root |
 
 Final integration requires, at minimum:
 
@@ -328,7 +330,8 @@ and exact-trace canary acknowledgement against its conformance harness.
 
 | ID | Date | Type | Affected work | D-/S-/P- IDs | Resolution or required spec change | Status |
 |---|---|---|---|---|---|---|
-| `C-0001` | 2026-07-02 | setup | `P0-WP01` | D-022, P-045, P-046 | Track package in repository and use this root execution ledger | active |
+| `C-0001` | 2026-07-02 | setup | `P0-WP01` | D-022, P-045, P-046 | Track package in repository and use this root execution ledger | complete |
+| `C-0002` | 2026-07-02 | gate | `P0-WP02..03`, `P0-GATE` | D-001..022, S-001..012, P-001..047 | Approve the mechanically validated contract after current-state inventory, compatibility, and two CodeRabbit review passes | complete |
 
 A new product choice requires a new decision ID and traceability row. A behavior
 change updates its contract and required test in the same change. Deferred release

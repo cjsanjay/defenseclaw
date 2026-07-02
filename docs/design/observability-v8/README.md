@@ -2,10 +2,12 @@
 
 ## Status
 
-Tracked draft for review and spec-driven implementation.
+Approved contract for spec-driven implementation. The execution ledger records
+phase-specific implementation and verification progress.
 
 - Target configuration version: `8`
 - Prepared: 2026-07-02
+- Approved for implementation: 2026-07-02 at `963b1bc9f`
 - Repository baseline: DefenseClaw configuration v7
 - Repository location: `docs/design/observability-v8/`
 - Execution ledger: [`../../../spec.md`](../../../spec.md)
