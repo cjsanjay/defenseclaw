@@ -22,7 +22,6 @@ import (
 	"sync/atomic"
 
 	"github.com/defenseclaw/defenseclaw/internal/audit"
-	"github.com/defenseclaw/defenseclaw/internal/config"
 	"github.com/defenseclaw/defenseclaw/internal/observability"
 	"github.com/defenseclaw/defenseclaw/internal/observability/pipeline"
 	"github.com/defenseclaw/defenseclaw/internal/observability/redaction"
@@ -68,16 +67,6 @@ func (factory *localLogFactory) Prepare(
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	// Phase 2 owns local durability only. Accepting an enabled destination here
-	// would let LocalLogPipeline create OptionalWork with no component authorized
-	// to deliver it. Disabled destinations remain valid source policy and become
-	// active normally once their Phase 3 component exists.
-	for _, destination := range input.Config.Plan.Destinations() {
-		if destination.Kind != config.ObservabilityV8DestinationLocalSQLite && destination.Enabled {
-			return nil, &localFactoryError{}
-		}
-	}
-
 	evaluator, err := router.New(input.Config.Plan)
 	if err != nil {
 		return nil, &localFactoryError{}

@@ -127,17 +127,46 @@ func (failure OptionalFailure) RouteName() string         { return failure.route
 func (failure OptionalFailure) RouteIndex() int           { return failure.routeIndex }
 func (failure OptionalFailure) Code() OptionalFailureCode { return failure.code }
 
+// ProjectedDeliveryIdentity is the complete bounded, non-content identity
+// retained beside one optional projection. It is derived only from the
+// already-validated canonical Record and never retains a producer input or the
+// canonical record itself. OriginDestination is reserved for normalized
+// inbound telemetry and is empty for locally produced records.
+type ProjectedDeliveryIdentity struct {
+	recordID          string
+	bucket            observability.Bucket
+	signal            observability.Signal
+	eventName         observability.EventName
+	originDestination string
+}
+
+func (identity ProjectedDeliveryIdentity) RecordID() string { return identity.recordID }
+func (identity ProjectedDeliveryIdentity) Bucket() observability.Bucket {
+	return identity.bucket
+}
+func (identity ProjectedDeliveryIdentity) Signal() observability.Signal {
+	return identity.signal
+}
+func (identity ProjectedDeliveryIdentity) EventName() observability.EventName {
+	return identity.eventName
+}
+func (identity ProjectedDeliveryIdentity) OriginDestination() string {
+	return identity.originDestination
+}
+
 // ProjectedDelivery is one independently projected optional-destination work
 // item. Its accessors return value-safe immutable types.
 type ProjectedDelivery struct {
 	delivery   router.Delivery
 	projection redaction.Projection
+	identity   ProjectedDeliveryIdentity
 }
 
 func (work ProjectedDelivery) Delivery() router.Delivery { return work.delivery }
 func (work ProjectedDelivery) Projection() redaction.Projection {
 	return work.projection
 }
+func (work ProjectedDelivery) Identity() ProjectedDeliveryIdentity { return work.identity }
 
 // LocalLogOutcome is an immutable snapshot of one coordinator invocation.
 // OptionalWork and OptionalFailures return detached slices.
@@ -298,6 +327,10 @@ func (pipeline *LocalLogPipeline) Process(
 		}
 		outcome.optionalWork = append(outcome.optionalWork, ProjectedDelivery{
 			delivery: delivery, projection: projection,
+			identity: ProjectedDeliveryIdentity{
+				recordID: record.RecordID(), bucket: record.Bucket(), signal: record.Signal(),
+				eventName: record.EventName(),
+			},
 		})
 	}
 	return outcome, nil

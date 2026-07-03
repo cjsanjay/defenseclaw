@@ -375,7 +375,7 @@ func TestRuntimeFailedCandidateLeavesOldGraphActive(t *testing.T) {
 	)
 	result, err := runtime.Reload(t.Context(), runtimegraph.ConfigFromPlan(candidatePlan, false))
 	if err == nil || err.Code() != runtimegraph.ErrorInitialization ||
-		err.ComponentName() != LocalLogComponentName || result.Status() != runtimegraph.ReloadRejected {
+		err.ComponentName() != DestinationDispatchComponentName || result.Status() != runtimegraph.ReloadRejected {
 		t.Fatalf("result=%s error=%v component=%q", result.Status(), err, err.ComponentName())
 	}
 	if result.ActiveGraph() != oldGraph || runtime.Active() != oldGraph {

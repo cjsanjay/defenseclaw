@@ -24,6 +24,7 @@ import (
 	"github.com/defenseclaw/defenseclaw/internal/audit"
 	"github.com/defenseclaw/defenseclaw/internal/config"
 	"github.com/defenseclaw/defenseclaw/internal/observability"
+	"github.com/defenseclaw/defenseclaw/internal/observability/delivery"
 	"github.com/defenseclaw/defenseclaw/internal/observability/pipeline"
 	"github.com/defenseclaw/defenseclaw/internal/observability/redaction"
 	"github.com/defenseclaw/defenseclaw/internal/observability/router"
@@ -37,7 +38,6 @@ const (
 	ErrorInvalidDependency    ErrorCode = "invalid_dependency"
 	ErrorStorePathMismatch    ErrorCode = "store_path_mismatch"
 	ErrorComponentUnavailable ErrorCode = "component_unavailable"
-	ErrorOptionalWork         ErrorCode = "optional_work_unsupported"
 	ErrorShutdown             ErrorCode = "shutdown_degraded"
 )
 
@@ -81,6 +81,14 @@ type Options struct {
 	Reporter                   runtimegraph.Reporter
 	EventHistoryHealthReporter audit.EventHistoryHealthReporter
 	RetentionController        *RetentionController
+	// DestinationAdapterFactory is required only when the compiled plan enables
+	// an optional destination that selects logs. Disabled and non-log-only
+	// destinations allocate no adapter or queue in this runtime component.
+	DestinationAdapterFactory DestinationAdapterFactory
+	// DestinationObserver receives bounded, content-free queue health and
+	// invariant transitions. Observer panics are isolated from producers and
+	// destination workers.
+	DestinationObserver delivery.Observer
 	// GraphOptions is optional. When supplied, Reporter is still replaced by
 	// the process-stable Reporter above so one runtime cannot split reporting
 	// across inconsistent owners.
@@ -92,10 +100,11 @@ type Options struct {
 // own caller-supplied stores or key material; Close must return before callers
 // close either SQLite store.
 type Runtime struct {
-	manager     *runtimegraph.Manager
-	store       *audit.Store
-	retention   *RetentionController
-	lifecycleMu sync.Mutex
+	manager             *runtimegraph.Manager
+	store               *audit.Store
+	retention           *RetentionController
+	destinationObserver *safeDeliveryObserver
+	lifecycleMu         sync.Mutex
 }
 
 // EmitContext is the exact immutable graph snapshot pinned for one Emit call.
@@ -153,16 +162,23 @@ func New(ctx context.Context, initial runtimegraph.Config, options Options) (*Ru
 		recordBuilder:  options.RecordBuilder,
 		healthReporter: options.EventHistoryHealthReporter,
 	}
+	destinationObserver := newSafeDeliveryObserver(options.DestinationObserver)
+	dispatchFactory := &destinationDispatchFactory{
+		adapters: options.DestinationAdapterFactory,
+		observer: destinationObserver,
+	}
 	manager, err := runtimegraph.New(
 		ctx,
 		initial,
 		[]runtimegraph.ComponentFactory{
 			&retentionPolicyFactory{controller: options.RetentionController},
 			factory,
+			dispatchFactory,
 		},
 		graphOptions,
 	)
 	if err != nil {
+		_ = destinationObserver.Close(context.Background())
 		return nil, err
 	}
 	// runtimegraph.New returns only after every generation-one component has
@@ -176,11 +192,13 @@ func New(ctx context.Context, initial runtimegraph.Config, options Options) (*Ru
 		_ = manager.WaitCleanup(cleanupContext)
 		_ = manager.FlushReports(cleanupContext)
 		_ = manager.WaitReporter(cleanupContext)
+		_ = destinationObserver.Close(cleanupContext)
 		return nil, &Error{code: ErrorInvalidDependency}
 	}
 	owned = true
 	return &Runtime{
 		manager: manager, store: options.Store, retention: options.RetentionController,
+		destinationObserver: destinationObserver,
 	}, nil
 }
 
@@ -193,9 +211,10 @@ func (runtime *Runtime) Active() *runtimegraph.Graph {
 }
 
 // Emit pins exactly one graph, resolves that generation's local-log component,
-// processes once, and releases the lease on every path. Configuration is
-// rejected during graph preparation if any optional destination is active, so
-// OptionalWork here is an invariant failure rather than silently dropped work.
+// processes once, hands independently projected optional work to that same
+// generation's bounded dispatchers only after local persistence, and releases
+// the lease on every path. Optional projection/enqueue failures never change
+// the producer result or trigger legacy fallback.
 func (runtime *Runtime) Emit(
 	ctx context.Context,
 	metadata router.Metadata,
@@ -236,8 +255,29 @@ func (runtime *Runtime) Emit(
 	if processErr != nil {
 		return outcome, processErr
 	}
-	if len(outcome.OptionalWork()) != 0 {
-		return outcome, &Error{code: ErrorOptionalWork}
+	if !outcome.LocalPersisted() {
+		return outcome, nil
+	}
+	dispatchValue, dispatchOK := lease.Component(DestinationDispatchComponentName)
+	dispatch, typedDispatch := dispatchValue.(*destinationDispatchComponent)
+	if !dispatchOK || !typedDispatch || dispatch == nil || dispatch.digest != graph.Digest() {
+		// A valid graph always contains this component. Treat corruption as
+		// bounded optional health and preserve the successful local result.
+		for _, work := range outcome.OptionalWork() {
+			observeBoundedDestinationFailure(
+				runtime.destinationObserver, work.Delivery().DestinationName,
+			)
+		}
+		for _, failure := range outcome.OptionalFailures() {
+			observeBoundedDestinationFailure(runtime.destinationObserver, failure.DestinationName())
+		}
+		return outcome, nil
+	}
+	for _, failure := range outcome.OptionalFailures() {
+		dispatch.ObserveProjectionFailure(failure)
+	}
+	for _, work := range outcome.OptionalWork() {
+		dispatch.Enqueue(work)
 	}
 	return outcome, nil
 }
@@ -290,6 +330,11 @@ func (runtime *Runtime) Close(ctx context.Context) error {
 	}
 	if err := runtime.manager.WaitReporter(ctx); first == nil && err != nil {
 		first = err
+	}
+	if first == nil && runtime.destinationObserver != nil {
+		if err := runtime.destinationObserver.Close(ctx); err != nil {
+			first = &Error{code: ErrorShutdown}
+		}
 	}
 	return first
 }

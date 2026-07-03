@@ -11,7 +11,7 @@ import (
 	"github.com/defenseclaw/defenseclaw/internal/observability/runtimegraph"
 )
 
-func TestRuntimeRejectsEnabledOptionalDestinationAndPreservesDisabledPolicy(t *testing.T) {
+func TestRuntimeRequiresAdapterForEnabledOptionalDestinationAndAllocatesNoneWhenDisabled(t *testing.T) {
 	dependencies := newRuntimeTestDependencies(t)
 	enabledPlan := runtimeTestPlan(t, dependencies.storePath, dependencies.judgePath, 90,
 		func(source *config.ObservabilityV8Source) {
@@ -23,7 +23,7 @@ func TestRuntimeRejectsEnabledOptionalDestinationAndPreservesDisabledPolicy(t *t
 	_, err := New(t.Context(), runtimegraph.ConfigFromPlan(enabledPlan, false), dependencies.options())
 	var graphErr *runtimegraph.Error
 	if !errors.As(err, &graphErr) || graphErr.Code() != runtimegraph.ErrorInitialization ||
-		graphErr.ComponentName() != LocalLogComponentName {
+		graphErr.ComponentName() != DestinationDispatchComponentName {
 		t.Fatalf("enabled optional destination error=%v", err)
 	}
 

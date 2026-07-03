@@ -454,6 +454,12 @@ func TestLocalLogPipelinePreservesCanonicalAndOutcomeImmutability(t *testing.T) 
 	if len(work) != 2 {
 		t.Fatalf("optional work = %d", len(work))
 	}
+	identity := work[0].Identity()
+	if identity.RecordID() != canonical.RecordID() || identity.Bucket() != canonical.Bucket() ||
+		identity.Signal() != canonical.Signal() || identity.EventName() != canonical.EventName() ||
+		identity.OriginDestination() != "" {
+		t.Fatalf("projected delivery identity = %#v", identity)
+	}
 	work[0].delivery.DestinationName = "mutated"
 	projectionBytes, err := work[1].projection.Bytes()
 	if err != nil {
