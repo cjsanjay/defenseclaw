@@ -150,7 +150,7 @@ func TestHookPhaseSequenceIsOrderedAndDirected(t *testing.T) {
 	planning.LifecycleState = "active"
 	planning.Phase = "planning"
 	planning = api.enrichHookPhase(planning)
-	if planning.Sequence != 1 || planning.PreviousPhase != "unknown" {
+	if planning.Sequence != 1 || planning.PreviousPhase != "" {
 		t.Fatalf("first phase = %+v", planning)
 	}
 	tool := base
@@ -168,6 +168,53 @@ func TestHookPhaseSequenceIsOrderedAndDirected(t *testing.T) {
 	responding = api.enrichHookPhase(responding)
 	if responding.Sequence != 3 || responding.PreviousPhase != "tool" {
 		t.Fatalf("third phase = %+v", responding)
+	}
+}
+
+func TestFirstHookLifecycleObservationsOmitUnreportedPreviousPhase(t *testing.T) {
+	events := captureGatewayEvents(t)
+	api := &APIServer{}
+	for _, payload := range []map[string]interface{}{
+		{
+			"hook_event_name": "SessionStart",
+			"session_id":      "first-root-session",
+			"agent_id":        "first-root-agent",
+			"agent_type":      "root",
+		},
+		{
+			"hook_event_name":   "SubagentStart",
+			"session_id":        "first-child-session",
+			"parent_session_id": "first-root-session",
+			"agent_id":          "first-child-agent",
+			"parent_agent_id":   "first-root-agent",
+			"agent_type":        "subagent",
+		},
+	} {
+		api.emitAgentHookLLMEvent(
+			context.Background(),
+			normalizeAgentHookRequest("codex", payload),
+			nil,
+		)
+	}
+
+	want := map[string]bool{"session_start": false, "subagent_start": false}
+	for _, event := range *events {
+		if _, ok := want[event.AgentLifecycleEvent]; !ok {
+			continue
+		}
+		if event.AgentPreviousPhase != "" {
+			t.Errorf(
+				"%s previous phase = %q, want omitted first-observation value",
+				event.AgentLifecycleEvent,
+				event.AgentPreviousPhase,
+			)
+		}
+		want[event.AgentLifecycleEvent] = true
+	}
+	for lifecycleEvent, observed := range want {
+		if !observed {
+			t.Errorf("strict gatewaylog validation dropped first %s observation", lifecycleEvent)
+		}
 	}
 }
 

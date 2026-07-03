@@ -987,7 +987,12 @@ func (a *APIServer) enrichHookPhase(meta llmEventMeta) llmEventMeta {
 		}
 		a.hookPhaseStateOrder = append(a.hookPhaseStateOrder, key)
 	}
-	meta.PreviousPhase = firstNonEmpty(state.phase, "unknown")
+	// The first observation has no reported previous phase. Keep that absence
+	// truthful for logs and traces instead of fabricating an "unknown" phase:
+	// their schemas omit the optional field, while the bounded Agent360 metric
+	// projection independently maps an empty PreviousPhase to its required
+	// low-cardinality "unknown" label.
+	meta.PreviousPhase = state.phase
 	state.sequence++
 	state.phase = meta.Phase
 	meta.Sequence = state.sequence
