@@ -28,11 +28,15 @@ from __future__ import annotations
 
 import json
 import re
+import subprocess
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 SCHEMA_DIR = ROOT / "schemas"
+OBSERVABILITY_V8_REFERENCE_GENERATOR = (
+    ROOT / "scripts" / "generate_observability_v8_reference.py"
+)
 
 EXPECTED_ENVELOPE_EVENT_TYPES = {
     "verdict", "judge", "lifecycle", "error", "diagnostic",
@@ -546,6 +550,16 @@ def check_schema_mirrors() -> bool:
     return ok
 
 
+def check_observability_v8_reference() -> bool:
+    """Reject generated reference, docs mirror, or staged wheel-data drift."""
+    result = subprocess.run(
+        [sys.executable, str(OBSERVABILITY_V8_REFERENCE_GENERATOR), "--check"],
+        cwd=ROOT,
+        check=False,
+    )
+    return result.returncode == 0
+
+
 def main() -> int:
     if not SCHEMA_DIR.is_dir():
         print(f"check_schemas: schema dir not found: {SCHEMA_DIR}", file=sys.stderr)
@@ -631,6 +645,9 @@ def main() -> int:
         ok = False
 
     if not check_cli_embed_mirrors():
+        ok = False
+
+    if not check_observability_v8_reference():
         ok = False
 
     return 0 if ok else 1

@@ -151,6 +151,28 @@ func TestReadConfigV8SourceRejectsOversizedInputWithCanonicalCode(t *testing.T) 
 	}
 }
 
+func TestConfigV8ReferenceCommandUsesEmbeddedGeneratedArtifacts(t *testing.T) {
+	previousSection, previousFormat := configV8ReferenceSection, configV8ReferenceFormat
+	t.Cleanup(func() {
+		configV8ReferenceSection, configV8ReferenceFormat = previousSection, previousFormat
+	})
+	for _, format := range []string{"yaml", "markdown"} {
+		configV8ReferenceSection, configV8ReferenceFormat = "observability", format
+		output := &strings.Builder{}
+		configV8ReferenceCmd.SetOut(output)
+		if err := configV8ReferenceCmd.RunE(configV8ReferenceCmd, nil); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(output.String(), "GENERATED FILE") || !strings.Contains(output.String(), "observability") {
+			t.Fatalf("%s reference does not look like generated observability documentation", format)
+		}
+	}
+	configV8ReferenceSection = "unknown"
+	if err := configV8ReferenceCmd.RunE(configV8ReferenceCmd, nil); err == nil {
+		t.Fatal("unsupported reference section was accepted")
+	}
+}
+
 func publicSchemaForTest(t *testing.T) []byte {
 	t.Helper()
 	output := &strings.Builder{}

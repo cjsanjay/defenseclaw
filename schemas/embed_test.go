@@ -666,16 +666,25 @@ func TestDefenseClawConfigV8RejectsUnknownNestedCurrentFields(t *testing.T) {
 func TestDefenseClawConfigV8ReferenceValidates(t *testing.T) {
 	t.Parallel()
 
-	raw, err := os.ReadFile("../docs/design/observability-v8/config-v8-observability-reference.yaml")
-	if err != nil {
-		t.Fatalf("read v8 reference config: %v", err)
-	}
+	raw := DefenseClawConfigV8ObservabilityReferenceYAML()
 	var document any
 	if err := yaml.Unmarshal(raw, &document); err != nil {
 		t.Fatalf("parse v8 reference config: %v", err)
 	}
 	if err := compileConfigV8Schema(t).Validate(document); err != nil {
 		t.Fatalf("v8 observability reference violates canonical schema: %v", err)
+	}
+
+	onDisk, err := os.ReadFile("config/v8/reference/observability.yaml")
+	if err != nil {
+		t.Fatalf("read canonical v8 reference: %v", err)
+	}
+	if !bytes.Equal(raw, onDisk) {
+		t.Fatal("embedded v8 YAML reference differs from canonical file")
+	}
+	markdown := DefenseClawConfigV8ObservabilityReferenceMarkdown()
+	if len(markdown) == 0 || !bytes.Contains(markdown, []byte("Complete source field catalog")) {
+		t.Fatal("embedded v8 Markdown reference is empty or incomplete")
 	}
 }
 

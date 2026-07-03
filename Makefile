@@ -695,6 +695,7 @@ _bundle-data:
 	@mkdir -p cli/defenseclaw/_data/splunk_local_bridge
 	@mkdir -p cli/defenseclaw/_data/local_observability_stack
 	@mkdir -p cli/defenseclaw/_data/llm
+	@mkdir -p cli/defenseclaw/_data/config/v8
 	@rm -rf cli/defenseclaw/_data/policies/guardrail/default
 	@rm -rf cli/defenseclaw/_data/policies/guardrail/strict
 	@rm -rf cli/defenseclaw/_data/policies/guardrail/permissive
@@ -715,6 +716,11 @@ _bundle-data:
 	@# Textual TUI model picker via importlib.resources. Tracked source lives
 	@# at bundles/llm/; _data/llm/ is the gitignored build-staging copy.
 	cp bundles/llm/model_catalog.json cli/defenseclaw/_data/llm/
+	@# v8 config contracts are canonical under schemas/. The wheel receives
+	@# exact build-staging copies so importlib.resources works after install.
+	cp schemas/config/v8/defenseclaw-config.schema.json cli/defenseclaw/_data/config/v8/
+	cp schemas/config/v8/reference/observability.yaml cli/defenseclaw/_data/config/v8/
+	cp schemas/config/v8/reference/observability.md cli/defenseclaw/_data/config/v8/
 	@# splunk_local_bridge and local_observability_stack are bind-mounted by Docker
 	@# (Grafana, Loki, Splunk, etc.) when `defenseclaw obs up` is running. Prefer
 	@# rsync-with-delete over `rm -rf && cp -r` because Docker Desktop on macOS

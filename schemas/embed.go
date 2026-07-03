@@ -23,6 +23,12 @@ import _ "embed"
 //go:embed config/v8/defenseclaw-config.schema.json
 var defenseClawConfigV8Schema []byte
 
+//go:embed config/v8/reference/observability.yaml
+var defenseClawConfigV8ObservabilityReferenceYAML []byte
+
+//go:embed config/v8/reference/observability.md
+var defenseClawConfigV8ObservabilityReferenceMarkdown []byte
+
 //go:embed telemetry/v8/registry.yaml
 var telemetryV8Registry []byte
 
@@ -33,6 +39,18 @@ var telemetryV8SemconvLock []byte
 // configuration schema bytes. Callers cannot mutate the process-wide embed.
 func DefenseClawConfigV8Schema() []byte {
 	return append([]byte(nil), defenseClawConfigV8Schema...)
+}
+
+// DefenseClawConfigV8ObservabilityReferenceYAML returns a copy of the
+// exhaustive, generated source-configuration example owned by the v8 schema.
+func DefenseClawConfigV8ObservabilityReferenceYAML() []byte {
+	return append([]byte(nil), defenseClawConfigV8ObservabilityReferenceYAML...)
+}
+
+// DefenseClawConfigV8ObservabilityReferenceMarkdown returns a copy of the
+// generated human-readable v8 observability field catalog.
+func DefenseClawConfigV8ObservabilityReferenceMarkdown() []byte {
+	return append([]byte(nil), defenseClawConfigV8ObservabilityReferenceMarkdown...)
 }
 
 // TelemetryV8Registry returns a copy of the immutable v8 telemetry registry

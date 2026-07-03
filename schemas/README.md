@@ -40,6 +40,29 @@ There are three enforcement levels:
 | `otel/runtime-approval-span.schema.json` | Runtime approval spans | CI emits a real span and compares its complete attribute set | None |
 | `otel/galileo-export-profile.schema.json` | Galileo destination filter | CI parity with the LLM contract and Galileo setup preset | None |
 | Other `otel/*-event.schema.json` files | OTel log/event consumers | Reference contracts plus subsystem tests | None |
+| `config/v8/defenseclaw-config.schema.json` | `config_version: 8` source validation and the observability compiler | Runtime validation in Go and Python; generated reference drift gate | Go embed in `schemas`; generated Python-wheel copy under `defenseclaw/_data/config/v8/` |
+
+## Generated v8 configuration reference
+
+The v8 JSON Schema is the only configuration-shape authority. The exhaustive
+YAML and Markdown views under `config/v8/reference/` are generated presentation
+artifacts. The generator validates the YAML against the schema, requires it to
+exercise every observability source-field path and destination kind, and renders
+the Markdown field catalog by walking the schema itself.
+
+Run:
+
+```sh
+python scripts/generate_observability_v8_reference.py --write
+make check-schemas
+```
+
+The generator also writes byte-identical, drift-checked copies under
+`cli/defenseclaw/_data/config/v8/` for `importlib.resources` consumers. Those
+three generated files are the only tracked exception in the otherwise
+gitignored Python build-data tree, so both plain `uv build` and `make dist-cli`
+produce a self-contained wheel. The checked-in authority remains under
+`schemas/`; `make _bundle-data` refreshes the copies defensively.
 
 ## Why any copies exist
 

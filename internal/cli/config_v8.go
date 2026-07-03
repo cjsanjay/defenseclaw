@@ -123,9 +123,39 @@ var configV8SchemaCmd = &cobra.Command{
 	},
 }
 
+var configV8ReferenceCmd = &cobra.Command{
+	Use:   "reference",
+	Short: "Emit a generated configuration v8 reference artifact",
+	Args:  cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, _ []string) error {
+		if configV8ReferenceSection != "observability" {
+			return fmt.Errorf("unsupported v8 reference section %q; expected observability", configV8ReferenceSection)
+		}
+		var data []byte
+		switch configV8ReferenceFormat {
+		case "yaml":
+			data = publicschemas.DefenseClawConfigV8ObservabilityReferenceYAML()
+		case "markdown":
+			data = publicschemas.DefenseClawConfigV8ObservabilityReferenceMarkdown()
+		default:
+			return fmt.Errorf("unsupported v8 reference format %q; expected yaml or markdown", configV8ReferenceFormat)
+		}
+		if _, err := cmd.OutOrStdout().Write(data); err != nil {
+			return fmt.Errorf("write configuration reference: %w", err)
+		}
+		if len(data) == 0 || data[len(data)-1] != '\n' {
+			_, err := io.WriteString(cmd.OutOrStdout(), "\n")
+			return err
+		}
+		return nil
+	},
+}
+
 var (
-	configV8ConfigPath string
-	configV8DataDir    string
+	configV8ConfigPath       string
+	configV8DataDir          string
+	configV8ReferenceSection string
+	configV8ReferenceFormat  string
 )
 
 func init() {
@@ -141,7 +171,19 @@ func init() {
 		"",
 		"default data directory when data_dir is omitted from the source",
 	)
-	configV8Cmd.AddCommand(configV8ValidateCmd, configV8EffectiveCmd, configV8SchemaCmd)
+	configV8ReferenceCmd.Flags().StringVar(
+		&configV8ReferenceSection,
+		"section",
+		"observability",
+		"reference section to render",
+	)
+	configV8ReferenceCmd.Flags().StringVar(
+		&configV8ReferenceFormat,
+		"format",
+		"yaml",
+		"reference format: yaml or markdown",
+	)
+	configV8Cmd.AddCommand(configV8ValidateCmd, configV8EffectiveCmd, configV8SchemaCmd, configV8ReferenceCmd)
 	rootCmd.AddCommand(configV8Cmd)
 }
 
