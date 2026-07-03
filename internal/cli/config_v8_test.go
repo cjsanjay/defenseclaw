@@ -66,7 +66,7 @@ observability:
 func TestCompileConfigV8FileLoadsInstallationDotEnvForValidationOnly(t *testing.T) {
 	directory := t.TempDir()
 	path := filepath.Join(directory, "config.yaml")
-	secretName := "DEFENSECLAW_V8_HELPER_TEST_TOKEN"
+	secretName := "DEFENSECLAW_TEST_KEY"
 	t.Setenv(secretName, "")
 	if err := os.WriteFile(filepath.Join(directory, ".env"), []byte(secretName+"=resolved-value\n"), 0o600); err != nil {
 		t.Fatal(err)

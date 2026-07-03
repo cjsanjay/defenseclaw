@@ -366,7 +366,7 @@ observability:
     # Header values may be bounded literal metadata or {env: NAME} secrets.
     headers:
       X-Tenant:
-        env: DEFENSECLAW_TENANT
+        env: ARCHIVE_TENANT
     # TLS verification defaults on. A CA path is read-only and may be shared.
     tls:
       insecure_skip_verify: false

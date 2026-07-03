@@ -156,7 +156,7 @@ observability:
 }
 
 func TestObservabilityV8RuntimeSecretResolverUsesKeyStoreBeforeEnvironment(t *testing.T) {
-	const name = "DEFENSECLAW_OBSERVABILITY_V8_TEST_SECRET"
+	const name = "DEFENSECLAW_TEST_KEY"
 	SetKey(name, "key-store-value")
 	t.Setenv(name, "environment-value")
 	value, ok := (observabilityV8RuntimeSecretResolver{}).ResolveObservabilitySecret(name)

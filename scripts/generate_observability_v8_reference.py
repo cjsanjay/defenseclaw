@@ -465,7 +465,7 @@ def _reference_document() -> dict[str, Any]:
                     "endpoint": "https://archive.example.test/defenseclaw",
                     "method": "POST",
                     "bearer_env": "ARCHIVE_BEARER_TOKEN",
-                    "headers": {"X-Tenant": {"env": "DEFENSECLAW_TENANT"}},
+                    "headers": {"X-Tenant": {"env": "ARCHIVE_TENANT"}},
                     "tls": {"insecure_skip_verify": False, "ca_cert": ""},
                     "timeout_ms": 10000,
                     "network_safety": {
