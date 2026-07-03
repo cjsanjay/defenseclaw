@@ -11,6 +11,7 @@
 package config
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -355,6 +356,72 @@ observability:
 	if semanticError.Source != "config.yaml" || semanticError.Path != "$.observability.destinations[0].batch.max_export_batch_size" ||
 		semanticError.Line != 10 || semanticError.Column == 0 || semanticError.ReceivedClass != "integer" || semanticError.Expected == "" {
 		t.Fatalf("semantic diagnostic = %#v", semanticError)
+	}
+}
+
+func TestParseCompileObservabilityV8BatchSourceEffectiveRoundTripAndMasking(t *testing.T) {
+	raw := []byte(`config_version: 8
+data_dir: /tmp/defenseclaw
+observability:
+  destinations:
+    - name: jsonl
+      kind: jsonl
+      path: /tmp/defenseclaw/events.jsonl
+    - name: console
+      kind: console
+      batch: {max_queue_size: 17, max_queue_bytes: 8388608}
+    - name: archive
+      kind: http_jsonl
+      endpoint: https://archive.example.test/events?access_token=secret-canary
+      batch:
+        max_queue_size: 512
+        max_queue_bytes: 4198400
+        max_export_batch_size: 512
+        max_export_batch_bytes: 4263936
+        scheduled_delay_ms: 1
+`)
+	compiled, err := ParseCompileObservabilityV8("config.yaml", raw, ObservabilityV8CompileOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := compiled.Observability.Destinations[0].Batch; got != (ObservabilityV8BatchSource{}) {
+		t.Fatalf("concise JSONL source was materialized: %+v", got)
+	}
+	consoleSource := compiled.Observability.Destinations[1].Batch
+	if consoleSource != (ObservabilityV8BatchSource{MaxQueueSize: 17, MaxQueueBytes: 8_388_608}) {
+		t.Fatalf("console source batch = %+v", consoleSource)
+	}
+	encoded, err := json.Marshal(compiled.Observability)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var roundTrip ObservabilityV8Source
+	if err := json.Unmarshal(encoded, &roundTrip); err != nil {
+		t.Fatal(err)
+	}
+	if roundTrip.Destinations[1].Batch != consoleSource ||
+		roundTrip.Destinations[2].Batch != compiled.Observability.Destinations[2].Batch {
+		t.Fatalf("batch fields changed across JSON round trip: %+v", roundTrip.Destinations)
+	}
+
+	jsonl, _ := compiled.Plan.Destination("jsonl")
+	if jsonl.Transport.Batch == nil || *jsonl.Transport.Batch != (ObservabilityV8BatchSource{
+		MaxQueueSize: 2_048, MaxQueueBytes: 67_108_864,
+	}) {
+		t.Fatalf("JSONL effective defaults = %+v", jsonl.Transport.Batch)
+	}
+	archive, _ := compiled.Plan.Destination("archive")
+	wantArchive := ObservabilityV8BatchSource{
+		MaxQueueSize: 512, MaxQueueBytes: 4_198_400, MaxExportBatchSize: 512,
+		MaxExportBatchBytes: 4_263_936, ScheduledDelayMS: 1,
+	}
+	if archive.Transport.Batch == nil || *archive.Transport.Batch != wantArchive {
+		t.Fatalf("archive effective batch = %+v", archive.Transport.Batch)
+	}
+	display := string(compiled.Plan.EffectiveJSON())
+	if strings.Contains(display, "secret-canary") || !strings.Contains(display, `"max_queue_bytes":4198400`) ||
+		!strings.Contains(display, `"max_export_batch_bytes":4263936`) {
+		t.Fatalf("effective plan masking/batch rendering failed: %s", display)
 	}
 }
 

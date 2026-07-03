@@ -1501,6 +1501,9 @@
         "rotation": {
           "$ref": "#/$defs/rotation"
         },
+        "batch": {
+          "$ref": "#/$defs/queueBatch"
+        },
         "send": {
           "$ref": "#/$defs/logSend"
         },
@@ -1530,6 +1533,9 @@
         },
         "enabled": {
           "$ref": "#/$defs/destinationEnabled"
+        },
+        "batch": {
+          "$ref": "#/$defs/queueBatch"
         },
         "send": {
           "$ref": "#/$defs/logSend"
@@ -1864,6 +1870,26 @@
       "maximum": 2147483647,
       "default": 10000
     },
+    "queueBatch": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "max_queue_size": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65536,
+          "default": 2048,
+          "description": "Maximum projected records retained by this destination queue."
+        },
+        "max_queue_bytes": {
+          "type": "integer",
+          "minimum": 4198400,
+          "maximum": 268435456,
+          "default": 67108864,
+          "description": "Maximum immutable projected payload bytes retained by this destination queue."
+        }
+      }
+    },
     "batch": {
       "type": "object",
       "additionalProperties": false,
@@ -1871,20 +1897,40 @@
         "max_queue_size": {
           "type": "integer",
           "minimum": 1,
-          "maximum": 2147483647
+          "maximum": 65536,
+          "default": 2048,
+          "description": "Maximum projected records retained by this destination queue."
+        },
+        "max_queue_bytes": {
+          "type": "integer",
+          "minimum": 4198400,
+          "maximum": 268435456,
+          "default": 67108864,
+          "description": "Maximum immutable projected payload bytes retained by this destination queue."
         },
         "max_export_batch_size": {
           "type": "integer",
           "minimum": 1,
-          "maximum": 2147483647
+          "maximum": 8192,
+          "default": 512,
+          "description": "Maximum records in one outbound request."
+        },
+        "max_export_batch_bytes": {
+          "type": "integer",
+          "minimum": 4263936,
+          "maximum": 67108864,
+          "default": 8388608,
+          "description": "Hard ceiling for one fully encoded outbound request."
         },
         "scheduled_delay_ms": {
           "type": "integer",
           "minimum": 1,
-          "maximum": 2147483647
+          "maximum": 600000,
+          "default": 5000,
+          "description": "Maximum normal batching delay in milliseconds."
         }
       },
-      "x-defenseclaw-semantic-constraint": "max_export_batch_size must not exceed max_queue_size. Adapter and preset defaults are resolved by the compiler."
+      "x-defenseclaw-semantic-constraint": "max_export_batch_size must not exceed max_queue_size. Queue bytes count projected payloads and export batch bytes count encoded requests, so no ordering between those byte fields is inferred. Adapter and preset defaults are resolved by the compiler."
     },
     "networkSafety": {
       "type": "object",

@@ -110,7 +110,15 @@ _DESTINATION_SCALARS: Final = frozenset(
 _DESTINATION_NESTED: Final = {
     "rotation": frozenset({"max_size_mb", "max_backups", "max_age_days", "compress"}),
     "tls": frozenset({"insecure", "insecure_skip_verify", "ca_cert"}),
-    "batch": frozenset({"max_queue_size", "max_export_batch_size", "scheduled_delay_ms"}),
+    "batch": frozenset(
+        {
+            "max_queue_size",
+            "max_queue_bytes",
+            "max_export_batch_size",
+            "max_export_batch_bytes",
+            "scheduled_delay_ms",
+        }
+    ),
     "network_safety": frozenset({"allow_private_networks", "allow_cgnat"}),
 }
 _MISSING: Final = object()

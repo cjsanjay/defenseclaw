@@ -8,6 +8,7 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
+import click
 from click.testing import CliRunner
 from defenseclaw.commands import cmd_observability
 from defenseclaw.config_inspect import ConfigV8WireResult
@@ -48,8 +49,18 @@ def _effective() -> dict:
             },
             {
                 "name": "soc",
+                "kind": "http_jsonl",
                 "enabled": True,
                 "selected_signals": ["logs"],
+                "transport": {
+                    "batch": {
+                        "max_queue_size": 2048,
+                        "max_queue_bytes": 67108864,
+                        "max_export_batch_size": 512,
+                        "max_export_batch_bytes": 8388608,
+                        "scheduled_delay_ms": 5000,
+                    }
+                },
                 "routes": [
                     {
                         "name": "ai-findings",
@@ -149,4 +160,33 @@ def test_top_level_plan_skips_legacy_runtime_config_load(tmp_path: Path) -> None
     payload = json.loads(result.output)
     assert payload["basis"] == "canonical_go_compiled_routes"
     assert payload["plan_digest"] == "plan-digest"
+    assert payload["delivery"] == [
+        {
+            "destination": "soc",
+            "kind": "http_jsonl",
+            "max_queue_size": 2048,
+            "max_queue_bytes": 67108864,
+            "max_export_batch_size": 512,
+            "max_export_batch_bytes": 8388608,
+            "scheduled_delay_ms": 5000,
+        }
+    ]
     assert len(payload["rows"]) == 2
+
+
+def test_plan_table_renders_compiled_delivery_limits() -> None:
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        result = runner.invoke(
+            click.Command(
+                "render",
+                callback=lambda: cmd_observability._render_plan_table(
+                    [], "digest", cmd_observability._delivery_settings(_effective())
+                ),
+            )
+        )
+
+    assert result.exit_code == 0, result.output
+    assert "Delivery limits (compiled defaults and source overrides):" in result.output
+    assert "67108864" in result.output
+    assert "8388608" in result.output

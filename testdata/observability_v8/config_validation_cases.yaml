@@ -32,6 +32,59 @@ cases:
             kind: console
             send: {signals: [logs], buckets: [platform.health]}
 
+  - name: queue-only-jsonl-boundaries
+    valid: true
+    source: |
+      config_version: 8
+      observability:
+        destinations:
+          - name: jsonl
+            kind: jsonl
+            path: /tmp/defenseclaw.jsonl
+            batch: {max_queue_size: 65536, max_queue_bytes: 268435456}
+
+  - name: queue-only-console-small-count
+    valid: true
+    source: |
+      config_version: 8
+      observability:
+        destinations:
+          - name: console
+            kind: console
+            batch: {max_queue_size: 1, max_queue_bytes: 4198400}
+
+  - name: push-byte-domains-are-independent
+    valid: true
+    source: |
+      config_version: 8
+      observability:
+        destinations:
+          - name: archive
+            kind: http_jsonl
+            endpoint: https://archive.example.test/events
+            batch:
+              max_queue_size: 512
+              max_queue_bytes: 4198400
+              max_export_batch_size: 512
+              max_export_batch_bytes: 4263936
+              scheduled_delay_ms: 1
+
+  - name: push-batch-maximums
+    valid: true
+    source: |
+      config_version: 8
+      observability:
+        destinations:
+          - name: archive
+            kind: http_jsonl
+            endpoint: https://archive.example.test/events
+            batch:
+              max_queue_size: 65536
+              max_queue_bytes: 268435456
+              max_export_batch_size: 8192
+              max_export_batch_bytes: 67108864
+              scheduled_delay_ms: 600000
+
   - name: galileo-traces-only
     valid: true
     source: |
@@ -109,6 +162,61 @@ cases:
           - name: console
             kind: console
             send: {signals: [traces], buckets: [agent.lifecycle]}
+
+  - name: jsonl-rejects-push-batch-fields
+    valid: false
+    source: |
+      config_version: 8
+      observability:
+        destinations:
+          - name: jsonl
+            kind: jsonl
+            path: /tmp/defenseclaw.jsonl
+            batch: {max_queue_size: 2048, scheduled_delay_ms: 1000}
+
+  - name: prometheus-rejects-batch
+    valid: false
+    source: |
+      config_version: 8
+      observability:
+        destinations:
+          - name: metrics
+            kind: prometheus
+            listen: 127.0.0.1:9464
+            path: /metrics
+            batch: {max_queue_size: 2048, max_queue_bytes: 67108864}
+
+  - name: push-batch-count-exceeds-queue-count
+    valid: false
+    source: |
+      config_version: 8
+      observability:
+        destinations:
+          - name: archive
+            kind: http_jsonl
+            endpoint: https://archive.example.test/events
+            batch: {max_queue_size: 10, max_export_batch_size: 11}
+
+  - name: queue-bytes-over-maximum
+    valid: false
+    source: |
+      config_version: 8
+      observability:
+        destinations:
+          - name: console
+            kind: console
+            batch: {max_queue_bytes: 268435457}
+
+  - name: export-batch-bytes-over-maximum
+    valid: false
+    source: |
+      config_version: 8
+      observability:
+        destinations:
+          - name: archive
+            kind: http_jsonl
+            endpoint: https://archive.example.test/events
+            batch: {max_export_batch_bytes: 67108865}
 
   - name: unknown-profile-reference
     valid: false

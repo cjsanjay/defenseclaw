@@ -108,6 +108,7 @@ def observability_plan(
         selected_signals=set(signals),
         filters=filters,
     )
+    delivery = _delivery_settings(effective)
     if fmt == "json":
         click.echo(
             json.dumps(
@@ -116,6 +117,7 @@ def observability_plan(
                     "config_version": inspected.config_version,
                     "plan_digest": inspected.plan_digest,
                     "network_validation": inspected.network_validation,
+                    "delivery": delivery,
                     "rows": rows,
                 },
                 indent=2,
@@ -123,7 +125,7 @@ def observability_plan(
             )
         )
     else:
-        _render_plan_table(rows, inspected.plan_digest)
+        _render_plan_table(rows, inspected.plan_digest, delivery)
     for warning in effective.get("warnings") or []:
         if isinstance(warning, dict):
             code = str(warning.get("code") or "warning")
@@ -254,7 +256,34 @@ def _destination_floor_route(destination: dict[str, Any]) -> str | None:
     return None
 
 
-def _render_plan_table(rows: list[dict[str, Any]], digest: str) -> None:
+def _delivery_settings(effective: dict[str, Any]) -> list[dict[str, Any]]:
+    """Project compiled queue/batch values without deriving defaults in Python."""
+
+    result: list[dict[str, Any]] = []
+    for destination in effective.get("destinations") or []:
+        if not isinstance(destination, dict):
+            continue
+        transport = destination.get("transport")
+        if not isinstance(transport, dict):
+            continue
+        batch = transport.get("batch")
+        if not isinstance(batch, dict):
+            continue
+        result.append(
+            {
+                "destination": str(destination.get("name") or ""),
+                "kind": str(destination.get("kind") or ""),
+                "max_queue_size": batch.get("max_queue_size"),
+                "max_queue_bytes": batch.get("max_queue_bytes"),
+                "max_export_batch_size": batch.get("max_export_batch_size"),
+                "max_export_batch_bytes": batch.get("max_export_batch_bytes"),
+                "scheduled_delay_ms": batch.get("scheduled_delay_ms"),
+            }
+        )
+    return result
+
+
+def _render_plan_table(rows: list[dict[str, Any]], digest: str, delivery: list[dict[str, Any]]) -> None:
     click.echo(f"Compiled Go plan digest: {digest}")
     headings = ("BUCKET", "SIGNAL", "COLLECT", "DESTINATION", "DECISION", "ROUTE", "REDACTION")
     values = [
@@ -282,4 +311,34 @@ def _render_plan_table(rows: list[dict[str, Any]], digest: str) -> None:
         click.echo("  ".join(str(value).ljust(widths[index]) for index, value in enumerate(row)))
     if any(row["decision"] == "conditional" for row in rows):
         click.echo("conditional = an earlier route constrains metadata not supplied by the current filters")
+    if delivery:
+        click.echo("Delivery limits (compiled defaults and source overrides):")
+        delivery_headings = (
+            "DESTINATION",
+            "KIND",
+            "QUEUE_RECORDS",
+            "QUEUE_BYTES",
+            "BATCH_RECORDS",
+            "BATCH_BYTES",
+            "DELAY_MS",
+        )
+        delivery_values = [
+            (
+                item["destination"],
+                item["kind"],
+                item["max_queue_size"],
+                item["max_queue_bytes"],
+                item["max_export_batch_size"] or "-",
+                item["max_export_batch_bytes"] or "-",
+                item["scheduled_delay_ms"] or "-",
+            )
+            for item in delivery
+        ]
+        delivery_widths = [len(value) for value in delivery_headings]
+        for row in delivery_values:
+            for index, value in enumerate(row):
+                delivery_widths[index] = max(delivery_widths[index], len(str(value)))
+        click.echo("  ".join(value.ljust(delivery_widths[index]) for index, value in enumerate(delivery_headings)))
+        for row in delivery_values:
+            click.echo("  ".join(str(value).ljust(delivery_widths[index]) for index, value in enumerate(row)))
     click.echo("Rows render canonical Go-compiled routes; Python does not compile routing policy.")

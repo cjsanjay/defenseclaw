@@ -32,8 +32,17 @@ const (
 	observabilityV8GalileoPresetProfile     = "galileo-rich-v2"
 	observabilityV8DefaultTimeoutMS         = 10_000
 	observabilityV8DefaultQueueSize         = 2_048
+	observabilityV8DefaultQueueBytes        = 64 * 1_024 * 1_024
 	observabilityV8DefaultExportBatchSize   = 512
+	observabilityV8DefaultExportBatchBytes  = 8 * 1_024 * 1_024
 	observabilityV8DefaultBatchDelayMS      = 5_000
+	observabilityV8MaxQueueSize             = 65_536
+	observabilityV8MinQueueBytes            = 4_198_400
+	observabilityV8MaxQueueBytes            = 256 * 1_024 * 1_024
+	observabilityV8MaxExportBatchSize       = 8_192
+	observabilityV8MinExportBatchBytes      = 4_263_936
+	observabilityV8MaxExportBatchBytes      = 64 * 1_024 * 1_024
+	observabilityV8MaxBatchDelayMS          = 600_000
 )
 
 var observabilityV8SemanticProfileLock = ObservabilityV8SemanticProfileLock{
@@ -789,8 +798,13 @@ func compileObservabilityV8Transport(
 			return ObservabilityV8TransportPlan{}, err
 		}
 		result.Rotation = &rotation
+		if err := compileObservabilityV8QueueDefaults(&result, source, path, true); err != nil {
+			return ObservabilityV8TransportPlan{}, err
+		}
 	case ObservabilityV8DestinationConsole:
-		// No transport fields are required.
+		if err := compileObservabilityV8QueueDefaults(&result, source, path, true); err != nil {
+			return ObservabilityV8TransportPlan{}, err
+		}
 	case ObservabilityV8DestinationPrometheus:
 		if err := validateObservabilityV8PrometheusTransport(source.Listen, source.Path, path); err != nil {
 			return ObservabilityV8TransportPlan{}, err
@@ -865,8 +879,8 @@ func validateObservabilityV8KindSpecificFields(source ObservabilityV8Destination
 		"signal_overrides": source.SignalOverrides != nil,
 	}
 	allowed := map[ObservabilityV8DestinationKind]map[string]struct{}{
-		ObservabilityV8DestinationJSONL:      setObservabilityV8Fields("path", "rotation"),
-		ObservabilityV8DestinationConsole:    setObservabilityV8Fields(),
+		ObservabilityV8DestinationJSONL:      setObservabilityV8Fields("path", "rotation", "batch"),
+		ObservabilityV8DestinationConsole:    setObservabilityV8Fields("batch"),
 		ObservabilityV8DestinationPrometheus: setObservabilityV8Fields("listen", "path"),
 		ObservabilityV8DestinationSplunkHEC:  setObservabilityV8Fields("endpoint", "token_env", "index", "source", "sourcetype", "sourcetype_overrides", "timeout_ms", "tls", "batch", "network_safety"),
 		ObservabilityV8DestinationHTTPJSONL:  setObservabilityV8Fields("endpoint", "method", "headers", "bearer_env", "timeout_ms", "tls", "batch", "network_safety"),
@@ -940,7 +954,8 @@ func observabilityV8TLSConfigured(source ObservabilityV8TLSSource) bool {
 }
 
 func observabilityV8BatchConfigured(source ObservabilityV8BatchSource) bool {
-	return source.MaxQueueSize != 0 || source.MaxExportBatchSize != 0 || source.ScheduledDelayMS != 0
+	return source.MaxQueueSize != 0 || source.MaxQueueBytes != 0 || source.MaxExportBatchSize != 0 ||
+		source.MaxExportBatchBytes != 0 || source.ScheduledDelayMS != 0
 }
 
 func observabilityV8NetworkSafetyConfigured(source ObservabilityV8NetworkSafetySource) bool {
@@ -986,25 +1001,30 @@ func compileObservabilityV8PushDefaults(
 		tls := source.TLS
 		result.TLS = &tls
 	}
-	if result.Batch == nil {
-		batch := source.Batch
-		result.Batch = &batch
-	}
 	if result.NetworkSafety == nil {
 		networkSafety := source.NetworkSafety
 		result.NetworkSafety = &networkSafety
 	}
-	if result.Batch.MaxQueueSize == 0 {
-		result.Batch.MaxQueueSize = observabilityV8DefaultQueueSize
+	if err := compileObservabilityV8QueueDefaults(result, source, path, false); err != nil {
+		return err
 	}
 	if result.Batch.MaxExportBatchSize == 0 {
 		result.Batch.MaxExportBatchSize = observabilityV8DefaultExportBatchSize
 	}
+	if result.Batch.MaxExportBatchBytes == 0 {
+		result.Batch.MaxExportBatchBytes = observabilityV8DefaultExportBatchBytes
+	}
 	if result.Batch.ScheduledDelayMS == 0 {
 		result.Batch.ScheduledDelayMS = observabilityV8DefaultBatchDelayMS
 	}
-	if result.Batch.MaxQueueSize < 1 || result.Batch.MaxExportBatchSize < 1 || result.Batch.ScheduledDelayMS < 1 {
-		return fmt.Errorf("%s.batch: queue size, export batch size, and scheduled delay must be positive", path)
+	if result.Batch.MaxExportBatchSize < 1 || result.Batch.MaxExportBatchSize > observabilityV8MaxExportBatchSize {
+		return fmt.Errorf("%s.batch.max_export_batch_size: must be from 1 through %d", path, observabilityV8MaxExportBatchSize)
+	}
+	if result.Batch.MaxExportBatchBytes < observabilityV8MinExportBatchBytes || result.Batch.MaxExportBatchBytes > observabilityV8MaxExportBatchBytes {
+		return fmt.Errorf("%s.batch.max_export_batch_bytes: must be from %d through %d", path, observabilityV8MinExportBatchBytes, observabilityV8MaxExportBatchBytes)
+	}
+	if result.Batch.ScheduledDelayMS < 1 || result.Batch.ScheduledDelayMS > observabilityV8MaxBatchDelayMS {
+		return fmt.Errorf("%s.batch.scheduled_delay_ms: must be from 1 through %d", path, observabilityV8MaxBatchDelayMS)
 	}
 	if result.Batch.MaxExportBatchSize > result.Batch.MaxQueueSize {
 		return fmt.Errorf("%s.batch.max_export_batch_size: must not exceed max_queue_size", path)
@@ -1019,6 +1039,41 @@ func compileObservabilityV8PushDefaults(
 		return nil
 	}
 	return validateObservabilityV8Endpoint(result.Endpoint, result.Protocol, *result.NetworkSafety, path+".endpoint")
+}
+
+func compileObservabilityV8QueueDefaults(
+	result *ObservabilityV8TransportPlan,
+	source ObservabilityV8DestinationSource,
+	path string,
+	queueOnly bool,
+) error {
+	if queueOnly {
+		switch {
+		case source.Batch.MaxExportBatchSize != 0:
+			return fmt.Errorf("%s.batch.max_export_batch_size: field is valid only for push destinations", path)
+		case source.Batch.MaxExportBatchBytes != 0:
+			return fmt.Errorf("%s.batch.max_export_batch_bytes: field is valid only for push destinations", path)
+		case source.Batch.ScheduledDelayMS != 0:
+			return fmt.Errorf("%s.batch.scheduled_delay_ms: field is valid only for push destinations", path)
+		}
+	}
+	if result.Batch == nil {
+		batch := source.Batch
+		result.Batch = &batch
+	}
+	if result.Batch.MaxQueueSize == 0 {
+		result.Batch.MaxQueueSize = observabilityV8DefaultQueueSize
+	}
+	if result.Batch.MaxQueueBytes == 0 {
+		result.Batch.MaxQueueBytes = observabilityV8DefaultQueueBytes
+	}
+	if result.Batch.MaxQueueSize < 1 || result.Batch.MaxQueueSize > observabilityV8MaxQueueSize {
+		return fmt.Errorf("%s.batch.max_queue_size: must be from 1 through %d", path, observabilityV8MaxQueueSize)
+	}
+	if result.Batch.MaxQueueBytes < observabilityV8MinQueueBytes || result.Batch.MaxQueueBytes > observabilityV8MaxQueueBytes {
+		return fmt.Errorf("%s.batch.max_queue_bytes: must be from %d through %d", path, observabilityV8MinQueueBytes, observabilityV8MaxQueueBytes)
+	}
+	return nil
 }
 
 func validateObservabilityV8PrometheusTransport(listen, pathValue, path string) error {

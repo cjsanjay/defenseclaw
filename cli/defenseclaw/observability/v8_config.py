@@ -115,6 +115,32 @@ DESTINATION_CAPABILITIES: dict[str, tuple[str, ...]] = {
     "http_jsonl": ("logs",),
     "otlp": SIGNALS,
 }
+DESTINATION_BATCH_MODES = {
+    "jsonl": "queue",
+    "console": "queue",
+    "prometheus": "none",
+    "splunk_hec": "push",
+    "http_jsonl": "push",
+    "otlp": "push",
+}
+QUEUE_DEFAULTS = {
+    "max_queue_size": 2_048,
+    "max_queue_bytes": 67_108_864,
+}
+PUSH_BATCH_DEFAULTS = {
+    "max_export_batch_size": 512,
+    "max_export_batch_bytes": 8_388_608,
+    "scheduled_delay_ms": 5_000,
+}
+QUEUE_BOUNDS = {
+    "max_queue_size": (1, 65_536),
+    "max_queue_bytes": (4_198_400, 268_435_456),
+}
+PUSH_BATCH_BOUNDS = {
+    "max_export_batch_size": (1, 8_192),
+    "max_export_batch_bytes": (4_263_936, 67_108_864),
+    "scheduled_delay_ms": (1, 600_000),
+}
 
 _TRACE_LIMIT_BOUNDS = {
     "max_attributes_per_span": (32, 256),
@@ -324,7 +350,12 @@ def observability_v8_parity_contract() -> dict[str, Any]:
             "metric_temporality": "delta",
         },
         "destination_capabilities": {name: list(signals) for name, signals in DESTINATION_CAPABILITIES.items()},
+        "destination_batch_modes": dict(DESTINATION_BATCH_MODES),
         "galileo_capabilities": ["traces"],
+        "queue_defaults": dict(QUEUE_DEFAULTS),
+        "push_batch_defaults": dict(PUSH_BATCH_DEFAULTS),
+        "queue_bounds": {name: list(bounds) for name, bounds in QUEUE_BOUNDS.items()},
+        "push_batch_bounds": {name: list(bounds) for name, bounds in PUSH_BATCH_BOUNDS.items()},
         "profiles": list(BUILT_IN_PROFILES),
         "detector_groups": list(DETECTOR_GROUPS),
         "field_classes": list(FIELD_CLASSES),
@@ -593,6 +624,21 @@ def _assert_schema_parity(schema: dict[str, Any]) -> None:
         raise RuntimeError("Python v8 route actions drifted from $defs.routeAction")
     if tuple(defs["selector"]["properties"]) != SELECTOR_FIELDS:
         raise RuntimeError("Python v8 selector vocabulary drifted from $defs.selector")
+    queue_properties = defs["queueBatch"]["properties"]
+    push_properties = defs["batch"]["properties"]
+    for name, expected in QUEUE_DEFAULTS.items():
+        if queue_properties[name]["default"] != expected or push_properties[name]["default"] != expected:
+            raise RuntimeError(f"Python v8 queue default drifted from $defs.batch.{name}")
+    for name, (minimum, maximum) in QUEUE_BOUNDS.items():
+        for properties in (queue_properties, push_properties):
+            if properties[name]["minimum"] != minimum or properties[name]["maximum"] != maximum:
+                raise RuntimeError(f"Python v8 queue bounds drifted from $defs.batch.{name}")
+    for name, expected in PUSH_BATCH_DEFAULTS.items():
+        if push_properties[name]["default"] != expected:
+            raise RuntimeError(f"Python v8 push default drifted from $defs.batch.{name}")
+    for name, (minimum, maximum) in PUSH_BATCH_BOUNDS.items():
+        if push_properties[name]["minimum"] != minimum or push_properties[name]["maximum"] != maximum:
+            raise RuntimeError(f"Python v8 push bounds drifted from $defs.batch.{name}")
     destination_defs = {
         "jsonlDestination": "jsonl",
         "consoleDestination": "console",
@@ -604,6 +650,13 @@ def _assert_schema_parity(schema: dict[str, Any]) -> None:
     schema_kinds = tuple(defs[name]["properties"]["kind"]["const"] for name in destination_defs)
     if schema_kinds != tuple(DESTINATION_CAPABILITIES):
         raise RuntimeError("Python v8 destination kinds drifted from the canonical schema")
+    for definition, kind in destination_defs.items():
+        properties = defs[definition]["properties"]
+        mode = DESTINATION_BATCH_MODES[kind]
+        expected_ref = {"queue": "#/$defs/queueBatch", "push": "#/$defs/batch"}.get(mode)
+        actual_ref = properties.get("batch", {}).get("$ref")
+        if actual_ref != expected_ref:
+            raise RuntimeError(f"Python v8 destination batch mode drifted for {kind}")
     default_checks = (
         (defs["collectPolicy"]["properties"]["logs"]["default"], True),
         (defs["collectPolicy"]["properties"]["traces"]["default"], True),
@@ -833,9 +886,9 @@ def _validate_destination(destination: dict[str, Any], path: str, source_name: s
         _semantic_error(source_name, f"{path}.signal_overrides", "remove overrides for unselected signals")
 
     batch = destination.get("batch", {})
-    queue_size = batch.get("max_queue_size", 2_048)
-    export_size = batch.get("max_export_batch_size", 512)
-    if export_size > queue_size:
+    queue_size = batch.get("max_queue_size", QUEUE_DEFAULTS["max_queue_size"])
+    export_size = batch.get("max_export_batch_size", PUSH_BATCH_DEFAULTS["max_export_batch_size"])
+    if kind in ("splunk_hec", "http_jsonl", "otlp") and export_size > queue_size:
         _semantic_error(
             source_name,
             f"{path}.batch.max_export_batch_size",
@@ -1057,9 +1110,14 @@ __all__ = [
     "BUCKETS",
     "BUILT_IN_PROFILES",
     "DESTINATION_CAPABILITIES",
+    "DESTINATION_BATCH_MODES",
     "DETECTOR_GROUPS",
     "FIELD_CLASSES",
     "FIELD_MODES",
+    "PUSH_BATCH_BOUNDS",
+    "PUSH_BATCH_DEFAULTS",
+    "QUEUE_BOUNDS",
+    "QUEUE_DEFAULTS",
     "ROUTE_ACTIONS",
     "SELECTOR_FIELDS",
     "SEVERITIES",

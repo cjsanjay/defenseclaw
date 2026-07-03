@@ -100,9 +100,7 @@ YAML_HEADER = """\
 """
 
 YAML_ANNOTATIONS = {
-    "config_version: 8": (
-        "# Selects the strict v8 configuration contract; unknown keys are errors.",
-    ),
+    "config_version: 8": ("# Selects the strict v8 configuration contract; unknown keys are errors.",),
     "  bucket_catalog_version: 1": (
         "  # Optional in source. Version 8 currently resolves catalog 1; pin it only",
         "  # when deliberately binding the file to this reviewed bucket taxonomy.",
@@ -118,9 +116,7 @@ YAML_ANNOTATIONS = {
     "    sampler: parentbased_traceidratio": (
         "    # Samplers: always_on/off, traceidratio, or their parentbased variants.",
     ),
-    "    sampler_arg: '0.10'": (
-        "    # Ratio in [0,1], required only by ratio samplers.",
-    ),
+    "    sampler_arg: '0.10'": ("    # Ratio in [0,1], required only by ratio samplers.",),
     "    semantic_profile: defenseclaw-genai-rich-v1": (
         "    # Immutable registry profile combining OTel GenAI portability with",
         "    # DefenseClaw lifecycle, guardrail, evidence, and security attributes.",
@@ -128,28 +124,16 @@ YAML_ANNOTATIONS = {
     "    compatibility_aliases: true": (
         "    # Temporarily emit documented legacy aliases from the same redacted value.",
     ),
-    "    limits:": (
-        "    # Hard per-span/event/message limits; truncation stays deterministic.",
-    ),
-    "  metric_policy:": (
-        "  # Process-wide metric reader interval and aggregation temporality.",
-    ),
-    "    export_interval_seconds: 60": (
-        "    # Positive reader interval; destination export does not override it.",
-    ),
-    "    temporality: delta": (
-        "    # delta or cumulative; choose for backend aggregation expectations.",
-    ),
+    "    limits:": ("    # Hard per-span/event/message limits; truncation stays deterministic.",),
+    "  metric_policy:": ("  # Process-wide metric reader interval and aggregation temporality.",),
+    "    export_interval_seconds: 60": ("    # Positive reader interval; destination export does not override it.",),
+    "    temporality: delta": ("    # delta or cumulative; choose for backend aggregation expectations.",),
     "  defaults:": (
         "  # Optional global bucket override. Omit it to inherit versioned catalog",
         "  # defaults (all signals collected, no redaction in catalog v1).",
     ),
-    "    collect:": (
-        "    # Signal construction gate. false avoids normal producer/runtime cost.",
-    ),
-    "    redaction_profile: none": (
-        "    # Source default is intentionally unredacted; buckets may override it.",
-    ),
+    "    collect:": ("    # Signal construction gate. false avoids normal producer/runtime cost.",),
+    "    redaction_profile: none": ("    # Source default is intentionally unredacted; buckets may override it.",),
     "  buckets:": (
         "  # All 14 catalog buckets are expanded here for discoverability. Normal source",
         "  # files should list only deliberate collection or redaction overrides.",
@@ -159,15 +143,9 @@ YAML_ANNOTATIONS = {
         "  # Detector groups: pii, credentials, secrets.",
         "  # Field modes: preserve, detect, whole, hash, remove.",
     ),
-    "      extends: sensitive": (
-        "      # Inheritance is single-level: sensitive, content, or strict.",
-    ),
-    "      detectors:": (
-        "      # Detector groups run only where a field class uses detect.",
-    ),
-    "      field_classes:": (
-        "      # Per-class handling redacts only sensitive substrings when set to detect.",
-    ),
+    "      extends: sensitive": ("      # Inheritance is single-level: sensitive, content, or strict.",),
+    "      detectors:": ("      # Detector groups run only where a field class uses detect.",),
+    "      field_classes:": ("      # Per-class handling redacts only sensitive substrings when set to detect.",),
     "  connectors:": (
         "  # Notification-only connector compatibility. This is not telemetry routing;",
         "  # the removed v7 connectors.*.audit_sinks key is intentionally unavailable.",
@@ -189,49 +167,31 @@ YAML_ANNOTATIONS = {
     "    judge_bodies_path: ~/.defenseclaw/judge_bodies.db": (
         "    # Separate forensic judge-body store; must not alias any configured file.",
     ),
-    "    retention_days: 90": (
-        "    # Applies to local event/evidence/judge history; zero means retain forever.",
-    ),
+    "    retention_days: 90": ("    # Applies to local event/evidence/judge history; zero means retain forever.",),
     "  destinations:": (
         "  # Optional exports. Presence defaults enabled:true. Every example is disabled",
         "  # so this exhaustive reference is safe to inspect without exporting data.",
     ),
-    "  - name: local-jsonl": (
-        "  # JSONL: logs only. Ordered routes demonstrate first-match drop/send behavior.",
-    ),
+    "  - name: local-jsonl": ("  # JSONL: logs only. Ordered routes demonstrate first-match drop/send behavior.",),
     "    rotation:": (
         "    # Size/age rotation with optional gzip compression; zero backups/age disables",
         "    # that pruning dimension without disabling the destination.",
     ),
-    "  - name: operator-console": (
-        "  # Console: logs only. Concise send replaces the generated all-logs policy.",
-    ),
-    "  - name: prometheus": (
-        "  # Prometheus: metrics only, exposed through the configured pull endpoint.",
-    ),
+    "  - name: operator-console": ("  # Console: logs only. Concise send replaces the generated all-logs policy.",),
+    "  - name: prometheus": ("  # Prometheus: metrics only, exposed through the configured pull endpoint.",),
     "  - name: splunk-production": (
         "  # Splunk HEC: logs only. Private/CGNAT collectors require reviewed opt-in;",
         "  # metadata, link-local, and other prohibited ranges remain blocked.",
     ),
-    "    token_env: SPLUNK_HEC_TOKEN": (
-        "    # Required HEC token environment-variable name.",
-    ),
-    "  - name: http-archive": (
-        "  # Generic HTTP JSONL: logs only. Header/auth values use environment references.",
-    ),
-    "    bearer_env: ARCHIVE_BEARER_TOKEN": (
-        "    # Optional bearer token environment-variable name.",
-    ),
-    "  - name: general-otel": (
-        "  # General OTLP: logs, traces, and metrics with per-signal endpoint overrides.",
-    ),
+    "    token_env: SPLUNK_HEC_TOKEN": ("    # Required HEC token environment-variable name.",),
+    "  - name: http-archive": ("  # Generic HTTP JSONL: logs only. Header/auth values use environment references.",),
+    "    bearer_env: ARCHIVE_BEARER_TOKEN": ("    # Optional bearer token environment-variable name.",),
+    "  - name: general-otel": ("  # General OTLP: logs, traces, and metrics with per-signal endpoint overrides.",),
     "    protocol: http/protobuf": (
         "    # grpc, grpc/protobuf, http, or http/protobuf; HTTP means OTLP protobuf,",
         "    # never arbitrary JSON.",
     ),
-    "    signal_overrides:": (
-        "    # Empty endpoint inherits the destination endpoint; path remains per signal.",
-    ),
+    "    signal_overrides:": ("    # Empty endpoint inherits the destination endpoint; path remains per signal.",),
     "  - name: galileo": (
         "  # Galileo is the OTLP adapter's trace-only rich-v2 preset; its batch-delay",
         "  # override is 1000 ms while the general OTLP default remains 5000 ms.",
@@ -240,37 +200,22 @@ YAML_ANNOTATIONS = {
         "    # Presence normally defaults true. Disabled examples retain policy without",
         "    # initializing transports or resolving their secrets.",
     ),
-    "    headers:": (
-        "    # Header values may be bounded literal metadata or {env: NAME} secrets.",
-    ),
-    "    tls:": (
-        "    # TLS verification defaults on. A CA path is read-only and may be shared.",
-    ),
-    "    timeout_ms: 10000": (
-        "    # Positive per-export timeout in milliseconds.",
-    ),
+    "    headers:": ("    # Header values may be bounded literal metadata or {env: NAME} secrets.",),
+    "    tls:": ("    # TLS verification defaults on. A CA path is read-only and may be shared.",),
+    "    timeout_ms: 10000": ("    # Positive per-export timeout in milliseconds.",),
     "    network_safety:": (
         "    # Private and CGNAT destinations require separate explicit opt-ins. DNS is",
         "    # rechecked at connect time; metadata/link-local targets are always blocked.",
     ),
     "    batch:": (
-        "    # Queue/batch/delay controls; export batch size cannot exceed queue size.",
+        "    # Queue count/bytes are always bounded. Push destinations additionally",
+        "    # bound encoded request count/bytes and delay; batch count <= queue count.",
     ),
-    "    routes:": (
-        "    # Advanced ordered rules. First match wins for each destination and signal.",
-    ),
-    "    send:": (
-        "    # Concise policy: exact signals + buckets + optional redaction profile.",
-    ),
-    "      selector:": (
-        "      # Selector fields AND together; values within one field OR together.",
-    ),
-    "      action: drop": (
-        "      # drop terminates routing and cannot specify a redaction profile.",
-    ),
-    "      action: send": (
-        "      # send applies the route profile, or the bucket profile when omitted.",
-    ),
+    "    routes:": ("    # Advanced ordered rules. First match wins for each destination and signal.",),
+    "    send:": ("    # Concise policy: exact signals + buckets + optional redaction profile.",),
+    "      selector:": ("      # Selector fields AND together; values within one field OR together.",),
+    "      action: drop": ("      # drop terminates routing and cannot specify a redaction profile.",),
+    "      action: send": ("      # send applies the route profile, or the bucket profile when omitted.",),
 }
 
 
@@ -287,10 +232,7 @@ def _reference_document() -> dict[str, Any]:
     from silently omitting a newly added field.
     """
 
-    bucket_policies = {
-        bucket: {"collect": _collect_all(), "redaction_profile": "none"}
-        for bucket in BUCKETS
-    }
+    bucket_policies = {bucket: {"collect": _collect_all(), "redaction_profile": "none"} for bucket in BUCKETS}
     return {
         "config_version": 8,
         "observability": {
@@ -377,6 +319,10 @@ def _reference_document() -> dict[str, Any]:
                         "max_age_days": 30,
                         "compress": True,
                     },
+                    "batch": {
+                        "max_queue_size": 2048,
+                        "max_queue_bytes": 67108864,
+                    },
                     "routes": [
                         {
                             "name": "omit-diagnostics",
@@ -404,6 +350,10 @@ def _reference_document() -> dict[str, Any]:
                     "name": "operator-console",
                     "kind": "console",
                     "enabled": False,
+                    "batch": {
+                        "max_queue_size": 1024,
+                        "max_queue_bytes": 33554432,
+                    },
                     "send": {
                         "signals": ["logs"],
                         "buckets": ["compliance.activity", "platform.health"],
@@ -442,7 +392,9 @@ def _reference_document() -> dict[str, Any]:
                     },
                     "batch": {
                         "max_queue_size": 2048,
+                        "max_queue_bytes": 67108864,
                         "max_export_batch_size": 256,
+                        "max_export_batch_bytes": 8388608,
                         "scheduled_delay_ms": 1000,
                     },
                     "routes": [
@@ -474,7 +426,9 @@ def _reference_document() -> dict[str, Any]:
                     },
                     "batch": {
                         "max_queue_size": 2048,
+                        "max_queue_bytes": 67108864,
                         "max_export_batch_size": 100,
+                        "max_export_batch_bytes": 8388608,
                         "scheduled_delay_ms": 1000,
                     },
                     "send": {
@@ -507,25 +461,23 @@ def _reference_document() -> dict[str, Any]:
                     },
                     "batch": {
                         "max_queue_size": 4096,
+                        "max_queue_bytes": 134217728,
                         "max_export_batch_size": 512,
+                        "max_export_batch_bytes": 16777216,
                         "scheduled_delay_ms": 5000,
                     },
                     "routes": [
                         {
                             "name": "operational-logs",
                             "signals": ["logs"],
-                            "selector": {
-                                "buckets": ["compliance.activity", "platform.health"]
-                            },
+                            "selector": {"buckets": ["compliance.activity", "platform.health"]},
                             "action": "send",
                             "redaction_profile": "strict",
                         },
                         {
                             "name": "runtime-signals",
                             "signals": ["traces", "metrics"],
-                            "selector": {
-                                "buckets": ["model.io", "tool.activity", "agent.lifecycle"]
-                            },
+                            "selector": {"buckets": ["model.io", "tool.activity", "agent.lifecycle"]},
                             "action": "send",
                             "redaction_profile": "sensitive",
                         },
@@ -549,7 +501,9 @@ def _reference_document() -> dict[str, Any]:
                     },
                     "batch": {
                         "max_queue_size": 2048,
+                        "max_queue_bytes": 67108864,
                         "max_export_batch_size": 512,
+                        "max_export_batch_bytes": 8388608,
                         "scheduled_delay_ms": 1000,
                     },
                     "send": {
@@ -775,9 +729,7 @@ def _render_yaml(document: Mapping[str, Any]) -> str:
     return YAML_HEADER + "\n".join(annotated) + "\n"
 
 
-def _schema_paths(
-    schema: Mapping[str, Any], node: Mapping[str, Any], prefix: str
-) -> set[str]:
+def _schema_paths(schema: Mapping[str, Any], node: Mapping[str, Any], prefix: str) -> set[str]:
     """Return structural source paths declared by a schema node."""
 
     node = _resolve(schema, node)
@@ -854,9 +806,7 @@ def _validate_reference(schema: Mapping[str, Any], document: Mapping[str, Any]) 
 
     expected_kinds = {kind for kind, _ in _destination_variants(schema)}
     actual_kinds = {
-        str(item.get("kind"))
-        for item in document["observability"]["destinations"]
-        if isinstance(item, Mapping)
+        str(item.get("kind")) for item in document["observability"]["destinations"] if isinstance(item, Mapping)
     }
     if actual_kinds != expected_kinds:
         raise ValueError(

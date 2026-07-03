@@ -19,8 +19,8 @@ or ordered `routes` for selector-specific policy. Collection gates run first.
 
 | Kind | Supported signals | Source fields |
 |---|---|---|
-| `jsonl` | logs | `name`, `kind`, `enabled`, `path`, `rotation`, `send`, `routes` |
-| `console` | logs | `name`, `kind`, `enabled`, `send`, `routes` |
+| `jsonl` | logs | `name`, `kind`, `enabled`, `path`, `rotation`, `batch`, `send`, `routes` |
+| `console` | logs | `name`, `kind`, `enabled`, `batch`, `send`, `routes` |
 | `prometheus` | metrics | `name`, `kind`, `enabled`, `listen`, `path`, `send`, `routes` |
 | `splunk_hec` | logs | `name`, `kind`, `enabled`, `endpoint`, `token_env`, `index`, `source`, `sourcetype`, `sourcetype_overrides`, `tls`, `timeout_ms`, `network_safety`, `batch`, `send`, `routes` |
 | `http_jsonl` | logs | `name`, `kind`, `enabled`, `endpoint`, `method`, `bearer_env`, `headers`, `tls`, `timeout_ms`, `network_safety`, `batch`, `send`, `routes` |
@@ -107,6 +107,9 @@ Constraints that span fields are enforced by the compiler in addition to JSON Sc
 | `observability.destinations[].rotation.max_backups` | integer | `5` |  |  |
 | `observability.destinations[].rotation.max_age_days` | integer | `30` |  |  |
 | `observability.destinations[].rotation.compress` | boolean | `true` |  |  |
+| `observability.destinations[].batch` | object |  |  |  |
+| `observability.destinations[].batch.max_queue_size` | integer | `2048` |  | Maximum projected records retained by this destination queue. |
+| `observability.destinations[].batch.max_queue_bytes` | integer | `67108864` |  | Maximum immutable projected payload bytes retained by this destination queue. |
 | `observability.destinations[].send` | object |  |  |  |
 | `observability.destinations[].send.signals` | constant |  | `["logs"]` | Required. |
 | `observability.destinations[].send.buckets` | one of |  |  | Required. |
@@ -138,10 +141,9 @@ Constraints that span fields are enforced by the compiler in addition to JSON Sc
 | `observability.destinations[].network_safety` | object |  |  |  |
 | `observability.destinations[].network_safety.allow_private_networks` | boolean | `false` |  |  |
 | `observability.destinations[].network_safety.allow_cgnat` | boolean | `false` |  |  |
-| `observability.destinations[].batch` | object |  |  |  |
-| `observability.destinations[].batch.max_queue_size` | integer |  |  |  |
-| `observability.destinations[].batch.max_export_batch_size` | integer |  |  |  |
-| `observability.destinations[].batch.scheduled_delay_ms` | integer |  |  |  |
+| `observability.destinations[].batch.max_export_batch_size` | integer | `512` |  | Maximum records in one outbound request. |
+| `observability.destinations[].batch.max_export_batch_bytes` | integer | `8388608` |  | Hard ceiling for one fully encoded outbound request. |
+| `observability.destinations[].batch.scheduled_delay_ms` | integer | `5000` |  | Maximum normal batching delay in milliseconds. |
 | `observability.destinations[].method` | string | `"POST"` | `POST, PUT, PATCH` |  |
 | `observability.destinations[].bearer_env` | string |  |  |  |
 | `observability.destinations[].headers` | object |  |  |  |

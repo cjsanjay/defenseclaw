@@ -178,6 +178,7 @@ func TestCompileObservabilityV8TransportDefaultsAndPresetExpansion(t *testing.T)
 	maxBackups, maxAge, compress := 0, 0, false
 	source := &ObservabilityV8Source{Destinations: []ObservabilityV8DestinationSource{
 		validObservabilityV8Destination("jsonl-defaults", ObservabilityV8DestinationJSONL),
+		validObservabilityV8Destination("console-defaults", ObservabilityV8DestinationConsole),
 		{
 			Name: "jsonl-explicit-zero", Kind: ObservabilityV8DestinationJSONL, Path: "/tmp/explicit.jsonl",
 			Rotation: ObservabilityV8RotationSource{MaxSizeMB: 1, MaxBackups: &maxBackups, MaxAgeDays: &maxAge, Compress: &compress},
@@ -196,13 +197,24 @@ func TestCompileObservabilityV8TransportDefaultsAndPresetExpansion(t *testing.T)
 	if jsonl.Transport.Rotation == nil || *jsonl.Transport.Rotation != (ObservabilityV8EffectiveRotation{MaxSizeMB: 50, MaxBackups: 5, MaxAgeDays: 30, Compress: true}) {
 		t.Fatalf("jsonl defaults = %+v", jsonl.Transport.Rotation)
 	}
+	queueDefaults := ObservabilityV8BatchSource{MaxQueueSize: 2_048, MaxQueueBytes: 67_108_864}
+	if jsonl.Transport.Batch == nil || *jsonl.Transport.Batch != queueDefaults {
+		t.Fatalf("jsonl queue defaults = %+v", jsonl.Transport.Batch)
+	}
+	console, _ := plan.Destination("console-defaults")
+	if console.Transport.Batch == nil || *console.Transport.Batch != queueDefaults {
+		t.Fatalf("console queue defaults = %+v", console.Transport.Batch)
+	}
 	explicit, _ := plan.Destination("jsonl-explicit-zero")
 	if explicit.Transport.Rotation == nil || *explicit.Transport.Rotation != (ObservabilityV8EffectiveRotation{MaxSizeMB: 1, MaxBackups: 0, MaxAgeDays: 0, Compress: false}) {
 		t.Fatalf("jsonl explicit rotation = %+v", explicit.Transport.Rotation)
 	}
 	httpDestination, _ := plan.Destination("http")
 	if httpDestination.Transport.Method != "POST" || httpDestination.Transport.TimeoutMS != 10_000 ||
-		httpDestination.Transport.Batch == nil || *httpDestination.Transport.Batch != (ObservabilityV8BatchSource{MaxQueueSize: 2_048, MaxExportBatchSize: 512, ScheduledDelayMS: 5_000}) {
+		httpDestination.Transport.Batch == nil || *httpDestination.Transport.Batch != (ObservabilityV8BatchSource{
+		MaxQueueSize: 2_048, MaxQueueBytes: 67_108_864, MaxExportBatchSize: 512,
+		MaxExportBatchBytes: 8_388_608, ScheduledDelayMS: 5_000,
+	}) {
 		t.Fatalf("http defaults = %+v", httpDestination.Transport)
 	}
 	otlp, _ := plan.Destination("otlp")
@@ -211,11 +223,151 @@ func TestCompileObservabilityV8TransportDefaultsAndPresetExpansion(t *testing.T)
 	}
 	galileo, _ := plan.Destination("galileo")
 	if galileo.PresetProfile != "galileo-rich-v2" || galileo.Transport.Protocol != "http/protobuf" || galileo.Transport.Batch == nil ||
-		galileo.Transport.Batch.ScheduledDelayMS != 1_000 {
+		*galileo.Transport.Batch != (ObservabilityV8BatchSource{
+			MaxQueueSize: 2_048, MaxQueueBytes: 67_108_864, MaxExportBatchSize: 512,
+			MaxExportBatchBytes: 8_388_608, ScheduledDelayMS: 1_000,
+		}) {
 		t.Fatalf("galileo preset expansion = %+v", galileo)
 	}
 	if got := plan.Snapshot().TracePolicy.SemanticProfileLock; got != observabilityV8SemanticProfileLock {
 		t.Fatalf("semantic profile lock = %+v", got)
+	}
+}
+
+func TestCompileObservabilityV8BatchBoundariesAndKinds(t *testing.T) {
+	tests := []struct {
+		name        string
+		destination ObservabilityV8DestinationSource
+		wantError   string
+	}{
+		{
+			name: "jsonl queue minimum",
+			destination: func() ObservabilityV8DestinationSource {
+				value := validObservabilityV8Destination("jsonl", ObservabilityV8DestinationJSONL)
+				value.Batch = ObservabilityV8BatchSource{MaxQueueSize: 1, MaxQueueBytes: 4_198_400}
+				return value
+			}(),
+		},
+		{
+			name: "console queue maximum",
+			destination: ObservabilityV8DestinationSource{
+				Name: "console", Kind: ObservabilityV8DestinationConsole,
+				Batch: ObservabilityV8BatchSource{MaxQueueSize: 65_536, MaxQueueBytes: 268_435_456},
+			},
+		},
+		{
+			name: "push byte domains independent",
+			destination: func() ObservabilityV8DestinationSource {
+				value := validObservabilityV8Destination("archive", ObservabilityV8DestinationHTTPJSONL)
+				value.Batch = ObservabilityV8BatchSource{
+					MaxQueueSize: 512, MaxQueueBytes: 4_198_400, MaxExportBatchSize: 512,
+					MaxExportBatchBytes: 4_263_936, ScheduledDelayMS: 1,
+				}
+				return value
+			}(),
+		},
+		{
+			name: "push maximums",
+			destination: func() ObservabilityV8DestinationSource {
+				value := validObservabilityV8Destination("archive", ObservabilityV8DestinationHTTPJSONL)
+				value.Batch = ObservabilityV8BatchSource{
+					MaxQueueSize: 65_536, MaxQueueBytes: 268_435_456, MaxExportBatchSize: 8_192,
+					MaxExportBatchBytes: 67_108_864, ScheduledDelayMS: 600_000,
+				}
+				return value
+			}(),
+		},
+		{
+			name: "queue count over maximum",
+			destination: ObservabilityV8DestinationSource{
+				Name: "console", Kind: ObservabilityV8DestinationConsole,
+				Batch: ObservabilityV8BatchSource{MaxQueueSize: 65_537},
+			},
+			wantError: "max_queue_size",
+		},
+		{
+			name: "queue bytes below minimum",
+			destination: ObservabilityV8DestinationSource{
+				Name: "console", Kind: ObservabilityV8DestinationConsole,
+				Batch: ObservabilityV8BatchSource{MaxQueueBytes: 4_198_399},
+			},
+			wantError: "max_queue_bytes",
+		},
+		{
+			name: "queue bytes over maximum",
+			destination: ObservabilityV8DestinationSource{
+				Name: "console", Kind: ObservabilityV8DestinationConsole,
+				Batch: ObservabilityV8BatchSource{MaxQueueBytes: 268_435_457},
+			},
+			wantError: "max_queue_bytes",
+		},
+		{
+			name: "export count over maximum",
+			destination: func() ObservabilityV8DestinationSource {
+				value := validObservabilityV8Destination("archive", ObservabilityV8DestinationHTTPJSONL)
+				value.Batch.MaxExportBatchSize = 8_193
+				return value
+			}(),
+			wantError: "max_export_batch_size",
+		},
+		{
+			name: "export bytes below minimum",
+			destination: func() ObservabilityV8DestinationSource {
+				value := validObservabilityV8Destination("archive", ObservabilityV8DestinationHTTPJSONL)
+				value.Batch.MaxExportBatchBytes = 4_263_935
+				return value
+			}(),
+			wantError: "max_export_batch_bytes",
+		},
+		{
+			name: "export bytes over maximum",
+			destination: func() ObservabilityV8DestinationSource {
+				value := validObservabilityV8Destination("archive", ObservabilityV8DestinationHTTPJSONL)
+				value.Batch.MaxExportBatchBytes = 67_108_865
+				return value
+			}(),
+			wantError: "max_export_batch_bytes",
+		},
+		{
+			name: "delay over maximum",
+			destination: func() ObservabilityV8DestinationSource {
+				value := validObservabilityV8Destination("archive", ObservabilityV8DestinationHTTPJSONL)
+				value.Batch.ScheduledDelayMS = 600_001
+				return value
+			}(),
+			wantError: "scheduled_delay_ms",
+		},
+		{
+			name: "jsonl rejects push field",
+			destination: func() ObservabilityV8DestinationSource {
+				value := validObservabilityV8Destination("jsonl", ObservabilityV8DestinationJSONL)
+				value.Batch.ScheduledDelayMS = 1_000
+				return value
+			}(),
+			wantError: "valid only for push destinations",
+		},
+		{
+			name: "prometheus rejects batch",
+			destination: ObservabilityV8DestinationSource{
+				Name: "metrics", Kind: ObservabilityV8DestinationPrometheus, Listen: "127.0.0.1:9464", Path: "/metrics",
+				Batch: ObservabilityV8BatchSource{MaxQueueSize: 2_048},
+			},
+			wantError: "not supported",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := CompileObservabilityV8(&ObservabilityV8Source{Destinations: []ObservabilityV8DestinationSource{test.destination}})
+			if test.wantError == "" {
+				if err != nil {
+					t.Fatalf("valid batch rejected: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), test.wantError) {
+				t.Fatalf("error = %v, want substring %q", err, test.wantError)
+			}
+		})
 	}
 }
 

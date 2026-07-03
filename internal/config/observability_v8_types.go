@@ -276,9 +276,11 @@ type ObservabilityV8TLSSource struct {
 }
 
 type ObservabilityV8BatchSource struct {
-	MaxQueueSize       int `json:"max_queue_size,omitempty" mapstructure:"max_queue_size" yaml:"max_queue_size,omitempty"`
-	MaxExportBatchSize int `json:"max_export_batch_size,omitempty" mapstructure:"max_export_batch_size" yaml:"max_export_batch_size,omitempty"`
-	ScheduledDelayMS   int `json:"scheduled_delay_ms,omitempty" mapstructure:"scheduled_delay_ms" yaml:"scheduled_delay_ms,omitempty"`
+	MaxQueueSize        int `json:"max_queue_size,omitempty" mapstructure:"max_queue_size" yaml:"max_queue_size,omitempty"`
+	MaxQueueBytes       int `json:"max_queue_bytes,omitempty" mapstructure:"max_queue_bytes" yaml:"max_queue_bytes,omitempty"`
+	MaxExportBatchSize  int `json:"max_export_batch_size,omitempty" mapstructure:"max_export_batch_size" yaml:"max_export_batch_size,omitempty"`
+	MaxExportBatchBytes int `json:"max_export_batch_bytes,omitempty" mapstructure:"max_export_batch_bytes" yaml:"max_export_batch_bytes,omitempty"`
+	ScheduledDelayMS    int `json:"scheduled_delay_ms,omitempty" mapstructure:"scheduled_delay_ms" yaml:"scheduled_delay_ms,omitempty"`
 }
 
 type ObservabilityV8NetworkSafetySource struct {

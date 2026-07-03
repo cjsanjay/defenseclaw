@@ -23,10 +23,15 @@ from typing import Any
 import pytest
 from defenseclaw.observability.v8_config import (
     BUCKETS,
+    DESTINATION_BATCH_MODES,
     DESTINATION_CAPABILITIES,
     MAX_MAPPING_ENTRIES,
     MAX_YAML_DEPTH,
     MAX_YAML_NODES,
+    PUSH_BATCH_BOUNDS,
+    PUSH_BATCH_DEFAULTS,
+    QUEUE_BOUNDS,
+    QUEUE_DEFAULTS,
     V8ConfigError,
     _shape,
     load_validate_v8,
@@ -57,7 +62,12 @@ def test_minimal_source_and_parity_contract_are_deterministic() -> None:
     assert contract["destination_capabilities"] == {
         name: list(signals) for name, signals in DESTINATION_CAPABILITIES.items()
     }
+    assert contract["destination_batch_modes"] == DESTINATION_BATCH_MODES
     assert contract["galileo_capabilities"] == ["traces"]
+    assert contract["queue_defaults"] == QUEUE_DEFAULTS
+    assert contract["push_batch_defaults"] == PUSH_BATCH_DEFAULTS
+    assert contract["queue_bounds"] == {name: list(bounds) for name, bounds in QUEUE_BOUNDS.items()}
+    assert contract["push_batch_bounds"] == {name: list(bounds) for name, bounds in PUSH_BATCH_BOUNDS.items()}
     assert contract["profiles"] == ["none", "sensitive", "content", "strict", "legacy-v7"]
 
 
@@ -89,6 +99,84 @@ def test_reference_source_validates_against_canonical_schema() -> None:
 
     assert validated.source["config_version"] == 8
     assert len(validated.source["observability"]["destinations"]) == 7
+
+
+def test_batch_source_round_trip_masking_and_independent_byte_domains() -> None:
+    source = {
+        "config_version": 8,
+        "observability": {
+            "destinations": [
+                {
+                    "name": "jsonl",
+                    "kind": "jsonl",
+                    "path": "/tmp/defenseclaw.jsonl",
+                    "batch": {"max_queue_size": 1, "max_queue_bytes": 4_198_400},
+                },
+                {
+                    "name": "archive",
+                    "kind": "http_jsonl",
+                    "endpoint": "https://archive.example.test/events?access_token=secret-canary",
+                    "batch": {
+                        "max_queue_size": 512,
+                        "max_queue_bytes": 4_198_400,
+                        "max_export_batch_size": 512,
+                        "max_export_batch_bytes": 4_263_936,
+                        "scheduled_delay_ms": 1,
+                    },
+                },
+            ]
+        },
+    }
+    validated = load_validate_v8(source)
+    masked = validated.masked
+
+    assert masked["observability"]["destinations"][0]["batch"] == source["observability"]["destinations"][0]["batch"]
+    assert masked["observability"]["destinations"][1]["batch"] == source["observability"]["destinations"][1]["batch"]
+    assert "secret-canary" not in validated.masked_json()
+    assert "max_export_batch_bytes" in validated.masked_json()
+
+
+@pytest.mark.parametrize(
+    "destination",
+    [
+        {
+            "name": "jsonl",
+            "kind": "jsonl",
+            "path": "/tmp/defenseclaw.jsonl",
+            "batch": {"scheduled_delay_ms": 1_000},
+        },
+        {
+            "name": "metrics",
+            "kind": "prometheus",
+            "listen": "127.0.0.1:9464",
+            "path": "/metrics",
+            "batch": dict(QUEUE_DEFAULTS),
+        },
+        {"name": "console", "kind": "console", "batch": {"max_queue_size": 65_537}},
+        {"name": "console", "kind": "console", "batch": {"max_queue_bytes": 4_198_399}},
+        {
+            "name": "archive",
+            "kind": "http_jsonl",
+            "endpoint": "https://archive.example.test/events",
+            "batch": {"max_export_batch_size": 8_193},
+        },
+        {
+            "name": "archive",
+            "kind": "http_jsonl",
+            "endpoint": "https://archive.example.test/events",
+            "batch": {"max_export_batch_bytes": 67_108_865},
+        },
+        {
+            "name": "archive",
+            "kind": "http_jsonl",
+            "endpoint": "https://archive.example.test/events",
+            "batch": {"scheduled_delay_ms": 600_001},
+        },
+    ],
+)
+def test_batch_kind_and_boundary_validation(destination: dict[str, Any]) -> None:
+    with pytest.raises(V8ConfigError):
+        load_validate_v8({"config_version": 8, "observability": {"destinations": [destination]}})
 
 
 @pytest.mark.parametrize(

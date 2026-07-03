@@ -244,6 +244,11 @@ observability:
       max_backups: 5
       max_age_days: 30
       compress: true
+    # Queue count/bytes are always bounded. Push destinations additionally
+    # bound encoded request count/bytes and delay; batch count <= queue count.
+    batch:
+      max_queue_size: 2048
+      max_queue_bytes: 67108864
     # Advanced ordered rules. First match wins for each destination and signal.
     routes:
     - name: omit-diagnostics
@@ -284,6 +289,11 @@ observability:
     # Presence normally defaults true. Disabled examples retain policy without
     # initializing transports or resolving their secrets.
     enabled: false
+    # Queue count/bytes are always bounded. Push destinations additionally
+    # bound encoded request count/bytes and delay; batch count <= queue count.
+    batch:
+      max_queue_size: 1024
+      max_queue_bytes: 33554432
     # Concise policy: exact signals + buckets + optional redaction profile.
     send:
       signals:
@@ -334,10 +344,13 @@ observability:
     network_safety:
       allow_private_networks: false
       allow_cgnat: false
-    # Queue/batch/delay controls; export batch size cannot exceed queue size.
+    # Queue count/bytes are always bounded. Push destinations additionally
+    # bound encoded request count/bytes and delay; batch count <= queue count.
     batch:
       max_queue_size: 2048
+      max_queue_bytes: 67108864
       max_export_batch_size: 256
+      max_export_batch_bytes: 8388608
       scheduled_delay_ms: 1000
     # Advanced ordered rules. First match wins for each destination and signal.
     routes:
@@ -378,10 +391,13 @@ observability:
     network_safety:
       allow_private_networks: false
       allow_cgnat: false
-    # Queue/batch/delay controls; export batch size cannot exceed queue size.
+    # Queue count/bytes are always bounded. Push destinations additionally
+    # bound encoded request count/bytes and delay; batch count <= queue count.
     batch:
       max_queue_size: 2048
+      max_queue_bytes: 67108864
       max_export_batch_size: 100
+      max_export_batch_bytes: 8388608
       scheduled_delay_ms: 1000
     # Concise policy: exact signals + buckets + optional redaction profile.
     send:
@@ -428,10 +444,13 @@ observability:
       metrics:
         endpoint: ''
         path: /v1/metrics
-    # Queue/batch/delay controls; export batch size cannot exceed queue size.
+    # Queue count/bytes are always bounded. Push destinations additionally
+    # bound encoded request count/bytes and delay; batch count <= queue count.
     batch:
       max_queue_size: 4096
+      max_queue_bytes: 134217728
       max_export_batch_size: 512
+      max_export_batch_bytes: 16777216
       scheduled_delay_ms: 5000
     # Advanced ordered rules. First match wins for each destination and signal.
     routes:
@@ -482,10 +501,13 @@ observability:
     network_safety:
       allow_private_networks: false
       allow_cgnat: false
-    # Queue/batch/delay controls; export batch size cannot exceed queue size.
+    # Queue count/bytes are always bounded. Push destinations additionally
+    # bound encoded request count/bytes and delay; batch count <= queue count.
     batch:
       max_queue_size: 2048
+      max_queue_bytes: 67108864
       max_export_batch_size: 512
+      max_export_batch_bytes: 8388608
       scheduled_delay_ms: 1000
     # Concise policy: exact signals + buckets + optional redaction profile.
     send:
