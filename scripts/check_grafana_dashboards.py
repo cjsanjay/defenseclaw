@@ -22,6 +22,11 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
+try:
+    from local_observability_v1 import compatibility_errors
+except ModuleNotFoundError:  # Imported as scripts.check_grafana_dashboards in tests.
+    from scripts.local_observability_v1 import compatibility_errors
+
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE_DIR = ROOT / "bundles/local_observability_stack/grafana/dashboards"
 PACKAGED_DIR = ROOT / "cli/defenseclaw/_data/local_observability_stack/grafana/dashboards"
@@ -463,6 +468,12 @@ def static_audit(
         if SOURCE_DATASOURCES.read_bytes() != PACKAGED_DATASOURCES.read_bytes():
             errors.append("CLI packaged Grafana datasource config does not match bundle source")
 
+    _compatibility_inventory, compatibility_audit_errors = compatibility_errors(
+        dashboards,
+        require_packaged=require_packaged,
+    )
+    errors.extend(compatibility_audit_errors)
+
     return dashboards, errors
 
 
@@ -529,10 +540,45 @@ def tempo_readiness_error(*, attempts: int = 9, retry_delay_seconds: float = 2) 
     return f"Tempo readiness failed after {attempts} attempts: {tempo_error}"
 
 
+def _readiness_endpoint_error(name: str, url: str) -> str | None:
+    try:
+        with urllib.request.urlopen(url, timeout=3) as response:
+            if 200 <= response.status < 300:
+                return None
+            return f"{name} readiness returned HTTP {response.status}"
+    except urllib.error.HTTPError as exc:
+        return f"{name} readiness returned HTTP {exc.code}"
+    except OSError as exc:
+        return f"{name} readiness failed: {exc}"
+
+
+def backend_readiness_errors() -> list[str]:
+    """Fail fast before compiling hundreds of queries against an unready stack."""
+
+    errors: list[str] = []
+    try:
+        grafana = request_json("http://127.0.0.1:3000/api/health")
+        if grafana.get("database") != "ok":
+            errors.append("Grafana database health is not ok")
+    except AuditError as exc:
+        errors.append(f"Grafana health failed: {exc}")
+    for name, url in (
+        ("Prometheus", "http://127.0.0.1:9090/-/ready"),
+        ("Loki", "http://127.0.0.1:3100/ready"),
+        ("Collector", "http://127.0.0.1:13133/"),
+    ):
+        if error := _readiness_endpoint_error(name, url):
+            errors.append(error)
+    if error := tempo_readiness_error():
+        errors.append(error)
+    return errors
+
+
 def live_inventory(
     dashboards: list[tuple[Path, dict[str, Any]]],
     *,
     range_seconds: int = 48 * 60 * 60,
+    deadline: float | None = None,
 ) -> tuple[list[dict[str, Any]], list[str]]:
     """Measure whether every retained panel can render against the local stack.
 
@@ -567,8 +613,14 @@ def live_inventory(
     tempo_error = tempo_readiness_error() if has_tempo_search else None
 
     for _, dashboard in dashboards:
+        if deadline is not None and time.monotonic() >= deadline:
+            errors.append("live dashboard audit exceeded its global deadline")
+            return inventory, errors
         panel_results: list[dict[str, Any]] = []
         for panel in panels(dashboard):
+            if deadline is not None and time.monotonic() >= deadline:
+                errors.append("live dashboard audit exceeded its global deadline")
+                return inventory, errors
             if panel.get("type") == "row":
                 continue
             if panel.get("type") == "text":
@@ -717,7 +769,11 @@ def print_inventory(inventory: list[dict[str, Any]], *, range_seconds: int) -> N
         )
 
 
-def live_audit(dashboards: list[tuple[Path, dict[str, Any]]]) -> list[str]:
+def live_audit(
+    dashboards: list[tuple[Path, dict[str, Any]]],
+    *,
+    deadline: float | None = None,
+) -> list[str]:
     errors: list[str] = []
     try:
         health = request_json("http://127.0.0.1:3000/api/health")
@@ -734,8 +790,12 @@ def live_audit(dashboards: list[tuple[Path, dict[str, Any]]]) -> list[str]:
     start_ns = now_ns - 300 * 1_000_000_000
 
     for _, dashboard in dashboards:
+        if deadline is not None and time.monotonic() >= deadline:
+            return errors + ["live dashboard audit exceeded its global deadline"]
         uid = dashboard["uid"]
         for panel in panels(dashboard):
+            if deadline is not None and time.monotonic() >= deadline:
+                return errors + ["live dashboard audit exceeded its global deadline"]
             title = panel.get("title", "untitled")
             for target in panel.get("targets", []):
                 datasource = target_datasource(panel, target)
@@ -797,19 +857,31 @@ def main() -> int:
         default=48,
         help="lookback used by --inventory (default: 48 hours)",
     )
+    parser.add_argument(
+        "--live-timeout-seconds",
+        type=int,
+        default=300,
+        help="global deadline shared by live compilation and inventory (default: 300)",
+    )
     args = parser.parse_args()
 
     if args.inventory_hours <= 0:
         parser.error("--inventory-hours must be greater than zero")
+    if args.live_timeout_seconds <= 0:
+        parser.error("--live-timeout-seconds must be greater than zero")
 
     dashboards, errors = static_audit(require_packaged=args.require_packaged)
+    live_deadline = time.monotonic() + args.live_timeout_seconds
+    if (args.live or args.inventory) and not errors:
+        errors.extend(backend_readiness_errors())
     if args.live and not errors:
-        errors.extend(live_audit(dashboards))
+        errors.extend(live_audit(dashboards, deadline=live_deadline))
     inventory: list[dict[str, Any]] = []
     if args.inventory and not errors:
         inventory, inventory_errors = live_inventory(
             dashboards,
             range_seconds=args.inventory_hours * 60 * 60,
+            deadline=live_deadline,
         )
         errors.extend(inventory_errors)
 
