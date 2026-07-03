@@ -56,6 +56,7 @@ import (
 	tracehttp "go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
 
 	"github.com/defenseclaw/defenseclaw/internal/config"
+	"github.com/defenseclaw/defenseclaw/internal/observability"
 )
 
 // Provider holds the OTel SDK providers and exposes telemetry emission methods.
@@ -79,6 +80,7 @@ type Provider struct {
 	// capacityShutdown stops the 15s runtime/SQLite metrics goroutine.
 	capacityShutdown context.CancelFunc
 	shutdown         atomic.Bool
+	v8               *v8ProviderState
 
 	// agentInstanceID is the per-process stable identifier the
 	// sidecar mints at boot. Accessed from multiple goroutines
@@ -289,13 +291,16 @@ func installOpenTelemetryGlobals(p *Provider) {
 
 // Enabled reports whether OTel export is active.
 func (p *Provider) Enabled() bool {
-	return p != nil && p.enabled
+	if p == nil || !p.enabled || p.shutdown.Load() {
+		return false
+	}
+	return p.v8 == nil || p.v8.active.Load()
 }
 
 // Tracer returns the defenseclaw tracer, or a no-op tracer when the
 // provider is nil or OTel is disabled.
 func (p *Provider) Tracer() trace.Tracer {
-	if p == nil || p.tracer == nil {
+	if p == nil || p.tracer == nil || !p.TracesEnabled() {
 		return traceNoop.NewTracerProvider().Tracer("defenseclaw")
 	}
 	return p.tracer
@@ -304,16 +309,17 @@ func (p *Provider) Tracer() trace.Tracer {
 // EmitTUIFilterTrace records a short-lived span when an operator changes
 // a TUI filter (severity, subsystem, agent id, …).
 func (p *Provider) EmitTUIFilterTrace(ctx context.Context, panel, filterType, oldVal, newVal string) {
-	if p == nil || !p.Enabled() || p.tracer == nil {
+	if !p.TraceBucketEnabled(observability.BucketDiagnostic) {
 		return
 	}
+	attrs := append(p.v8StartAttributes(observability.BucketDiagnostic),
+		attribute.String("panel", panel),
+		attribute.String("filter_type", filterType),
+		attribute.String("old", oldVal),
+		attribute.String("new", newVal),
+	)
 	_, sp := p.tracer.Start(ctx, "defenseclaw.tui.filter",
-		trace.WithAttributes(
-			attribute.String("panel", panel),
-			attribute.String("filter_type", filterType),
-			attribute.String("old", oldVal),
-			attribute.String("new", newVal),
-		))
+		trace.WithAttributes(attrs...))
 	sp.End()
 }
 
@@ -351,7 +357,7 @@ func (p *Provider) AgentInstanceID() string {
 
 // Shutdown flushes pending telemetry and releases resources.
 func (p *Provider) Shutdown(ctx context.Context) error {
-	if p == nil || !p.Enabled() {
+	if p == nil || !p.enabled {
 		return nil
 	}
 	if !p.shutdown.CompareAndSwap(false, true) {
@@ -361,14 +367,26 @@ func (p *Provider) Shutdown(ctx context.Context) error {
 	defer cancel()
 
 	var errs []error
+	v8Failed := false
+	var v8Cause error
+	recordShutdownError := func(signal string, err error) {
+		if p.v8 != nil {
+			v8Failed = true
+			if v8Cause == nil {
+				v8Cause = v8ContextCause(err)
+			}
+			return
+		}
+		errs = append(errs, fmt.Errorf("%s: %w", signal, err))
+	}
 	if p.tracerProvider != nil {
 		if err := p.tracerProvider.Shutdown(ctx); err != nil {
-			errs = append(errs, fmt.Errorf("traces: %w", err))
+			recordShutdownError("traces", err)
 		}
 	}
 	if p.loggerProvider != nil {
 		if err := p.loggerProvider.Shutdown(ctx); err != nil {
-			errs = append(errs, fmt.Errorf("logs: %w", err))
+			recordShutdownError("logs", err)
 		}
 	}
 	if p.capacityShutdown != nil {
@@ -376,8 +394,11 @@ func (p *Provider) Shutdown(ctx context.Context) error {
 	}
 	if p.meterProvider != nil {
 		if err := p.meterProvider.Shutdown(ctx); err != nil {
-			errs = append(errs, fmt.Errorf("metrics: %w", err))
+			recordShutdownError("metrics", err)
 		}
+	}
+	if v8Failed {
+		return newV8ProviderError(V8ProviderErrorShutdown, v8Cause)
 	}
 	if len(errs) > 0 {
 		return fmt.Errorf("telemetry: shutdown: %v", errs)

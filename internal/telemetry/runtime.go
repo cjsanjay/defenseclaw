@@ -28,6 +28,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/defenseclaw/defenseclaw/internal/gatewaylog"
+	"github.com/defenseclaw/defenseclaw/internal/observability"
 	"github.com/defenseclaw/defenseclaw/internal/redaction"
 )
 
@@ -87,12 +88,13 @@ func (p *Provider) SetSpanResourceContext(span trace.Span) {
 // EmitStartupSpan creates a short-lived span to verify the trace export pipeline
 // is working. Called once at sidecar startup.
 func (p *Provider) EmitStartupSpan(ctx context.Context) {
-	if !p.TracesEnabled() {
+	if !p.TraceBucketEnabled(observability.BucketPlatformHealth) {
 		return
 	}
 	_, span := p.tracer.Start(ctx, "defenseclaw/startup",
 		trace.WithSpanKind(trace.SpanKindInternal),
 		trace.WithTimestamp(time.Now()),
+		trace.WithAttributes(p.v8StartAttributes(observability.BucketPlatformHealth)...),
 	)
 	p.setSpanResourceContext(span)
 	span.SetAttributes(attribute.String("defenseclaw.event", "sidecar_start"))
@@ -109,11 +111,12 @@ func (p *Provider) EmitStartupSpan(ctx context.Context) {
 // Nil span is safely returned when traces are disabled; consumers
 // can call End on nil spans per the OTel SDK contract.
 func (p *Provider) StartGuardrailStageSpan(ctx context.Context, stage, direction, model string) (context.Context, trace.Span) {
-	if !p.TracesEnabled() {
+	if !p.TraceBucketEnabled(observability.BucketGuardrailEvaluation) {
 		return ctx, nil
 	}
 	ctx, span := p.tracer.Start(ctx, fmt.Sprintf("guardrail/%s", stage),
 		trace.WithSpanKind(trace.SpanKindInternal),
+		trace.WithAttributes(p.v8StartAttributes(observability.BucketGuardrailEvaluation)...),
 	)
 	p.setSpanResourceContext(span)
 	span.SetAttributes(
@@ -157,11 +160,12 @@ func (p *Provider) EndGuardrailStageSpan(span trace.Span, action, severity, reas
 // Nil span is returned when traces are disabled; End is a safe no-op
 // per the OTel SDK contract.
 func (p *Provider) StartGuardrailPhaseSpan(ctx context.Context, phase string) (context.Context, trace.Span) {
-	if p == nil || !p.TracesEnabled() {
+	if !p.TraceBucketEnabled(observability.BucketGuardrailEvaluation) {
 		return ctx, nil
 	}
 	ctx, span := p.tracer.Start(ctx, fmt.Sprintf("guardrail.%s", phase),
 		trace.WithSpanKind(trace.SpanKindInternal),
+		trace.WithAttributes(p.v8StartAttributes(observability.BucketGuardrailEvaluation)...),
 	)
 	p.setSpanResourceContext(span)
 	span.SetAttributes(
@@ -197,12 +201,13 @@ func (p *Provider) EndGuardrailPhaseSpan(span trace.Span, action, severity strin
 
 // EmitInspectSpan creates a span for a tool/message inspection evaluation.
 func (p *Provider) EmitInspectSpan(ctx context.Context, tool, action, severity string, durationMs float64) string {
-	if !p.TracesEnabled() {
+	if !p.TraceBucketEnabled(observability.BucketGuardrailEvaluation) {
 		return ""
 	}
 	_, span := p.tracer.Start(ctx, fmt.Sprintf("inspect/%s", tool),
 		trace.WithSpanKind(trace.SpanKindInternal),
 		trace.WithTimestamp(time.Now().Add(-time.Duration(durationMs)*time.Millisecond)),
+		trace.WithAttributes(p.v8StartAttributes(observability.BucketGuardrailEvaluation)...),
 	)
 	p.setSpanResourceContext(span)
 	span.SetAttributes(
@@ -233,7 +238,7 @@ func (p *Provider) StartAgentSpan(
 	ctx context.Context,
 	conversationID, agentName, agentType, agentID, provider, connector string,
 ) (context.Context, trace.Span) {
-	if !p.TracesEnabled() {
+	if !p.TraceBucketEnabled(observability.BucketAgentLifecycle) {
 		return ctx, nil
 	}
 
@@ -245,6 +250,7 @@ func (p *Provider) StartAgentSpan(
 	ctx, span := p.tracer.Start(ctx, spanName,
 		trace.WithSpanKind(trace.SpanKindInternal),
 		trace.WithTimestamp(time.Now()),
+		trace.WithAttributes(p.v8StartAttributes(observability.BucketAgentLifecycle)...),
 	)
 
 	p.setSpanResourceContext(span)
@@ -319,6 +325,9 @@ func (p *Provider) emitGenAICanary(ctx context.Context, destination string) (str
 	if p == nil || !p.TracesEnabled() || p.tracerProvider == nil {
 		return "", fmt.Errorf("OTel traces are not enabled")
 	}
+	if p.v8 != nil {
+		return p.emitV8GenAICanary(ctx, destination)
+	}
 	rootCtx := trace.ContextWithSpanContext(ctx, trace.SpanContext{})
 	agentCtx, agentSpan := p.StartAgentSpan(
 		rootCtx, "defenseclaw-galileo-canary", "defenseclaw", "diagnostic", "canary", "openai", "defenseclaw",
@@ -345,6 +354,65 @@ func (p *Provider) emitGenAICanary(ctx context.Context, destination string) (str
 	p.EndAgentSpan(agentSpan, "")
 	if err := p.tracerProvider.ForceFlush(ctx); err != nil {
 		return traceID, fmt.Errorf("flush runtime canary: %w", err)
+	}
+	return traceID, nil
+}
+
+func (p *Provider) emitV8GenAICanary(ctx context.Context, destination string) (string, error) {
+	if !p.TraceBucketEnabled(observability.BucketDiagnostic) {
+		return "", fmt.Errorf("diagnostic trace collection is not enabled")
+	}
+	markerAttrs := append(p.v8StartAttributes(observability.BucketDiagnostic),
+		attribute.Bool(telemetryCanaryAttribute, true),
+		attribute.String(v8CanaryOperationAttribute, v8CanaryOperationValue),
+	)
+	if destination != "" {
+		markerAttrs = append(markerAttrs, attribute.String(telemetryCanaryDestinationAttribute, destination))
+	}
+	rootCtx := trace.ContextWithSpanContext(ctx, trace.SpanContext{})
+	agentCtx, agentSpan := p.tracer.Start(rootCtx, "invoke_agent defenseclaw",
+		trace.WithSpanKind(trace.SpanKindInternal),
+		trace.WithTimestamp(time.Now()),
+		trace.WithAttributes(markerAttrs...),
+	)
+	p.setSpanResourceContext(agentSpan)
+	agentSpan.SetAttributes(
+		attribute.String("gen_ai.operation.name", "invoke_agent"),
+		attribute.String("gen_ai.agent.name", "defenseclaw"),
+		attribute.String("gen_ai.agent.id", "canary"),
+		attribute.String("gen_ai.agent.type", "diagnostic"),
+		attribute.String("gen_ai.conversation.id", "defenseclaw-galileo-canary"),
+		attribute.String("gen_ai.provider.name", "openai"),
+		attribute.String("defenseclaw.connector.source", "defenseclaw"),
+		attribute.String("openinference.span.kind", "AGENT"),
+	)
+	p.SetGenAIInput(agentSpan, "DefenseClaw Galileo runtime canary request")
+	p.SetGenAIOutput(agentSpan, "DefenseClaw Galileo runtime canary response")
+
+	_, llmSpan := p.tracer.Start(agentCtx, "chat gpt-4o-mini",
+		trace.WithSpanKind(trace.SpanKindClient),
+		trace.WithTimestamp(time.Now()),
+		trace.WithAttributes(markerAttrs...),
+	)
+	p.setSpanResourceContext(llmSpan)
+	llmSpan.SetAttributes(
+		attribute.String("gen_ai.operation.name", "chat"),
+		attribute.String("gen_ai.system", "openai"),
+		attribute.String("gen_ai.provider.name", "openai"),
+		attribute.String("gen_ai.request.model", "gpt-4o-mini"),
+		attribute.String("openinference.span.kind", "LLM"),
+	)
+	p.SetGenAIInput(llmSpan, "DefenseClaw Galileo runtime canary request")
+	p.SetGenAIOutput(llmSpan, "DefenseClaw Galileo runtime canary response")
+	traceID := llmSpan.SpanContext().TraceID().String()
+	p.EndLLMSpan(
+		ctx, llmSpan, "gpt-4o-mini", 0, 0, []string{"stop"}, 0,
+		"diagnostic", "pass", "openai", time.Now(),
+		"defenseclaw", "diagnostic", "canary", "defenseclaw-galileo-canary",
+	)
+	p.EndAgentSpan(agentSpan, "")
+	if err := p.tracerProvider.ForceFlush(ctx); err != nil {
+		return traceID, newV8ProviderError(V8ProviderErrorFlush, err)
 	}
 	return traceID, nil
 }
@@ -422,7 +490,7 @@ func (p *Provider) StartToolSpan(
 ) (context.Context, trace.Span) {
 	p.RecordToolCall(ctx, tool, toolProvider, dangerous)
 
-	if !p.TracesEnabled() {
+	if !p.TraceBucketEnabled(observability.BucketToolActivity) {
 		return ctx, nil
 	}
 
@@ -433,6 +501,7 @@ func (p *Provider) StartToolSpan(
 	ctx, span := p.tracer.Start(ctx, fmt.Sprintf("execute_tool %s", tool),
 		trace.WithSpanKind(trace.SpanKindInternal),
 		trace.WithTimestamp(startedAt),
+		trace.WithAttributes(p.v8StartAttributes(observability.BucketToolActivity)...),
 	)
 
 	p.setSpanResourceContext(span)
@@ -626,13 +695,14 @@ func (p *Provider) StartApprovalSpan(
 	cwd string,
 	cor ToolSpanContext,
 ) (context.Context, trace.Span) {
-	if !p.TracesEnabled() {
+	if !p.TraceBucketEnabled(observability.BucketEnforcementAction) {
 		return ctx, nil
 	}
 
 	ctx, span := p.tracer.Start(ctx, fmt.Sprintf("exec.approval/%s", id),
 		trace.WithSpanKind(trace.SpanKindInternal),
 		trace.WithTimestamp(time.Now()),
+		trace.WithAttributes(p.v8StartAttributes(observability.BucketEnforcementAction)...),
 	)
 
 	p.setSpanResourceContext(span)
@@ -718,6 +788,9 @@ func (p *Provider) StartLLMSpan(
 	maxTokens int,
 	temperature float64,
 ) (context.Context, trace.Span) {
+	if !p.TraceBucketEnabled(observability.BucketModelIO) {
+		return ctx, nil
+	}
 	return p.StartLLMSpanAt(ctx, system, model, provider, maxTokens, temperature, time.Now())
 }
 
@@ -732,7 +805,7 @@ func (p *Provider) StartLLMSpanAt(
 	temperature float64,
 	startedAt time.Time,
 ) (context.Context, trace.Span) {
-	if !p.TracesEnabled() {
+	if !p.TraceBucketEnabled(observability.BucketModelIO) {
 		return ctx, nil
 	}
 	if startedAt.IsZero() {
@@ -742,6 +815,7 @@ func (p *Provider) StartLLMSpanAt(
 	ctx, span := p.tracer.Start(ctx, fmt.Sprintf("chat %s", model),
 		trace.WithSpanKind(trace.SpanKindClient),
 		trace.WithTimestamp(startedAt),
+		trace.WithAttributes(p.v8StartAttributes(observability.BucketModelIO)...),
 	)
 
 	p.setSpanResourceContext(span)
@@ -840,12 +914,13 @@ func (p *Provider) StartJudgeSpan(
 	maxTokens int,
 	kind string,
 ) (context.Context, trace.Span) {
-	if !p.TracesEnabled() {
+	if !p.TraceBucketEnabled(observability.BucketGuardrailEvaluation) {
 		return ctx, nil
 	}
 	ctx, span := p.tracer.Start(ctx, "defenseclaw.guardrail.judge",
 		trace.WithSpanKind(trace.SpanKindClient),
 		trace.WithTimestamp(time.Now()),
+		trace.WithAttributes(p.v8StartAttributes(observability.BucketGuardrailEvaluation)...),
 	)
 	p.setSpanResourceContext(span)
 	span.SetAttributes(
@@ -896,7 +971,7 @@ func (p *Provider) StartGuardrailSpan(
 	ctx context.Context,
 	name, targetType, model string,
 ) (context.Context, trace.Span) {
-	if !p.TracesEnabled() {
+	if !p.TraceBucketEnabled(observability.BucketGuardrailEvaluation) {
 		return ctx, nil
 	}
 
@@ -904,6 +979,7 @@ func (p *Provider) StartGuardrailSpan(
 	ctx, span := p.tracer.Start(ctx, spanName,
 		trace.WithSpanKind(trace.SpanKindInternal),
 		trace.WithTimestamp(time.Now()),
+		trace.WithAttributes(p.v8StartAttributes(observability.BucketGuardrailEvaluation)...),
 	)
 
 	p.setSpanResourceContext(span)
@@ -948,17 +1024,14 @@ func (p *Provider) EndGuardrailSpan(
 // StartPolicySpan starts a new OTel span for an OPA policy evaluation.
 // Metrics are always recorded when OTel is enabled, even if traces are off.
 func (p *Provider) StartPolicySpan(ctx context.Context, domain, targetType, targetName string) (context.Context, trace.Span) {
-	if !p.Enabled() {
-		return ctx, nil
-	}
-
-	if !p.TracesEnabled() {
+	if !p.TraceBucketEnabled(observability.BucketGuardrailEvaluation) {
 		return ctx, nil
 	}
 
 	ctx, span := p.tracer.Start(ctx, fmt.Sprintf("policy/%s", domain),
 		trace.WithSpanKind(trace.SpanKindInternal),
 		trace.WithTimestamp(time.Now()),
+		trace.WithAttributes(p.v8StartAttributes(observability.BucketGuardrailEvaluation)...),
 	)
 
 	p.setSpanResourceContext(span)
