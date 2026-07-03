@@ -21,7 +21,7 @@ import (
 )
 
 var (
-	providerTokenRE = regexp.MustCompile(`(?:AKIA|ASIA|AROA|AGPA|AIDA|AIPA|ANPA|ANVA)[A-Z0-9]{16}|(?:ghp_|gho_|ghu_|ghs_|ghr_)[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9]{22}_[A-Za-z0-9]{59}|glpat-[A-Za-z0-9_-]{20,255}|xoxb-[0-9]{10,13}-[0-9]{10,13}-[A-Za-z0-9]{24,128}|(?:xoxp-|xoxa-|xoxr-|xoxs-)[A-Za-z0-9-]{24,200}|(?:sk_live_|sk_test_|rk_live_|rk_test_|pk_live_|pk_test_)[A-Za-z0-9]{20,128}|AIza[A-Za-z0-9_-]{35}|sk-proj-[A-Za-z0-9_+=.-]{16,248}|sk-ant-[A-Za-z0-9_+=.-]{17,249}|sk-or-[A-Za-z0-9_+=.-]{18,250}|sk-[A-Za-z0-9_+=.-]{21,253}|eyJ[A-Za-z0-9_-]*\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+`)
+	providerTokenRE = regexp.MustCompile(`(?:AKIA|ASIA|AROA|AGPA|AIDA|AIPA|ANPA|ANVA)[A-Z0-9]{16}|(?:ghp_|gho_|ghu_|ghs_|ghr_)[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9]{22}_[A-Za-z0-9]{59}|glpat-[A-Za-z0-9_-]{20,255}|xoxb-[0-9]{10,13}-[0-9]{10,13}-[A-Za-z0-9]{24,128}|(?:xoxp-|xoxa-|xoxr-|xoxs-)[A-Za-z0-9-]{24,200}|(?:sk_live_|sk_test_|rk_live_|rk_test_|pk_live_|pk_test_)[A-Za-z0-9]{20,128}|AIza[A-Za-z0-9_-]{35}|sk-proj-[A-Za-z0-9_+=.-]{16,248}|sk-ant-[A-Za-z0-9_+=.-]{17,249}|sk-or-[A-Za-z0-9_+=.-]{18,250}|sk-[A-Za-z0-9_+=.-]{21,253}|eyJ[A-Za-z0-9_-]*={0,2}\.[A-Za-z0-9_-]+={0,2}\.[A-Za-z0-9_-]+={0,2}`)
 	authorizationRE = regexp.MustCompile(`(?i)^(authorization|proxy-authorization)[\t ]*[:=][\t ]*(bearer|basic|digest|token|apikey)[\t ]+([^\r\n]+)$`)
 	assignmentKeyRE = regexp.MustCompile(`(?i)(password|passwd|pwd|secret|client_secret|api_key|apikey|access_token|refresh_token|private_key|signing_key)`)
 	dsnKeyRE        = regexp.MustCompile(`(?i)(password|passwd|pwd|pass|secret|client_secret|api_key|apikey|access_token|refresh_token|token|signature|credential)`)
@@ -110,13 +110,33 @@ func validJWT(value string) bool {
 			return false
 		}
 	}
-	for _, part := range parts[:2] {
-		decoded, err := base64.RawURLEncoding.DecodeString(strings.TrimRight(part, "="))
-		if err != nil || len(decoded) == 0 || len(decoded) > 8192 || !validBoundedJSONObject(decoded) {
+	for index, part := range parts {
+		decoded, ok := decodeJWTPart(part)
+		if !ok || len(decoded) == 0 || len(decoded) > 8192 {
+			return false
+		}
+		if index < 2 && !validBoundedJSONObject(decoded) {
 			return false
 		}
 	}
 	return true
+}
+
+func decodeJWTPart(part string) ([]byte, bool) {
+	trimmed := strings.TrimRight(part, "=")
+	padding := len(part) - len(trimmed)
+	if padding > 2 || strings.ContainsRune(trimmed, '=') {
+		return nil, false
+	}
+	if padding > 0 {
+		if len(part)%4 != 0 {
+			return nil, false
+		}
+		decoded, err := base64.URLEncoding.DecodeString(part)
+		return decoded, err == nil
+	}
+	decoded, err := base64.RawURLEncoding.DecodeString(trimmed)
+	return decoded, err == nil
 }
 
 func validBoundedJSONObject(encoded []byte) bool {
@@ -405,7 +425,8 @@ func parseCookieValue(line string, position int) (start, end, next int, valid bo
 
 func recognizeConnectionStrings(input string) ([]candidate, error) {
 	result := []candidate{}
-	for _, uri := range uriRE.FindAllStringIndex(input, -1) {
+	uriRanges := uriRE.FindAllStringIndex(input, -1)
+	for _, uri := range uriRanges {
 		uriValue := input[uri[0]:uri[1]]
 		parsed, ok := parseHierarchicalURI(uriValue)
 		if !ok && containsEligibleRawQuery(uriValue) {
@@ -419,8 +440,32 @@ func recognizeConnectionStrings(input string) ([]candidate, error) {
 		}
 		result = append(result, queryCandidates(input[uri[0]:uri[1]], uri[0], parsed, true)...)
 	}
-	result = append(result, scanKeyValues(input, dsnKeyRE, true)...)
+	for _, item := range scanKeyValues(input, dsnKeyRE, true) {
+		if !overlapsAnyRange(item.start, item.end, uriRanges) {
+			result = append(result, item)
+		}
+	}
 	return result, nil
+}
+
+func overlapsAnyRange(start, end int, ranges [][]int) bool {
+	// regexp.FindAllStringIndex returns non-overlapping ranges in source
+	// order. Binary search for the first range whose end is after start so a
+	// field with many URI and DSN candidates remains O(n log n), never O(n²).
+	low, high := 0, len(ranges)
+	for low < high {
+		middle := low + (high-low)/2
+		if len(ranges[middle]) != 2 || ranges[middle][1] <= start {
+			low = middle + 1
+		} else {
+			high = middle
+		}
+	}
+	if low < len(ranges) {
+		interval := ranges[low]
+		return len(interval) == 2 && interval[0] < end
+	}
+	return false
 }
 
 func recognizeAssignments(input string) []candidate {
@@ -432,7 +477,7 @@ func scanKeyValues(input string, keyPattern *regexp.Regexp, dsn bool) []candidat
 	result := make([]candidate, 0, len(indices))
 	for _, index := range indices {
 		lexicalStart := index[0]
-		if lexicalStart > 0 && input[lexicalStart-1] == '"' {
+		if !dsn && lexicalStart > 0 && input[lexicalStart-1] == '"' {
 			lexicalStart--
 		}
 		if index[0] > 0 && (isASCIIAlphaNum(input[index[0]-1]) || input[index[0]-1] == '_') {
@@ -442,7 +487,7 @@ func scanKeyValues(input string, keyPattern *regexp.Regexp, dsn bool) []candidat
 			continue
 		}
 		position := index[1]
-		if index[0] > 0 && input[index[0]-1] == '"' && position < len(input) && input[position] == '"' {
+		if !dsn && index[0] > 0 && input[index[0]-1] == '"' && position < len(input) && input[position] == '"' {
 			position++
 		}
 		position = skipOWS(input, position)
@@ -550,7 +595,7 @@ func validHighEntropy(value string, fieldClass observability.FieldClass) bool {
 			return false
 		}
 	}
-	if looksUUID(value) || ((len(value) == 16 || len(value) == 32 || len(value) == 64) && allHex(value) && fieldClass == observability.FieldClassIdentifier) {
+	if looksUUID(value) || (len(value) == 32 && allHex(value)) || (len(value) == 64 && allHex(value) && fieldClass == observability.FieldClassIdentifier) {
 		return false
 	}
 	classes := 0
@@ -668,11 +713,11 @@ func recognizeCloudIdentifiers(input string) []candidate {
 	for _, parts := range cloudLabelRE.FindAllStringSubmatchIndex(input, -1) {
 		label := strings.ToLower(input[parts[2]:parts[3]])
 		value := input[parts[4]:parts[5]]
-		accepted := validCloudLabelValue(label, value)
+		accepted := asciiIdentifierBoundary(input, parts[2], parts[3]) && validCloudLabelValue(label, value)
 		result = append(result, candidate{start: parts[4], end: parts[5], accepted: accepted})
 	}
 	for _, parts := range arnRE.FindAllStringSubmatchIndex(input, -1) {
-		result = append(result, candidate{start: parts[2], end: parts[3], accepted: true})
+		result = append(result, candidate{start: parts[2], end: parts[3], accepted: parts[0] == 0 || !isASCIIIdentifierByte(input[parts[0]-1])})
 	}
 	for _, parts := range azurePathRE.FindAllStringSubmatchIndex(input, -1) {
 		result = append(result, candidate{start: parts[4], end: parts[5], accepted: validUUID(input[parts[4]:parts[5]])})
@@ -683,6 +728,15 @@ func recognizeCloudIdentifiers(input string) []candidate {
 		}
 	}
 	return result
+}
+
+func asciiIdentifierBoundary(input string, start, end int) bool {
+	return (start == 0 || !isASCIIIdentifierByte(input[start-1])) &&
+		(end == len(input) || !isASCIIIdentifierByte(input[end]))
+}
+
+func isASCIIIdentifierByte(value byte) bool {
+	return isASCIIAlphaNum(value) || value == '_'
 }
 
 func recognizeEmails(input string) []candidate {
@@ -700,10 +754,31 @@ func recognizeTelephones(input string) []candidate {
 	result := make([]candidate, 0, len(indices))
 	for _, index := range indices {
 		value := input[index[0]:index[1]]
-		accepted := digitBoundary(input, index[0], index[1]) && validTelephone(value) && !hasTelephoneExtension(input[index[1]:])
+		accepted := digitBoundary(input, index[0], index[1]) &&
+			!hasInternationalPrefix(input, index[0]) &&
+			!hasNumericTelephonePrefix(input, index[0]) &&
+			validTelephone(value) &&
+			!hasTelephoneExtension(input[index[1]:])
 		result = append(result, candidate{start: index[0], end: index[1], accepted: accepted})
 	}
 	return result
+}
+
+func hasNumericTelephonePrefix(input string, start int) bool {
+	return start >= 2 && strings.ContainsRune(" .-", rune(input[start-1])) && isASCIIDigit(input[start-2])
+}
+
+func hasInternationalPrefix(input string, start int) bool {
+	if start == 0 || !strings.ContainsRune(" .-", rune(input[start-1])) {
+		return false
+	}
+	position := start - 2
+	digits := 0
+	for position >= 0 && digits < 3 && isASCIIDigit(input[position]) {
+		digits++
+		position--
+	}
+	return digits > 0 && position >= 0 && input[position] == '+'
 }
 
 func hasTelephoneExtension(remainder string) bool {
@@ -1128,7 +1203,8 @@ func isEntropyByte(value byte) bool {
 }
 
 func emailBoundary(input string, start, end int) bool {
-	return (start == 0 || !isEmailByte(input[start-1])) && (end == len(input) || !isEmailByte(input[end]))
+	return (start == 0 || input[start-1] < utf8.RuneSelf && !isEmailByte(input[start-1])) &&
+		(end == len(input) || input[end] < utf8.RuneSelf && !isEmailByte(input[end]))
 }
 
 func isEmailByte(value byte) bool {
