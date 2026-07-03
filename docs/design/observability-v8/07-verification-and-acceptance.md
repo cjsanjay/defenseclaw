@@ -685,15 +685,37 @@ Required cases:
 - The logical registry’s focused authoring files validate together against the
   pinned OTel/GenAI registry dependencies and DefenseClaw extension rules.
 - Normal registry generation performs no network access. Tests corrupt each
-  normalized upstream snapshot digest and referenced name/type/stability/source
-  tuple in turn and require a closed failure before any output is emitted.
+  normalized upstream snapshot digest and referenced
+  name/type/shape/stability/source/version tuple in turn and require a closed
+  failure before any output is emitted.
+- OpenInference normalization accepts exactly the pinned Python package's trace,
+  resource, version, and Reserved Attributes specification files. Instrumentation,
+  example, test, and internal-documentation decoys are excluded; a missing or
+  mismatched package version, malformed/duplicate table row, unknown type, or
+  constant/table mismatch fails atomically.
+- OpenInference scalar, primitive-list, scalar-union, indexed-prefix, and
+  object-prefix shapes round-trip without implicit stringification or conversion of
+  flattened structures into literal OTLP arrays/objects. Fixtures cover bare
+  `metadata`, the resource-only project name, OTel-owned exception fields, and
+  constants-only prefix components.
+- The pinned overlap inventory is checked explicitly: dedicated GenAI wins the 60
+  current core overlaps; deprecated transitions and active-identical definitions
+  are distinguished; active conflicts fail; `gen_ai.request.top_k` has a reviewed
+  `double`-to-`int64` migration disposition; and core-only deprecated GenAI fields
+  cannot satisfy ordinary family references. Core retains ownership of compatible
+  OpenInference `session.id` and `user.id` overlaps, and incompatible overlaps fail.
+- Reordering upstream archive members produces identical snapshots, locks, and
+  generated outputs.
 - Generated JSON Schema bundle, compact catalog, Markdown reference, Go/Python
   constants/builders, field-class maps, fixtures, and Galileo/OpenInference
   projections are deterministic and checked for drift.
 - Inventory tests preserve 25 trace families, 131 metric instruments, 75 dotted
   log identities, twelve lifecycle/compatibility identities, fourteen gateway
   event mappings, and 188 audit-action mappings. They prove producer mappings do
-  not create implicit families or override canonical bucket ownership.
+  not create implicit families or override canonical bucket ownership. Named
+  producer-identity sets expand to the same exact tuples as the unfactored
+  inventory; empty, duplicate, unknown, unused, nested, wildcard, union, and
+  policy-incompatible sets fail.
 - Every current OTel schema field, event, name/kind pattern, and Galileo requirement
   has an explicit preserved/aliased/removed/corrected migration disposition.
 - Real Go and Python producers are validated, not hand-built substitute objects.

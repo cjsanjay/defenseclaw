@@ -302,7 +302,7 @@ Required when available and applicable:
 
 - `gen_ai.operation.name=invoke_agent`
 - `gen_ai.provider.name`
-- `gen_ai.agent.name`, `gen_ai.agent.type`, and `gen_ai.agent.id`
+- `gen_ai.agent.name`, `gen_ai.agent.id`, and `defenseclaw.agent.type`
 - `gen_ai.conversation.id`
 - `openinference.span.kind=AGENT`
 - Redacted `gen_ai.input.messages` and `gen_ai.output.messages`
@@ -311,6 +311,11 @@ Required when available and applicable:
 - Connector, run, user-principal reference, stream mode, session source, and resume
   indicator
 - Input/output availability states and original byte lengths
+
+`gen_ai.agent.type` is retained only as a projection-only compatibility alias of
+`defenseclaw.agent.type`; it is not part of the pinned OTel GenAI convention. The
+alias and canonical field derive from the same destination-redacted value, and
+canonical builders accept only the DefenseClaw-owned field.
 
 Workflow spans use `openinference.span.kind=CHAIN` or the pinned equivalent and
 describe bounded orchestration such as one turn, scan pipeline, or retrieval-

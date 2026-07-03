@@ -184,6 +184,34 @@ refreshed only by an explicit dependency-update operation that derives it from t
 pinned revision and produces a reviewed semantic diff; a self-authored subset plus
 its own digest is not sufficient provenance.
 
+OpenInference normalization uses only the pinned Python semantic-conventions
+package version source, its trace and resource constant modules, and
+`spec/semantic_conventions.md`. The Reserved Attributes table is authoritative for
+direct trace-attribute names, types, and meanings, while the released Python
+constants prove that the SDK symbol exists. Direct trace entries are the exact
+intersection, except OTel-standard exception fields remain OTel-core owned;
+`openinference.project.name` is the explicit resource-module exception. The
+released package has no per-row stability field, so the normalized stability is a
+documented compatibility-profile policy rather than an upstream row claim.
+Instrumentation, examples, tests, internal documentation, and other language SDKs
+never contribute attributes to the Python `0.1.30` profile.
+
+OpenInference unions and structured collections retain their upstream wire shape.
+`String/Integer` is a closed scalar union. `List of objects` is an indexed,
+zero-based flattened-prefix template and `Image Object` is an object-prefix
+template; neither becomes a literal OTLP array or object attribute. Prefix/template
+components are projection metadata, not generic DefenseClaw attribute types.
+
+Dependency overlap records provenance, not shared canonical ownership. The
+dedicated GenAI snapshot owns every current definition it contains. Deprecated
+core definitions moved to that repository are legacy migration provenance; an
+active duplicate is accepted only when its complete shape is equal, an active
+conflict fails, and a deprecated/current type change requires an explicit migration
+disposition. Core-only deprecated GenAI definitions cannot satisfy an ordinary
+family reference. OTel core remains the canonical owner of standard fields also
+named by OpenInference, while OpenInference-only fields are compatibility-projection
+inputs and never override OTel or OTel GenAI ownership.
+
 ## 5. Registry Composition Model
 
 The registry defines reusable groups rather than copying every common attribute
@@ -275,6 +303,14 @@ allowed contextual identities, severity policy, mandatory-floor rules, companion
 rules, and compatibility lifecycle. It references registered log identities and
 MUST NOT define a body schema, override a referenced family's bucket, or create an
 implicit family.
+
+To keep this exact mapping inventory reviewable, a repeated closed contextual set
+is declared once as a named producer-identity set and mappings reference exactly
+one set. The compiler expands the reference into an immutable explicit identity
+tuple before producing runtime data. Sets cannot include other sets, use wildcard
+members, inherit, union, or supply a fallback. Empty, duplicate, unknown, unused,
+or policy-incompatible sets are errors, so factoring cannot broaden a producer's
+allowed identities.
 
 The canonical log-identity baseline contains 75 dotted event identities and twelve
 lifecycle/compatibility identities. This includes `guardrail.judge.completed`,

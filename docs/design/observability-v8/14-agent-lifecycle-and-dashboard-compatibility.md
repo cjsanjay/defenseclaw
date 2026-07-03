@@ -380,6 +380,12 @@ gen_ai.provider.name
 gen_ai.request.model
 ```
 
+`gen_ai.agent.type` in this list is the frozen PR #403/#412 Collector and dashboard
+compatibility label. The canonical registry field is `defenseclaw.agent.type`; the
+local-observability projection emits the legacy label from that same
+destination-redacted value until the Collector and every current/historical query
+are migrated under the declared alias-removal lifecycle.
+
 Request, turn, trace, span, prompt, response, argument, result, reason, evidence,
 URL, user, and arbitrary error values are forbidden spanmetrics dimensions. Adding
 a dimension requires a cardinality/security review and a dashboard need.
