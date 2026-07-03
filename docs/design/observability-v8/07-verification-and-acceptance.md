@@ -24,13 +24,13 @@ Tests must validate outputs, not merely that functions returned no error.
 | Multi-destination fan-out | One collected log persisted once to implicit local SQLite and delivered independently once to each configured optional destination: JSONL, a Splunk fake, and a general OTLP fake |
 | Capability, concise, and advanced routing | Omitted policy compiles to one all-bucket capability route; `send` compiles to one deterministic narrowing route; advanced send/drop ordering remains first-match-wins and destination-independent |
 | Selector logic | AND across fields, OR within a field, wildcard rules, absent-field behavior, severity threshold |
-| Per-destination redaction | Golden concise-send and advanced-route projections under none/sensitive/content/strict/custom profiles |
+| Per-destination redaction | Golden concise-send and advanced-route projections under none/sensitive/content/strict/legacy-v7/custom profiles |
 | Immutable canonical record | Deep equality before/after all destination projections and race testing |
 | Fail-closed redaction | Injected detector/parser/serializer failures and safe delivered projection/health result |
 | Profile-faithful content | Under `none`, governed content is preserved only in schema-defined content fields; under redacting profiles, sensitive canaries are absent everywhere those profiles govern; metrics never contain content labels |
 | Atomic reload | Invalid reload keeps old graph; valid reload swaps once and drains old exporters |
 | Runtime v8 cutover | Legacy block rejection and actionable pointer to automatic upgrade or optional preview |
-| Automatic migration | Golden v7-to-v8 conversions, complete pre-write validation, atomic write/backup, secrets masked, retry/idempotence |
+| Automatic migration | Golden v7-to-v8 conversions, generated family selection, deterministic protocol splitting, metric-conflict rejection, legacy environment materialization, ancillary `.env` promotion/rollback, `legacy-v7`, complete pre-write validation, atomic write/backup, and retry/idempotence |
 | Global retention | Fake-clock boundary tests across every history table and both databases |
 | Preserve state tables | Reaper tests showing actions/snapshots/schema metadata remain |
 | Finding semantics | Occurrence fields/remediation/evidence tests and explicit absence of synthetic workflow status |
@@ -45,7 +45,7 @@ Tests must validate outputs, not merely that functions returned no error.
 | Push network safety | HTTP JSONL, OTLP, and Splunk tests cover every prohibited address class, guarded dialing/DNS rebinding, disabled redirects, failure isolation, and narrowly bounded private/CGNAT opt-ins |
 
 Decision-level coverage for `D-001` through `D-022`, `S-001` through `S-012`, and
-`P-001` through `P-049` is normative in `13-decision-traceability.md`; this matrix is
+`P-001` through `P-057` is normative in `13-decision-traceability.md`; this matrix is
 the requirement-level summary rather than a competing decision index.
 
 ## 3. Taxonomy Tests
@@ -159,6 +159,7 @@ Startup/reload validation MUST reject:
 - Custom profile attempting to extend another custom profile; single-level
   inheritance makes cycles unrepresentable.
 - Custom profile extending or aliasing `none`.
+- Custom profile extending or aliasing immutable `legacy-v7`.
 - Empty effective detector groups for a `detect` mode, `credential: preserve`, or
   `preserve` on a dynamic content/reason/evidence/error/path class.
 - Enabled OTLP destination with no selected signal or resolved endpoint.
@@ -508,6 +509,10 @@ Required cases:
   profile/version members; independent overrides and lock mismatches fail.
 - The canonical record `schema_version` and span `family_schema_version` coexist in
   fixtures without collision or ambiguous generated names.
+- Generated v7 exporter selection covers every current log, trace, metric, audit
+  action, JSONL/console event, OTel filter operation, and destination path; removing
+  one mapping fails generation, and converter tests prove no duplicate hand list or
+  wildcard fallback exists.
 
 ### 9.7 Agent lifecycle and local dashboards
 
@@ -575,10 +580,17 @@ Golden fixtures MUST cover:
 - Named `local-observability` destination with logs/traces/metrics, loopback/private
   endpoint intent, full `local-observability-v1` capability, and a deliberately
   narrowed fixture that preserves intent while reporting partial dashboard support.
-- Loopback/RFC1918 local destination migration materializes only the destination's
-  explicit `allow_private_networks` intent; metadata/link-local remains blocked and
-  no process-wide bypass appears.
+- Every explicit loopback/RFC1918/IPv6-ULA v7 literal, across local and non-local
+  destinations, materializes only that destination's `allow_private_networks`
+  intent; metadata/link-local/always-prohibited targets remain blocked and no
+  process-wide bypass appears.
 - Galileo preset and span filter.
+- Same-source OTel signals with differing protocols split into stable suffixed
+  destinations without losing endpoint, TLS, credentials, batch, route, enabled,
+  or profile intent.
+- Multiple metric destinations with equal effective interval/temporality converge
+  on one process policy; conflicting values fail before write and name the exact
+  align-or-remove remediation.
 - Current resource/metrics/runtime-span/event schema set imported into the one
   registry with generated-artifact parity.
 - Audit JSONL, Splunk, HTTP JSONL, and OTLP log sinks.
@@ -593,6 +605,16 @@ Golden fixtures MUST cover:
   second runtime emission gate. The baseline inventory test also proves there is no
   unhandled connector-level `emit_otel` config field.
 - Inline and environment/key-store credential forms.
+- Inline tokens, bearer tokens, exact references, and interpolated headers such as
+  an authorization scheme plus token. Promotion uses deterministic environment
+  names, places complete effective values only in the ancillary `.env` edit,
+  masks all output/object representations, and is idempotent on retry.
+- Every supported DefenseClaw/OpenClaw/standard OTel enablement, endpoint, signal
+  endpoint, protocol, signal protocol, and TLS-insecure environment input, proving
+  effective non-secret behavior is materialized and later environment changes do
+  not alter v8 policy.
+- Splunk `sourcetype_overrides`, OTLP-log `logger_name`, and the complete
+  `legacy-v7` field/helper compatibility corpus.
 - Already-v8 input.
 - Current valid v7 input with `config_version: 7`, an absent stamp, and numeric zero;
   all three produce equivalent v8 semantics. Missing/zero mixed with a v8-only key
@@ -607,6 +629,9 @@ Assertions:
   YAML through the registered required migration.
 - Unrelated config remains semantically identical.
 - Existing comments and ASCII guidance survive automatic migration.
+- Current family eligibility is read from the generated registry compatibility
+  selection; a removed/ambiguous entry fails before write rather than broadening a
+  route.
 - Migration emits no source SQLite destination/catch-all, uses concise `send` where
   one selector is sufficient, and uses advanced routes only when legacy exclusions
   or detailed selectors require them.
@@ -619,6 +644,9 @@ Assertions:
 - Active migrated destinations omit redundant `enabled: true`; disabled legacy
   destinations retain explicit `enabled: false`.
 - Generated config passes gateway and Python CLI parsing.
+- After Phase 4 version dispatch, an unrelated Python setup/TUI/config write to a
+  v8 source preserves the complete observability block and never invokes the v7
+  connector-only serializer.
 - The migration cursor records the conversion only after successful activation;
   already-v8 and retry cases do not duplicate output.
 - Running v8 gateway rejects original legacy blocks with actionable instructions.
@@ -806,6 +834,12 @@ intended commands.
   routes, or database migrations.
 - Migration output and the normal confirmation summary contain no resolved secrets
   or governed content.
+- The pure converter returns declarative ancillary edits without I/O; preview and
+  upgrade consume the same result. Generated v7 family selection supplies every
+  eligibility decision and a missing mapping is a pre-write error.
+- Per-signal protocol splits are deterministic, equal metric policies validate,
+  and conflicting metric policies fail with the documented destination/field
+  remediation.
 
 ### 16.2 Backup and atomicity
 
@@ -814,6 +848,9 @@ intended commands.
 - Comment-heavy fixtures preserve ASCII guidance, comments, order, unrelated
   sections, and safe scalar/list style.
 - Config activation uses locking, temporary files, fsync, and atomic rename.
+- Ancillary `.env` promotion uses the same lock/backup/rollback unit;
+  complete inline/interpolated values never enter YAML/diff/output, and an injected
+  failure after either file write restores both original byte streams.
 - A failure before rename never exposes a partial v8 file.
 - Insufficient permissions or disk space fail before gateway shutdown where they
   can be determined locally.
@@ -828,6 +865,10 @@ intended commands.
 - Inject failures before validation and during multi-file config activation. The
   exact v7 source bytes remain or are restored, the cursor remains unapplied, and
   the v8 gateway is not started against v7 configuration.
+- Manifest-required migration failure, ancillary-write failure, and cursor failure
+  all exercise the Phase 7 restart gate: target gateway start is never invoked,
+  exact active-source/`.env` backups are restored, exit is nonzero, and the
+  backup path is printed without a success banner.
 - When the existing previous-gateway snapshot is used for recovery, v7 starts only
   after its exact source bytes are active.
 - The additive v8 database schema remains readable by the immediately previous
@@ -848,6 +889,9 @@ intended commands.
   comment-heavy YAML.
 - Direct v8 gateway startup with v7 configuration rejects it and points first to
   `defenseclaw upgrade`, with the standalone preview as an optional diagnostic.
+- Python config/setup/TUI and gateway entrypoints dispatch on `config_version`:
+  v7 remains on the legacy path before upgrade, while v8 validation/mutation never
+  traverses the v7 observability dataclass or writer.
 - A seeded local-observability bundle is backed up and refreshed automatically;
   custom files and persistent volumes survive, DefenseClaw-owned files match the
   target package, a previously running stack is restarted/verified, and optional

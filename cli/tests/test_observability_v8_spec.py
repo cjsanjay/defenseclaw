@@ -37,7 +37,7 @@ def test_observability_v8_spec_is_complete_and_traceable() -> None:
     result = _run()
 
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "D=22 S=12 P=49 total=83" in result.stdout
+    assert "D=22 S=12 P=57 total=91" in result.stdout
 
 
 def test_observability_v8_spec_detects_missing_traceability(tmp_path: Path) -> None:

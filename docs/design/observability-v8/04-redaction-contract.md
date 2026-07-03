@@ -76,11 +76,38 @@ separately classified safe basename or destination class, but it cannot relabel 
 original path as metadata. This behavior is fixed profile data, not an
 implementation-language default.
 
+### 3.5 `legacy-v7`
+
+`legacy-v7` is an immutable built-in route projection used only to preserve the
+effective redacting behavior of an upgraded v7 installation. It is not the default
+for a fresh v8 source and it is not a synonym for `sensitive`, `content`, or
+`strict`:
+
+- Safe metadata is preserved.
+- General strings, model/tool content, errors, paths, credentials, and other v7
+  whole-field surfaces use the existing v7 length/hash placeholder behavior.
+- Entity/identifier fields retain the v7 entity-placeholder rules, including the
+  reviewed long-value prefix threshold.
+- Reasons retain the v7 bounded token-aware behavior that preserves reviewed rule
+  IDs and safe enum/key glue while whole-redacting dynamic values.
+- Evidence retains the v7 evidence placeholder and bounded match-coordinate
+  metadata.
+- Existing v7 placeholder recognition, idempotence, spoof resistance, short-value
+  handling, and SHA-256 compatibility token grammar are preserved exactly by
+  generated golden vectors.
+
+The profile is selected explicitly on migration-generated local/bucket/destination
+routes when v7 redaction was effective. When v7 redaction was globally disabled,
+migration selects the ordinary `none` behavior instead. `legacy-v7` is implemented
+in the central Phase 2 projection engine; it does not keep a second v7 fan-out or
+producer-side redaction path alive.
+
 ## 4. Custom Profile Composition
 
 A custom redacting profile MUST extend exactly one of `sensitive`, `content`, or
-`strict`; `none` cannot be extended or aliased because it has no transformations to
-compose. A custom profile MAY change only:
+`strict`; neither `none` nor `legacy-v7` can be extended or aliased. `none` has no
+transformations to compose, while `legacy-v7` is a fixed migration-compatibility
+contract rather than an authoring base. A custom profile MAY change only:
 
 - Enabled built-in detector groups.
 - Per-field-class transformation mode.
@@ -284,10 +311,11 @@ If a complete projection cannot be safely serialized:
 ### 9.3 Profile-faithful failure behavior
 
 There is no environment variable or runtime error path that changes the selected
-profile. Under `sensitive`, `content`, `strict`, or a custom redacting profile,
-redaction errors fail closed and never fall back to raw output. Under the selected
-`none` profile, raw content is intentional and no detector is expected to run; the
-projection still enforces schema, type, size, and serialization constraints.
+profile. Under `sensitive`, `content`, `strict`, `legacy-v7`, or a custom redacting
+profile, redaction errors fail closed and never fall back to raw output. Under the
+selected `none` profile, raw content is intentional and no detector is expected to
+run; the projection still enforces schema, type, size, and serialization
+constraints.
 
 The v7 `DEFENSECLAW_DISABLE_REDACTION` behavior is removed from both Go and Python
 surfaces during migration. `DEFENSECLAW_REVEAL_PII` may remain only as an
@@ -328,6 +356,9 @@ The redaction implementation MUST be tested for:
 - Failure-closed behavior and recursion protection.
 - Cross-language `hash-v1` golden vectors, path/URI normalization edge cases, key
   rotation, and unavailable-key fail-closed behavior.
+- `legacy-v7` golden vectors for each v7 string/entity/content/reason/evidence
+  helper, placeholder grammar, repeated application, spoofed placeholders, and
+  globally disabled versus redacting migration outcomes.
 - GenAI, OpenInference, legacy, span-event, link, exception, and Galileo projection
   aliases all receive equal-or-stronger redaction from one canonical value.
 - Input/output `reported` and redaction-state metadata remain truthful after whole,

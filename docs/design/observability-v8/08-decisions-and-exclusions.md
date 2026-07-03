@@ -105,6 +105,14 @@ diverges.
 | P-047 | Make `judge_bodies.db` the sole authoritative v8 judge-body store. Upgrade copies legacy `audit.db.judge_responses` idempotently by stable ID, verifies target commits before writer cutover or source cleanup, deduplicates compatibility reads/authorized local exports with the authoritative store first, completes export before purge, purges legacy copies before authoritative rows, and removes the runtime fallback that writes new bodies to `audit.db`. | Prevents dual writes, duplicate forensic results, unverified destructive cleanup, and silent reintroduction of raw judge bodies into the mandatory event-history database. |
 | P-048 | Resolve omitted adapter transport values to the exact compiler defaults in 03 §4.4: JSONL 50 MiB/five backups/30 days/compressed, HTTP `POST`, 10-second push timeout, 2,048/512/5,000 ms push batching, general OTLP `grpc`, and Galileo HTTP/protobuf with a 1,000 ms delay. | Makes the effective graph reproducible and prevents SDK or ambient-environment defaults from silently changing operator behavior. |
 | P-049 | Enforce the v1 trace-family minimums in 11 §14 as well as hard ceilings, and fail startup when the embedded semantic-profile registry disagrees with the pinned semantic-convention lock or compiled instrumentation tuple. | Guarantees that a configured “rich” trace can retain required identity/shape fields and that dependency updates cannot silently change its schema. |
+| P-050 | Promote v7 inline tokens, bearer tokens, and interpolated secret headers to deterministic environment references; confine complete effective values to ancillary locked/backed-up/rollback-capable `.env` edits and exclude them from YAML, candidates/diffs, representations, and output. | Preserves valid legacy credentials without adding an inline-secret v8 grammar or leaking resolved values during automatic migration. |
+| P-051 | Provide immutable built-in `legacy-v7` as a non-extendable route projection implemented by the central Phase 2 engine and selected only where migration must preserve effective v7 redaction. | Fresh v8 can remain full-fidelity by default while upgraded redacting installations retain exact string/entity/content/reason/evidence behavior without a permanent legacy pipeline. |
+| P-052 | Preserve Splunk `sourcetype_overrides` and OTLP-log `logger_name` as typed adapter-owned v8 destination fields. | These are observable operator contracts that cannot be dropped merely because they do not change canonical record classification. |
+| P-053 | Split v7 destinations with differing effective per-signal protocols into deterministic signal-suffixed v8 destinations; reject conflicting effective metric interval/temporality policies before write with an exact align-or-remove remediation. | Preserves representable transport intent and fails explicitly where v8 process-wide metric policy cannot losslessly represent v7 independent readers. |
+| P-054 | Materialize `allow_private_networks` separately for every translated destination with an explicit v7 loopback/RFC1918/IPv6-ULA literal, including required warning/audit, while retaining unconditional blocks and prohibiting a global bypass. | Keeps working private collectors working without weakening the destination-scoped SSRF model. |
+| P-055 | Materialize all effective non-secret legacy DefenseClaw/OpenClaw/standard OTel environment inputs into v8 source; preserve secret-bearing inputs as references or deterministic ancillary promotions, then retire ambient policy overrides. | Prevents environment-backed v7 installations from silently disabling or retargeting telemetry at cutover while keeping v8 policy explicit and reproducible. |
+| P-056 | Generate a versioned v7 exporter/family compatibility-selection artifact from the canonical telemetry registry and require the converter to consume it without a hand-maintained family list or wildcard fallback. | Makes no-broadening migration mechanically complete across current logs, traces, metrics, actions, filters, and destination paths. |
+| P-057 | Keep Phase 1 migration work side-effect-free; deliver ordinary Python writer/runtime `config_version` dispatch in Phase 4 and all activation, ancillary backup/rollback, cursor, required-failure restart-gate, and service lifecycle changes in Phase 7. | Preserves phase boundaries and prevents a pure converter from acquiring live-write/service authority or a v8 source from passing through the legacy serializer. |
 
 ## 4. Explicitly Excluded Behavior
 
@@ -157,6 +165,16 @@ The following MUST NOT appear incidentally in the v8 observability implementatio
 - Treating a dashboard query that parses but addresses a nonexistent label/field,
   returns a cadence-induced false zero, or loses root/subagent scope as compatible.
 - Resetting local Prometheus, Loki, Tempo, or Grafana volumes as part of upgrade.
+- Keeping a resolved v7 inline/interpolated credential in v8 YAML or any migration
+  summary, diff, diagnostic, object representation, or compliance record.
+- Approximating effective v7 redaction with `sensitive`, `content`, or `strict`
+  instead of the immutable `legacy-v7` compatibility projection.
+- A converter-local hand list of current producer/exporter families or a wildcard
+  fallback when generated v7 compatibility selection is missing.
+- Guessing one protocol across different v7 per-signal protocols, or silently
+  selecting one of several conflicting effective metric policies.
+- Routing a v8 source through the connector-only v7 Python serializer, or placing
+  required-failure restart/rollback behavior inside the Phase 1 pure converter.
 
 ## 5. Review Checklist
 
@@ -228,6 +246,16 @@ Before marking the spec approved, reviewers should answer yes to each question:
   change?
 - Does the automatic migration preserve judge-body retention state independently of
   its database-path move and correctly disclose the Galileo preset-delay change?
+- Are inline/interpolated secrets promoted without entering YAML/output, with the
+  ancillary `.env` included in exact backup and rollback?
+- Do differing signal protocols split deterministically, conflicting metric
+  policies fail with exact remediation, and every private literal receive only a
+  destination-scoped opt-in?
+- Is every effective legacy OTel environment input materialized and every current
+  family selected from generated registry compatibility data rather than a hand
+  list?
+- Is `legacy-v7` exact and non-extendable, and can an unrelated Python writer never
+  erase a v8 observability graph?
 - Are setup, doctor, TUI, dashboards, and docs included before release?
 - Does the ordinary upgrade refresh compatible DefenseClaw-owned local-stack assets,
   preserve custom files and history volumes, and verify readiness without requiring

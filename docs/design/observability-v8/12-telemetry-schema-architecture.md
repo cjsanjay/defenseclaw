@@ -112,6 +112,7 @@ schemas/telemetry/generated/
   compatibility/galileo.json
   compatibility/openinference.json
   compatibility/local-observability.json # generated dashboard/query consumer profile
+  compatibility/v7-exporter-selection.json # generated migration eligibility/profile map
 ```
 
 Only the manifest, three domain model files, lock, and curated examples are edited
@@ -317,6 +318,15 @@ datasource/dashboard UIDs, and aliases consumed by the bundled dashboards. The
 portable catalog may link to this manifest by compatibility-profile ID but does not
 copy its mappings. The dashboard checker parses every query and fails when its
 dependency is absent from this manifest.
+
+`compatibility/v7-exporter-selection.json` is the migration counterpart. For every
+current v7 log, trace, metric, audit action, gateway JSONL/console event, OTel span
+filter operation, and destination-specific emission path, it records the canonical
+v8 signal, bucket, source, event/family/instrument identity, eligibility, and
+`legacy-v7` projection disposition. The converter consumes this generated artifact
+and MUST NOT contain a hand-maintained duplicate family list. It is versioned with
+the registry, deterministic, secret-free, and fails generation when a current
+producer/exporter has no unambiguous disposition.
 
 ## 7. Standard Base Plus DefenseClaw Overlay
 
@@ -532,6 +542,9 @@ Migration proceeds in stages:
 9. Generate `local-observability-v1`, prove all fourteen dashboards and rules are
    covered, and keep aliases/dual emission until every current and historical query
    fixture has migrated.
+10. Generate the v7 exporter/family compatibility selection, prove every current
+    producer/action/signal/export path has one migration disposition, and make the
+    converter fail when the generated artifact lacks an exact mapping.
 
 No current schema is deleted merely because the registry exists. The release gate
 requires a machine-generated inventory showing every old field as preserved,
@@ -609,3 +622,6 @@ live content or secret values.
 - Every PR #412 metric name/label/histogram/cadence correction is represented by
   `local-observability-v1`; all fourteen source dashboards match their packaged
   copies and pass static plus live query validation.
+- The generated v7 exporter-selection artifact covers every current producer,
+  action, signal, span-filter operation, and destination eligibility rule; the
+  migration converter consumes it without a duplicate hand-authored family list.

@@ -11,6 +11,8 @@ phase-specific implementation and verification progress.
 - Repository baseline: DefenseClaw configuration v7
 - Repository location: `docs/design/observability-v8/`
 - Execution ledger: [`../../../spec.md`](../../../spec.md)
+- Decision registry: 22 locked product decisions, 12 semantic decisions, and 57
+  ambiguity-removal decisions (91 total)
 
 ## Purpose
 
@@ -153,6 +155,24 @@ The terms **MUST**, **MUST NOT**, **REQUIRED**, **SHOULD**, **SHOULD NOT**, and
 38. `judge_bodies.db` is the sole authoritative v8 forensic body store. Upgrade
     performs a verified idempotent cutover and removes the runtime write fallback
     to `audit.db`.
+39. V7 inline tokens and interpolated secret headers migrate to deterministic
+    environment references; complete values are confined to ancillary locked,
+    backed-up, rollback-capable `.env` edits and never enter YAML or output.
+40. Effective v7 redaction is preserved by immutable, non-extendable `legacy-v7`
+    in the central projection engine, not by approximating it with another v8
+    profile or retaining a parallel pipeline.
+41. Splunk sourcetype overrides and OTLP log scope names remain typed adapter
+    fields. Different per-signal protocols split deterministically, while
+    conflicting metric policies fail before write with exact remediation.
+42. Every explicit v7 private literal gets only a destination-scoped network opt-in,
+    and all effective non-secret legacy OTel environment inputs become explicit v8
+    source policy before ambient overrides retire.
+43. Current-family migration eligibility is generated from the canonical telemetry
+    registry and consumed by the converter; no hand-maintained family list or
+    wildcard broadening fallback is permitted.
+44. Phase 1 owns pure candidate conversion, Phase 4 owns Python writer/runtime
+    version dispatch, and Phase 7 owns activation, ancillary backup/rollback,
+    required-failure restart gating, cursor state, and service lifecycle.
 
 ## Review Method
 

@@ -120,12 +120,15 @@ rest.
 | `otel.resource` | `observability.resource` |
 | `otel.traces` sampler | `observability.trace_policy` |
 | `otel.metrics` interval/temporality | `observability.metric_policy`; preserve explicit values, while the inherited current default remains `export_interval_s: 60` and `temporality: delta` |
-| `otel.logs.emit_individual_findings: true` | Add an OTLP log route that includes `security.finding`; `false`/absent does not automatically route individual finding logs |
+| `otel.logs.emit_individual_findings: true` | Add an OTLP log route for the generated canonical individual-finding event family; `false`/absent does not automatically route those individual finding logs and does not drop unrelated `security.finding` facts |
 | `otel.destinations[]` | `observability.destinations[]` with `kind: otlp`; selected signals come from generated `send`/advanced routes and per-signal endpoint/path details become `signal_overrides` |
+| Different effective v7 per-signal protocols in one OTel destination | Split into deterministic signal-specific v8 destinations with stable suffixes; never select one protocol or add a hidden override |
+| Conflicting effective v7 metric interval/temporality policies | Fail candidate generation before any write and identify the conflicting destination names/fields plus the exact remediation: align the policies or keep only one metric-export destination |
+| Effective non-secret legacy OTel environment inputs | Materialize the effective master enablement, endpoint, signal endpoint, protocol, signal protocol, TLS-insecure, and resource-attribute values into destination-scoped v8 source; later environment changes do not override the committed graph |
 | Named `local-observability` OTLP destination | Preserve its name, endpoint/protocol/TLS and local-network intent; include logs/traces/metrics and every `local-observability-v1` family unless explicit v7 policy was narrower, in which case preserve it and report partial dashboard capability |
-| Loopback/RFC1918 local-observability endpoint | Preserve an explicit `network_safety.allow_private_networks` value. When absent, materialize `true` only for the named local-observability destination that requires the private endpoint, with the required warning/audit; never overwrite explicit `false` or create a process-wide private-network bypass |
+| Explicit v7 loopback/RFC1918/IPv6-ULA literal endpoint | Materialize `network_safety.allow_private_networks: true` only on each translated destination that needs it, with the required warning/audit; metadata/link-local/unspecified/multicast/reserved targets remain invalid and no process-wide bypass is created |
 | Galileo batch delay | Preserve an explicit operator delay. If the source merely inherited the v7 5,000 ms default, materialize the v8 `galileo-rich-v2` preset value of 1,000 ms and disclose the preset-default change in the upgrade summary |
-| OTel span filters | Equivalent bucket/source/event routes plus the versioned destination compatibility profile where mapping is exact; otherwise explicit migration warning with before/after eligible families |
+| OTel span filters and current exporter eligibility | Use generated v7 family-compatibility selection from the telemetry registry to produce exact bucket/source/event routes; never maintain a hand-authored converter list or broaden on an unknown mapping |
 | Top-level `audit_db` | `observability.local.path` |
 | Top-level `judge_bodies_db` | `observability.local.judge_bodies_path` (deliberate relocation; field name simplified) |
 | `guardrail.retain_judge_bodies: true/false` | Preserve the explicit Boolean at the same `guardrail.retain_judge_bodies` key; the path moves, but feature enablement does not |
@@ -135,17 +138,18 @@ rest.
 | `DEFENSECLAW_JSONL_DISABLE` truthy | Migrated JSONL destination has `enabled: false`; otherwise it is enabled to preserve current output |
 | Current gateway JSONL rotation defaults | `rotation: {max_size_mb: 50, max_backups: 5, max_age_days: 30, compress: true}` unless a supported current override supplies another value |
 | Current gateway pretty console output | One `kind: console` destination preserving current stderr/pretty behavior and audience as closely as the taxonomy permits |
-| Splunk HEC audit sink | `kind: splunk_hec` |
+| Splunk HEC audit sink | `kind: splunk_hec`, including the adapter-owned `sourcetype_overrides` action map |
 | HTTP JSONL audit sink | `kind: http_jsonl` |
-| OTLP log audit sink | Merge into a matching `kind: otlp` destination or create a separate uniquely named OTLP destination |
+| OTLP log audit sink | Merge into a matching `kind: otlp` destination or create a separate uniquely named OTLP destination; preserve adapter-owned `logger_name` |
 | `observability.connectors[*].audit_sinks` | Destination selectors using `connectors`; preserve explicit suppress/inherit intent, then remove the legacy child |
 | `observability.connectors[*].webhooks` | Preserve in place as a typed notification-only compatibility child; do not translate it into a destination route |
 | `ai_discovery.emit_otel: false` | Keep local `ai.discovery` logs enabled, but omit `ai.discovery` from translated OTLP log/trace/metric policies; do not incorrectly turn this destination-specific legacy intent into `collect.logs: false` |
 | `ai_discovery.emit_otel: true` or absent (v7 default true) | Enable `ai.discovery` trace/metric collection and include the bucket in each translated OTLP signal policy that previously received that provider signal; ordinary local discovery logs remain enabled |
 | `privacy.disable_redaction: true` | Preserve unredacted local and destination behavior with effective `none`; omit redundant profile keys where the new default is exact |
 | `DEFENSECLAW_DISABLE_REDACTION` truthy | Same unredacted preservation as the privacy field; migration reports that the legacy environment gate is now represented by v8 policy/defaults |
-| `privacy.disable_redaction: false/absent` | Materialize the prior effective local and per-destination redacting profiles/bucket overrides so an upgraded installation does not become unredacted merely because fresh v8 defaults are full-fidelity |
+| `privacy.disable_redaction: false/absent` | Materialize immutable built-in `legacy-v7` on the applicable local, bucket, and destination routes so the upgrade retains the exact old projection instead of becoming unredacted or approximating it with another v8 profile |
 | `DEFENSECLAW_REVEAL_PII` | Retain only as an authorized local display control; it does not influence persisted/exported projections or judge-body retention |
+| Inline v7 tokens/bearer tokens and interpolated secret headers | Replace with deterministic environment references; write the complete effective values only through ancillary locked/backed-up/rollback-capable `.env` edits and never place them in YAML or output |
 | Prometheus/operator-side scrape integration | Preserve bundle intent/documentation; create no native destination implicitly. `kind: prometheus` is a new opt-in v8 destination |
 | Seeded local-observability bundle | Back up and refresh DefenseClaw-owned Collector/datasource/dashboard/rule/config files to the mutually compatible target bundle; preserve custom files and all history volumes; restart/verify an already-running stack through the existing lifecycle |
 
@@ -167,11 +171,52 @@ judge content.
 The migrator MUST NOT merge destinations merely because their endpoints match when
 credentials, TLS, batching, signal settings, or route intent differ.
 
+The v8 converter consumes a generated v7 compatibility-selection artifact owned by
+the telemetry registry. For every current log, trace, metric, action, and exporter
+family, that artifact declares its v7 eligibility and canonical v8
+bucket/source/event identity. Phase 5 generates and drift-checks it from the same
+registry as the public schemas; the converter never embeds a second manually
+maintained family list. A missing or ambiguous mapping is a pre-write migration
+error with the affected source family, not permission to use `*` and broaden
+delivery.
+
+The complete legacy OTel environment inventory is mechanical, not illustrative:
+`DEFENSECLAW_OTEL_ENABLED`; the DefenseClaw, OpenClaw, and standard OTel global
+endpoint/protocol names; their `LOGS`, `TRACES`, and `METRICS` endpoint/protocol
+forms; the DefenseClaw/OpenClaw TLS-insecure names; `OTEL_RESOURCE_ATTRIBUTES`; and
+`OTEL_EXPORTER_OTLP_HEADERS`. The converter applies the existing v7 precedence,
+materializes all effective non-secret values, and records only the input names in
+its masked summary. Header values are secret-bearing: exact environment references
+remain references, while complete inline or interpolated values use the ancillary
+`.env` promotion contract below. Inventory tests enumerate the concrete names and
+fail when runtime support adds one without a migration disposition.
+
+V7 secret-bearing inputs are normalized before the v8 candidate is constructed.
+Exact `${NAME}` references remain references. Inline values and interpolated values
+such as `Basic ${TOKEN}` become stable, destination-and-field-derived environment
+references whose complete effective values are stored only in the ancillary
+`.env` edit. The active config and `.env` are locked and backed up as
+one required migration unit; failure restores both, and retry reuses the same names
+without duplicate assignments. Preview reports only reference names and the fact
+that an ancillary edit would occur.
+
+When a v7 destination selects signals with different effective protocols, the
+converter creates one destination per protocol/signal group, preserves the source
+name on the first group, and uses `-<signal[-signal...]>` suffixes for the rest,
+with signals and groups ordered by the canonical `logs`, `traces`, `metrics` order.
+Endpoint, credentials, TLS, batching, routes, enabled state, and redaction are
+copied to each resulting destination before signal-specific overrides are applied.
+Metric export remains process-policy scoped in v8: two effective v7 metric
+interval/temporality policies that disagree are not representable, so conversion
+fails before write and instructs the operator to align those named policies or
+retain only one metric-export destination.
+
 The migrator emits the concise `send` form whenever one bucket/signal selection and
 one redaction choice preserve intent. It MUST NOT omit both `send` and `routes` on a
 migrated destination unless the v7 destination already received every supported
-signal, every catalog bucket, unredacted; omission has broad v8 meaning. It emits advanced `routes` only for legacy
-exclusions, multiple precedence rules, source/connector/action/event/severity
+signal, every catalog bucket, unredacted; omission has broad v8 meaning. It emits
+advanced `routes` only for legacy exclusions, multiple precedence rules,
+source/connector/action/event/severity
 selectors, or differing redaction within one destination. It never writes the
 generated local destination/catch-all or a second OTLP signal-enable map. It omits
 `enabled` for active optional destinations and writes `enabled: false` only to
@@ -179,9 +224,11 @@ preserve a disabled legacy destination.
 
 After a successful migration, the gateway/CLI no longer consult
 `DEFENSECLAW_JSONL_DISABLE`, `DEFENSECLAW_DISABLE_REDACTION`, or
-`DEFENSECLAW_PERSIST_JUDGE`; their effective
-intent is represented in v8 YAML. Migration preview must name an environment-derived
-decision without printing any secret values.
+`DEFENSECLAW_PERSIST_JUDGE`, nor the legacy DefenseClaw/OpenClaw/standard OTel
+enablement, endpoint, protocol, or TLS inputs for observability policy; their
+effective intent is represented in v8 YAML and source-declared secret references.
+Migration preview must name an environment-derived decision without printing any
+secret values.
 
 ## 4. Producer Classification Registry
 
@@ -248,8 +295,10 @@ Deliver:
   Python loader preserves many unmodeled keys; changing that behavior for the v8
   observability contract is intentional and breaking. Unrelated valid extension
   sections remain preserved according to their own schemas.
-- One deterministic migration function registered as a required
-  `defenseclaw upgrade` migration and reused by the optional read-only CLI preview.
+- One deterministic, side-effect-free v7-to-v8 candidate conversion library with
+  secret-free diagnostics. Registration, ancillary writes, service restart, and
+  rollback remain Phase 7 integration work; Phase 1 tests only pure conversion and
+  validation seams.
 - Documentation examples and config reference.
 
 Do not switch runtime producers yet. Phase 1 must produce a validated immutable
@@ -260,7 +309,6 @@ Primary areas:
 - `internal/config/`
 - `cli/defenseclaw/config.py`
 - `cli/defenseclaw/commands/cmd_config.py`
-- setup/TUI config writers that parse, display, or mutate observability policy
 - `cli/defenseclaw/observability/`
 - schema and documentation directories
 
@@ -272,6 +320,8 @@ Deliver:
 - Collection gate and mandatory-floor catalog.
 - Ordered per-destination route engine.
 - Central redaction engine and built-in/custom profiles.
+- Immutable built-in `legacy-v7` route projection with exact compatibility vectors;
+  it is not extendable and does not preserve a parallel producer/fan-out path.
 - Built-in SQLite store adapter and event-history schema migration.
 - Transactional normalized projections.
 - Global reaper across audit and judge-body databases.
@@ -293,6 +343,8 @@ Deliver:
 
 - JSONL, console, Splunk HEC, HTTP JSONL, OTLP, and the new opt-in native
   Prometheus adapter behind the destination registry.
+- Splunk `sourcetype_overrides` and OTLP-log `logger_name` as typed adapter-owned
+  fields in the destination registry and canonical schema.
 - Independent destination queues, retry, draining, and health.
 - Destination-local log/trace/metric route filtering.
 - Trace span creation gates and cloned redacted export projections.
@@ -362,6 +414,14 @@ Remove or retire:
 Duplicate-removal tests must assert one semantic action produces exactly the
 expected records and projections.
 
+Phase 4 also switches ordinary Python config/setup/TUI writers and runtime config
+entrypoints by `config_version`. A v8 source is validated and mutated through the
+v8 source/writer path; it is never loaded and re-saved through the connector-only
+v7 `ObservabilityConfig` dataclass. A v7 source continues through the v7 path until
+Phase 7 performs the required migration. Tests must prove that an unrelated Python
+write cannot erase v8 defaults, buckets, profiles, destinations, routes, or local
+settings.
+
 Python CLI/setup/TUI tests must additionally prove that legacy redaction and JSONL
 environment variables cannot silently override a committed v8 graph and that
 redaction status reports capability-default, explicit concise-send, and
@@ -398,6 +458,9 @@ Deliver:
 - Generated `local-observability-v1` compatibility inventory connecting registry
   families to the exact Prometheus names/labels/buckets, Loki fields, Tempo fields,
   and dashboard consumers fixed by PR #412.
+- Generated versioned v7 exporter/family compatibility selection consumed by the
+  pure converter, covering current logs, traces, metrics, audit actions,
+  JSONL/console eligibility, OTel filters, and destination-specific behavior.
 
 Primary areas:
 
@@ -441,6 +504,14 @@ Deliver before the v8 release:
 - Atomic v8 config activation as part of target installation.
 - Exact v7 source restoration and prevention of an incompatible v8 gateway start
   when the required conversion fails.
+- Version-dispatched Python migration activation plus ancillary `.env`
+  locking, backup, and rollback. The active v8 writer/runtime dispatch delivered in
+  Phase 4 is a prerequisite; Phase 7 must not route the new source through a v7 save
+  path.
+- A narrow required-migration restart gate: candidate, ancillary-write, manifest,
+  or cursor failure restores the backed-up unit, leaves the migration unapplied,
+  skips the target gateway start, and exits nonzero with the backup path. This is
+  Phase 7 work, not part of the Phase 1 pure converter.
 - Retry/idempotence, backup status, and read-only config permission preflight.
 - Historical baseline upgrade, failure injection, rollback, and compatibility tests.
 - Automatic backup/refresh of an installed local-observability bundle, preservation

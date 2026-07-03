@@ -332,7 +332,11 @@ order:
 
 The implicit catalog profile is `none`. It is valid at every resolution level,
 including defaults, bucket policy, optional destinations, and the built-in local
-store. An explicitly named unknown profile is invalid.
+store. The complete built-in name set is `none`, `sensitive`, `content`, `strict`,
+and the immutable migration-compatibility profile `legacy-v7`. `legacy-v7` is a
+valid explicit reference but cannot be extended or aliased; its exact projection
+contract is defined in `04-redaction-contract.md`. An explicitly named unknown
+profile is invalid.
 
 ## 4. Destination Registry
 
@@ -512,9 +516,16 @@ Kind-specific fields are:
 | `jsonl` | `path`, `rotation.max_size_mb`, `rotation.max_backups`, `rotation.max_age_days`, `rotation.compress`, plus existing file permission/reopen behavior |
 | `console` | No required transport fields; output stream/format behavior remains adapter-defined and schema-documented |
 | `prometheus` | `listen`, `path` |
-| `splunk_hec` | `endpoint`, `token_env`, optional `index`, `source`, `sourcetype`, TLS/timeout/batch |
+| `splunk_hec` | `endpoint`, `token_env`, optional `index`, `source`, `sourcetype`, `sourcetype_overrides`, TLS/timeout/batch |
 | `http_jsonl` | `endpoint`, optional `method`, `headers`, `bearer_env`, TLS/timeout/batch |
-| `otlp` | `protocol`, `endpoint`, `headers`, TLS/timeout/batch, optional `signal_overrides.<signal>.{endpoint,path}` |
+| `otlp` | `protocol`, `endpoint`, `headers`, optional `logger_name`, TLS/timeout/batch, optional `signal_overrides.<signal>.{endpoint,path}` |
+
+`sourcetype_overrides` is a bounded map from registered audit action to Splunk
+sourcetype. It changes only the adapter envelope; it does not reclassify the
+canonical record or replace route selectors. `logger_name` is the bounded OTel log
+instrumentation-scope name used by a log-capable OTLP destination. It likewise has
+no routing or schema-selection effect. Both fields are retained because they are
+operator-visible v7 adapter behavior, not implementation-only constants.
 
 Every configurable adapter field must be present in the canonical schema and the
 generated all-knobs reference. Internal constants that are intentionally not
@@ -530,6 +541,10 @@ operator tunable must not be presented as YAML knobs.
   second transport enablement switch.
 - `signal_overrides` may contain only selected signals and may change endpoint/path
   details, not enable an otherwise unselected signal.
+- A v8 OTLP destination has one protocol. Automatic migration of a v7 destination
+  whose selected signals use different effective protocols creates deterministic
+  signal-specific destinations instead of adding a hidden per-signal protocol
+  exception or guessing one protocol.
 - Each selected signal resolves an endpoint from its override or the destination
   endpoint.
 - Trace sampling is process-wide under `trace_policy`; a destination cannot request
@@ -541,9 +556,15 @@ operator tunable must not be presented as YAML knobs.
 ### 4.6 Secret-bearing fields
 
 Tokens, authorization headers, and credentials MUST support environment or key-store
-references. Inline secret values MAY remain supported only where existing
-configuration requires compatibility, but setup commands, config display, doctor,
-TUI, migration preview, errors, and compliance diffs MUST mask them.
+references. New v8 source does not require an inline secret compatibility form.
+During automatic migration, a v7 inline token, bearer token, or interpolated header
+such as `Basic ${TOKEN}` is converted to one deterministic environment reference
+whose value is the complete effective secret/header value. That value is written
+only through the ancillary locked, backed-up, rollback-capable `.env` update;
+it never enters v8 YAML, a candidate/diff object, migration output, doctor/TUI
+display, an error, or a compliance record. The generated environment-variable name
+is stable for the source destination and field so retry cannot create duplicate
+`.env` entries.
 
 Explicit v8 observability policy is not implicitly overridden by legacy DefenseClaw
 or standard OTel environment variables. Only documented bootstrap variables and
