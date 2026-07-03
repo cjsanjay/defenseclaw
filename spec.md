@@ -3,10 +3,10 @@
 ```yaml
 spec_status: approved-for-implementation
 goal_status: active
-current_phase: P1
+current_phase: P2
 target_config_version: 8
 baseline_commit: fd13acedfcffc0cc431d5a72f329b56b50b22baa
-last_verified_commit: c7234b5de4baa4092761ad886a24ebcba8478af8
+last_verified_commit: c29cdddc4e785463d8f26da43df199897051c163
 last_updated: 2026-07-02
 ```
 
@@ -31,10 +31,10 @@ or a plausible-looking dashboard is not completion.
 
 | Field | Value |
 |---|---|
-| Active work package | `P1-WP04` — deterministic v7-to-v8 converter engine and typed compatibility-artifact contract |
-| Ready queue | `P1-GATE` after converter engine, secret, environment-precedence, idempotence, and fail-closed artifact-contract tests |
+| Active work package | `P2-WP01` — immutable generic canonical-record substrate and current classified-log builder |
+| Ready queue | `P2-WP02` after the canonical envelope, immutable payload, deterministic builder, and registration validation are complete |
 | Blocked | None |
-| Next phase gate | `P1-GATE` — validated immutable v8 runtime plan and deterministic converter engine/API; generated selection integration remains release-blocking in `P5-WP06` |
+| Next phase gate | `P2-GATE` — canonical router, redaction, SQLite, retention, and representative safe-path integration without producer-wide cutover |
 | Root coordinator | Primary Codex thread |
 | Implementation branch | `codex/observability-v8-spec-implementation` from `main` |
 
@@ -203,14 +203,14 @@ substitute a converter-local family list, `*`, or all-catalog-buckets fallback.
 | `P1-WP01` | `DONE` | subagent + root | `P0-GATE` | Bucket/signal/event/severity/source/selector types and classification contract | 14 gateway events and 188 audit actions exhaustively classified; focused Go tests/vet at `d15292434` |
 | `P1-WP02` | `DONE` | root + subagents | `P1-WP01` | Go v8 schema, defaults, compiler, capabilities, routes, profiles, strict legacy rejection | Closed schema and embedded registry; strict parser; immutable/masked plan; capability/preset/route/profile/secret/path/endpoint/provenance diagnostics; normal/race/vet/schema suites and `make check` passed at `780adcf72` |
 | `P1-WP03` | `DONE` | root + subagents | `P1-WP02` | Python source/schema parity with registry-owned selectors delegated to the canonical Go helper; comment-preserving writer; source/effective/reference/plan generation | Commits `3c9739c0c..c7234b5de`; 82 focused Python tests, normal/race Go tests, schema/reference drift gates, Ruff, and real Go/Python bridge passed |
-| `P1-WP04` | `IN_PROGRESS` | root + subagent | `P1-WP02..03` | Side-effect-free deterministic v7-to-v8 converter engine plus a strict typed contract for generated v7 eligibility, exact filter predicates, adapter routes, and local-profile coverage; no generated registry data is hand-authored here | Engine/environment/secret/rewrite/protocol/filter tests; synthetic contract fixtures prove missing or ambiguous mappings fail closed and canonical Go candidate validation is required |
-| `P1-GATE` | `TODO` | root | `P1-WP01..04` | Immutable validated runtime plan plus converter engine/artifact API from YAML; runtime producers not switched and final generated selection/goldens explicitly remain in `P5-WP06` | Phase test set recorded; gate evidence must not claim complete v7 mapping or dashboard migration equivalence |
+| `P1-WP04` | `DONE` | root + subagents + Claude review | `P1-WP02..03` | Side-effect-free deterministic v7-to-v8 converter engine plus a strict typed contract for generated v7 eligibility, exact filter predicates, adapter routes, and local-profile coverage; no generated registry data is hand-authored here | Commits `bf4fed78b..c29cdddc4`; 237 focused converter/contract tests, Ruff/format/diff checks, exhaustive v7 precedence/secret/filter/parser/idempotence cases, and two canonical Go candidate validations passed. Synthetic fixtures prove missing, malformed, duplicate, incomplete, or inexact contract data fail closed; semantic family completeness/ambiguity/staleness remains `P5-WP06`/P7. |
+| `P1-GATE` | `DONE` | root | `P1-WP01..04` | Immutable validated runtime plan plus converter engine/artifact API from YAML; runtime producers not switched and final generated selection/goldens explicitly remain in `P5-WP06` | At `c29cdddc4`: 334 broad Python tests; Go normal/race/vet; schema/reference/spec and full `make check`; local and multi-destination candidates compiled valid by the real Go helper. This gate does not certify final v7 family eligibility, PR #403/#412 dashboard coverage, Galileo equivalence, or complete migration goldens. |
 
 ### P2 — Canonical Router, Redaction, SQLite, Retention
 
 | ID | Status | Owner | Depends on | Deliverable | Verification/evidence |
 |---|---|---|---|---|---|
-| `P2-WP01` | `TODO` | unassigned | `P1-GATE` | Immutable canonical record/builders and producer classification registry | Schema/builders/exhaustiveness tests |
+| `P2-WP01` | `READY` | root + subagents | `P1-GATE` | Immutable generic canonical record substrate, deterministic current classified-log builder, and strict registered-identity validation; generated trace/metric family builders remain `P5-WP02` | Schema/envelope/value immutability/builders/serialization/bounds/registration/exhaustiveness tests |
 | `P2-WP02` | `TODO` | unassigned | `P2-WP01` | Collection/floor gates and per-destination route compiler/evaluator | Routing/fan-out/collection tests |
 | `P2-WP03` | `TODO` | unassigned | `P2-WP01` | Central profiles/detectors/field transforms and cross-language `hash-v1` | Detector/property/Go-Python parity tests |
 | `P2-WP04` | `TODO` | unassigned | `P2-WP01..03` | Implicit SQLite store, projections, integrity, judge separation | Migration/transaction/query tests |
@@ -320,6 +320,10 @@ only “passed.” A relevant change invalidates old evidence.
 | `V-0009` | 2026-07-02 | `c7234b5de4baa4092761ad886a24ebcba8478af8` | P1-WP03 | `go test ./internal/observability ./internal/config ./internal/cli ./schemas -count=1`; `go test -race ./internal/config ./internal/cli -count=1`; focused v8 Python suite | Normal and race suites passed; 82 Python validator/writer/reference/parity/bridge/CLI tests passed | root + subagents |
 | `V-0010` | 2026-07-02 | `c7234b5de4baa4092761ad886a24ebcba8478af8` | P1-WP03 | `uv run python scripts/generate_observability_v8_reference.py --check`; `uv run python scripts/check_schemas.py`; focused Ruff | Six generated/reference/wheel mirrors, 23 JSON schemas, 131-metric catalog, schema mirrors, and all Python lint checks passed | root + subagent |
 | `V-0011` | 2026-07-02 | `c7234b5de4baa4092761ad886a24ebcba8478af8` | P1-WP03 | Build real gateway; run `defenseclaw config validate/show/reference` and `defenseclaw observability plan` against a temporary v8 install | Versioned Go/Python bridge, full-capability OTLP expansion, generated reference, and filtered canonical-plan rendering passed | root |
+| `V-0012` | 2026-07-02 | `c29cdddc4e785463d8f26da43df199897051c163` | P1-WP04 | `uv run --project cli pytest -q cli/tests/test_observability_v8_migration.py cli/tests/test_observability_v8_compatibility.py`; targeted Ruff/format and `git diff --check` | 237 focused converter/typed-contract tests passed; lint, format, and diff checks passed | root + subagents + Claude review |
+| `V-0013` | 2026-07-02 | `c29cdddc4e785463d8f26da43df199897051c163` | P1-GATE | Broad v8 Python suite covering migration, compatibility, config, YAML, parity, reference, spec, config-v8 commands, plan, inspect, and environment-registry coverage | 334 passed in 13.92s | root |
+| `V-0014` | 2026-07-02 | `c29cdddc4e785463d8f26da43df199897051c163` | P1-GATE | `go test` normal and race plus `go vet` for `./internal/observability ./internal/config ./internal/cli ./schemas`; `make check` | Go normal/race/vet passed; v7 parity, 91-decision spec, inventory, 23 schemas/131 metrics, 14 dashboards/313 panels, Go/TS provider coverage, catalog, and upgrade manifest passed | root |
+| `V-0015` | 2026-07-02 | `c29cdddc4e785463d8f26da43df199897051c163` | P1-GATE | Build `/tmp/defenseclaw-v8`; convert and run `config-v8 validate` for full local-observability and multi-destination/audit/filter candidates | Both real Go compiler results returned `valid:true`; this proves candidate validity, not generated family mapping completeness | root |
 
 Final integration requires, at minimum:
 
@@ -350,6 +354,7 @@ and exact-trace canary acknowledgement against its conformance harness.
 | `C-0002` | 2026-07-02 | gate | `P0-WP02..03`, `P0-GATE` | D-001..022, S-001..012, P-001..047 | Approve the mechanically validated contract after current-state inventory, compatibility, and two CodeRabbit review passes | complete |
 | `C-0003` | 2026-07-02 | architecture | `P1-WP03`, `P5-WP01..02` | D-019, P-010, P-030, P-046 | Python validates source/schema semantics and renders the masked source; canonical effective compilation and registered action/event selector validation always run in Go. P5's sole registry compiler will generate the shared Python selector constants instead of introducing a hand-maintained duplicate in P1. | complete |
 | `C-0004` | 2026-07-02 | dependency | `P1-WP04`, `P1-GATE`, `P5-WP06`, `P7-WP01` | D-020, P-030, P-044, P-046, P-056, P-057 | Split converter-engine/API completion from generated family-selection integration: P1 may unblock canonical runtime work only after strict typed fail-closed engine tests; P5's sole compiler owns the complete compatibility artifact and mapping goldens, which remain mandatory before automatic migration or release. | complete |
+| `C-0005` | 2026-07-02 | gate | `P1-WP04`, `P1-GATE`, `P2-WP01`, `P5-WP06`, `P7-WP01` | D-020, P-030, P-044, P-046, P-056, P-057 | Close P1 at `c29cdddc4` after independent/subagent/Claude review and exact-HEAD gates. The immutable plan and converter engine/API may unblock P2; generated v7 family eligibility, complete migration goldens, PR #403/#412 dashboard equivalence, Galileo conformance, and activation remain mandatory in their existing P5/P6/P7 work packages. | complete |
 
 A new product choice requires a new decision ID and traceability row. A behavior
 change updates its contract and required test in the same change. Deferred release
