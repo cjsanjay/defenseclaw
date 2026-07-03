@@ -111,11 +111,7 @@ class V7Selector:
     def as_mapping(self) -> Mapping[str, tuple[str, ...]]:
         """Return a detached immutable mapping containing only selected fields."""
 
-        result = {
-            name: getattr(self, name)
-            for name in SELECTOR_FIELDS
-            if getattr(self, name)
-        }
+        result = {name: getattr(self, name) for name in SELECTOR_FIELDS if getattr(self, name)}
         return MappingProxyType(result)
 
     @property
@@ -170,9 +166,7 @@ class V7CompatibilitySelection:
         root = _require_mapping(source, "$")
         _require_exact_fields(root, _TOP_LEVEL_FIELDS, "$")
         _require_exact_integer(root["schema_version"], SCHEMA_VERSION, "$.schema_version")
-        _require_exact_integer(
-            root["source_config_version"], SOURCE_CONFIG_VERSION, "$.source_config_version"
-        )
+        _require_exact_integer(root["source_config_version"], SOURCE_CONFIG_VERSION, "$.source_config_version")
         registry_schema_version = _require_positive_integer(
             root["registry_schema_version"], "$.registry_schema_version"
         )
@@ -209,11 +203,9 @@ class V7CompatibilitySelection:
         )
 
     def __repr__(self) -> str:
-        selector_count = sum(
-            len(selectors)
-            for _, signals in self._exporters
-            for _, selectors in signals
-        ) + sum(len(selectors) for _, selectors in self._features)
+        selector_count = sum(len(selectors) for _, signals in self._exporters for _, selectors in signals) + sum(
+            len(selectors) for _, selectors in self._features
+        )
         return (
             "V7CompatibilitySelection("
             f"schema_version={self.schema_version}, "
@@ -228,23 +220,13 @@ class V7CompatibilitySelection:
     def collection(self) -> Mapping[str, Mapping[str, tuple[str, ...]]]:
         """Return a detached, deeply immutable view of conditional collection."""
 
-        return MappingProxyType(
-            {
-                condition: MappingProxyType(dict(signals))
-                for condition, signals in self._collection
-            }
-        )
+        return MappingProxyType({condition: MappingProxyType(dict(signals)) for condition, signals in self._collection})
 
     @property
     def exporters(self) -> Mapping[str, Mapping[str, tuple[V7Selector, ...]]]:
         """Return a detached, deeply immutable exporter profile view."""
 
-        return MappingProxyType(
-            {
-                exporter: MappingProxyType(dict(signals))
-                for exporter, signals in self._exporters
-            }
-        )
+        return MappingProxyType({exporter: MappingProxyType(dict(signals)) for exporter, signals in self._exporters})
 
     @property
     def features(self) -> Mapping[str, tuple[V7Selector, ...]]:
@@ -291,9 +273,7 @@ class V7CompatibilitySelection:
         _require_query_name(feature, FEATURE_NAMES, "$.features")
         return _lookup(self._features, feature)
 
-    def span_filter_selectors(
-        self, operation: str, required_attributes: Sequence[str]
-    ) -> tuple[V7Selector, ...]:
+    def span_filter_selectors(self, operation: str, required_attributes: Sequence[str]) -> tuple[V7Selector, ...]:
         """Return selectors only for an exact operation/attribute predicate."""
 
         _require_token(operation, "$.span_filter_operation")
@@ -304,9 +284,7 @@ class V7CompatibilitySelection:
                 "$.span_filter_operation",
                 "regenerate the artifact with the configured legacy operation",
             )
-        attributes = _canonical_query_tokens(
-            required_attributes, "$.span_filter_operation.required_attributes"
-        )
+        attributes = _canonical_query_tokens(required_attributes, "$.span_filter_operation.required_attributes")
         if attributes != expected.required_attributes:
             raise _error(
                 "unmapped_span_filter_predicate",
@@ -426,9 +404,7 @@ def _parse_span_filter_operations(value: Any) -> tuple[tuple[str, V7SpanFilterOp
 
 def _parse_local_observability(value: Any) -> V7LocalObservabilityProfile:
     source = _require_mapping(value, "$.local_observability")
-    _require_exact_fields(
-        source, frozenset({"profile_id", "complete"}), "$.local_observability"
-    )
+    _require_exact_fields(source, frozenset({"profile_id", "complete"}), "$.local_observability")
     if source["profile_id"] != LOCAL_OBSERVABILITY_PROFILE:
         raise _error(
             "invalid_local_profile",

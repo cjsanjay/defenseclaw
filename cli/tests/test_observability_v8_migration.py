@@ -1,0 +1,2224 @@
+# Copyright 2026 Cisco Systems, Inc. and its affiliates
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# SPDX-License-Identifier: Apache-2.0
+
+from __future__ import annotations
+
+import hashlib
+from collections.abc import Mapping
+
+import defenseclaw.observability.v8_migration as migration_module
+import pytest
+import yaml
+from defenseclaw.observability.presets import GALILEO
+from defenseclaw.observability.v8_compatibility import V7CompatibilitySelection
+from defenseclaw.observability.v8_config import BUCKETS, load_validate_v8
+from defenseclaw.observability.v8_migration import (
+    V8MigrationDependencyError,
+    V8MigrationError,
+    convert_v7_observability_to_v8,
+)
+
+_EMPTY_SIGNALS = {"logs": [], "traces": [], "metrics": []}
+_GENERATED_COMPATIBILITY = {
+    "schema_version": 1,
+    "source_config_version": 7,
+    "registry_schema_version": 1,
+    "projection_profile": "legacy-v7",
+    "collection": {
+        "always": {
+            "logs": ["compliance.activity", "platform.health"],
+            "traces": [],
+            "metrics": [],
+        },
+        "otel.logs": {
+            **_EMPTY_SIGNALS,
+            "logs": ["security.finding", "model.io", "ai.discovery"],
+        },
+        "otel.traces": {
+            **_EMPTY_SIGNALS,
+            "traces": ["guardrail.evaluation", "model.io", "tool.activity", "agent.lifecycle", "ai.discovery"],
+        },
+        "otel.metrics": {
+            **_EMPTY_SIGNALS,
+            "metrics": ["model.io", "agent.lifecycle", "ai.discovery", "platform.health"],
+        },
+    },
+    "exporters": {
+        "gateway_jsonl": {"logs": [{"buckets": ["compliance.activity", "platform.health"]}]},
+        "gateway_console": {"logs": [{"buckets": ["compliance.activity", "platform.health"]}]},
+        "audit_sink": {"logs": [{"buckets": ["compliance.activity"], "actions": ["config-update", "scan"]}]},
+        "generic_otlp": {
+            "logs": [{"buckets": ["security.finding", "model.io", "ai.discovery"]}],
+            "traces": [
+                {
+                    "event_names": [
+                        "span.agent.invoke",
+                        "span.model.chat",
+                        "span.retrieval.search",
+                        "span.tool.execute",
+                        "span.workflow.run",
+                    ]
+                }
+            ],
+            "metrics": [{"buckets": ["model.io", "agent.lifecycle", "ai.discovery", "platform.health"]}],
+        },
+        "local_observability": {
+            "logs": [
+                {
+                    "buckets": [
+                        "security.finding",
+                        "model.io",
+                        "tool.activity",
+                        "agent.lifecycle",
+                        "platform.health",
+                    ]
+                }
+            ],
+            "traces": [
+                {
+                    "event_names": [
+                        "span.agent.invoke",
+                        "span.model.chat",
+                        "span.retrieval.search",
+                        "span.tool.execute",
+                        "span.workflow.run",
+                    ]
+                }
+            ],
+            "metrics": [{"buckets": ["model.io", "agent.lifecycle", "platform.health"]}],
+        },
+    },
+    "features": {
+        "otel_individual_findings": [{"event_names": ["finding.observed"]}],
+    },
+    "span_filter_operations": {
+        "chat": {
+            "required_attributes": ["tenant.export_allowed"],
+            "selectors": [{"event_names": ["span.model.chat"]}],
+        },
+        "retrieve": {
+            "required_attributes": [],
+            "selectors": [{"event_names": ["span.retrieval.search"]}],
+        },
+    },
+    "local_observability": {"profile_id": "local-observability-v1", "complete": True},
+}
+_TYPED_COMPATIBILITY = V7CompatibilitySelection.from_mapping(_GENERATED_COMPATIBILITY)
+
+
+def _convert(source: str | bytes, environment: Mapping[str, str] | None = None, **kwargs: object):
+    kwargs.setdefault("effective_data_dir", "/var/lib/defenseclaw")
+    kwargs.setdefault("compatibility_selection", _TYPED_COMPATIBILITY)
+    return convert_v7_observability_to_v8(source, environment or {}, **kwargs)
+
+
+def _document(result: object) -> dict[str, object]:
+    candidate = result.candidate  # type: ignore[attr-defined]
+    document = yaml.safe_load(candidate)
+    assert isinstance(document, dict)
+    return document
+
+
+def _destination(document: Mapping[str, object], name: str) -> dict[str, object]:
+    observability = document["observability"]
+    assert isinstance(observability, dict)
+    destinations = observability["destinations"]
+    assert isinstance(destinations, list)
+    return next(item for item in destinations if isinstance(item, dict) and item.get("name") == name)
+
+
+def _galileo_span_filter_yaml() -> str:
+    value = {
+        "span_filter": {
+            "operations": [
+                {"name": name, "require_attributes": list(attributes)}
+                for name, attributes in GALILEO.span_filter_operations
+            ]
+        }
+    }
+    return "\n".join("      " + line for line in yaml.safe_dump(value, sort_keys=False).rstrip().splitlines())
+
+
+def test_already_valid_v8_is_an_exact_noop() -> None:
+    source = b"# exact bytes\r\nconfig_version: 8\r\nobservability: {}\r\n"
+
+    result = convert_v7_observability_to_v8(
+        source,
+        {"DEFENSECLAW_DISABLE_REDACTION": "1"},
+        compatibility_selection=None,
+    )
+
+    assert result.candidate == source
+    assert result.changed is False
+    assert result.already_v8 is True
+    assert result.source_sha256 == hashlib.sha256(source).hexdigest()
+    assert result.candidate_sha256 == result.source_sha256
+    assert result.source_sha256 not in repr(result)
+    assert result.candidate_sha256 not in repr(result)
+    assert result.environment_edits == ()
+
+
+def test_v7_requires_a_valid_generated_compatibility_selection() -> None:
+    with pytest.raises(V8MigrationDependencyError) as missing:
+        convert_v7_observability_to_v8(
+            "config_version: 7\n",
+            {},
+            effective_data_dir="/var/lib/defenseclaw",
+        )
+    assert missing.value.code == "compatibility_selection_required"
+
+    malformed = dict(_GENERATED_COMPATIBILITY, schema_version=2)
+    with pytest.raises(V8MigrationDependencyError) as invalid:
+        convert_v7_observability_to_v8(
+            "config_version: 7\n",
+            {},
+            effective_data_dir="/var/lib/defenseclaw",
+            compatibility_selection=malformed,
+        )
+    assert invalid.value.code == "compatibility_selection_invalid"
+
+
+def test_representative_mapping_is_valid_deterministic_and_idempotent() -> None:
+    source = """# ┌──── OBSERVABILITY GUIDE ────┐
+# collect -> route -> redact -> deliver
+config_version: 7
+data_dir: ~/.defenseclaw
+audit_db: ~/.defenseclaw/audit.db
+judge_bodies_db: ~/.defenseclaw/judge.db
+guardrail:
+  enabled: true
+otel:
+  enabled: true
+  traces: {sampler: parentbased_traceidratio, sampler_arg: '0.25'}
+  logs: {emit_individual_findings: false}
+  metrics: {export_interval_s: 60, temporality: delta}
+  resource:
+    attributes: {service.name: defenseclaw, deployment.environment: test}
+  destinations:
+    - name: local-observability
+      preset: local-otlp
+      enabled: true
+      protocol: grpc
+      endpoint: 127.0.0.1:4317
+      tls: {insecure: true}
+      batch: {max_queue_size: 4096, max_export_batch_size: 512, scheduled_delay_ms: 2500}
+      traces: {enabled: true}
+      logs: {enabled: true}
+      metrics: {enabled: true, export_interval_s: 60, temporality: delta}
+privacy: {disable_redaction: false}
+ai_discovery: {enabled: true, emit_otel: false}
+# keep this comment with the unrelated section
+notifications: {enabled: true}
+"""
+
+    first = _convert(source)
+    second = _convert(source)
+    document = _document(first)
+    observability = document["observability"]
+    assert isinstance(observability, dict)
+
+    assert first.candidate == second.candidate
+    assert first.candidate_sha256 == second.candidate_sha256
+    assert first.summary.otlp_destinations == 1
+    assert first.summary.local_observability == "partial"
+    assert observability["local"] == {
+        "path": "~/.defenseclaw/audit.db",
+        "judge_bodies_path": "~/.defenseclaw/judge.db",
+    }
+    assert observability["trace_policy"] == {
+        "sampler": "parentbased_traceidratio",
+        "sampler_arg": "0.25",
+    }
+    assert observability["metric_policy"] == {
+        "export_interval_seconds": 60,
+        "temporality": "delta",
+    }
+    assert observability["defaults"] == {
+        "collect": {"logs": False, "traces": False, "metrics": False},
+        "redaction_profile": "legacy-v7",
+    }
+    assert observability["buckets"]["compliance.activity"] == {"collect": {"logs": True}}
+    assert observability["buckets"]["model.io"] == {"collect": {"logs": True, "traces": True, "metrics": True}}
+    assert "ai.discovery" not in observability["buckets"]
+    local = _destination(document, "local-observability")
+    assert local["network_safety"] == {"allow_private_networks": True}
+    assert {route["signals"][0] for route in local["routes"]} == {"logs", "traces", "metrics"}
+    drop_route = next(route for route in local["routes"] if route["name"] == "legacy-individual-findings-disabled-1")
+    assert drop_route["selector"]["event_names"] == ["finding.observed"]
+    log_route = next(route for route in local["routes"] if route["name"] == "legacy-local-observability-logs-1")
+    assert "security.finding" in log_route["selector"]["buckets"]
+    assert "ai.discovery" not in log_route["selector"]["buckets"]
+    assert local["routes"][0] == {
+        "name": "legacy-ai-discovery-disabled",
+        "signals": ["logs", "traces", "metrics"],
+        "selector": {"buckets": ["ai.discovery"]},
+        "action": "drop",
+    }
+    assert all(route.get("selector", {}).get("buckets") != list(BUCKETS) for route in local["routes"])
+    metric_route = next(route for route in local["routes"] if route["signals"] == ["metrics"])
+    assert "redaction_profile" not in metric_route
+    rendered = first.candidate.decode()
+    assert rendered.startswith("# ┌──── OBSERVABILITY GUIDE ────┐")
+    assert "# keep this comment with the unrelated section" in rendered
+    assert "notifications: {enabled: true}" in rendered
+    assert rendered.index("data_dir:") < rendered.index("observability:") < rendered.index("guardrail:")
+    load_validate_v8(first.candidate)
+
+    retry = _convert(first.candidate)
+    assert retry.already_v8 is True
+    assert retry.changed is False
+    assert retry.candidate == first.candidate
+
+
+def test_complete_local_observability_selection_reports_full_dashboard_coverage() -> None:
+    result = _convert(
+        """config_version: 7
+otel:
+  enabled: true
+  destinations:
+    - name: local-observability
+      preset: local-otlp
+      enabled: true
+      endpoint: 127.0.0.1:4317
+      protocol: grpc
+      traces: {enabled: true}
+      logs: {enabled: true}
+      metrics: {enabled: true}
+"""
+    )
+
+    assert result.summary.local_observability == "full"
+    assert "partial_dashboard_capability:local-observability" not in result.warnings
+
+
+@pytest.mark.parametrize("sampler", [None, "", "always_on", "traceidratio", "parentbased_always_off", "future"])
+def test_v7_always_sample_vocabulary_maps_semantically(sampler: str | None) -> None:
+    sampler_line = "" if sampler is None else f"  traces: {{sampler: '{sampler}', sampler_arg: '0.01'}}\n"
+    result = _convert(
+        "config_version: 7\notel:\n"
+        "  enabled: true\n"
+        f"{sampler_line}"
+        "  destinations:\n"
+        "    - {name: traces, enabled: true, endpoint: 'https://collector.example.test', "
+        "protocol: grpc, traces: {enabled: true}}\n"
+    )
+
+    assert _document(result)["observability"]["trace_policy"] == {"sampler": "always_on"}
+
+
+@pytest.mark.parametrize(
+    ("argument", "expected"),
+    [(None, "1.0"), ("not-a-number", "1.0"), ("2.5", "1.0"), ("-0.5", "0.0"), ("0.25", "0.25")],
+)
+def test_v7_parentbased_ratio_argument_is_normalized(argument: str | None, expected: str) -> None:
+    argument_field = "" if argument is None else f", sampler_arg: '{argument}'"
+    result = _convert(
+        f"config_version: 7\notel:\n  traces: {{sampler: parentbased_traceidratio{argument_field}}}\n  enabled: false\n"
+    )
+
+    assert _document(result)["observability"]["trace_policy"] == {
+        "sampler": "parentbased_traceidratio",
+        "sampler_arg": expected,
+    }
+
+
+def test_v7_always_off_ignores_legacy_sampler_argument() -> None:
+    result = _convert("config_version: 7\notel: {enabled: false, traces: {sampler: always_off, sampler_arg: '1.0'}}\n")
+
+    assert _document(result)["observability"]["trace_policy"] == {"sampler": "always_off"}
+
+
+def test_missing_or_zero_version_is_supported_only_when_unambiguous() -> None:
+    absent = _convert("audit_db: /tmp/audit.db\n")
+    zero = _convert("config_version: 0\naudit_db: /tmp/audit.db\n")
+
+    assert _document(absent)["config_version"] == 8
+    assert _document(zero)["config_version"] == 8
+
+    with pytest.raises(V8MigrationError) as captured:
+        _convert("observability:\n  defaults: {redaction_profile: none}\n")
+    assert captured.value.code == "ambiguous_unversioned_source"
+
+
+@pytest.mark.parametrize("version", [5, 6])
+def test_current_loader_normalized_versions_convert_directly(version: int) -> None:
+    result = _convert(f"config_version: {version}\notel: {{enabled: false}}\n")
+
+    assert _document(result)["config_version"] == 8
+    assert result.summary.source_version == version
+
+
+@pytest.mark.parametrize("version", [1, 2, 3, 4])
+def test_historical_versions_require_in_memory_prenormalization(version: int) -> None:
+    canary = "must-not-appear-in-historical-diagnostic"
+    with pytest.raises(V8MigrationDependencyError) as captured:
+        _convert(f"config_version: {version}\nunknown: {canary}\n")
+
+    assert captured.value.code == "historical_prenormalization_required"
+    assert "in memory" in captured.value.action
+    assert "intermediate release" in captured.value.action
+    assert canary not in str(captured.value)
+    assert "none" not in str(captured.value)
+
+
+def test_absent_or_relative_data_dir_requires_explicit_absolute_effective_value() -> None:
+    with pytest.raises(V8MigrationDependencyError) as captured:
+        convert_v7_observability_to_v8("config_version: 7\n", {}, compatibility_selection=_TYPED_COMPATIBILITY)
+    assert captured.value.code == "effective_data_dir_required"
+
+    result = convert_v7_observability_to_v8(
+        "config_version: 7\ndata_dir: ~/.defenseclaw\n",
+        {},
+        effective_data_dir="/srv/defenseclaw",
+        compatibility_selection=_TYPED_COMPATIBILITY,
+    )
+    jsonl = _destination(_document(result), "gateway-jsonl")
+    assert jsonl["path"] == "/srv/defenseclaw/gateway.jsonl"
+    assert not str(jsonl["path"]).startswith("~")
+    observability = _document(result)["observability"]
+    assert observability["local"] == {
+        "path": "/srv/defenseclaw/audit.db",
+        "judge_bodies_path": "/srv/defenseclaw/judge_bodies.db",
+    }
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "audit_db: false",
+        "audit_db: 0",
+        "audit_db: ''",
+        "judge_bodies_db: false",
+        "judge_bodies_db: 0",
+        "judge_bodies_db: ''",
+    ],
+)
+def test_present_malformed_legacy_storage_paths_never_fall_back_to_defaults(field: str) -> None:
+    with pytest.raises(V8MigrationError) as captured:
+        _convert(f"config_version: 7\n{field}\n")
+    assert captured.value.code == "unsupported_type"
+
+
+def test_invalid_v8_is_never_reinterpreted_as_v7() -> None:
+    with pytest.raises(V8MigrationError) as captured:
+        _convert("config_version: 8\nobservability: {unknown: true}\n")
+
+    assert captured.value.code == "unsupported_version"
+    assert "repair the invalid v8 source" in str(captured.value)
+
+
+@pytest.mark.parametrize(
+    ("environment", "expected"),
+    [
+        ({}, None),
+        ({"DEFENSECLAW_PERSIST_JUDGE": "garbage"}, None),
+        ({"DEFENSECLAW_PERSIST_JUDGE": "0"}, False),
+        ({"DEFENSECLAW_PERSIST_JUDGE": " FALSE "}, False),
+        ({"DEFENSECLAW_PERSIST_JUDGE": "off"}, False),
+    ],
+)
+def test_judge_body_environment_precedence(environment: Mapping[str, str], expected: bool | None) -> None:
+    result = _convert("config_version: 7\nguardrail: {enabled: true}\n", environment)
+    guardrail = _document(result)["guardrail"]
+    assert isinstance(guardrail, dict)
+    assert guardrail.get("retain_judge_bodies") is expected
+
+    explicit_false = _convert(
+        "config_version: 7\nguardrail: {enabled: true, retain_judge_bodies: false}\n",
+        {"DEFENSECLAW_PERSIST_JUDGE": "1"},
+    )
+    assert _document(explicit_false)["guardrail"]["retain_judge_bodies"] is False
+
+    forced_false = _convert(
+        "config_version: 7\nguardrail:\n  enabled: true\n  retain_judge_bodies: true # preserve comment\n",
+        {"DEFENSECLAW_PERSIST_JUDGE": "no"},
+    )
+    assert "retain_judge_bodies: false # preserve comment" in forced_false.candidate.decode()
+
+
+@pytest.mark.parametrize("value", ["1", "true", " YES ", "on", "enabled"])
+def test_jsonl_disable_is_materialized_without_ambient_reads(value: str) -> None:
+    result = _convert("config_version: 7\n", {"DEFENSECLAW_JSONL_DISABLE": value})
+    jsonl = _destination(_document(result), "gateway-jsonl")
+
+    assert jsonl["enabled"] is False
+    assert "environment_decision:DEFENSECLAW_JSONL_DISABLE" in result.warnings
+
+
+def test_unredacted_intent_omits_legacy_profile_and_routes_none() -> None:
+    result = _convert(
+        "config_version: 7\nprivacy: {disable_redaction: false}\n",
+        {"DEFENSECLAW_DISABLE_REDACTION": "true"},
+    )
+    observability = _document(result)["observability"]
+    assert isinstance(observability, dict)
+
+    assert observability["defaults"] == {"collect": {"logs": False, "traces": False, "metrics": False}}
+    assert result.summary.redaction_intent == "unredacted"
+    assert "environment_decision:DEFENSECLAW_DISABLE_REDACTION" in result.warnings
+    console = _destination(_document(result), "gateway-console")
+    assert all(route["redaction_profile"] == "none" for route in console["routes"])
+
+
+@pytest.mark.parametrize("value", ["enable", "enabled", "garbage", "0", "false", "no", "off"])
+def test_redaction_environment_uses_exact_v7_truthy_vocabulary(value: str) -> None:
+    result = _convert("config_version: 7\n", {"DEFENSECLAW_DISABLE_REDACTION": value})
+
+    observability = _document(result)["observability"]
+    assert observability["defaults"]["redaction_profile"] == "legacy-v7"
+    assert "environment_decision:DEFENSECLAW_DISABLE_REDACTION" not in result.warnings
+
+
+def test_inline_and_interpolated_secrets_become_protected_environment_edits() -> None:
+    canary_token = "splunk-secret-canary"
+    canary_header = "Bearer otlp-secret-canary"
+    source = f"""config_version: 7
+audit_sinks:
+  - name: splunk
+    kind: splunk_hec
+    enabled: true
+    splunk_hec:
+      endpoint: https://splunk.example.test/services/collector
+      token: {canary_token}
+  - name: audit-otlp
+    kind: otlp_logs
+    enabled: true
+    otlp_logs:
+      endpoint: https://collector.example.test
+      protocol: http
+      headers:
+        Authorization: Bearer ${{SOURCE_TOKEN}}
+        project: safe-project
+"""
+
+    result = _convert(source, {"SOURCE_TOKEN": "otlp-secret-canary"})
+    candidate = result.candidate.decode()
+    document = _document(result)
+
+    assert canary_token not in candidate
+    assert canary_header not in candidate
+    assert "safe-project" not in candidate
+    assert canary_token not in repr(result)
+    assert canary_header not in repr(result)
+    assert result.source_sha256 not in repr(result)
+    assert result.candidate_sha256 not in repr(result)
+    assert all(canary_token not in line and canary_header not in line for line in result.summary.lines())
+    assert len(result.environment_edits) == 3
+    assert {edit.value for edit in result.environment_edits} == {canary_token, canary_header, "safe-project"}
+    assert all(edit.backup_required and edit.rollback_with_config for edit in result.environment_edits)
+    splunk = _destination(document, "splunk")
+    assert str(splunk["token_env"]).startswith("DEFENSECLAW_MIGRATED_")
+    otlp = _destination(document, "audit-otlp")
+    assert set(otlp["headers"]["project"]) == {"env"}
+    assert set(otlp["headers"]["Authorization"]) == {"env"}
+    load_validate_v8(result.candidate)
+
+
+def test_exact_header_environment_reference_never_reads_or_copies_value() -> None:
+    source = """config_version: 7
+otel:
+  enabled: true
+  destinations:
+    - name: remote
+      enabled: true
+      endpoint: https://collector.example.test
+      protocol: grpc
+      headers: {Authorization: '${REMOTE_TOKEN}'}
+      traces: {enabled: true}
+"""
+    result = _convert(source, {})
+    remote = _destination(_document(result), "remote")
+
+    assert remote["headers"]["Authorization"] == {"env": "REMOTE_TOKEN"}
+    assert result.environment_edits == ()
+
+
+def test_every_non_reference_header_is_promoted_without_name_heuristics() -> None:
+    source = """config_version: 7
+otel:
+  enabled: true
+  destinations:
+    - name: remote
+      enabled: true
+      endpoint: https://collector.example.test
+      protocol: grpc
+      headers:
+        project: project-canary
+        logstream: logstream-canary
+        X-Custom: custom-canary
+        Authorization: '${EXISTING_TOKEN}'
+      traces: {enabled: true}
+"""
+
+    result = _convert(source)
+    destination = _destination(_document(result), "remote")
+
+    assert {edit.value for edit in result.environment_edits} == {
+        "project-canary",
+        "logstream-canary",
+        "custom-canary",
+    }
+    assert all(
+        value not in result.candidate.decode() for value in ("project-canary", "logstream-canary", "custom-canary")
+    )
+    assert destination["headers"]["Authorization"] == {"env": "EXISTING_TOKEN"}
+    assert all(set(destination["headers"][name]) == {"env"} for name in ("project", "logstream", "X-Custom"))
+
+
+def test_interpolated_header_requires_explicit_environment_snapshot() -> None:
+    source = """config_version: 7
+otel:
+  enabled: true
+  destinations:
+    - name: remote
+      enabled: true
+      endpoint: https://collector.example.test
+      protocol: grpc
+      headers: {Authorization: 'Bearer ${MISSING_TOKEN}'}
+      traces: {enabled: true}
+"""
+
+    with pytest.raises(V8MigrationDependencyError) as captured:
+        _convert(source)
+    assert captured.value.code == "environment_value_required"
+    assert "MISSING_TOKEN" not in str(captured.value)
+
+
+def test_explicit_otel_environment_transport_is_materialized_with_precedence() -> None:
+    result = _convert(
+        "config_version: 7\notel: {enabled: true}\n",
+        {
+            "DEFENSECLAW_OTEL_TRACES_ENDPOINT": "http://127.0.0.1:4318/v1/traces",
+            "DEFENSECLAW_OTEL_TRACES_PROTOCOL": "http/protobuf",
+            "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": "https://lower-precedence.example.test",
+            "OTEL_RESOURCE_ATTRIBUTES": "service.name=from-env,deployment.environment=staging",
+        },
+    )
+    document = _document(result)
+    remote = _destination(document, "local-observability")
+
+    assert remote["protocol"] == "http/protobuf"
+    assert remote["signal_overrides"] == {"traces": {"endpoint": "http://127.0.0.1:4318/v1/traces"}}
+    assert remote["network_safety"] == {"allow_private_networks": True}
+    observability = document["observability"]
+    assert isinstance(observability, dict)
+    assert observability["resource"]["attributes"] == {
+        "service.name": "from-env",
+        "deployment.environment": "staging",
+    }
+
+
+def test_legacy_resource_preset_markers_are_removed_but_real_attributes_survive() -> None:
+    result = _convert(
+        """config_version: 7
+otel:
+  enabled: false
+  resource:
+    attributes:
+      defenseclaw.preset: generic-otlp
+      defenseclaw.preset_name: Generic OTLP
+      service.name: defenseclaw
+      deployment.environment: staging
+"""
+    )
+    attributes = _document(result)["observability"]["resource"]["attributes"]
+    assert attributes == {
+        "service.name": "defenseclaw",
+        "deployment.environment": "staging",
+    }
+
+
+def test_v7_resource_null_and_scalar_values_preserve_go_yaml_node_lexemes() -> None:
+    null_result = _convert("config_version: 7\notel: {enabled: false, resource: {attributes: null}}\n")
+    scalar_result = _convert(
+        """config_version: 7
+otel:
+  enabled: false
+  resource:
+    attributes:
+      answer: 42
+      enabled: true
+      boolean_alias: yes
+      hexadecimal: 0x10
+      yes: no
+      ratio: 0.25
+      nullable: null
+"""
+    )
+
+    assert "resource" not in _document(null_result)["observability"]
+    assert _document(scalar_result)["observability"]["resource"]["attributes"] == {
+        "answer": "42",
+        "enabled": "true",
+        "boolean_alias": "yes",
+        "hexadecimal": "0x10",
+        "yes": "no",
+        "ratio": "0.25",
+    }
+
+
+def test_otel_service_name_environment_has_runtime_precedence_and_is_materialized() -> None:
+    result = _convert(
+        """config_version: 7
+otel:
+  enabled: false
+  resource:
+    attributes: {service.name: configured-name, deployment.environment: test}
+""",
+        {
+            "OTEL_RESOURCE_ATTRIBUTES": "service.name=resource-env-name,service.namespace=security",
+            "OTEL_SERVICE_NAME": "service-env-name",
+        },
+    )
+    attributes = _document(result)["observability"]["resource"]["attributes"]
+    assert attributes == {
+        "service.name": "service-env-name",
+        "deployment.environment": "test",
+        "service.namespace": "security",
+    }
+    assert "environment_decision:OTEL_SERVICE_NAME" in result.warnings
+
+
+@pytest.mark.parametrize(
+    ("preset", "endpoint", "expected_name", "expected_preset"),
+    [
+        ("galileo", "https://api.galileo.ai/otel/traces", "galileo", "galileo"),
+        ("local-otlp", "127.0.0.1:4317", "local-observability", None),
+        ("generic-otlp", "127.0.0.1:4317", "local-observability", None),
+    ],
+)
+def test_flat_preset_identity_and_loopback_local_inference_survive(
+    preset: str, endpoint: str, expected_name: str, expected_preset: str | None
+) -> None:
+    result = _convert(
+        f"""config_version: 7
+otel:
+  enabled: true
+  endpoint: {endpoint}
+  protocol: {"http" if preset == "galileo" else "grpc"}
+  resource:
+    attributes:
+      defenseclaw.preset: {preset}
+  traces: {{enabled: true}}
+"""
+    )
+    destination = _destination(_document(result), expected_name)
+    assert destination.get("preset") == expected_preset
+    if expected_name == "local-observability":
+        assert destination["network_safety"] == {"allow_private_networks": True}
+
+
+@pytest.mark.parametrize(("value", "enabled"), [("true", True), ("1", True), ("0", False), ("false", False)])
+def test_otel_enabled_and_tls_environment_inputs_are_materialized(value: str, enabled: bool) -> None:
+    result = _convert(
+        "config_version: 7\notel: {enabled: false}\n",
+        {
+            "DEFENSECLAW_OTEL_ENABLED": value,
+            "DEFENSECLAW_OTEL_TRACES_ENDPOINT": "https://collector.example.test",
+            "OPENCLAW_OTEL_TLS_INSECURE": value,
+        },
+    )
+    destination = _destination(_document(result), "generic-otlp")
+
+    assert destination.get("enabled") is (None if enabled else False)
+    assert destination["tls"]["insecure"] is enabled
+    assert "environment_decision:DEFENSECLAW_OTEL_ENABLED" in result.warnings
+    assert "environment_decision:DEFENSECLAW_OTEL_TLS_INSECURE" in result.warnings
+
+
+@pytest.mark.parametrize(
+    ("value", "enabled"),
+    [
+        ("1", True),
+        ("t", True),
+        ("T", True),
+        ("TRUE", True),
+        ("true", True),
+        ("True", True),
+        ("0", False),
+        ("f", False),
+        ("F", False),
+        ("FALSE", False),
+        ("false", False),
+        ("False", False),
+    ],
+)
+def test_otel_enabled_environment_uses_exact_go_boolean_vocabulary(value: str, enabled: bool) -> None:
+    result = _convert(
+        "config_version: 7\notel: {enabled: true}\n",
+        {
+            "DEFENSECLAW_OTEL_ENABLED": value,
+            "DEFENSECLAW_OTEL_TRACES_ENDPOINT": "https://collector.example.test",
+        },
+    )
+
+    destination = _destination(_document(result), "generic-otlp")
+    assert destination.get("enabled") is (None if enabled else False)
+    assert "environment_decision:DEFENSECLAW_OTEL_ENABLED" in result.warnings
+
+
+@pytest.mark.parametrize("value", ["yes", "on", "enable", "enabled", "no", "off", "garbage", " true "])
+def test_invalid_nonempty_otel_enabled_environment_fails_value_safely(value: str) -> None:
+    with pytest.raises(V8MigrationError) as captured:
+        _convert(
+            "config_version: 7\notel: {enabled: true}\n",
+            {
+                "DEFENSECLAW_OTEL_ENABLED": value,
+                "DEFENSECLAW_OTEL_TRACES_ENDPOINT": "https://collector.example.test",
+            },
+        )
+
+    assert captured.value.code == "invalid_environment_boolean"
+    assert captured.value.action == "use the exact Go boolean vocabulary without surrounding whitespace"
+    assert captured.value.__cause__ is None
+
+
+def test_empty_otel_enabled_environment_is_effectively_unset() -> None:
+    result = _convert(
+        "config_version: 7\notel: {enabled: true}\n",
+        {
+            "DEFENSECLAW_OTEL_ENABLED": "",
+            "DEFENSECLAW_OTEL_TRACES_ENDPOINT": "https://collector.example.test",
+        },
+    )
+
+    assert _destination(_document(result), "generic-otlp").get("enabled") is None
+    assert "environment_decision:DEFENSECLAW_OTEL_ENABLED" not in result.warnings
+
+
+@pytest.mark.parametrize(("value", "expected"), [("yes", True), ("on", True), ("no", False), ("off", False)])
+def test_otel_tls_environment_keeps_its_distinct_v7_vocabulary(value: str, expected: bool) -> None:
+    result = _convert(
+        "config_version: 7\notel: {enabled: false}\n",
+        {
+            "DEFENSECLAW_OTEL_TRACES_ENDPOINT": "https://collector.example.test",
+            "OPENCLAW_OTEL_TLS_INSECURE": value,
+        },
+    )
+
+    assert _destination(_document(result), "generic-otlp")["tls"]["insecure"] is expected
+
+
+@pytest.mark.parametrize("alias", ["DEFENSECLAW_OTEL_TLS_INSECURE", "OPENCLAW_OTEL_TLS_INSECURE"])
+def test_both_legacy_tls_insecure_aliases_are_materialized(alias: str) -> None:
+    result = _convert(
+        "config_version: 7\notel: {enabled: true}\n",
+        {
+            "DEFENSECLAW_OTEL_TRACES_ENDPOINT": "https://collector.example.test",
+            alias: "true",
+        },
+    )
+    assert _destination(_document(result), "generic-otlp")["tls"]["insecure"] is True
+
+
+def test_all_otel_exporter_header_environment_values_are_protected() -> None:
+    canary = "custom-header-secret-canary"
+    result = _convert(
+        "config_version: 7\notel: {enabled: true}\n",
+        {
+            "DEFENSECLAW_OTEL_TRACES_ENDPOINT": "https://collector.example.test",
+            "OTEL_EXPORTER_OTLP_HEADERS": f"X-Custom={canary},project=sensitive-project",
+        },
+    )
+    destination = _destination(_document(result), "generic-otlp")
+
+    assert canary not in result.candidate.decode()
+    assert "sensitive-project" not in result.candidate.decode()
+    assert set(destination["headers"]["X-Custom"]) == {"env"}
+    assert set(destination["headers"]["project"]) == {"env"}
+    assert {edit.value for edit in result.environment_edits} == {canary, "sensitive-project"}
+
+
+def test_preexisting_protected_environment_names_are_reused_or_collision_suffixed() -> None:
+    source = """config_version: 7
+audit_sinks:
+  - name: splunk
+    kind: splunk_hec
+    enabled: true
+    splunk_hec:
+      endpoint: https://splunk.example.test/services/collector
+      token: current-secret
+"""
+    first = _convert(source)
+    first_edit = first.environment_edits[0]
+    same = _convert(source, {first_edit.name: first_edit.value})
+    different = _convert(source, {first_edit.name: "preexisting-different-secret"})
+    same_destination = _destination(_document(same), "splunk")
+    different_destination = _destination(_document(different), "splunk")
+
+    assert same.environment_edits == ()
+    assert same_destination["token_env"] == first_edit.name
+    assert len(different.environment_edits) == 1
+    assert different.environment_edits[0].name != first_edit.name
+    assert different_destination["token_env"] == different.environment_edits[0].name
+    assert "current-secret" not in repr(different)
+    assert "preexisting-different-secret" not in repr(different)
+
+
+@pytest.mark.parametrize(
+    ("kind", "block_name", "environment_field", "inline_field"),
+    [
+        ("splunk_hec", "splunk_hec", "token_env", "token"),
+        ("http_jsonl", "http_jsonl", "bearer_env", "bearer_token"),
+    ],
+)
+def test_legacy_credential_environment_fallback_preserves_effective_inline_value(
+    kind: str, block_name: str, environment_field: str, inline_field: str
+) -> None:
+    endpoint_field = "endpoint" if kind == "splunk_hec" else "url"
+    source = f"""config_version: 7
+audit_sinks:
+  - name: fallback
+    kind: {kind}
+    enabled: true
+    {block_name}:
+      {endpoint_field}: https://collector.example.test
+      {environment_field}: EXISTING_REFERENCE
+      {inline_field}: inline-fallback-canary
+"""
+
+    missing = _convert(source)
+    available = _convert(source, {"EXISTING_REFERENCE": "environment-value-canary"})
+    missing_destination = _destination(_document(missing), "fallback")
+    available_destination = _destination(_document(available), "fallback")
+
+    assert missing_destination[environment_field] != "EXISTING_REFERENCE"
+    assert {edit.value for edit in missing.environment_edits} == {"inline-fallback-canary"}
+    assert available_destination[environment_field] == "EXISTING_REFERENCE"
+    assert available.environment_edits == ()
+    assert "inline-fallback-canary" not in missing.candidate.decode()
+    assert "environment-value-canary" not in available.candidate.decode()
+
+
+def test_named_destination_inherits_global_batch_per_field() -> None:
+    result = _convert(
+        """config_version: 7
+otel:
+  enabled: true
+  batch: {max_queue_size: 4096, max_export_batch_size: 512, scheduled_delay_ms: 5000}
+  destinations:
+    - name: remote
+      enabled: true
+      endpoint: https://collector.example.test
+      protocol: grpc
+      batch: {scheduled_delay_ms: 250}
+      traces: {enabled: true}
+"""
+    )
+    remote = _destination(_document(result), "remote")
+    assert remote["batch"] == {
+        "max_queue_size": 4096,
+        "max_export_batch_size": 512,
+        "scheduled_delay_ms": 250,
+    }
+
+
+@pytest.mark.parametrize("inherited_value", [0, -1])
+def test_nonpositive_destination_batch_fields_inherit_effective_global_values(inherited_value: int) -> None:
+    result = _convert(
+        f"""config_version: 7
+otel:
+  enabled: true
+  batch: {{max_queue_size: 4096, max_export_batch_size: 256, scheduled_delay_ms: 2500}}
+  destinations:
+    - name: remote
+      enabled: true
+      endpoint: https://collector.example.test
+      protocol: grpc
+      batch:
+        max_queue_size: {inherited_value}
+        max_export_batch_size: {inherited_value}
+        scheduled_delay_ms: {inherited_value}
+      traces: {{enabled: true}}
+"""
+    )
+
+    assert _destination(_document(result), "remote")["batch"] == {
+        "max_queue_size": 4096,
+        "max_export_batch_size": 256,
+        "scheduled_delay_ms": 2500,
+    }
+
+
+@pytest.mark.parametrize(
+    ("alias", "signal"),
+    [
+        ("DEFENSECLAW_OTEL_ENDPOINT", None),
+        ("OPENCLAW_OTEL_ENDPOINT", None),
+        ("OTEL_EXPORTER_OTLP_ENDPOINT", None),
+        ("DEFENSECLAW_OTEL_LOGS_ENDPOINT", "logs"),
+        ("OPENCLAW_OTEL_LOGS_ENDPOINT", "logs"),
+        ("OTEL_EXPORTER_OTLP_LOGS_ENDPOINT", "logs"),
+        ("DEFENSECLAW_OTEL_TRACES_ENDPOINT", "traces"),
+        ("OPENCLAW_OTEL_TRACES_ENDPOINT", "traces"),
+        ("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", "traces"),
+        ("DEFENSECLAW_OTEL_METRICS_ENDPOINT", "metrics"),
+        ("OPENCLAW_OTEL_METRICS_ENDPOINT", "metrics"),
+        ("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT", "metrics"),
+    ],
+)
+def test_every_legacy_otel_endpoint_alias_has_a_materialized_disposition(alias: str, signal: str | None) -> None:
+    result = _convert(
+        "config_version: 7\notel: {enabled: true}\n",
+        {alias: "https://collector.example.test/otlp"},
+    )
+    destination = _destination(_document(result), "generic-otlp")
+    if signal is None:
+        assert destination["endpoint"] == "https://collector.example.test/otlp"
+    else:
+        assert destination["signal_overrides"][signal]["endpoint"] == "https://collector.example.test/otlp"
+    assert any(warning.startswith("environment_decision:OTEL") for warning in result.warnings)
+
+
+@pytest.mark.parametrize(
+    ("alias", "signal"),
+    [
+        ("DEFENSECLAW_OTEL_PROTOCOL", None),
+        ("OPENCLAW_OTEL_PROTOCOL", None),
+        ("OTEL_EXPORTER_OTLP_PROTOCOL", None),
+        ("DEFENSECLAW_OTEL_LOGS_PROTOCOL", "logs"),
+        ("OPENCLAW_OTEL_LOGS_PROTOCOL", "logs"),
+        ("OTEL_EXPORTER_OTLP_LOGS_PROTOCOL", "logs"),
+        ("DEFENSECLAW_OTEL_TRACES_PROTOCOL", "traces"),
+        ("OPENCLAW_OTEL_TRACES_PROTOCOL", "traces"),
+        ("OTEL_EXPORTER_OTLP_TRACES_PROTOCOL", "traces"),
+        ("DEFENSECLAW_OTEL_METRICS_PROTOCOL", "metrics"),
+        ("OPENCLAW_OTEL_METRICS_PROTOCOL", "metrics"),
+        ("OTEL_EXPORTER_OTLP_METRICS_PROTOCOL", "metrics"),
+    ],
+)
+def test_every_legacy_otel_protocol_alias_has_a_materialized_disposition(alias: str, signal: str | None) -> None:
+    result = _convert(
+        "config_version: 7\notel: {enabled: true, endpoint: 'https://collector.example.test'}\n",
+        {alias: "http/protobuf"},
+    )
+    observability = _document(result)["observability"]
+    assert isinstance(observability, dict)
+    otlp = [destination for destination in observability["destinations"] if destination["kind"] == "otlp"]
+    assert any(destination["protocol"] == "http/protobuf" for destination in otlp)
+    assert any(warning.startswith("environment_decision:OTEL") for warning in result.warnings)
+
+
+def test_otel_alias_precedence_prefers_yaml_then_defenseclaw_then_openclaw_then_standard() -> None:
+    environment = {
+        "DEFENSECLAW_OTEL_ENDPOINT": "https://defenseclaw.example.test",
+        "OPENCLAW_OTEL_ENDPOINT": "https://openclaw.example.test",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "https://standard.example.test",
+    }
+    from_yaml = _convert(
+        "config_version: 7\notel: {enabled: true, endpoint: 'https://yaml.example.test'}\n",
+        environment,
+    )
+    assert _destination(_document(from_yaml), "generic-otlp")["endpoint"] == "https://yaml.example.test"
+
+    from_aliases = _convert("config_version: 7\notel: {enabled: true}\n", environment)
+    assert _destination(_document(from_aliases), "generic-otlp")["endpoint"] == ("https://defenseclaw.example.test")
+
+
+def test_per_signal_protocol_conflict_splits_stable_destinations() -> None:
+    source = """config_version: 7
+otel:
+  enabled: true
+  destinations:
+    - name: backend
+      enabled: true
+      endpoint: https://collector.example.test
+      protocol: grpc
+      traces: {enabled: true, protocol: grpc}
+      logs: {enabled: true, protocol: http/protobuf, endpoint: https://logs.example.test/v1/logs}
+      metrics: {enabled: false}
+"""
+    first = _convert(source)
+    second = _convert(source)
+    observability = _document(first)["observability"]
+    assert isinstance(observability, dict)
+    names = [item["name"] for item in observability["destinations"]]
+
+    assert "backend" in names
+    assert "backend-logs" in names
+    assert first.candidate == second.candidate
+
+
+def test_flat_signal_protocol_becomes_v7_destination_fallback() -> None:
+    result = _convert(
+        """config_version: 7
+otel:
+  enabled: true
+  endpoint: https://collector.example.test
+  traces: {protocol: http/protobuf}
+"""
+    )
+
+    otlp = [
+        destination
+        for destination in _document(result)["observability"]["destinations"]
+        if destination["kind"] == "otlp"
+    ]
+    assert len(otlp) == 1
+    assert otlp[0]["name"] == "generic-otlp"
+    assert otlp[0]["protocol"] == "http/protobuf"
+    assert {tuple(route["signals"]) for route in otlp[0]["routes"]} == {
+        ("logs",),
+        ("traces",),
+        ("metrics",),
+    }
+
+
+def test_flat_signal_protocol_from_environment_becomes_v7_destination_fallback() -> None:
+    result = _convert(
+        "config_version: 7\notel: {enabled: true, endpoint: 'https://collector.example.test'}\n",
+        {"OTEL_EXPORTER_OTLP_TRACES_PROTOCOL": "http/protobuf"},
+    )
+
+    destination = _destination(_document(result), "generic-otlp")
+    assert destination["protocol"] == "http/protobuf"
+    assert "environment_decision:OTEL_TRACES_PROTOCOL" in result.warnings
+
+
+def test_legacy_destination_names_are_deterministically_normalized_and_collision_safe() -> None:
+    long_name = "Very Long Destination " + "X" * 100
+    source = f"""config_version: 7
+otel:
+  enabled: true
+  destinations:
+    - name: 'TEAM OTLP'
+      enabled: true
+      endpoint: https://one.example.test
+      protocol: grpc
+      traces: {{enabled: true}}
+    - name: 'team-otlp'
+      enabled: true
+      endpoint: https://two.example.test
+      protocol: grpc
+      traces: {{enabled: true}}
+    - name: 'Télémétrie 東京'
+      enabled: true
+      endpoint: https://three.example.test
+      protocol: grpc
+      traces: {{enabled: true}}
+    - name: '{long_name}'
+      enabled: true
+      endpoint: https://four.example.test
+      protocol: grpc
+      traces: {{enabled: true}}
+"""
+    first = _convert(source)
+    second = _convert(source)
+    observability = _document(first)["observability"]
+    names = [destination["name"] for destination in observability["destinations"] if destination["kind"] == "otlp"]
+
+    assert names[0] == "team-otlp"
+    assert names[1] == "team-otlp-2"
+    assert names[2] == "t-l-m-trie"
+    assert len(names[3]) <= 64
+    assert all(_name == _name.lower() and " " not in _name for _name in names)
+    assert first.candidate == second.candidate
+    assert any(warning.startswith("destination_name_normalized:") for warning in first.warnings)
+
+
+def test_legacy_http_json_protocol_maps_to_protobuf_with_warning() -> None:
+    result = _convert(
+        """config_version: 7
+otel:
+  enabled: true
+  destinations:
+    - name: legacy-http
+      enabled: true
+      endpoint: https://collector.example.test
+      protocol: http/json
+      traces: {enabled: true}
+"""
+    )
+    destination = _destination(_document(result), "legacy-http")
+    assert destination["protocol"] == "http/protobuf"
+    assert "protocol_compatibility:http/json_to_http/protobuf" in result.warnings
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        'config_version: 7\nprivacy: {disable_redaction: "false"}\n',
+        'config_version: 7\notel: {enabled: "false"}\n',
+        'config_version: 7\notel: {enabled: true, tls: {insecure: "true"}}\n',
+        'config_version: 7\naudit_sinks: [{name: x, kind: http_jsonl, enabled: "false", http_jsonl: {url: https://x.example}}]\n',
+        'config_version: 7\naudit_sinks: [{name: x, kind: http_jsonl, enabled: true, http_jsonl: {url: https://x.example, insecure_skip_verify: "false"}}]\n',
+    ],
+)
+def test_quoted_owned_booleans_are_rejected_not_truthiness_coerced(source: str) -> None:
+    with pytest.raises(V8MigrationError) as captured:
+        _convert(source)
+    assert captured.value.code == "unsupported_type"
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "config_version: 7\notel: {enabled: true}\n",
+        """config_version: 7
+otel:
+  enabled: true
+  destinations:
+    - name: invalid
+      enabled: true
+      endpoint: https://collector.example.test
+      protocol: grpc
+      traces: {enabled: false}
+      logs: {enabled: false}
+      metrics: {enabled: false}
+""",
+        """config_version: 7
+otel:
+  enabled: true
+  destinations:
+    - name: missing-endpoint
+      enabled: true
+      protocol: grpc
+      traces: {enabled: true}
+""",
+    ],
+)
+def test_invalid_enabled_v7_otel_shapes_are_rejected_not_broadened_or_dropped(source: str) -> None:
+    with pytest.raises(V8MigrationError) as captured:
+        _convert(source)
+    assert captured.value.code == "invalid_v7_otel"
+
+
+def test_disabled_destination_without_signals_is_preserved_as_explicit_drop_routes() -> None:
+    result = _convert(
+        """config_version: 7
+otel:
+  enabled: false
+  destinations:
+    - name: dormant
+      enabled: false
+      endpoint: https://collector.example.test
+      protocol: grpc
+"""
+    )
+    dormant = _destination(_document(result), "dormant")
+
+    assert dormant["enabled"] is False
+    assert dormant["routes"] == [
+        {
+            "name": "legacy-disabled-no-signals",
+            "signals": ["logs", "traces", "metrics"],
+            "selector": {},
+            "action": "drop",
+        }
+    ]
+
+
+def test_disabled_destination_without_any_transport_fails_instead_of_disappearing() -> None:
+    with pytest.raises(V8MigrationError) as captured:
+        _convert(
+            """config_version: 7
+otel:
+  enabled: false
+  destinations:
+    - {name: dormant, enabled: false}
+"""
+        )
+
+    assert captured.value.code == "dormant_otel_not_representable"
+
+
+def test_metric_only_send_and_protocol_split_metric_group_have_no_redaction_profile() -> None:
+    metric_only = _convert(
+        """config_version: 7
+otel:
+  enabled: true
+  destinations:
+    - name: metrics
+      enabled: true
+      endpoint: https://metrics.example.test
+      protocol: grpc
+      metrics: {enabled: true}
+"""
+    )
+    metric_destination = _destination(_document(metric_only), "metrics")
+    assert metric_destination["routes"] == [
+        {
+            "name": "legacy-generic-otlp-metrics-1",
+            "signals": ["metrics"],
+            "selector": {"buckets": ["model.io", "agent.lifecycle", "ai.discovery", "platform.health"]},
+        }
+    ]
+    assert all("redaction_profile" not in route for route in metric_destination["routes"])
+    load_validate_v8(metric_only.candidate)
+
+    split = _convert(
+        """config_version: 7
+otel:
+  enabled: true
+  destinations:
+    - name: split
+      enabled: true
+      endpoint: https://collector.example.test
+      protocol: grpc
+      traces: {enabled: true, protocol: grpc}
+      metrics: {enabled: true, protocol: http/protobuf, endpoint: https://metrics.example.test/v1/metrics}
+"""
+    )
+    metric_group = _destination(_document(split), "split-metrics")
+    assert {tuple(route["signals"]) for route in metric_group["routes"]} == {("metrics",)}
+    assert all("redaction_profile" not in route for route in metric_group["routes"])
+    load_validate_v8(split.candidate)
+
+
+def test_individual_finding_toggle_uses_generated_event_family_not_whole_bucket() -> None:
+    template = """config_version: 7
+otel:
+  enabled: true
+  logs: {emit_individual_findings: %s}
+  destinations:
+    - name: logs
+      enabled: true
+      endpoint: https://collector.example.test
+      protocol: grpc
+      logs: {enabled: true}
+"""
+    disabled = _destination(_document(_convert(template % "false")), "logs")
+    assert disabled["routes"][0] == {
+        "name": "legacy-individual-findings-disabled-1",
+        "signals": ["logs"],
+        "selector": {"event_names": ["finding.observed"]},
+        "action": "drop",
+    }
+    send_route = next(route for route in disabled["routes"] if route["name"] == "legacy-generic-otlp-logs-1")
+    assert "security.finding" in send_route["selector"]["buckets"]
+
+    enabled = _destination(_document(_convert(template % "true")), "logs")
+    assert all(route["action"] != "drop" for route in enabled["routes"] if "action" in route)
+    assert enabled["routes"] == [
+        {
+            "name": "legacy-generic-otlp-logs-1",
+            "signals": ["logs"],
+            "selector": {"buckets": ["security.finding", "model.io", "ai.discovery"]},
+            "redaction_profile": "legacy-v7",
+        }
+    ]
+
+
+def test_conflicting_metric_policy_fails_before_candidate() -> None:
+    source = """config_version: 7
+otel:
+  enabled: true
+  metrics: {export_interval_s: 60, temporality: delta}
+  destinations:
+    - name: one
+      enabled: true
+      endpoint: https://one.example.test
+      protocol: grpc
+      metrics: {enabled: true, export_interval_s: 30, temporality: delta}
+    - name: two
+      enabled: true
+      endpoint: https://two.example.test
+      protocol: grpc
+      metrics: {enabled: true, export_interval_s: 60, temporality: delta}
+"""
+
+    with pytest.raises(V8MigrationError) as captured:
+        _convert(source)
+    assert captured.value.code == "conflicting_metric_policy"
+    assert "one" in captured.value.path
+    assert captured.value.action == "align policies or keep only one metric-export destination"
+
+
+def test_flat_and_named_metric_policy_conflict_fails_before_candidate() -> None:
+    source = """config_version: 7
+otel:
+  enabled: true
+  endpoint: https://flat.example.test
+  metrics: {export_interval_s: 60, temporality: delta}
+  destinations:
+    - name: named
+      enabled: true
+      endpoint: https://named.example.test
+      protocol: grpc
+      metrics: {enabled: true, export_interval_s: 30, temporality: delta}
+"""
+
+    with pytest.raises(V8MigrationError) as captured:
+        _convert(source)
+
+    assert captured.value.code == "conflicting_metric_policy"
+    assert "$.otel.metrics.export_interval_s" in captured.value.path
+    assert "named" in captured.value.path
+
+
+def test_single_metric_destination_override_becomes_process_policy() -> None:
+    result = _convert(
+        """config_version: 7
+otel:
+  enabled: true
+  metrics: {export_interval_s: 60, temporality: delta}
+  destinations:
+    - name: one
+      enabled: true
+      endpoint: https://one.example.test
+      protocol: grpc
+      metrics: {enabled: true, export_interval_s: 30, temporality: cumulative}
+"""
+    )
+
+    assert _document(result)["observability"]["metric_policy"] == {
+        "export_interval_seconds": 30,
+        "temporality": "cumulative",
+    }
+
+
+def test_disabled_metric_destination_does_not_create_effective_policy_conflict() -> None:
+    result = _convert(
+        """config_version: 7
+otel:
+  enabled: true
+  metrics: {export_interval_s: 60, temporality: delta}
+  destinations:
+    - name: active
+      enabled: true
+      endpoint: https://active.example.test
+      protocol: grpc
+      metrics: {enabled: true, export_interval_s: 60, temporality: delta}
+    - name: dormant
+      enabled: false
+      endpoint: https://dormant.example.test
+      protocol: grpc
+      metrics: {enabled: true, export_interval_s: 5, temporality: cumulative}
+"""
+    )
+
+    assert _document(result)["observability"]["metric_policy"] == {
+        "export_interval_seconds": 60,
+        "temporality": "delta",
+    }
+
+
+def test_galileo_inherited_delay_changes_but_explicit_delay_is_preserved() -> None:
+    base = """config_version: 7
+otel:
+  enabled: true
+  destinations:
+    - name: galileo
+      preset: galileo
+      enabled: true
+      protocol: http
+      endpoint: https://api.galileo.ai/otel/traces
+      headers:
+        Galileo-API-Key: '${GALILEO_API_KEY}'
+      __BATCH__
+      traces: {enabled: true}
+__SPAN_FILTER__
+"""
+    base = base.replace("__SPAN_FILTER__", _galileo_span_filter_yaml())
+    inherited = _convert(base.replace("__BATCH__", ""))
+    explicit = _convert(base.replace("__BATCH__", "batch: {scheduled_delay_ms: 5000}"))
+
+    inherited_galileo = _destination(_document(inherited), "galileo")
+    explicit_galileo = _destination(_document(explicit), "galileo")
+    assert inherited_galileo["batch"]["scheduled_delay_ms"] == 1000
+    assert "galileo_preset_delay_changed:5000_to_1000" in inherited.warnings
+    assert explicit_galileo["batch"]["scheduled_delay_ms"] == 5000
+    assert "galileo_preset_delay_changed:5000_to_1000" not in explicit.warnings
+
+
+def test_required_attribute_span_filters_use_exact_generated_compatibility_selection() -> None:
+    operation_filter = """config_version: 7
+otel:
+  enabled: true
+  destinations:
+    - name: remote
+      enabled: true
+      endpoint: https://collector.example.test
+      protocol: grpc
+      traces: {enabled: true}
+      span_filter:
+        operations:
+          - name: chat
+            require_attributes: [tenant.export_allowed]
+"""
+    top_level_filter = operation_filter.replace(
+        "operations:\n          - name: chat\n            require_attributes: [tenant.export_allowed]",
+        "require_operation: chat\n        require_attributes: [tenant.export_allowed]",
+    )
+
+    for source in (operation_filter, top_level_filter):
+        result = _convert(source)
+        destination = _destination(_document(result), "remote")
+        assert destination["routes"] == [
+            {
+                "name": "legacy-generic-otlp-traces-1",
+                "signals": ["traces"],
+                "selector": {"event_names": ["span.model.chat"]},
+                "redaction_profile": "legacy-v7",
+            }
+        ]
+        assert "span_filter_translated_from_generated_compatibility_selection" in result.warnings
+
+    exact = """config_version: 7
+otel:
+  enabled: true
+  destinations:
+    - name: galileo
+      preset: galileo
+      enabled: true
+      endpoint: https://api.galileo.ai/otel/traces
+      protocol: http
+      traces: {enabled: true}
+__SPAN_FILTER__
+""".replace("__SPAN_FILTER__", _galileo_span_filter_yaml())
+    exact_destination = _destination(_document(_convert(exact)), "galileo")
+    assert exact_destination["routes"] == [
+        {
+            "name": "legacy-generic-otlp-traces-1",
+            "signals": ["traces"],
+            "selector": {
+                "event_names": [
+                    "span.agent.invoke",
+                    "span.model.chat",
+                    "span.retrieval.search",
+                    "span.tool.execute",
+                    "span.workflow.run",
+                ]
+            },
+            "redaction_profile": "legacy-v7",
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    "span_filter",
+    ["{}", "{operations: []}", "{require_operation: '   ', require_attributes: []}"],
+)
+def test_disabled_legacy_span_filter_uses_normal_exporter_selection(span_filter: str) -> None:
+    result = _convert(
+        f"""config_version: 7
+otel:
+  enabled: true
+  destinations:
+    - name: remote
+      enabled: true
+      endpoint: https://collector.example.test
+      protocol: grpc
+      traces: {{enabled: true}}
+      span_filter: {span_filter}
+"""
+    )
+    destination = _destination(_document(result), "remote")
+
+    assert destination["routes"][0]["selector"] == {
+        "event_names": [
+            "span.agent.invoke",
+            "span.model.chat",
+            "span.retrieval.search",
+            "span.tool.execute",
+            "span.workflow.run",
+        ]
+    }
+    assert "span_filter_translated_from_generated_compatibility_selection" not in result.warnings
+
+
+def test_galileo_operation_names_with_stricter_attributes_are_not_elided() -> None:
+    value = {
+        "span_filter": {
+            "operations": [
+                {"name": name, "require_attributes": list(attributes)}
+                for name, attributes in GALILEO.span_filter_operations
+            ]
+        }
+    }
+    value["span_filter"]["operations"][0]["require_attributes"].append("tenant.export_allowed")
+    filter_yaml = "\n".join("      " + line for line in yaml.safe_dump(value, sort_keys=False).rstrip().splitlines())
+    source = """config_version: 7
+otel:
+  enabled: true
+  destinations:
+    - name: galileo
+      preset: galileo
+      enabled: true
+      endpoint: https://api.galileo.ai/otel/traces
+      protocol: http
+      traces: {enabled: true}
+__SPAN_FILTER__
+""".replace("__SPAN_FILTER__", filter_yaml)
+
+    with pytest.raises(V8MigrationError) as captured:
+        _convert(source)
+    assert captured.value.code == "span_filter_mapping_incomplete"
+
+
+def test_galileo_non_trace_signals_split_to_generic_sibling_without_loss() -> None:
+    result = _convert(
+        """config_version: 7
+otel:
+  enabled: true
+  logs: {emit_individual_findings: true}
+  destinations:
+    - name: galileo
+      preset: galileo
+      enabled: true
+      endpoint: https://api.galileo.ai/otel/traces
+      protocol: http
+      traces: {enabled: true}
+      logs: {enabled: true}
+      metrics: {enabled: true}
+"""
+    )
+    document = _document(result)
+    traces = _destination(document, "galileo")
+    other = _destination(document, "galileo-logs-metrics")
+
+    assert traces["preset"] == "galileo"
+    assert {tuple(route["signals"]) for route in traces["routes"]} == {("traces",)}
+    assert traces["batch"]["scheduled_delay_ms"] == 1000
+    assert "preset" not in other
+    assert {tuple(route["signals"]) for route in other["routes"]} == {("logs",), ("metrics",)}
+    assert all("redaction_profile" not in route for route in other["routes"] if route["signals"] == ["metrics"])
+    assert other["batch"]["scheduled_delay_ms"] == 5000
+
+
+def test_galileo_without_traces_remains_generic_instead_of_inventing_trace_export() -> None:
+    result = _convert(
+        """config_version: 7
+otel:
+  enabled: true
+  logs: {emit_individual_findings: true}
+  destinations:
+    - name: galileo
+      preset: galileo
+      enabled: true
+      endpoint: https://collector.example.test/v1/logs
+      protocol: http
+      logs: {enabled: true}
+"""
+    )
+    destination = _destination(_document(result), "galileo")
+
+    assert "preset" not in destination
+    assert {tuple(route["signals"]) for route in destination["routes"]} == {("logs",)}
+
+
+def test_custom_span_filter_consumes_generated_compatibility_selection() -> None:
+    source = """config_version: 7
+otel:
+  enabled: true
+  destinations:
+    - name: custom
+      enabled: true
+      protocol: grpc
+      endpoint: https://collector.example.test
+      traces: {enabled: true}
+      span_filter: {require_operation: retrieve}
+"""
+
+    with pytest.raises(V8MigrationDependencyError) as captured:
+        _convert(source, compatibility_selection=None)
+    assert captured.value.code == "compatibility_selection_required"
+
+    result = _convert(source)
+    custom = _destination(_document(result), "custom")
+    assert custom["routes"] == [
+        {
+            "name": "legacy-generic-otlp-traces-1",
+            "signals": ["traces"],
+            "selector": {"event_names": ["span.retrieval.search"]},
+            "redaction_profile": "legacy-v7",
+        }
+    ]
+
+
+def test_connector_audit_overrides_become_ordered_routes_and_webhooks_survive() -> None:
+    aliased = """config_version: 7
+audit_sinks:
+  - &not_allowed
+    name: global-http
+    kind: http_jsonl
+    enabled: true
+    http_jsonl: {url: https://events.example.test}
+webhooks: [*not_allowed]
+"""
+    with pytest.raises(V8MigrationError) as captured:
+        _convert(aliased)
+    assert captured.value.code == "invalid_yaml"
+
+    source = """config_version: 7
+audit_sinks:
+  - name: global-http
+    kind: http_jsonl
+    enabled: true
+    http_jsonl: {url: https://events.example.test}
+observability:
+  connectors:
+    codex:
+      audit_sinks: []
+      webhooks:
+        - name: incident
+          url: https://notifications.example.test
+          type: generic
+          events: [scan]
+"""
+    result = _convert(source)
+    document = _document(result)
+    destination = _destination(document, "global-http")
+
+    assert destination["routes"][0] == {
+        "name": "legacy-connector-suppress",
+        "signals": ["logs"],
+        "selector": {"connectors": ["codex"]},
+        "action": "drop",
+    }
+    observability = document["observability"]
+    assert isinstance(observability, dict)
+    assert observability["connectors"]["codex"]["webhooks"][0]["name"] == "incident"
+
+
+@pytest.mark.parametrize(
+    ("legacy_name", "canonical"),
+    [("CoDeX", "codex"), ("open-hands", "openhands"), ("open_hands", "openhands")],
+)
+def test_connector_names_use_current_case_and_openhands_normalization(legacy_name: str, canonical: str) -> None:
+    result = _convert(
+        f"""config_version: 7
+observability:
+  connectors:
+    {legacy_name}:
+      webhooks:
+        - name: incident
+          type: generic
+          enabled: false
+          url: https://notifications.example.test
+      audit_sinks: []
+"""
+    )
+    observability = _document(result)["observability"]
+
+    assert list(observability["connectors"]) == [canonical]
+
+
+@pytest.mark.parametrize(
+    ("first", "second"),
+    [("Codex", "codex"), ("open-hands", "open_hands"), ("OpenHands", "open_hands")],
+)
+def test_connector_alias_collisions_fail_before_candidate(first: str, second: str) -> None:
+    source = f"""config_version: 7
+observability:
+  connectors:
+    {first}: {{audit_sinks: []}}
+    {second}: {{audit_sinks: []}}
+"""
+
+    with pytest.raises(V8MigrationError) as captured:
+        _convert(source)
+
+    assert captured.value.code == "duplicate_connector_alias"
+
+
+def test_sink_specific_adapter_fields_and_selector_intent_survive() -> None:
+    source = """config_version: 7
+audit_sinks:
+  - name: splunk
+    kind: splunk_hec
+    enabled: true
+    batch_size: 100
+    flush_interval_s: 2
+    timeout_s: 9
+    min_severity: high
+    actions: [scan]
+    splunk_hec:
+      endpoint: https://splunk.example.test/services/collector
+      token_env: SPLUNK_TOKEN
+      sourcetype: defenseclaw:audit
+      sourcetype_overrides: {scan: 'defenseclaw:scan'}
+  - name: log-scope
+    kind: otlp_logs
+    enabled: true
+    otlp_logs:
+      endpoint: https://collector.example.test
+      protocol: grpc
+      logger_name: defenseclaw.audit
+"""
+    result = _convert(source)
+    document = _document(result)
+    splunk = _destination(document, "splunk")
+    scope = _destination(document, "log-scope")
+
+    assert splunk["sourcetype_overrides"] == {
+        "llm-judge-response": "defenseclaw:judge",
+        "guardrail-verdict": "defenseclaw:verdict",
+        "scan": "defenseclaw:scan",
+    }
+    assert splunk["timeout_ms"] == 9000
+    assert splunk["batch"] == {
+        "max_export_batch_size": 100,
+        "max_queue_size": 10000,
+        "scheduled_delay_ms": 2000,
+    }
+    assert splunk["routes"][0]["selector"]["min_severity"] == "HIGH"
+    assert splunk["routes"][0]["selector"]["actions"] == ["scan"]
+    assert scope["logger_name"] == "defenseclaw.audit"
+    load_validate_v8(result.candidate)
+
+
+def test_audit_action_without_exact_generated_route_has_actionable_error() -> None:
+    source = """config_version: 7
+audit_sinks:
+  - name: splunk
+    kind: splunk_hec
+    enabled: true
+    actions: [guardrail-verdict]
+    splunk_hec:
+      endpoint: https://splunk.example.test/services/collector
+      token_env: SPLUNK_TOKEN
+"""
+
+    with pytest.raises(V8MigrationError) as captured:
+        _convert(source)
+
+    assert captured.value.code == "unrepresentable_audit_actions"
+    assert captured.value.path == "$.audit_sinks[].actions"
+    assert "exact generated audit route" in captured.value.action
+
+
+def test_audit_sink_effective_defaults_and_partial_overrides_are_materialized() -> None:
+    source = """config_version: 7
+audit_sinks:
+  - name: splunk-defaults
+    kind: splunk_hec
+    enabled: true
+    batch_size: 200
+    splunk_hec:
+      endpoint: https://splunk.example.test/services/collector
+      token_env: SPLUNK_TOKEN
+      sourcetype_overrides: {guardrail-verdict: 'corp:verdict'}
+  - name: http-defaults
+    kind: http_jsonl
+    enabled: true
+    http_jsonl: {url: https://events.example.test}
+  - name: otlp-defaults
+    kind: otlp_logs
+    enabled: true
+    otlp_logs: {endpoint: https://collector.example.test}
+"""
+    document = _document(_convert(source))
+    splunk = _destination(document, "splunk-defaults")
+    http = _destination(document, "http-defaults")
+    otlp = _destination(document, "otlp-defaults")
+
+    assert splunk["source"] == "defenseclaw"
+    assert splunk["sourcetype"] == "_json"
+    assert splunk["sourcetype_overrides"] == {
+        "llm-judge-response": "defenseclaw:judge",
+        "guardrail-verdict": "corp:verdict",
+    }
+    assert splunk["timeout_ms"] == 10000
+    assert splunk["batch"] == {
+        "max_export_batch_size": 200,
+        "max_queue_size": 20000,
+        "scheduled_delay_ms": 5000,
+    }
+    assert http["timeout_ms"] == 10000
+    assert http["batch"] == {
+        "max_export_batch_size": 1,
+        "max_queue_size": 10000,
+        "scheduled_delay_ms": 5000,
+    }
+    assert otlp["logger_name"] == "defenseclaw.audit"
+    assert otlp["timeout_ms"] == 10000
+    assert otlp["batch"] == {
+        "max_export_batch_size": 512,
+        "max_queue_size": 2048,
+        "scheduled_delay_ms": 5000,
+    }
+
+
+def test_crlf_comments_ascii_order_and_unrelated_scalar_style_survive() -> None:
+    source = (
+        "# ┌── keep ──┐\r\n"
+        "config_version: 7\r\n"
+        "environment: 'quoted-value' # inline\r\n"
+        "otel: {enabled: false}\r\n"
+        "# this belongs to guardrail\r\n"
+        "guardrail: {enabled: false}\r\n"
+    )
+    result = _convert(source)
+    candidate = result.candidate.decode()
+
+    assert candidate.count("\n") == candidate.count("\r\n")
+    assert candidate.startswith("# ┌── keep ──┐\r\nconfig_version: 8\r\n")
+    assert "environment: 'quoted-value' # inline\r\n" in candidate
+    assert "# this belongs to guardrail\r\n" in candidate
+    assert candidate.index("environment:") < candidate.index("observability:") < candidate.index("guardrail:")
+
+
+def test_comments_inside_every_reformatted_owned_section_survive_as_comment_tokens() -> None:
+    source = """config_version: 7
+audit_db: /var/lib/defenseclaw/audit.db # audit-path-comment
+judge_bodies_db: /var/lib/defenseclaw/judge.db # judge-path-comment
+otel: # otel-root-comment
+  # ┌── nested otel guide ──┐
+  enabled: false # otel-enabled-comment
+  resource:
+    attributes:
+      service.name: '# quoted-hash-not-comment'
+audit_sinks: # sinks-root-comment
+  [] # sinks-empty-comment
+observability: # connector-root-comment
+  connectors:
+    codex:
+      # webhook-comment
+      webhooks: []
+privacy: # privacy-root-comment
+  disable_redaction: false # privacy-value-comment
+ai_discovery: # discovery-root-comment
+  enabled: true
+  emit_otel: false # discovery-routing-comment
+"""
+    result = _convert(source)
+    candidate = result.candidate.decode()
+
+    expected_comments = (
+        "# audit-path-comment",
+        "# judge-path-comment",
+        "# otel-root-comment",
+        "# ┌── nested otel guide ──┐",
+        "# otel-enabled-comment",
+        "# sinks-root-comment",
+        "# sinks-empty-comment",
+        "# connector-root-comment",
+        "# webhook-comment",
+        "# privacy-root-comment",
+        "# privacy-value-comment",
+        "# discovery-root-comment",
+        "# discovery-routing-comment",
+    )
+    for comment in expected_comments:
+        assert comment in candidate
+    assert candidate.count("# quoted-hash-not-comment") == 1
+    load_validate_v8(result.candidate)
+
+
+def test_preserved_comments_scrub_migrated_secrets_and_exclude_block_scalar_hashes() -> None:
+    token_canary = "inline-token-canary"
+    block_canary = "block-header-canary"
+    source = f"""config_version: 7
+# before owned root repeats {token_canary}
+audit_sinks:
+  # standalone repeats {token_canary}
+  - name: splunk
+    kind: splunk_hec
+    enabled: true
+    splunk_hec:
+      endpoint: https://splunk.example.test/services/collector
+      token: {token_canary} # inline repeats {token_canary}
+  - name: audit-otlp
+    kind: otlp_logs
+    enabled: true
+    otlp_logs:
+      endpoint: https://collector.example.test
+      headers:
+        Authorization: |
+          Bearer {block_canary} # scalar-content-not-comment
+      # real header comment survives
+"""
+    result = _convert(source)
+    candidate = result.candidate.decode()
+
+    assert token_canary not in candidate
+    assert block_canary not in candidate
+    assert "# scalar-content-not-comment" not in candidate
+    assert "# standalone repeats [REDACTED]" in candidate
+    assert "# before owned root repeats [REDACTED]" in candidate
+    assert "# inline repeats [REDACTED]" in candidate
+    assert "# real header comment survives" in candidate
+
+
+def test_interpolated_secret_components_are_scrubbed_from_preserved_comments() -> None:
+    component = "component-secret-canary"
+    source = f"""config_version: 7
+otel:
+  enabled: true
+  # standalone component {component}
+  destinations:
+    - name: remote
+      enabled: true
+      endpoint: https://collector.example.test
+      protocol: grpc
+      headers:
+        Authorization: 'Bearer ${{SOURCE_TOKEN}}' # inline component {component}
+      traces: {{enabled: true}}
+"""
+    result = _convert(source, {"SOURCE_TOKEN": component})
+    candidate = result.candidate.decode()
+
+    assert component not in candidate
+    assert "# standalone component [REDACTED]" in candidate
+    assert "# inline component [REDACTED]" in candidate
+
+
+def test_many_secret_literals_and_comments_use_bounded_multi_literal_scrubbing() -> None:
+    headers = "\n".join(f"        X-Token-{index}: secret-{index:03d}" for index in range(128))
+    comments = "\n".join(f"  # comment secret-{index:03d}" for index in range(128))
+    source = f"""config_version: 7
+otel:
+  enabled: true
+{comments}
+  destinations:
+    - name: remote
+      enabled: true
+      endpoint: https://collector.example.test
+      protocol: grpc
+      headers:
+{headers}
+      traces: {{enabled: true}}
+"""
+    result = _convert(source)
+
+    assert len(result.environment_edits) == 128
+    assert "secret-000" not in result.candidate.decode()
+    assert result.candidate.decode().count("# comment [REDACTED]") == 128
+
+
+def test_sensitive_literal_limits_fail_before_scrubber_allocation() -> None:
+    oversized = "sensitive-canary-" + "x" * (256 * 1024)
+    source = f"""config_version: 7
+otel:
+  enabled: true
+  destinations:
+    - name: remote
+      enabled: true
+      endpoint: https://collector.example.test
+      protocol: grpc
+      headers: {{X-Custom: '{oversized}'}}
+      traces: {{enabled: true}}
+"""
+
+    with pytest.raises(V8MigrationError) as captured:
+        _convert(source)
+    assert captured.value.code == "sensitive_data_too_large"
+    assert "sensitive-canary" not in str(captured.value)
+    assert captured.value.__cause__ is None
+
+
+def test_sensitive_literal_count_is_bounded_before_scrubber_allocation() -> None:
+    destinations = [
+        {
+            "name": f"remote-{destination_index}",
+            "enabled": True,
+            "endpoint": "https://collector.example.test",
+            "protocol": "grpc",
+            "headers": {
+                f"X-Custom-{header_index}": f"value-{destination_index}-{header_index}" for header_index in range(820)
+            },
+            "traces": {"enabled": True},
+        }
+        for destination_index in range(5)
+    ]
+    source = yaml.safe_dump(
+        {"config_version": 7, "otel": {"enabled": True, "destinations": destinations}},
+        sort_keys=False,
+    )
+
+    with pytest.raises(V8MigrationError) as captured:
+        _convert(source)
+    assert captured.value.code == "sensitive_data_too_large"
+
+
+def test_explicit_environment_entry_and_value_limits_are_value_safe() -> None:
+    too_many = {f"SAFE_NAME_{index}": "x" for index in range(4097)}
+    with pytest.raises(V8MigrationError) as captured_entries:
+        _convert("config_version: 7\n", too_many)
+    assert captured_entries.value.code == "environment_too_large"
+
+    canary = "environment-value-canary-" + "x" * (256 * 1024)
+    with pytest.raises(V8MigrationError) as captured_value:
+        _convert("config_version: 7\n", {"OVERSIZED_VALUE": canary})
+    assert captured_value.value.code == "environment_value_too_large"
+    assert "environment-value-canary" not in str(captured_value.value)
+    assert captured_value.value.__cause__ is None
+
+
+def test_malformed_yaml_diagnostic_suppresses_secret_bearing_parser_cause() -> None:
+    canary = "malformed-secret-canary"
+    with pytest.raises(V8MigrationError) as captured:
+        _convert(f'config_version: 7\notel: {{headers: {{Authorization: "{canary}}}}}\n')
+
+    assert canary not in str(captured.value)
+    assert canary not in repr(captured.value)
+    assert captured.value.__cause__ is None
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "config_version: 7\notel: {enabled: true, future_knob: true}\n",
+        "config_version: 7\naudit_sinks: [{name: x, kind: future, enabled: true}]\n",
+        "config_version: 7\nprivacy: {disable_redaction: false, future_knob: true}\n",
+        "config_version: 7\nconfig_version: 7\n",
+    ],
+)
+def test_unsupported_or_unsafe_v7_shapes_fail_instead_of_guessing(source: str) -> None:
+    with pytest.raises(V8MigrationError):
+        _convert(source)
+
+
+@pytest.mark.parametrize(
+    "nested",
+    [
+        "batch: {future_knob: 1}",
+        "tls: {future_knob: true}",
+        "resource: {future_knob: {}}",
+    ],
+)
+def test_unknown_nested_otel_fields_fail_before_candidate(nested: str) -> None:
+    with pytest.raises(V8MigrationError) as captured:
+        _convert(f"config_version: 7\notel:\n  enabled: false\n  {nested}\n")
+    assert captured.value.code == "unsupported_v7_shape"
+
+    destination_nested = (
+        "config_version: 7\notel:\n  enabled: true\n  destinations:\n"
+        "    - name: remote\n      enabled: true\n      endpoint: https://collector.example.test\n"
+        "      protocol: grpc\n      traces: {enabled: true}\n"
+        f"      {nested}\n"
+    )
+    with pytest.raises(V8MigrationError):
+        _convert(destination_nested)
+
+
+def test_unknown_span_filter_operation_field_fails_before_family_lookup() -> None:
+    source = """config_version: 7
+otel:
+  enabled: true
+  destinations:
+    - name: remote
+      enabled: true
+      endpoint: https://collector.example.test
+      protocol: grpc
+      traces: {enabled: true}
+      span_filter:
+        operations:
+          - {name: chat, future_knob: true}
+"""
+    with pytest.raises(V8MigrationError) as captured:
+        _convert(source)
+    assert captured.value.code == "unsupported_v7_shape"
+
+
+def test_deep_yaml_nesting_is_rejected_without_runtime_recursion_leak() -> None:
+    deeply_nested = "config_version: 7\nunknown: " + "[" * 2000 + "0" + "]" * 2000 + "\n"
+    with pytest.raises(V8MigrationError) as captured:
+        _convert(deeply_nested)
+    assert captured.value.code in {"source_too_complex", "invalid_yaml"}
+
+
+def test_yaml_node_limit_is_enforced_before_container_construction(monkeypatch: pytest.MonkeyPatch) -> None:
+    source = "config_version: 7\nunknown:\n" + "  - x\n" * 65_536
+    constructed = False
+
+    def fail_if_constructed(*args: object, **kwargs: object) -> object:
+        nonlocal constructed
+        constructed = True
+        raise AssertionError("YAML construction must not run after structural preflight rejection")
+
+    monkeypatch.setattr(migration_module.yaml, "load", fail_if_constructed)
+    with pytest.raises(V8MigrationError) as captured:
+        _convert(source)
+    assert captured.value.code == "source_too_complex"
+    assert constructed is False
+
+
+def test_yaml_mapping_entry_limit_is_enforced_before_container_construction(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = "config_version: 7\nunknown:\n" + "".join(f"  key_{index}: x\n" for index in range(1_025))
+    constructed = False
+
+    def fail_if_constructed(*args: object, **kwargs: object) -> object:
+        nonlocal constructed
+        constructed = True
+        raise AssertionError("YAML construction must not run after mapping preflight rejection")
+
+    monkeypatch.setattr(migration_module.yaml, "load", fail_if_constructed)
+    with pytest.raises(V8MigrationError) as captured:
+        _convert(source)
+    assert captured.value.code == "source_too_complex"
+    assert constructed is False
+
+
+def test_nonscalar_resource_attribute_container_has_value_safe_error() -> None:
+    with pytest.raises(V8MigrationError) as captured:
+        _convert("config_version: 7\notel:\n  resource:\n    attributes: [not, a, mapping]\n")
+    assert captured.value.code == "unsupported_type"
+    assert captured.value.__cause__ is None
+
+
+@pytest.mark.parametrize(
+    ("endpoint", "expected_name", "expected_safety"),
+    [
+        ("collector.localhost:4317", "local-observability", {"allow_private_networks": True}),
+        ("[::ffff:100.64.0.1]:4317", "generic-otlp", {"allow_cgnat": True}),
+    ],
+)
+def test_migrator_and_validator_share_private_endpoint_classification(
+    endpoint: str, expected_name: str, expected_safety: dict[str, bool]
+) -> None:
+    result = _convert(
+        f"""config_version: 7
+otel:
+  enabled: true
+  endpoint: '{endpoint}'
+  protocol: grpc
+  traces: {{enabled: true}}
+"""
+    )
+
+    destination = _destination(_document(result), expected_name)
+    assert destination["network_safety"] == expected_safety
+    load_validate_v8(result.candidate)
+
+
+def test_malformed_endpoint_diagnostic_is_value_safe() -> None:
+    canary = "malformed-host-canary"
+    source = f"""config_version: 7
+otel:
+  enabled: true
+  endpoint: http://[{canary}]
+  traces: {{enabled: true}}
+"""
+
+    with pytest.raises(V8MigrationError) as captured:
+        _convert(source)
+    assert captured.value.code == "invalid_endpoint"
+    assert canary not in str(captured.value)
+    assert canary not in repr(captured.value)
+    assert captured.value.__cause__ is None
+
+
+def test_diagnostics_warnings_and_summary_never_contain_source_values() -> None:
+    canary = "never-render-this-secret"
+    source = f"""config_version: 7
+audit_sinks:
+  - name: splunk
+    kind: splunk_hec
+    enabled: true
+    splunk_hec:
+      endpoint: https://splunk.example.test/services/collector
+      token: {canary}
+"""
+    result = _convert(source)
+
+    assert canary not in repr(result)
+    assert canary not in " ".join(result.warnings)
+    assert canary not in " ".join(result.summary.lines())
+    assert canary not in result.candidate.decode()

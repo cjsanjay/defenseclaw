@@ -80,9 +80,7 @@ def _artifact() -> dict[str, Any]:
             },
         },
         "features": {
-            "otel_individual_findings": [
-                _selector(event_names=["finding.observed"], sources=["telemetry.scan"])
-            ],
+            "otel_individual_findings": [_selector(event_names=["finding.observed"], sources=["telemetry.scan"])],
         },
         "span_filter_operations": {
             "execute_tool": {
@@ -121,12 +119,10 @@ def test_valid_narrow_artifact_exposes_exact_immutable_queries() -> None:
         "config-update",
         "scan",
     )
-    assert selection.feature_selectors("otel_individual_findings")[0].event_names == (
-        "finding.observed",
-    )
-    assert selection.span_filter_selectors(
-        "chat", ["gen_ai.operation.name", "gen_ai.request.model"]
-    )[0].event_names == ("span.model.chat",)
+    assert selection.feature_selectors("otel_individual_findings")[0].event_names == ("finding.observed",)
+    assert selection.span_filter_selectors("chat", ["gen_ai.operation.name", "gen_ai.request.model"])[
+        0
+    ].event_names == ("span.model.chat",)
     assert selection.local_observability.profile_id == "local-observability-v1"
     assert selection.local_observability.complete is True
 
@@ -157,9 +153,7 @@ def test_artifact_is_detached_deeply_immutable_and_hashable() -> None:
         lambda value: value.update({"future_extension": {}}),
         lambda value: value["exporters"].pop("audit_sink"),
         lambda value: value["exporters"]["gateway_jsonl"].update({"traces": []}),
-        lambda value: value["exporters"]["audit_sink"]["logs"][0].update(
-            {"connectors": ["codex"]}
-        ),
+        lambda value: value["exporters"]["audit_sink"]["logs"][0].update({"connectors": ["codex"]}),
         lambda value: value["features"].clear(),
     ],
 )
@@ -196,9 +190,7 @@ def test_missing_or_unknown_fields_and_exporters_fail_closed(mutation: Any) -> N
         ),
     ],
 )
-def test_malformed_metadata_conditions_and_tokens_are_rejected(
-    path: tuple[Any, ...], value: Any, code: str
-) -> None:
+def test_malformed_metadata_conditions_and_tokens_are_rejected(path: tuple[Any, ...], value: Any, code: str) -> None:
     source = _artifact()
     target: Any = source
     for part in path[:-1]:
@@ -263,9 +255,7 @@ def test_oversize_tokens_and_sequences_are_rejected() -> None:
     assert captured.value.code == "invalid_token"
 
     source = _artifact()
-    source["exporters"]["generic_otlp"]["logs"] = [
-        _selector(event_names=[f"event.{index}"]) for index in range(257)
-    ]
+    source["exporters"]["generic_otlp"]["logs"] = [_selector(event_names=[f"event.{index}"]) for index in range(257)]
     with pytest.raises(V7CompatibilityError) as captured:
         load_v7_compatibility_selection(source)
     assert captured.value.code == "invalid_selector_count"
@@ -273,17 +263,13 @@ def test_oversize_tokens_and_sequences_are_rejected() -> None:
 
 def test_combined_exporter_and_feature_routes_respect_destination_limit() -> None:
     source = _artifact()
-    source["exporters"]["generic_otlp"]["logs"] = [
-        _selector(event_names=[f"event.{index}"]) for index in range(255)
-    ]
+    source["exporters"]["generic_otlp"]["logs"] = [_selector(event_names=[f"event.{index}"]) for index in range(255)]
     with pytest.raises(V7CompatibilityError) as captured:
         load_v7_compatibility_selection(source)
     assert captured.value.code == "invalid_exporter_route_count"
 
     source = _artifact()
-    source["exporters"]["generic_otlp"]["logs"] = [
-        _selector(event_names=[f"event.{index}"]) for index in range(254)
-    ]
+    source["exporters"]["generic_otlp"]["logs"] = [_selector(event_names=[f"event.{index}"]) for index in range(254)]
     with pytest.raises(V7CompatibilityError) as captured:
         load_v7_compatibility_selection(source)
     assert captured.value.code == "invalid_feature_route_count"
@@ -310,9 +296,7 @@ def test_mapping_and_sequence_order_canonicalize_deterministically() -> None:
     reordered = copy.deepcopy(source)
     reordered["collection"] = dict(reversed(tuple(reordered["collection"].items())))
     reordered["exporters"] = dict(reversed(tuple(reordered["exporters"].items())))
-    reordered["span_filter_operations"] = dict(
-        reversed(tuple(reordered["span_filter_operations"].items()))
-    )
+    reordered["span_filter_operations"] = dict(reversed(tuple(reordered["span_filter_operations"].items())))
     reordered["collection"]["always"]["logs"].reverse()
     reordered["exporters"]["audit_sink"]["logs"][0]["actions"].reverse()
     reordered["span_filter_operations"]["chat"]["required_attributes"].reverse()
