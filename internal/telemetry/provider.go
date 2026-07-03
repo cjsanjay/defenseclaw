@@ -770,6 +770,17 @@ func (p *Provider) DestinationAcknowledgedCanaryTrace(destination, traceID strin
 	if p == nil || strings.TrimSpace(traceID) == "" {
 		return false
 	}
+	if p.v8 != nil {
+		if !p.Enabled() || p.v8.canaryAck == nil {
+			return false
+		}
+		acknowledged := false
+		func() {
+			defer func() { _ = recover() }()
+			acknowledged = p.v8.canaryAck(destination, traceID)
+		}()
+		return acknowledged
+	}
 	p.deliveryMu.RLock()
 	counters := p.deliveryByName[destination]
 	p.deliveryMu.RUnlock()

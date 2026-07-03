@@ -687,6 +687,9 @@ func TestV8GenerationPipelineFactoryBindsExactCandidateAndOwnsChildren(t *testin
 			return V8GenerationPipelines{
 				SpanProcessors: []sdktrace.SpanProcessor{processor},
 				MetricReaders:  []sdkmetric.Reader{reader},
+				CanaryAcknowledged: func(destination, traceID string) bool {
+					return destination == "galileo" && traceID == "0102030405060708090a0b0c0d0e0f10"
+				},
 			}, nil
 		},
 	})
@@ -697,6 +700,10 @@ func TestV8GenerationPipelineFactoryBindsExactCandidateAndOwnsChildren(t *testin
 		t.Fatalf("pipeline factory calls = %d", calls.Load())
 	}
 	provider.v8.active.Store(true)
+	if !provider.DestinationAcknowledgedCanaryTrace("galileo", "0102030405060708090a0b0c0d0e0f10") ||
+		provider.DestinationAcknowledgedCanaryTrace("other", "0102030405060708090a0b0c0d0e0f10") {
+		t.Fatal("v8 provider did not use its generation-bound canary lookup")
+	}
 	_, span := provider.StartAgentSpan(context.Background(), "codex", "root", "root", "agent", "", "")
 	provider.EndAgentSpan(span, "")
 	if err := provider.Shutdown(context.Background()); err != nil {
@@ -704,6 +711,9 @@ func TestV8GenerationPipelineFactoryBindsExactCandidateAndOwnsChildren(t *testin
 	}
 	if processor.shutdowns.Load() != 1 {
 		t.Fatalf("processor shutdowns = %d", processor.shutdowns.Load())
+	}
+	if provider.DestinationAcknowledgedCanaryTrace("galileo", "0102030405060708090a0b0c0d0e0f10") {
+		t.Fatal("shutdown provider retained canary acknowledgement")
 	}
 }
 
@@ -779,6 +789,30 @@ func TestV8SignalFactoryPanicsRejectCandidateWithBoundedCode(t *testing.T) {
 				t.Fatalf("panic error = %T/%v, want %s", err, providerError, test.code)
 			}
 		})
+	}
+}
+
+func TestV8CanaryAcknowledgementLookupPanicFailsClosed(t *testing.T) {
+	plan := v8PlanForTest(t, "always_on", "", nil)
+	provider, err := NewProviderV8Inactive(context.Background(), plan, 1, V8ProviderOptions{
+		GenerationPipelines: func(
+			context.Context, *config.ObservabilityV8Plan, uint64, V8MetricReaderSpec,
+		) (V8GenerationPipelines, error) {
+			return V8GenerationPipelines{
+				SpanProcessors: []sdktrace.SpanProcessor{&v8TrackingProcessor{}},
+				CanaryAcknowledged: func(string, string) bool {
+					panic("sensitive canary backend panic")
+				},
+			}, nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider.v8.active.Store(true)
+	t.Cleanup(func() { _ = provider.Shutdown(context.Background()) })
+	if provider.DestinationAcknowledgedCanaryTrace("galileo", "0102030405060708090a0b0c0d0e0f10") {
+		t.Fatal("panicking canary lookup reported acknowledgement")
 	}
 }
 

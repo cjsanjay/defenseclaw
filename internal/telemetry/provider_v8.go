@@ -80,6 +80,10 @@ type V8MetricReaderFactory func(generation uint64, spec V8MetricReaderSpec) (sdk
 type V8GenerationPipelines struct {
 	SpanProcessors []sdktrace.SpanProcessor
 	MetricReaders  []sdkmetric.Reader
+	// CanaryAcknowledged queries only the exact candidate generation's
+	// destination acknowledgement registry. It must be nonblocking, panic-safe
+	// at the provider boundary, and return false after its processors retire.
+	CanaryAcknowledged func(destination, traceID string) bool
 }
 
 // V8GenerationPipelineFactory is the production destination-assembly seam.
@@ -192,6 +196,7 @@ type v8ProviderState struct {
 	metricSpec V8MetricReaderSpec
 	limits     config.ObservabilityV8TraceLimitsSource
 	debug      *v8SamplingDebug
+	canaryAck  func(destination, traceID string) bool
 }
 
 // MetricBucketEnabled is the collection-before-construction predicate for
@@ -345,6 +350,7 @@ func NewProviderV8Inactive(
 	limits := snapshot.TracePolicy.Limits
 	preparedProcessors := make([]sdktrace.SpanProcessor, 0, 1)
 	preparedReaders := make([]sdkmetric.Reader, 0, len(options.MetricReaderFactories))
+	pipelines := V8GenerationPipelines{}
 	cleanupPrepared := func() {
 		v8BoundedPrepareCleanup(options.PrepareCleanupTimeout, func(cleanupContext context.Context) {
 			for index := len(preparedReaders) - 1; index >= 0; index-- {
@@ -362,7 +368,8 @@ func NewProviderV8Inactive(
 		})
 	}
 	if options.GenerationPipelines != nil && (len(traceCollect) > 0 || len(metricCollect) > 0) {
-		pipelines, pipelineErr := callV8GenerationPipelineFactory(
+		var pipelineErr error
+		pipelines, pipelineErr = callV8GenerationPipelineFactory(
 			options.GenerationPipelines, ctx, plan, generation, metricSpec,
 		)
 		preparedProcessors = append(preparedProcessors, pipelines.SpanProcessors...)
@@ -468,6 +475,7 @@ func NewProviderV8Inactive(
 		v8: &v8ProviderState{
 			generation: generation, planDigest: plan.Digest(), collect: traceCollect,
 			metrics: metricCollect, metricSpec: metricSpec, limits: limits, debug: debug,
+			canaryAck: pipelines.CanaryAcknowledged,
 		},
 	}, nil
 }
@@ -521,6 +529,9 @@ func validV8GenerationPipelines(
 	metricsCollected bool,
 ) bool {
 	if !tracesCollected && len(pipelines.SpanProcessors) != 0 {
+		return false
+	}
+	if pipelines.CanaryAcknowledged != nil && (!tracesCollected || len(pipelines.SpanProcessors) == 0) {
 		return false
 	}
 	if !metricsCollected && len(pipelines.MetricReaders) != 0 {
