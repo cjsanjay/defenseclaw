@@ -14,6 +14,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"net/url"
 
 	"github.com/defenseclaw/defenseclaw/internal/observability"
 )
@@ -311,6 +312,11 @@ func maskObservabilityV8EffectivePlan(source ObservabilityV8EffectivePlan) Obser
 	result := cloneObservabilityV8EffectivePlan(source)
 	for destinationIndex := range result.Destinations {
 		destination := &result.Destinations[destinationIndex]
+		destination.Transport.Endpoint = maskObservabilityV8Endpoint(destination.Transport.Endpoint)
+		for signal, override := range destination.Transport.SignalOverrides {
+			override.Endpoint = maskObservabilityV8Endpoint(override.Endpoint)
+			destination.Transport.SignalOverrides[signal] = override
+		}
 		for name, value := range destination.Transport.Headers {
 			if value.Static == nil {
 				continue
@@ -319,6 +325,24 @@ func maskObservabilityV8EffectivePlan(source ObservabilityV8EffectivePlan) Obser
 		}
 	}
 	return result
+}
+
+func maskObservabilityV8Endpoint(value string) string {
+	if value == "" {
+		return value
+	}
+	parsed, err := url.Parse(value)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return value
+	}
+	if parsed.RawQuery != "" || parsed.ForceQuery {
+		parsed.RawQuery = "[REDACTED]"
+		parsed.ForceQuery = true
+	}
+	if parsed.Fragment != "" {
+		parsed.Fragment = "[REDACTED]"
+	}
+	return parsed.String()
 }
 
 func cloneObservabilityV8Destinations(source []ObservabilityV8EffectiveDestination) []ObservabilityV8EffectiveDestination {

@@ -610,6 +610,24 @@ func TestObservabilityV8HeaderValueSourceShapes(t *testing.T) {
 	}
 }
 
+func TestObservabilityV8EffectivePlanMasksEndpointQueryAndFragment(t *testing.T) {
+	destination := validObservabilityV8Destination("archive", ObservabilityV8DestinationHTTPJSONL)
+	destination.Endpoint = "https://collector.example.test/events?api_key=query-secret#private-fragment"
+	plan, err := CompileObservabilityV8(&ObservabilityV8Source{Destinations: []ObservabilityV8DestinationSource{destination}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	display := string(plan.EffectiveJSON())
+	if strings.Contains(display, "query-secret") || strings.Contains(display, "private-fragment") {
+		t.Fatalf("effective plan leaked endpoint query or fragment: %s", display)
+	}
+	runtimeDestination, ok := plan.RuntimeDestination("archive")
+	if !ok || !strings.Contains(runtimeDestination.Transport.Endpoint, "query-secret") ||
+		!strings.Contains(runtimeDestination.Transport.Endpoint, "private-fragment") {
+		t.Fatalf("runtime endpoint was altered: %+v", runtimeDestination.Transport)
+	}
+}
+
 func mustCompileObservabilityV8(t *testing.T, source *ObservabilityV8Source) *ObservabilityV8Plan {
 	t.Helper()
 	plan, err := CompileObservabilityV8(source)
