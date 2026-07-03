@@ -32,20 +32,27 @@ func loadOrCreateCorrelationKeyPlatform(dataDir string, entropy keyEntropyReader
 		return CorrelationKey{}, keyStoreError(KeyStoreErrorInvalidDataDir)
 	}
 
-	dir, err := os.Open(dataDir)
+	dirFD, err := unix.Open(
+		dataDir,
+		unix.O_RDONLY|unix.O_CLOEXEC|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_NONBLOCK,
+		0,
+	)
 	if err != nil {
+		if errors.Is(err, unix.ELOOP) || errors.Is(err, unix.ENOTDIR) {
+			return CorrelationKey{}, keyStoreError(KeyStoreErrorInvalidDataDir)
+		}
+		return CorrelationKey{}, keyStoreError(KeyStoreErrorUnavailable)
+	}
+	dir := os.NewFile(uintptr(dirFD), correlationKeyFilename)
+	if dir == nil {
+		_ = unix.Close(dirFD)
 		return CorrelationKey{}, keyStoreError(KeyStoreErrorUnavailable)
 	}
 	defer func() { _ = dir.Close() }()
-
-	dirStat, err := dir.Stat()
-	if err != nil || !dirStat.IsDir() {
-		return CorrelationKey{}, keyStoreError(KeyStoreErrorInvalidDataDir)
-	}
-	dirFD := int(dir.Fd())
+	dirFD = int(dir.Fd())
 
 	for attempt := 0; attempt < keyInstallAttempts; attempt++ {
-		key, found, loadErr := loadExistingCorrelationKey(dirFD)
+		key, found, loadErr := loadExistingCorrelationKey(dirFD, hooks)
 		if loadErr != nil {
 			return CorrelationKey{}, loadErr
 		}
@@ -72,7 +79,7 @@ func loadOrCreateCorrelationKeyPlatform(dataDir string, entropy keyEntropyReader
 	return CorrelationKey{}, keyStoreError(KeyStoreErrorInstall)
 }
 
-func loadExistingCorrelationKey(dirFD int) (CorrelationKey, bool, error) {
+func loadExistingCorrelationKey(dirFD int, hooks keyStoreHooks) (CorrelationKey, bool, error) {
 	fd, err := unix.Openat(
 		dirFD,
 		correlationKeyFilename,
@@ -103,6 +110,9 @@ func loadExistingCorrelationKey(dirFD int) (CorrelationKey, bool, error) {
 	}
 	if err := validateCorrelationKeyStat(&before); err != nil {
 		return CorrelationKey{}, false, err
+	}
+	if err := runAfterExistingValidation(hooks); err != nil {
+		return CorrelationKey{}, false, keyStoreError(KeyStoreErrorUnavailable)
 	}
 
 	var material [hashV1KeySize]byte
@@ -210,6 +220,9 @@ func installCorrelationKey(dirFD int, candidate CorrelationKey, entropy keyEntro
 			return false, nil
 		}
 		return false, keyStoreError(KeyStoreErrorInstall)
+	}
+	if err := runAfterLink(hooks); err != nil {
+		return false, keyStoreError(KeyStoreErrorSync)
 	}
 	if err := unix.Fsync(dirFD); err != nil {
 		return false, keyStoreError(KeyStoreErrorSync)

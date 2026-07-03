@@ -14,7 +14,10 @@
 
 package redaction
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestLegacyV7PureHelpersGoldens(t *testing.T) {
 	tests := []struct {
@@ -27,6 +30,7 @@ func TestLegacyV7PureHelpersGoldens(t *testing.T) {
 		{name: "string standard", got: LegacyV7String("hello world"), want: "<redacted len=11 sha=b94d27b9>"},
 		{name: "entity empty", got: LegacyV7Entity(""), want: "<empty>"},
 		{name: "entity short", got: LegacyV7Entity("abcd"), want: "<redacted len=4>"},
+		{name: "entity middle", got: LegacyV7Entity("abcdef"), want: "<redacted len=6 sha=bef57ec7>"},
 		{name: "entity long", got: LegacyV7Entity("hello world"), want: `<redacted len=11 prefix="h" sha=b94d27b9>`},
 		{name: "content empty", got: LegacyV7MessageContent(""), want: "<empty>"},
 		{name: "content standard", got: LegacyV7MessageContent("hello world"), want: "<redacted len=11 sha=b94d27b9>"},
@@ -49,6 +53,16 @@ func TestLegacyV7PureHelpersGoldens(t *testing.T) {
 }
 
 func TestLegacyV7PureHelpersIgnoreGlobalState(t *testing.T) {
+	nestedReason := "matched: SEC-FIXTURE:dynamic explanation"
+	whitespaceReason := "user=fixture-user password=FixturePassword123 role=operator"
+	wantNested := LegacyV7Reason(nestedReason)
+	wantWhitespace := LegacyV7Reason(whitespaceReason)
+	if strings.Contains(wantNested, "dynamic explanation") {
+		t.Fatalf("nested legacy-v7 reason fixture was not redacted: %q", wantNested)
+	}
+	if strings.Contains(wantWhitespace, "FixturePassword123") {
+		t.Fatalf("whitespace legacy-v7 reason fixture was not redacted: %q", wantWhitespace)
+	}
 	scenarios := []struct {
 		name            string
 		revealEnv       string
@@ -77,6 +91,8 @@ func TestLegacyV7PureHelpersIgnoreGlobalState(t *testing.T) {
 				{name: "entity", got: LegacyV7Entity("hello world"), want: `<redacted len=11 prefix="h" sha=b94d27b9>`},
 				{name: "content", got: LegacyV7MessageContent("hello world"), want: "<redacted len=11 sha=b94d27b9>"},
 				{name: "reason", got: LegacyV7Reason("RULE:hello world"), want: "RULE:<redacted len=11 sha=b94d27b9>"},
+				{name: "reason nested", got: LegacyV7Reason(nestedReason), want: wantNested},
+				{name: "reason whitespace", got: LegacyV7Reason(whitespaceReason), want: wantWhitespace},
 				{name: "evidence", got: LegacyV7Evidence("hello world", 0, 5), want: "<redacted-evidence len=11 match=[0:5] sha=b94d27b9>"},
 			}
 

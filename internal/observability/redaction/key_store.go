@@ -88,7 +88,16 @@ func LoadOrCreateCorrelationKey(dataDir string) (CorrelationKey, error) {
 // keyStoreHooks exists only to exercise cleanup and failure-closed behavior in
 // package tests. Production always supplies the zero value.
 type keyStoreHooks struct {
-	afterTempSync func() error
+	afterExistingValidation func() error
+	afterTempSync           func() error
+	afterLink               func() error
+}
+
+func runAfterExistingValidation(hooks keyStoreHooks) error {
+	if hooks.afterExistingValidation == nil {
+		return nil
+	}
+	return hooks.afterExistingValidation()
 }
 
 func runAfterTempSync(hooks keyStoreHooks) error {
@@ -96,6 +105,13 @@ func runAfterTempSync(hooks keyStoreHooks) error {
 		return nil
 	}
 	return hooks.afterTempSync()
+}
+
+func runAfterLink(hooks keyStoreHooks) error {
+	if hooks.afterLink == nil {
+		return nil
+	}
+	return hooks.afterLink()
 }
 
 // Keep io.Reader in the platform boundary so tests can inject a deterministic

@@ -105,20 +105,27 @@ func TestCorrelationKeyRejectsUnsafePermissions(t *testing.T) {
 }
 
 func TestCorrelationKeyRejectsSymlink(t *testing.T) {
-	t.Parallel()
-	dir := t.TempDir()
-	target := filepath.Join(dir, "target")
-	key := fixedTestKey(0x42)
-	if err := os.WriteFile(target, key[:], 0o600); err != nil {
-		t.Fatalf("write symlink target: %v", err)
-	}
-	if err := os.Symlink(target, filepath.Join(dir, correlationKeyFilename)); err != nil {
-		t.Fatalf("create symlink: %v", err)
-	}
+	for _, dangling := range []bool{false, true} {
+		dangling := dangling
+		t.Run(fmt.Sprintf("dangling_%t", dangling), func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			target := filepath.Join(dir, "target")
+			if !dangling {
+				key := fixedTestKey(0x42)
+				if err := os.WriteFile(target, key[:], 0o600); err != nil {
+					t.Fatalf("write symlink target: %v", err)
+				}
+			}
+			if err := os.Symlink(target, filepath.Join(dir, correlationKeyFilename)); err != nil {
+				t.Fatalf("create symlink: %v", err)
+			}
 
-	_, err := LoadOrCreateCorrelationKey(dir)
-	if !IsKeyStoreError(err, KeyStoreErrorUnsafeType) {
-		t.Fatalf("error = %v, want unsafe type", err)
+			_, err := LoadOrCreateCorrelationKey(dir)
+			if !IsKeyStoreError(err, KeyStoreErrorUnsafeType) {
+				t.Fatalf("error = %v, want unsafe type", err)
+			}
+		})
 	}
 }
 
@@ -161,6 +168,48 @@ func TestCorrelationKeyRejectsWrongLength(t *testing.T) {
 			_, err := LoadOrCreateCorrelationKey(dir)
 			if !IsKeyStoreError(err, KeyStoreErrorInvalidLength) {
 				t.Fatalf("error = %v, want invalid length", err)
+			}
+		})
+	}
+}
+
+func TestCorrelationKeyRevalidatesExistingFileAfterInitialStat(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		mutate func(string) error
+		code   KeyStoreErrorCode
+	}{
+		{name: "truncate_during_read", code: KeyStoreErrorInvalidLength, mutate: func(path string) error {
+			return os.Truncate(path, 0)
+		}},
+		{name: "append_during_read", code: KeyStoreErrorInvalidLength, mutate: func(path string) error {
+			file, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0)
+			if err != nil {
+				return err
+			}
+			if _, err = file.Write([]byte{0x7f}); err != nil {
+				_ = file.Close()
+				return err
+			}
+			return file.Close()
+		}},
+		{name: "permissions_change_after_read", code: KeyStoreErrorUnsafePermissions, mutate: func(path string) error {
+			return os.Chmod(path, 0o640)
+		}},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			key := fixedTestKey(0x29)
+			writeExistingCorrelationKey(t, dir, key[:], 0o600)
+			path := filepath.Join(dir, correlationKeyFilename)
+			hooks := keyStoreHooks{afterExistingValidation: func() error { return test.mutate(path) }}
+			_, err := loadOrCreateCorrelationKeyPlatform(dir, bytes.NewReader(nil), hooks)
+			if !IsKeyStoreError(err, test.code) {
+				t.Fatalf("error = %v, want %s", err, test.code)
 			}
 		})
 	}
@@ -238,6 +287,31 @@ func TestCorrelationKeyInterruptedCreationCleansTemporaryFile(t *testing.T) {
 	}
 	if _, statErr := os.Lstat(filepath.Join(dir, correlationKeyFilename)); !os.IsNotExist(statErr) {
 		t.Fatalf("target exists after interruption: %v", statErr)
+	}
+	assertNoCorrelationKeyTemps(t, dir)
+}
+
+func TestCorrelationKeyPostLinkFailureLeavesOneLoadableKey(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	entropy := bytes.NewReader(bytes.Repeat([]byte{0x3c}, hashV1KeySize+keyTempRandomBytes))
+	hooks := keyStoreHooks{afterLink: func() error { return errors.New("injected directory sync failure") }}
+
+	_, err := loadOrCreateCorrelationKeyPlatform(dir, entropy, hooks)
+	if !IsKeyStoreError(err, KeyStoreErrorSync) {
+		t.Fatalf("error = %v, want sync failure", err)
+	}
+	loaded, err := LoadOrCreateCorrelationKey(dir)
+	if err != nil {
+		t.Fatalf("load key installed before sync failure: %v", err)
+	}
+	material, ok := loaded.Material()
+	var expected [hashV1KeySize]byte
+	for index := range expected {
+		expected[index] = 0x3c
+	}
+	if !ok || material != expected {
+		t.Fatal("post-link failure did not leave the installed candidate loadable")
 	}
 	assertNoCorrelationKeyTemps(t, dir)
 }
@@ -342,6 +416,13 @@ func TestCorrelationKeyInvalidDataDirectory(t *testing.T) {
 	}
 	if _, err := LoadOrCreateCorrelationKey(file); !IsKeyStoreError(err, KeyStoreErrorInvalidDataDir) {
 		t.Fatalf("non-directory error = %v", err)
+	}
+	symlink := filepath.Join(t.TempDir(), "data-link")
+	if err := os.Symlink(t.TempDir(), symlink); err != nil {
+		t.Fatalf("create data-dir symlink: %v", err)
+	}
+	if _, err := LoadOrCreateCorrelationKey(symlink); !IsKeyStoreError(err, KeyStoreErrorInvalidDataDir) {
+		t.Fatalf("symlink data-dir error = %v", err)
 	}
 	if _, err := LoadOrCreateCorrelationKey(filepath.Join(t.TempDir(), "missing")); !IsKeyStoreError(err, KeyStoreErrorUnavailable) {
 		t.Fatalf("missing data-dir error = %v", err)
