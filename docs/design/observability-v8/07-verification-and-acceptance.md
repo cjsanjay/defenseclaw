@@ -975,6 +975,10 @@ Assertions:
   metadata/task-credential, unspecified, multicast/reserved, and inline credentials
   remain blocked under both opt-ins; no environment-only bypass works.
 - TLS certificate and hostname validation defaults secure.
+- Plaintext HTTP with Splunk authentication, a bearer token, an
+  authentication-like header, or a secret-backed header emits exactly one
+  content-free `plaintext_credentials` warning per prepared destination;
+  unauthenticated HTTP and HTTPS do not emit that warning.
 - Header/token masking across error, health, doctor, TUI, migration, and compliance
   output.
 - Log-injection/newline handling for console, JSONL, and HEC.

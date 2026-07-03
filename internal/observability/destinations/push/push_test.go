@@ -613,6 +613,72 @@ func TestTLSCABundleAndSafeWarnings(t *testing.T) {
 	}
 }
 
+func TestPlaintextCredentialWarningsAreBounded(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	var warnings []Warning
+	observer := WarningObserverFunc(func(warning Warning) { warnings = append(warnings, warning) })
+	base := HTTPJSONLConfig{
+		Destination: "archive", Endpoint: server.URL,
+		Network: NetworkOptions{AllowPrivateNetworks: true}, Observer: observer,
+	}
+	if _, err := NewHTTPJSONL(context.Background(), base); err != nil {
+		t.Fatal(err)
+	}
+	if countWarning(warnings, WarningPlaintextCredentials) != 0 {
+		t.Fatalf("unauthenticated HTTP warnings=%+v", warnings)
+	}
+
+	warnings = nil
+	base.BearerToken = "bounded-token"
+	if _, err := NewHTTPJSONL(context.Background(), base); err != nil {
+		t.Fatal(err)
+	}
+	if countWarning(warnings, WarningPlaintextCredentials) != 1 {
+		t.Fatalf("bearer HTTP warnings=%+v", warnings)
+	}
+	for _, warning := range warnings {
+		if warning.Destination != "archive" {
+			t.Fatalf("warning identity drifted: %+v", warning)
+		}
+	}
+
+	warnings = nil
+	base.BearerToken = ""
+	base.Headers = map[string]string{"X-Tenant": "tenant-a"}
+	base.SecretHeaders = true
+	if _, err := NewHTTPJSONL(context.Background(), base); err != nil {
+		t.Fatal(err)
+	}
+	if countWarning(warnings, WarningPlaintextCredentials) != 1 {
+		t.Fatalf("secret-header HTTP warnings=%+v", warnings)
+	}
+
+	warnings = nil
+	if _, err := NewSplunkHEC(context.Background(), SplunkHECConfig{
+		Destination: "splunk", Endpoint: server.URL, Token: "hec-token",
+		Network: NetworkOptions{AllowPrivateNetworks: true}, Observer: observer,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if countWarning(warnings, WarningPlaintextCredentials) != 1 {
+		t.Fatalf("Splunk HTTP warnings=%+v", warnings)
+	}
+}
+
+func countWarning(warnings []Warning, code WarningCode) int {
+	count := 0
+	for _, warning := range warnings {
+		if warning.Code == code {
+			count++
+		}
+	}
+	return count
+}
+
 func TestTimeoutAfterServerReceivesBodyTerminatesAmbiguousAttempt(t *testing.T) {
 	received := make(chan string, 1)
 	release := make(chan struct{})

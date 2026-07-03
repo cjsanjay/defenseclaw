@@ -126,6 +126,7 @@ Section references are to this specification package.
 | P-063 | 03 §4.4; 05 §7.1 | 07 §§2,5,9.6,13 |
 | P-064 | 05 §§6.3,6.5 | 07 §§5,13 |
 | P-065 | 03 §4.5 | 07 §§4.2,13 |
+| P-066 | 03 §§4.4-4.4.1 | 07 §13 |
 
 ## 5. Review use
 

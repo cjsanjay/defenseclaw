@@ -49,6 +49,7 @@ const (
 	WarningPrivateNetworksAllowed  WarningCode = "private_networks_allowed"
 	WarningCGNATAllowed            WarningCode = "cgnat_allowed"
 	WarningActivationDNSDegraded   WarningCode = "activation_dns_degraded"
+	WarningPlaintextCredentials    WarningCode = "plaintext_credentials"
 )
 
 type Warning struct {
@@ -96,6 +97,7 @@ type baseConfig struct {
 	tls         TLSOptions
 	network     NetworkOptions
 	observer    WarningObserver
+	credentials bool
 }
 
 type preparedTransport struct {
@@ -146,7 +148,7 @@ func prepareTransport(ctx context.Context, config baseConfig) (preparedTransport
 		}
 	}
 
-	emitPolicyWarnings(config)
+	emitPolicyWarnings(config, endpoint.Scheme)
 	transport := &http.Transport{
 		Proxy:                 nil,
 		DialContext:           netguard.V8SafeDialContext(policy, dialer, resolver),
@@ -196,7 +198,7 @@ func classifyConstructionError(err error) error {
 	return ErrInvalidConfig
 }
 
-func emitPolicyWarnings(config baseConfig) {
+func emitPolicyWarnings(config baseConfig, scheme string) {
 	if config.tls.InsecureSkipVerify {
 		emitWarning(config.observer, Warning{Destination: config.destination, Code: WarningTLSVerificationDisabled})
 	}
@@ -205,6 +207,9 @@ func emitPolicyWarnings(config baseConfig) {
 	}
 	if config.network.AllowCGNAT {
 		emitWarning(config.observer, Warning{Destination: config.destination, Code: WarningCGNATAllowed})
+	}
+	if scheme == "http" && config.credentials {
+		emitWarning(config.observer, Warning{Destination: config.destination, Code: WarningPlaintextCredentials})
 	}
 }
 

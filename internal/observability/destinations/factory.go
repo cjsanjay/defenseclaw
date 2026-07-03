@@ -277,7 +277,8 @@ func (factory *Factory) prepareHTTPJSONL(
 	adapter, prepareErr := newHTTPJSONLSafely(ctx, push.HTTPJSONLConfig{
 		Destination: destination.Name, Endpoint: destination.Transport.Endpoint,
 		Method: destination.Transport.Method, Headers: headers, BearerToken: bearer,
-		TLS: tlsOptions,
+		SecretHeaders: hasSecretHeaderReferences(destination.Transport.Headers),
+		TLS:           tlsOptions,
 		Network: push.NetworkOptions{
 			AllowPrivateNetworks: network.AllowPrivateNetworks,
 			AllowCGNAT:           network.AllowCGNAT,
@@ -296,6 +297,15 @@ func (factory *Factory) prepareHTTPJSONL(
 		return nil, cleanup, err
 	}
 	return adapter, cleanup, nil
+}
+
+func hasSecretHeaderReferences(source map[string]config.ObservabilityV8HeaderValue) bool {
+	for _, value := range source {
+		if value.Secret != nil {
+			return true
+		}
+	}
+	return false
 }
 
 func newSplunkSafely(ctx context.Context, config push.SplunkHECConfig) (adapter *push.SplunkHEC, err error) {

@@ -81,6 +81,7 @@ func NewSplunkHEC(ctx context.Context, config SplunkHECConfig) (*SplunkHEC, erro
 		tls:         config.TLS,
 		network:     config.Network,
 		observer:    config.Observer,
+		credentials: true,
 	})
 	if err != nil {
 		return nil, err

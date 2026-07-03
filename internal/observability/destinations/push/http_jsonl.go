@@ -16,6 +16,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"strings"
 	"unicode/utf8"
 
 	"github.com/defenseclaw/defenseclaw/internal/observability/delivery"
@@ -27,9 +28,13 @@ type HTTPJSONLConfig struct {
 	Method      string
 	Headers     map[string]string
 	BearerToken string
-	TLS         TLSOptions
-	Network     NetworkOptions
-	Observer    WarningObserver
+	// SecretHeaders reports that at least one entry in Headers originated from
+	// a secret-provider reference. The resolved value itself remains only in
+	// Headers and is never included in warnings.
+	SecretHeaders bool
+	TLS           TLSOptions
+	Network       NetworkOptions
+	Observer      WarningObserver
 }
 
 // HTTPJSONL is an immutable delivery.Adapter. NewHTTPJSONL performs guarded
@@ -69,6 +74,7 @@ func NewHTTPJSONL(ctx context.Context, config HTTPJSONLConfig) (*HTTPJSONL, erro
 		tls:         config.TLS,
 		network:     config.Network,
 		observer:    config.Observer,
+		credentials: config.BearerToken != "" || config.SecretHeaders || hasAuthenticationHeader(headers),
 	})
 	if err != nil {
 		return nil, err
@@ -77,6 +83,18 @@ func NewHTTPJSONL(ctx context.Context, config HTTPJSONLConfig) (*HTTPJSONL, erro
 		endpoint: prepared.endpoint.String(), method: method,
 		headers: headers, client: prepared.client, activation: prepared.activation,
 	}, nil
+}
+
+func hasAuthenticationHeader(headers http.Header) bool {
+	for name := range headers {
+		canonical := strings.ToLower(name)
+		if canonical == "authorization" || canonical == "proxy-authorization" ||
+			strings.Contains(canonical, "api-key") || strings.Contains(canonical, "apikey") ||
+			strings.Contains(canonical, "token") || strings.Contains(canonical, "secret") {
+			return true
+		}
+	}
+	return false
 }
 
 func (adapter *HTTPJSONL) ActivationState() ActivationState {

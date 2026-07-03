@@ -511,6 +511,14 @@ Static inline authorization secrets are discouraged and must be masked if retain
 for compatibility. New generated configurations use environment or key-store
 references.
 
+An explicit `http://` endpoint remains valid for intentional local or legacy
+collectors. When Splunk authentication, a bearer token, an authentication-like
+static header, or any secret-provider-backed header is present, preparation MUST
+emit a bounded `plaintext_credentials` startup/reload warning and mandatory
+`compliance.activity` event naming only the destination. It never includes the
+endpoint, header name/value, reference name, or resolved secret. Unauthenticated
+HTTP emits no credential warning. HTTPS and OTLP TLS policy remain unchanged.
+
 #### 4.4.1 Push-destination network safety
 
 Every enabled `splunk_hec`, `http_jsonl`, and `otlp` destination MUST use the shared
@@ -540,6 +548,10 @@ This is a transport invariant, including destinations created by presets:
   unspecified/multicast/reserved addresses, and inline credentials remain blocked
   even with either opt-in. There is no environment-only or global push-exporter SSRF
   bypass in v8.
+- Explicit plaintext HTTP with resolved authentication or secret-backed headers
+  remains supported for compatibility but always emits the content-free
+  `plaintext_credentials` warning/audit. This warning is independent of the
+  private-network opt-ins and cannot be suppressed through environment state.
 
 Unsafe-endpoint health records use `platform.health`, contain a bounded reason code,
 and MUST NOT echo credentials, headers, URL user information, or sensitive query

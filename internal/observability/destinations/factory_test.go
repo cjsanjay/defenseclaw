@@ -333,6 +333,9 @@ func TestFactoryPreparesLocalAndPushAdaptersWithoutStartingDelivery(t *testing.T
 	if warnings.count(push.WarningPrivateNetworksAllowed) != 2 {
 		t.Fatalf("private-network warnings=%d", warnings.count(push.WarningPrivateNetworksAllowed))
 	}
+	if warnings.count(push.WarningPlaintextCredentials) != 2 {
+		t.Fatalf("plaintext-credential warnings=%d", warnings.count(push.WarningPlaintextCredentials))
+	}
 	for index := len(cleanups) - 1; index >= 0; index-- {
 		if err := cleanups[index](context.Background()); err != nil {
 			t.Fatalf("cleanup %d: %v", index, err)
