@@ -6,7 +6,7 @@ goal_status: active
 current_phase: P3
 target_config_version: 8
 baseline_commit: fd13acedfcffc0cc431d5a72f329b56b50b22baa
-last_verified_commit: f5704777c
+last_verified_commit: a3c76dc3b
 last_updated: 2026-07-03
 ```
 
@@ -31,8 +31,8 @@ or a plausible-looking dashboard is not completion.
 
 | Field | Value |
 |---|---|
-| Active work package | `P3-WP01` — isolated JSONL, console, Splunk HEC, and HTTP JSONL destination adapters plus generation-owned runtime dispatch |
-| Ready queue | Complete and verify P3-WP01 adapters/runtime dispatch, then finish P3-WP02 OTLP delivery and inbound normalization |
+| Active work package | `P3-WP02..04` — OTLP delivery, canonical metrics, and Galileo compatibility projection |
+| Ready queue | Close OTLP and metrics review findings, integrate signal transports, then validate `local-observability-v1` |
 | Blocked | None |
 | Next phase gate | `P3-GATE` — destination isolation plus Galileo and local-observability compatibility |
 | Root coordinator | Primary Codex thread |
@@ -221,10 +221,10 @@ substitute a converter-local family list, `*`, or all-catalog-buckets fallback.
 
 | ID | Status | Owner | Depends on | Deliverable | Verification/evidence |
 |---|---|---|---|---|---|
-| `P3-WP01` | `IN_PROGRESS` | root + config/delivery/network/adapter/runtime subagents | `P2-GATE` | JSONL, console, Splunk HEC, HTTP JSONL adapters and isolated queues | Hardened local and guarded push adapters plus post-SQLite generation-owned runtime dispatch committed; composite factory and end-to-end fan-out remain active |
+| `P3-WP01` | `DONE` | root + config/delivery/network/adapter/runtime subagents | `P2-GATE` | JSONL, console, Splunk HEC, HTTP JSONL adapters and isolated queues | Commits `d493f487c..a3c76dc3b`: bounded delivery, compiler defaults, guarded local/push adapters, generation-owned post-SQLite dispatch, composite factory, and real five-destination fan-out with reload/failure isolation passed normal/race/vet/Windows and PR #412 dashboard gates |
 | `P3-WP02` | `IN_PROGRESS` | root + OTel subagent | `P2-GATE` | OTLP log/trace/metric routing, projection, sampling, inbound normalization | Generation-owned provider, sampler, collection gates, bounded span data, resource truth, and exact canary substrate committed; OTLP delivery and inbound normalization remain queued |
-| `P3-WP03` | `TODO` | unassigned | `P3-WP02` | Metric catalog/gates/bounded attributes and native Prometheus option | Instrument/temporality tests |
-| `P3-WP04` | `TODO` | unassigned | `P3-WP02` | Galileo projection, delivery funnel, partial success, exact canary | Galileo schema/canary tests |
+| `P3-WP03` | `IN_PROGRESS` | root + telemetry subagent | `P3-WP02` | Metric catalog/gates/bounded attributes and native Prometheus option | Exact 131-instrument substrate and reader lifecycle are under final adversarial review; Prometheus transport remains |
+| `P3-WP04` | `IN_PROGRESS` | root + Galileo subagent | `P3-WP02` | Galileo projection, delivery funnel, partial success, exact canary | `galileo-rich-v2` compatibility projection and schema/canary tests are active |
 | `P3-WP05` | `TODO` | unassigned | `P3-WP02..03` | `local-observability-v1`, Collector pipeline, PR #412 query inventory | Dashboard static/live compatibility tests |
 | `P3-GATE` | `TODO` | root | `P3-WP01..05` | All destinations isolated; Galileo and local stack preserve baseline | Phase E2E evidence |
 
@@ -350,6 +350,9 @@ only “passed.” A relevant change invalidates old evidence.
 | `V-0039` | 2026-07-03 | `3a1d14e16` | P3 HTTP JSONL/Splunk adapters | Netguard/delivery/push normal; push race/vet/repeated; Windows amd64 compile; post-review invalid-UTF-8 regressions | Both adapters use offline plus activation resolution and guarded per-dial rebinding protection, disable proxy and redirects, validate TLS/headers/secrets, close responses, classify pre-write transient versus post-write ambiguous outcomes, and emit bounded exact projection-only wire data. Splunk aliases cannot recover removed values or opaque producer HEC events. | root + push-adapter subagent |
 | `V-0040` | 2026-07-03 | `d68870941` | P3 generation-owned log dispatch | Pipeline/runtime normal; focused runtime race; pipeline/runtime vet; Windows amd64 compile; queue-byte separation regression | Optional projections carry only bounded canonical identity, enqueue after successful SQLite persistence, and remain attached to their graph generation across reload/removal. Independent queues isolate overload, adapter, observer, and projection failures; rejected candidates and shutdown clean acquisitions in reverse order. Queue-only encoded writes no longer misuse the projected-byte ceiling. | root + runtime subagent |
 | `V-0041` | 2026-07-03 | `f5704777c` | P3 ambiguous-delivery contract | `make check-observability-v8-spec`; focused spec pytest; diff check | The contract now consistently permits bounded exact-byte/exact-ID retry for transient and ambiguous acknowledgement loss while keeping authentication, permanent payload, and unsafe endpoint outcomes terminal. Spec lint passed with 98 traced decisions and 7 focused tests. | root |
+| `V-0042` | 2026-07-03 | `706043bba` | P3 composite log-adapter assembly | Destination-factory normal/race/vet; Windows amd64 compile; full observability tests | One process-stable factory now prepares distinct generation-owned JSONL, console, HTTP JSONL, and Splunk adapters from detached compiled destinations, resolves bounded secrets/CA material once per candidate, returns retryable cleanup, and rejects unsupported or malformed destinations with content-free errors. | root + adapter subagents |
+| `V-0043` | 2026-07-03 | `705c62a18` | P3 OTLP path/protocol parity | Go config normal/race/vet; 59 focused Python tests; Ruff; shared corpus and spec checks | Go and Python now reject signal-path overrides for gRPC OTLP while retaining per-signal endpoints; HTTP/protobuf remains the only protocol with configurable paths. The shared corpus prevents migration or CLI validation from accepting a graph the runtime cannot implement. | root |
+| `V-0044` | 2026-07-03 | `a3c76dc3b` | P3 real multi-destination boundary | Integration normal x10, race, vet, Windows amd64 compile; packaged dashboard audit; 33 focused Agent360/Grafana tests | One canonical `security.finding` commits exactly once to SQLite before independent JSONL, console, HTTP JSONL, Splunk, and failing-slow delivery. Destination-specific unredacted/content/sensitive/strict/legacy projections preserve identity and correlation, Splunk aliases remain projection-only, optional failures cannot delay the producer, rejected reloads stay content-free, and destination removal drains cleanly. PR #412 remained at 14 dashboards/313 panels. | root + destination/runtime subagents |
 
 Final integration requires, at minimum:
 
