@@ -70,6 +70,11 @@ type APIServer struct {
 	notifier    *notifier.Dispatcher
 	aiDiscovery *inventory.ContinuousDiscoveryService
 
+	// observabilityV8 is process-owned by Sidecar. When present, inbound OTLP
+	// admission is emitted through the canonical collection/redaction/routing
+	// graph instead of the legacy audit/sink path.
+	observabilityV8 sidecarRuntimeEmitter
+
 	// cfgMu protects mutable fields in scannerCfg.Guardrail (Mode,
 	// ScannerMode) which can be changed at runtime via the PATCH
 	// /v1/guardrail/config endpoint while other goroutines read them.
@@ -3159,6 +3164,7 @@ func (a *APIServer) emitHTTPAuthFailure(ctx context.Context, r *http.Request, ro
 	if a.otel != nil {
 		a.otel.RecordHTTPAuthFailure(ctx, route, metricReason)
 	}
+	a.emitOTLPAuthenticationFailureV8(ctx, r, metricReason)
 }
 
 // apiCSRFProtect is the CSRF gate for the REST API with structured auth telemetry.

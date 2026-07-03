@@ -58,6 +58,7 @@ import (
 	collectortracepb "go.opentelemetry.io/proto/otlp/collector/trace/v1"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/reflect/protoreflect"
 
 	"github.com/defenseclaw/defenseclaw/internal/audit"
 	"github.com/defenseclaw/defenseclaw/internal/redaction"
@@ -167,9 +168,16 @@ func (a *APIServer) handleOTLPSignal(w http.ResponseWriter, r *http.Request, sig
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	started := time.Now().UTC()
+	source := normalizeConnectorTelemetrySource(r.Header.Get(otelSourceHeader))
+	ctx := r.Context()
+	if id := agentIdentityForOTLPSource(source); id != (AgentIdentity{}) {
+		ctx = ContextWithAgentIdentity(ctx, id)
+	}
 
 	contentType := r.Header.Get("Content-Type")
 	if !isOTLPContentType(contentType) {
+		a.emitOTLPBatchRejectedV8(ctx, signal, source, "unknown", "unsupported_content_type", 0, started)
 		// Be explicit about why we rejected so the exporter logs
 		// surface the right error.
 		w.Header().Set("Accept", "application/json, application/x-protobuf")
@@ -181,28 +189,24 @@ func (a *APIServer) handleOTLPSignal(w http.ResponseWriter, r *http.Request, sig
 
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
+		a.emitOTLPBatchRejectedV8(ctx, signal, source, "unknown", "body_read_failed", 0, started)
 		http.Error(w, "read body", http.StatusBadRequest)
 		return
 	}
 	defer r.Body.Close()
 
-	source := strings.ToLower(strings.TrimSpace(r.Header.Get(otelSourceHeader)))
-	if source == "" {
-		// Fall back to "unknown" rather than rejecting — older
-		// codex/claude releases that didn't bake the header still
-		// produce useful telemetry, and tokenAuth has already
-		// validated the credential.
-		source = "unknown"
-	}
-	source = normalizeConnectorTelemetrySource(source)
-	ctx := r.Context()
-	if id := agentIdentityForOTLPSource(source); id != (AgentIdentity{}) {
-		ctx = ContextWithAgentIdentity(ctx, id)
-	}
-
 	bodyBytes := int64(len(body))
-	summaryBody, payloadFormat, normalizeErr := normalizeOTLPIngestBody(body, signal, contentType)
+	normalize := normalizeOTLPIngestBodyLegacy
+	if a.hasOTLPObservabilityRuntime() {
+		normalize = normalizeOTLPIngestBody
+	}
+	summaryBody, payloadFormat, normalizeErr := normalize(body, signal, contentType)
 	if normalizeErr != nil {
+		a.emitOTLPBatchRejectedV8(ctx, signal, source, payloadFormat, "invalid_"+payloadFormat, bodyBytes, started)
+		if a.hasOTLPObservabilityRuntime() {
+			writeOTLPSuccess(w)
+			return
+		}
 		details := fmt.Sprintf("malformed OTLP-%s payload: %v (size=%d bytes)", payloadFormat, normalizeErr, len(body))
 		details = a.appendRawOTLPDetails(details, source, signal, body)
 		ev := audit.Event{
@@ -218,6 +222,13 @@ func (a *APIServer) handleOTLPSignal(w http.ResponseWriter, r *http.Request, sig
 		_ = persistAuditEvent(a.logger, a.store, ev)
 		a.otel.RecordOTelIngest(ctx, string(signal), source, "malformed", 0, bodyBytes)
 		a.otel.EmitConnectorTelemetryLog(ctx, string(signal), source, "malformed", 0, bodyBytes, details)
+		writeOTLPSuccess(w)
+		return
+	}
+	if a.hasOTLPObservabilityRuntime() && isDefenseClawSelfExport(summaryBody, signal) {
+		// Do not emit another telemetry.ingest record here. The request is an
+		// export of a DefenseClaw record back to this receiver, and emitting a
+		// rejection would create the next loop iteration.
 		writeOTLPSuccess(w)
 		return
 	}
@@ -237,11 +248,11 @@ func (a *APIServer) handleOTLPSignal(w http.ResponseWriter, r *http.Request, sig
 	}
 	summary, stats, parseErr := summarizeOTLPPayload(summaryBody, signal)
 	if parseErr != nil {
-		// We log the parse failure but still 200 — the exporter
-		// already paid the network round-trip and retrying won't
-		// help (the body is malformed). Audit + meter + emit a
-		// WARN log so dashboards / alerts surface the drift
-		// without the exporter retrying.
+		a.emitOTLPBatchRejectedV8(ctx, signal, source, payloadFormat, "invalid_envelope", bodyBytes, started)
+		if a.hasOTLPObservabilityRuntime() {
+			writeOTLPSuccess(w)
+			return
+		}
 		details := fmt.Sprintf("malformed OTLP-%s normalized payload: %v (size=%d bytes)", payloadFormat, parseErr, len(body))
 		details = a.appendRawOTLPDetails(details, source, signal, body)
 		ev := audit.Event{
@@ -256,12 +267,20 @@ func (a *APIServer) handleOTLPSignal(w http.ResponseWriter, r *http.Request, sig
 			Connector: source,
 		}
 		_ = persistAuditEvent(a.logger, a.store, ev)
-		// Record metrics + emit OTel log for the malformed branch.
-		// We pass records=0 (we couldn't extract any) but keep
-		// bodyBytes so volume dashboards still see the request.
 		a.otel.RecordOTelIngest(ctx, string(signal), source, "malformed", 0, bodyBytes)
 		a.otel.EmitConnectorTelemetryLog(ctx, string(signal), source, "malformed", 0, bodyBytes,
 			a.appendRawOTLPDetails(fmt.Sprintf("malformed OTLP-%s normalized payload: %v", payloadFormat, parseErr), source, signal, body))
+		writeOTLPSuccess(w)
+		return
+	}
+	if a.hasOTLPObservabilityRuntime() {
+		if _, emitErr := a.emitOTLPBatchAcceptedV8(
+			ctx, signal, source, payloadFormat, stats, bodyBytes, int64(len(summaryBody)), started,
+		); emitErr != nil {
+			fmt.Fprintln(otelIngestLogSink(), "[otel-ingest] canonical accepted-batch persistence failed")
+		}
+		// The v8 runtime owns collection, local persistence, redaction, and all
+		// optional export. Never dual-write through legacy audit/OTel sinks.
 		writeOTLPSuccess(w)
 		return
 	}
@@ -359,10 +378,6 @@ func (a *APIServer) deltaOTLPCumulativeTokenUsage(usage otelTokenUsage) (otelTok
 }
 
 func normalizeOTLPIngestBody(body []byte, signal otelIngestSignal, contentType string) ([]byte, string, error) {
-	if !isOTLPProtobufContentType(contentType) {
-		return body, "json", nil
-	}
-
 	var msg proto.Message
 	switch signal {
 	case otelSignalLogs:
@@ -372,19 +387,95 @@ func normalizeOTLPIngestBody(body []byte, signal otelIngestSignal, contentType s
 	case otelSignalTraces:
 		msg = &collectortracepb.ExportTraceServiceRequest{}
 	default:
-		return nil, "protobuf", fmt.Errorf("unknown OTLP signal %q", signal)
+		return nil, "unknown", fmt.Errorf("unknown OTLP signal")
 	}
-	if err := proto.Unmarshal(body, msg); err != nil {
-		return nil, "protobuf", err
+	payloadFormat := "json"
+	if isOTLPProtobufContentType(contentType) {
+		payloadFormat = "protobuf"
+		if err := (proto.UnmarshalOptions{DiscardUnknown: false}).Unmarshal(body, msg); err != nil {
+			return nil, payloadFormat, err
+		}
+		if messageContainsUnknownOTLPFields(msg.ProtoReflect()) {
+			return nil, payloadFormat, errors.New("OTLP protobuf contains unsupported fields")
+		}
+	} else {
+		if err := (protojson.UnmarshalOptions{DiscardUnknown: false}).Unmarshal(body, msg); err != nil {
+			return nil, payloadFormat, err
+		}
 	}
 	normalized, err := protojson.MarshalOptions{
 		EmitUnpopulated: false,
 		UseProtoNames:   false,
 	}.Marshal(msg)
 	if err != nil {
+		return nil, payloadFormat, err
+	}
+	return normalized, payloadFormat, nil
+}
+
+// normalizeOTLPIngestBodyLegacy preserves the v7 receiver contract until P4
+// removes the old audit/sink path. JSON is passed through exactly; protobuf is
+// decoded with the historical permissive unknown-field behavior.
+func normalizeOTLPIngestBodyLegacy(body []byte, signal otelIngestSignal, contentType string) ([]byte, string, error) {
+	if !isOTLPProtobufContentType(contentType) {
+		return body, "json", nil
+	}
+	var message proto.Message
+	switch signal {
+	case otelSignalLogs:
+		message = &collectorlogspb.ExportLogsServiceRequest{}
+	case otelSignalMetrics:
+		message = &collectormetricspb.ExportMetricsServiceRequest{}
+	case otelSignalTraces:
+		message = &collectortracepb.ExportTraceServiceRequest{}
+	default:
+		return nil, "protobuf", fmt.Errorf("unknown OTLP signal %q", signal)
+	}
+	if err := proto.Unmarshal(body, message); err != nil {
+		return nil, "protobuf", err
+	}
+	normalized, err := protojson.MarshalOptions{
+		EmitUnpopulated: false,
+		UseProtoNames:   false,
+	}.Marshal(message)
+	if err != nil {
 		return nil, "protobuf", err
 	}
 	return normalized, "protobuf", nil
+}
+
+// messageContainsUnknownOTLPFields rejects protobuf extension bytes at every
+// nesting level. Silently preserving or dropping such bytes would create an
+// opaque side channel around the canonical v8 schema and redaction pipeline.
+func messageContainsUnknownOTLPFields(message protoreflect.Message) bool {
+	if !message.IsValid() {
+		return false
+	}
+	if len(message.GetUnknown()) != 0 {
+		return true
+	}
+	found := false
+	message.Range(func(field protoreflect.FieldDescriptor, value protoreflect.Value) bool {
+		switch {
+		case field.IsMap() && field.MapValue().Kind() == protoreflect.MessageKind:
+			value.Map().Range(func(_ protoreflect.MapKey, child protoreflect.Value) bool {
+				if messageContainsUnknownOTLPFields(child.Message()) {
+					found = true
+					return false
+				}
+				return true
+			})
+		case field.IsList() && field.Kind() == protoreflect.MessageKind:
+			list := value.List()
+			for index := 0; index < list.Len() && !found; index++ {
+				found = messageContainsUnknownOTLPFields(list.Get(index).Message())
+			}
+		case field.Kind() == protoreflect.MessageKind:
+			found = messageContainsUnknownOTLPFields(value.Message())
+		}
+		return !found
+	})
+	return found
 }
 
 func decorateOTLPIngestSummary(summary, payloadFormat string, wireBytes, normalizedBytes int) string {
