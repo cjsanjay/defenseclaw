@@ -6,8 +6,8 @@ goal_status: active
 current_phase: P2
 target_config_version: 8
 baseline_commit: fd13acedfcffc0cc431d5a72f329b56b50b22baa
-last_verified_commit: 1e0b9ea426f7acdcaa34e184592dfd4eb4d386ee
-last_updated: 2026-07-02
+last_verified_commit: 39fe480d1266164aef2e0f2b5c70c7a02daec53e
+last_updated: 2026-07-03
 ```
 
 ## Goal Contract
@@ -31,8 +31,8 @@ or a plausible-looking dashboard is not completion.
 
 | Field | Value |
 |---|---|
-| Active work package | `P2-WP04` — implicit SQLite history, projections, integrity, and judge-body cutover |
-| Ready queue | `P2-WP05` after the SQLite transaction, migration, integrity, and judge-separation gates are complete |
+| Active work package | `P2-WP05` — global retention reaper and immutable atomic runtime graph/reload/health |
+| Ready queue | `P2-GATE` after the reaper, graph swap, rollback, and health gates are complete |
 | Blocked | None |
 | Next phase gate | `P2-GATE` — canonical router, redaction, SQLite, retention, and representative safe-path integration without producer-wide cutover |
 | Root coordinator | Primary Codex thread |
@@ -213,8 +213,8 @@ substitute a converter-local family list, `*`, or all-catalog-buckets fallback.
 | `P2-WP01` | `DONE` | root + subagents | `P1-GATE` | Immutable generic canonical record substrate, deterministic current classified-log builder, and strict registered-identity validation; generated trace/metric family builders remain `P5-WP02` | Commits `13fddfe7c..b328351a6`; lossless lexical JSON, exact union/classes/bounds, immutable values/records, registry-resolved builders, authenticated minimal floor, adversarial normal/race/vet gates |
 | `P2-WP02` | `DONE` | root + subagent | `P2-WP01` | Collection/floor gates and per-destination route compiler/evaluator | Commit `b8a2a9823`; immutable metadata, zero-allocation collection admission, floor over/understatement prevention, ordered selectors/drop/fan-out/capability tests, normal/race/vet gates |
 | `P2-WP03` | `DONE` | root + subagents + Claude review | `P2-WP01` | Central profiles/detectors/field transforms and cross-language `hash-v1` | Commits `ba0f56636..b5890a92c`; exact profiles, 14-detector conformance, Unicode/hash parity, pure legacy-v7, key custody, immutable projection, P-060/P-061 privacy hardening, config adapter, normal/race/vet/schema/spec gates |
-| `P2-WP04` | `IN_PROGRESS` | root + SQLite/judge subagents | `P2-WP01..03` | Implicit SQLite store, projections, integrity, judge separation | Commits `4f2a80166`, `1e0b9ea42`: verifiable immutable event history and authoritative judge-body cutover are complete; audit.db path hardening, normalized mutable alert projection/CAS/reconciliation, and final router/store integration remain |
-| `P2-WP05` | `TODO` | unassigned | `P2-WP04` | Global retention reaper and immutable atomic runtime graph/reload/health | Fake-clock/race/failure tests |
+| `P2-WP04` | `DONE` | root + SQLite/judge/storage/graph subagents + Claude + CodeRabbit | `P2-WP01..03` | Implicit SQLite store, projections, integrity, judge separation | Commits `4f2a80166`, `1e0b9ea42`, `39fe480d1`: exact graph-bound local projections, mandatory all-bucket SQLite pipeline, hardened main/sidecar paths and readiness, correlation-key integrity, immutable finding plus mutable alert CAS/receipts/replay, retention-safe judge separation, post-commit reentrant health, and rollback-readable additive schemas. Normal/race/vet/Windows/make/spec/inventory gates passed; 12 of 16 CodeRabbit issues fixed and 4 contract/query-invalid suggestions rejected with evidence. |
+| `P2-WP05` | `IN_PROGRESS` | root + runtime/storage subagents | `P2-WP04` | Global retention reaper and immutable atomic runtime graph/reload/health | Fake-clock/race/failure tests in progress |
 | `P2-GATE` | `TODO` | root | `P2-WP01..05` | Representative producers route once through safe canonical path | Exactly-once/failure-injection evidence |
 
 ### P3 — Destinations, OTel, Galileo, Local Observability
@@ -334,6 +334,8 @@ only “passed.” A relevant change invalidates old evidence.
 | `V-0023` | 2026-07-02 | `4f2a80166d3dbf477897b2fbd67587e485ae8382` | P2-WP04 immutable event history | `go test ./internal/audit -count=1`; focused `-race`; `go vet ./internal/audit`; actual `origin/main` reopen/read probe | Additive event-history migration preserved v7 provenance meanings, stored exact post-redaction envelopes with projection hash/HMAC metadata, verified bounded ID/ranges, enforced mandatory readiness, and remained readable by the previous code | root + subagents + Claude review |
 | `V-0024` | 2026-07-02 | `1e0b9ea426f7acdcaa34e184592dfd4eb4d386ee` | P2-WP04 judge-body cutover | `go test ./internal/audit ./internal/gateway -count=1`; `go test -race ./internal/audit ./internal/gateway -count=1`; focused post-review race; `go vet ./internal/audit ./internal/gateway ./internal/telemetry`; Linux/Windows test compilation | Broad normal passed (`audit` 6.539s, `gateway` 46.699s); broad race passed (`audit` 154.450s, `gateway` 506.823s); focused race, vet, and both cross-platform compile gates passed after all review fixes | root + SQLite/judge subagents + direct/Claude-assisted review |
 | `V-0025` | 2026-07-02 | `1e0b9ea426f7acdcaa34e184592dfd4eb4d386ee` | P2-WP04 judge compatibility/security | `make check-observability-v8-spec`; focused TUI pytest/Ruff; create v8 audit/judge DBs, reopen/write with actual `origin/main`, reopen/repair with v8 | 95-decision spec passed; 8 TUI history tests and Ruff passed; actual previous release opened both additive schemas, wrote legacy-shaped rows, and v8 reopened/read them with non-NULL normalized timestamps in all four rows | root + subagents |
+| `V-0026` | 2026-07-03 | `39fe480d1266164aef2e0f2b5c70c7a02daec53e` | P2-WP04 implicit SQLite/local pipeline | `go test ./internal/audit ./internal/observability/pipeline ./internal/observability/router ./internal/config ./internal/telemetry -count=1`; focused post-review race; `go vet` for the same packages; Windows amd64 test compilation for audit/telemetry/pipeline | Final normal suite passed (`audit` 9.307s, pipeline 0.764s, router 1.724s, config 1.065s, telemetry 1.274s); final focused race passed (`audit` 64.667s, pipeline 2.967s); vet and all Windows compile gates passed | root + storage/graph/alert subagents |
+| `V-0027` | 2026-07-03 | `39fe480d1266164aef2e0f2b5c70c7a02daec53e` | P2-WP04 repository/review gate | `make check`; `.venv/bin/python -m pytest cli/tests/test_observability_v8_inventory.py -q`; `coderabbit review --agent -t uncommitted`; `git diff --check` | Repository check passed: v7 parity, 23 baseline schemas plus separate v8 redaction schemas, 95 decisions, 14 dashboards/313 panels, Go/TS provider coverage, catalog, and upgrade manifest. Inventory tests 8/8 passed. CodeRabbit raised 16 issues: 12 valid issues fixed and reverified; 4 suggestions rejected because they contradicted locked unbounded receipt/ACK initialization decisions, requested unsafe error disclosure, or indexed an unqueried field. | root + Claude + CodeRabbit |
 
 Final integration requires, at minimum:
 
@@ -369,6 +371,7 @@ and exact-trace canary acknowledgement against its conformance harness.
 | `C-0007` | 2026-07-02 | privacy architecture | `P2-WP03`, `P5-WP02` | D-011, P-059, P-060, P-061 | Custom redacting profiles cannot rewrite metadata/schema-approved identifiers. Delivery projections retain only surviving original field-class provenance, omit removed object pointers, and recursively prune containers emptied solely by descendant removal; array indices remain stable through `null` without synthesizing classes. Object member names are schema-owned vocabulary, while dynamic names are classified values. Canonical records retain their complete immutable maps. | complete |
 | `C-0008` | 2026-07-02 | gate | `P2-WP03`, `P2-WP04` | D-009..012, P-026, P-038, P-051, P-059..061 | Close the central redaction work package after exhaustive detector grammar coverage, cross-language hash parity, secure fixed key custody, pure legacy-v7 compatibility, immutable per-route projection, structural-name protection, fail-closed plan adaptation, independent adversarial review, Claude review/fixes, and exact-HEAD normal/race/vet/schema/spec gates. This unblocks SQLite projection persistence but not producer cutover or remote adapters. | complete |
 | `C-0009` | 2026-07-02 | storage architecture | `P2-WP04`, `P2-WP05` | P-021, P-045, P-047 | Preserve v7 audit column meanings while adding distinct exact-projection/hash/HMAC fields; cut retained raw judge bodies over once to an owner-only dedicated database with crash-resumable verification, normalized indexed instants, no audit.db writer fallback, and authoritative-first compatibility reads. Unix/Windows main and auxiliary SQLite paths fail closed across ownership, link/reparse, ACL, mutable-ancestor, and stale-sidecar hazards. The global age reaper and cutover-marker cleanup remain the next P2-WP05 scope. | complete |
+| `C-0010` | 2026-07-03 | gate | `P2-WP04`, `P2-WP05`, `P2-GATE` | D-013..016, S-012, P-005..008, P-021, P-045, P-047 | Close P2-WP04 at `39fe480d1` after implicit all-bucket SQLite persistence, exact runtime-graph projection binding, hardened readiness/path/sidecar handling, correlation-key integrity, protected alert receipts and streaming replay, post-lifecycle health dispatch, adversarial Claude/storage review, one consolidated CodeRabbit pass, and final normal/race/vet/cross-platform/repository gates. P2-WP05 now owns the global age reaper, protected-state exclusions/capacity health, atomic graph reload/swap, and cleanup markers; representative producer cutover remains P2-GATE. | complete |
 
 A new product choice requires a new decision ID and traceability row. A behavior
 change updates its contract and required test in the same change. Deferred release
