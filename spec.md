@@ -6,7 +6,7 @@ goal_status: active
 current_phase: P2
 target_config_version: 8
 baseline_commit: fd13acedfcffc0cc431d5a72f329b56b50b22baa
-last_verified_commit: d44a58f5f2204f617be17988aaef5102d0787683
+last_verified_commit: b5890a92c202dd18a1b8c8742187d784fb9b424d
 last_updated: 2026-07-02
 ```
 
@@ -31,8 +31,8 @@ or a plausible-looking dashboard is not completion.
 
 | Field | Value |
 |---|---|
-| Active work package | `P2-WP03` — central redaction profiles, detectors, field transforms, and cross-language `hash-v1` |
-| Ready queue | `P2-WP04` after the central projection/redaction engine and Go/Python parity gates are complete |
+| Active work package | `P2-WP04` — implicit SQLite history, projections, integrity, and judge-body cutover |
+| Ready queue | `P2-WP05` after the SQLite transaction, migration, integrity, and judge-separation gates are complete |
 | Blocked | None |
 | Next phase gate | `P2-GATE` — canonical router, redaction, SQLite, retention, and representative safe-path integration without producer-wide cutover |
 | Root coordinator | Primary Codex thread |
@@ -212,8 +212,8 @@ substitute a converter-local family list, `*`, or all-catalog-buckets fallback.
 |---|---|---|---|---|---|
 | `P2-WP01` | `DONE` | root + subagents | `P1-GATE` | Immutable generic canonical record substrate, deterministic current classified-log builder, and strict registered-identity validation; generated trace/metric family builders remain `P5-WP02` | Commits `13fddfe7c..b328351a6`; lossless lexical JSON, exact union/classes/bounds, immutable values/records, registry-resolved builders, authenticated minimal floor, adversarial normal/race/vet gates |
 | `P2-WP02` | `DONE` | root + subagent | `P2-WP01` | Collection/floor gates and per-destination route compiler/evaluator | Commit `b8a2a9823`; immutable metadata, zero-allocation collection admission, floor over/understatement prevention, ordered selectors/drop/fan-out/capability tests, normal/race/vet gates |
-| `P2-WP03` | `IN_PROGRESS` | root + subagents + Claude review | `P2-WP01` | Central profiles/detectors/field transforms and cross-language `hash-v1` | Detector/property/Go-Python parity tests |
-| `P2-WP04` | `TODO` | unassigned | `P2-WP01..03` | Implicit SQLite store, projections, integrity, judge separation | Migration/transaction/query tests |
+| `P2-WP03` | `DONE` | root + subagents + Claude review | `P2-WP01` | Central profiles/detectors/field transforms and cross-language `hash-v1` | Commits `ba0f56636..b5890a92c`; exact profiles, 14-detector conformance, Unicode/hash parity, pure legacy-v7, key custody, immutable projection, P-060/P-061 privacy hardening, config adapter, normal/race/vet/schema/spec gates |
+| `P2-WP04` | `IN_PROGRESS` | root + SQLite/judge subagents | `P2-WP01..03` | Implicit SQLite store, projections, integrity, judge separation | Migration/transaction/query tests |
 | `P2-WP05` | `TODO` | unassigned | `P2-WP04` | Global retention reaper and immutable atomic runtime graph/reload/health | Fake-clock/race/failure tests |
 | `P2-GATE` | `TODO` | root | `P2-WP01..05` | Representative producers route once through safe canonical path | Exactly-once/failure-injection evidence |
 
@@ -330,6 +330,7 @@ only “passed.” A relevant change invalidates old evidence.
 | `V-0019` | 2026-07-02 | `bb245eb03` | P2-WP03 | `go test ./internal/redaction -count=1`; `go test -race ./internal/redaction -count=1`; `go vet ./internal/redaction` | Pure legacy-v7 string/entity/content/reason/evidence goldens, global/environment invariance, idempotence, spoof resistance, coordinates, and compatible sink wrappers passed | root + subagent |
 | `V-0020` | 2026-07-02 | `bf0def9af` | P2-WP03 | Detector Go normal/race/vet; generated catalog check; `scripts/check_schemas.py`; focused Python config/catalog tests and Ruff | Machine catalog/schema/generated Go/Python parity passed; 14 bounded recognizers, work limits, original-byte intervals, overlap union, token domains, and synthetic corpus passed; exhaustive §6.1 expansion remains active | root + subagent + Claude review |
 | `V-0021` | 2026-07-02 | `d44a58f5f` | P2-WP03 | Redaction package normal/race/vet; compile-only tests for Linux, FreeBSD, OpenBSD, NetBSD, DragonFly BSD, and unsupported Windows | Fixed-path key create/load, concurrent convergence, no-follow/type/owner/mode/length validation, entropy/interruption cleanup, immutable access, safe errors, and portability passed | root + subagent + Claude review |
+| `V-0022` | 2026-07-02 | `b5890a92c202dd18a1b8c8742187d784fb9b424d` | P2-WP03 gate | `go test` and `go test -race` for `./internal/observability/... ./internal/redaction ./internal/config`; `go vet`; 69 focused Python hash/catalog/config/spec tests; Unicode/catalog generators; schema/spec checks; diff check | All Go normal/race/vet passed; 69 Python tests passed; six generated config mirrors, detector/Unicode artifacts, 23 schemas, 131 metrics, and 95 decision-traceability entries were current and valid | root + subagents + Claude review |
 
 Final integration requires, at minimum:
 
@@ -363,6 +364,7 @@ and exact-trace canary acknowledgement against its conformance harness.
 | `C-0005` | 2026-07-02 | gate | `P1-WP04`, `P1-GATE`, `P2-WP01`, `P5-WP06`, `P7-WP01` | D-020, P-030, P-044, P-046, P-056, P-057 | Close P1 at `c29cdddc4` after independent/subagent/Claude review and exact-HEAD gates. The immutable plan and converter engine/API may unblock P2; generated v7 family eligibility, complete migration goldens, PR #403/#412 dashboard equivalence, Galileo conformance, and activation remain mandatory in their existing P5/P6/P7 work packages. | complete |
 | `C-0006` | 2026-07-02 | security architecture | `P2-WP01..02`, `P5-WP02` | D-001, D-016, P-042, P-058 | Public generic construction requires complete exact leaf classes and cannot assert schema derivation or mandatory state. Current log metadata/builders resolve registered producer kind/key/typed facts internally; disabled-floor construction uses a separate content-free authenticated marker accepted only by local SQLite. Generated event-to-bucket ownership, family outcome subsets, schema-derived classes, and richer reviewed floor bodies remain solely P5 registry outputs. | complete |
 | `C-0007` | 2026-07-02 | privacy architecture | `P2-WP03`, `P5-WP02` | D-011, P-059, P-060, P-061 | Custom redacting profiles cannot rewrite metadata/schema-approved identifiers. Delivery projections retain only surviving original field-class provenance, omit removed object pointers, and recursively prune containers emptied solely by descendant removal; array indices remain stable through `null` without synthesizing classes. Object member names are schema-owned vocabulary, while dynamic names are classified values. Canonical records retain their complete immutable maps. | complete |
+| `C-0008` | 2026-07-02 | gate | `P2-WP03`, `P2-WP04` | D-009..012, P-026, P-038, P-051, P-059..061 | Close the central redaction work package after exhaustive detector grammar coverage, cross-language hash parity, secure fixed key custody, pure legacy-v7 compatibility, immutable per-route projection, structural-name protection, fail-closed plan adaptation, independent adversarial review, Claude review/fixes, and exact-HEAD normal/race/vet/schema/spec gates. This unblocks SQLite projection persistence but not producer cutover or remote adapters. | complete |
 
 A new product choice requires a new decision ID and traceability row. A behavior
 change updates its contract and required test in the same change. Deferred release
