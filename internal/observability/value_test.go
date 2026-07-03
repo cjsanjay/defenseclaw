@@ -65,6 +65,18 @@ func TestValueMinimalLineSeparatorEscapesPreserveLiteralBackslashes(t *testing.T
 	if !bytes.Contains(encoded, []byte(`"literal_escape":"\\u2028\\u2029"`)) {
 		t.Fatalf("literal escape spelling was rewritten: %q", encoded)
 	}
+
+	parsed, err := ParseValue([]byte(`{"literal_escape":"\\u2028\\u2029"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsedObject, err := parsed.Object()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := parsedObject["literal_escape"]; got != `\u2028\u2029` {
+		t.Fatalf("parsed literal escape = %q", got)
+	}
 }
 
 func TestValueCanonicalExponentVectors(t *testing.T) {
@@ -116,6 +128,24 @@ func TestValueLosslessDecimalAndExtremeExponentVectors(t *testing.T) {
 				t.Fatalf("got %s, want %s", got, test.want)
 			}
 		})
+	}
+}
+
+func TestValueEquivalentNumberSpellingsHaveOneCanonicalEncoding(t *testing.T) {
+	inputs := []any{
+		json.Number("100000000000000000000"),
+		json.Number("1e20"),
+		json.Number("100000000000000000000.0"),
+		1e20,
+	}
+	for _, input := range inputs {
+		value, err := NewValue(map[string]any{"n": input})
+		if err != nil {
+			t.Fatalf("%v: %v", input, err)
+		}
+		if got := string(value.Bytes()); got != `{"n":1e20}` {
+			t.Fatalf("%v canonicalized as %s", input, got)
+		}
 	}
 }
 

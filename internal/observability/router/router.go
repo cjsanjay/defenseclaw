@@ -327,8 +327,8 @@ func New(plan *config.ObservabilityV8Plan) (*Evaluator, error) {
 		}
 		seenDestinations[source.Name] = struct{}{}
 		destination := compileDestinationIndex(source)
-		if len(destination.routes) > 0 && !destination.firstMatch {
-			return nil, fmt.Errorf("compiled destination does not declare first-match routing")
+		if err := validateDestinationIndex(destination); err != nil {
+			return nil, err
 		}
 		if source.Kind == config.ObservabilityV8DestinationLocalSQLite {
 			if source.Name != config.ObservabilityV8LocalDestinationName || !source.Generated || !source.Enabled {
@@ -348,6 +348,21 @@ func New(plan *config.ObservabilityV8Plan) (*Evaluator, error) {
 		return nil, fmt.Errorf("compiled plan omits the required local SQLite destination")
 	}
 	return evaluator, nil
+}
+
+func validateDestinationIndex(destination compiledDestination) error {
+	if len(destination.routes) > 0 && !destination.firstMatch {
+		return fmt.Errorf("compiled destination does not declare first-match routing")
+	}
+	for position, route := range destination.routes {
+		if route.index != position {
+			return fmt.Errorf("compiled destination route order does not match its indexes")
+		}
+		if route.selector.bucketWildcard && !coversCatalog(route.selector.buckets) {
+			return fmt.Errorf("compiled wildcard route does not pin the complete bucket catalog")
+		}
+	}
+	return nil
 }
 
 func compileDestinationIndex(source config.ObservabilityV8EffectiveDestination) compiledDestination {
@@ -442,6 +457,18 @@ func validLocalDestination(destination compiledDestination) bool {
 			}
 		}
 		if route.redactionProfileByBucket[bucket] == "" {
+			return false
+		}
+	}
+	return true
+}
+
+func coversCatalog(buckets map[observability.Bucket]struct{}) bool {
+	if len(buckets) != len(observability.Buckets()) {
+		return false
+	}
+	for _, bucket := range observability.Buckets() {
+		if _, ok := buckets[bucket]; !ok {
 			return false
 		}
 	}
@@ -575,7 +602,8 @@ func routeDestination(destination compiledDestination, metadata Metadata, floorO
 }
 
 func (selector compiledSelector) matches(metadata Metadata) bool {
-	if !matchesValue(selector.buckets, metadata.identity.Bucket, observability.Bucket("*")) {
+	if !selector.bucketWildcard &&
+		!matchesValue(selector.buckets, metadata.identity.Bucket, observability.Bucket("*")) {
 		return false
 	}
 	if !matchesValue(selector.sources, metadata.source, observability.Source("*")) {

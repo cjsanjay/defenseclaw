@@ -408,6 +408,39 @@ func TestUnmatchedRouteAndDisabledDestinationProduceNoOptionalDelivery(t *testin
 	}
 }
 
+func TestEvaluatorRejectsRouteIndexAndWildcardCatalogDrift(t *testing.T) {
+	plan, err := config.CompileObservabilityV8(&config.ObservabilityV8Source{
+		Destinations: []config.ObservabilityV8DestinationSource{{
+			Name: "remote", Kind: config.ObservabilityV8DestinationConsole,
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	snapshot := plan.Snapshot()
+	var source config.ObservabilityV8EffectiveDestination
+	for _, candidate := range snapshot.Destinations {
+		if candidate.Name == "remote" {
+			source = candidate
+			break
+		}
+	}
+	indexDrift := compileDestinationIndex(source)
+	indexDrift.routes[0].index = 7
+	if err := validateDestinationIndex(indexDrift); err == nil {
+		t.Fatal("router accepted route index drift")
+	}
+
+	wildcardDrift := compileDestinationIndex(source)
+	wildcardDrift.routes[0].selector.buckets = map[observability.Bucket]struct{}{
+		observability.BucketDiagnostic: {},
+	}
+	if err := validateDestinationIndex(wildcardDrift); err == nil {
+		t.Fatal("router accepted wildcard without the pinned catalog")
+	}
+}
+
 func TestEvaluationRejectsInvalidOrMismatchedMetadataAndPropagatesBuilderError(t *testing.T) {
 	evaluator := mustEvaluator(t, nil)
 	metadata := findingMetadata()

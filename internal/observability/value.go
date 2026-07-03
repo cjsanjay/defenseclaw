@@ -213,9 +213,9 @@ func (state *normalizationState) normalize(value reflect.Value, containerDepth i
 		}
 		return text, nil
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-		return json.Number(strconv.FormatInt(value.Int(), 10)), nil
+		return normalizeJSONNumber(json.Number(strconv.FormatInt(value.Int(), 10)))
 	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
-		return json.Number(strconv.FormatUint(value.Uint(), 10)), nil
+		return normalizeJSONNumber(json.Number(strconv.FormatUint(value.Uint(), 10)))
 	case reflect.Float32, reflect.Float64:
 		floating := value.Float()
 		if math.IsNaN(floating) || math.IsInf(floating, 0) {
@@ -225,7 +225,7 @@ func (state *normalizationState) normalize(value reflect.Value, containerDepth i
 			return json.Number("0"), nil
 		}
 		bits := value.Type().Bits()
-		return json.Number(normalizeExponent(strconv.FormatFloat(floating, 'g', -1, bits))), nil
+		return normalizeJSONNumber(json.Number(normalizeExponent(strconv.FormatFloat(floating, 'g', -1, bits))))
 	case reflect.Map:
 		if containerDepth > MaxCanonicalValueDepth {
 			return nil, valueError(ValueErrorDepthLimit)
@@ -351,13 +351,6 @@ func normalizeJSONNumber(number json.Number) (json.Number, error) {
 	if !jsonNumberPattern.MatchString(text) {
 		return "", valueError(ValueErrorInvalidNumber)
 	}
-	if isIntegerJSONNumber(text) {
-		integer := new(big.Int)
-		if _, ok := integer.SetString(text, 10); !ok {
-			return "", valueError(ValueErrorInvalidNumber)
-		}
-		return json.Number(integer.String()), nil
-	}
 	normalized, ok := normalizeExactDecimal(text)
 	if !ok {
 		return "", valueError(ValueErrorInvalidNumber)
@@ -478,15 +471,6 @@ func normalizeExponent(number string) string {
 		exponent = "-" + exponent
 	}
 	return mantissa + "e" + exponent
-}
-
-func isIntegerJSONNumber(value string) bool {
-	for _, character := range value {
-		if character == '.' || character == 'e' || character == 'E' {
-			return false
-		}
-	}
-	return true
 }
 
 type decodeState struct {

@@ -181,6 +181,51 @@ func TestRecordFullEnvelopeLexicalGolden(t *testing.T) {
 	}
 }
 
+func TestRecordLiteralLineSeparatorEscapesRoundTripInEnvelopeStrings(t *testing.T) {
+	inputs := []RecordInput{
+		func() RecordInput {
+			input := validRecordInput()
+			input.Correlation.RequestID = `\u2028\u2029`
+			return input
+		}(),
+		func() RecordInput {
+			input := validRecordInput()
+			input.Identity = EventIdentity{
+				Bucket: BucketAgentLifecycle,
+				Signal: SignalTraces,
+				Name:   "span.workflow.run",
+			}
+			input.SpanName = `workflow \u2028 \u2029`
+			return input
+		}(),
+	}
+	for _, input := range inputs {
+		record, err := NewRecord(input)
+		if err != nil {
+			t.Fatal(err)
+		}
+		encoded, err := record.Bytes()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !json.Valid(encoded) {
+			t.Fatalf("record encoding is invalid JSON: %q", encoded)
+		}
+		var wire map[string]any
+		if err := json.Unmarshal(encoded, &wire); err != nil {
+			t.Fatal(err)
+		}
+		if input.Identity.Signal == SignalLogs {
+			correlation := wire["correlation"].(map[string]any)
+			if got := correlation["request_id"]; got != input.Correlation.RequestID {
+				t.Fatalf("request_id round trip = %q", got)
+			}
+		} else if got := wire["span_name"]; got != input.SpanName {
+			t.Fatalf("span_name round trip = %q", got)
+		}
+	}
+}
+
 func TestRecordPayloadArmsBySignal(t *testing.T) {
 	tests := []struct {
 		name               string
