@@ -78,9 +78,13 @@ type Provider struct {
 	startTime time.Time
 
 	// capacityShutdown stops the 15s runtime/SQLite metrics goroutine.
-	capacityShutdown context.CancelFunc
-	shutdown         atomic.Bool
-	v8               *v8ProviderState
+	capacityShutdown  context.CancelFunc
+	shutdown          atomic.Bool
+	v8                *v8ProviderState
+	v8ShutdownMu      sync.Mutex
+	v8ShutdownStarted bool
+	v8ShutdownDone    chan struct{}
+	v8ShutdownErr     error
 
 	// agentInstanceID is the per-process stable identifier the
 	// sidecar mints at boot. Accessed from multiple goroutines
@@ -360,6 +364,9 @@ func (p *Provider) Shutdown(ctx context.Context) error {
 	if p == nil || !p.enabled {
 		return nil
 	}
+	if p.v8 != nil {
+		return p.shutdownV8(ctx)
+	}
 	if !p.shutdown.CompareAndSwap(false, true) {
 		return nil
 	}
@@ -404,6 +411,67 @@ func (p *Provider) Shutdown(ctx context.Context) error {
 		return fmt.Errorf("telemetry: shutdown: %v", errs)
 	}
 	return nil
+}
+
+// shutdownV8 retires the provider immediately, but lets the one-shot OTel SDK
+// shutdown continue on an internal deadline if the runtimegraph caller times
+// out. Later acquisition-cleanup retries wait for and return the same terminal
+// result instead of incorrectly succeeding while exporters may still be live.
+func (p *Provider) shutdownV8(ctx context.Context) error {
+	p.shutdown.Store(true)
+	p.v8ShutdownMu.Lock()
+	if !p.v8ShutdownStarted {
+		p.v8ShutdownStarted = true
+		p.v8ShutdownDone = make(chan struct{})
+		go p.runV8Shutdown()
+	}
+	done := p.v8ShutdownDone
+	p.v8ShutdownMu.Unlock()
+
+	select {
+	case <-done:
+		p.v8ShutdownMu.Lock()
+		err := p.v8ShutdownErr
+		p.v8ShutdownMu.Unlock()
+		return err
+	case <-ctx.Done():
+		return newV8ProviderError(V8ProviderErrorShutdown, ctx.Err())
+	}
+}
+
+func (p *Provider) runV8Shutdown() {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	failed := false
+	var firstCause error
+	record := func(err error) {
+		if err != nil {
+			failed = true
+			if firstCause == nil {
+				firstCause = v8ContextCause(err)
+			}
+		}
+	}
+	if p.tracerProvider != nil {
+		record(p.tracerProvider.Shutdown(ctx))
+	}
+	if p.loggerProvider != nil {
+		record(p.loggerProvider.Shutdown(ctx))
+	}
+	if p.capacityShutdown != nil {
+		p.capacityShutdown()
+	}
+	if p.meterProvider != nil {
+		record(p.meterProvider.Shutdown(ctx))
+	}
+
+	p.v8ShutdownMu.Lock()
+	if failed {
+		p.v8ShutdownErr = newV8ProviderError(V8ProviderErrorShutdown, firstCause)
+	}
+	close(p.v8ShutdownDone)
+	p.v8ShutdownMu.Unlock()
 }
 
 type namedOTelDestination struct {

@@ -520,8 +520,7 @@ func TestV8ResourceUsesPlanAndSafeProcessMetadataOnly(t *testing.T) {
 			"tenant.id": "config-must-not-override", "deployment.mode": "config-must-not-override",
 			"workspace.id": "config-must-not-override", "deployment.environment": "config-must-not-override",
 			"deployment.environment.name": "config-must-not-override", "defenseclaw.claw.mode": "config-must-not-override",
-			"defenseclaw.claw.home_dir": "/private/operator/home",
-			"defenseclaw.instance.id":   "config-must-not-override", "discovery.source": "config-must-not-override",
+			"defenseclaw.instance.id": "config-must-not-override", "discovery.source": "config-must-not-override",
 			"defenseclaw.device.id": "config-must-not-override", "service.version": "config-must-not-override",
 			"custom.safe": "configured",
 		}

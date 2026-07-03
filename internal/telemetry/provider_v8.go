@@ -23,12 +23,17 @@ import (
 	"strconv"
 	"strings"
 	"sync/atomic"
+	"time"
 	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel/attribute"
 	logNoop "go.opentelemetry.io/otel/log/noop"
+	"go.opentelemetry.io/otel/metric"
 	metricNoop "go.opentelemetry.io/otel/metric/noop"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/sdk/metric/exemplar"
+	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/trace"
@@ -51,6 +56,21 @@ const (
 // generation. A factory is used instead of accepting reusable processor
 // instances so reload cannot accidentally share queues across generations.
 type V8SpanProcessorFactory func(generation uint64) (sdktrace.SpanProcessor, error)
+
+// V8MetricReaderSpec is the complete process-wide policy handed to every
+// independently prepared reader. The default compiled plan yields 60-second
+// delta collection and an explicit per-instrument cardinality ceiling.
+type V8MetricReaderSpec struct {
+	ExportInterval   time.Duration
+	ExportTimeout    time.Duration
+	Temporality      metricdata.Temporality
+	CardinalityLimit int
+}
+
+// V8MetricReaderFactory creates one reader owned by exactly one graph
+// generation. Multiple factories allow later OTLP destinations to own
+// independent readers without sharing providers or mutating OTel globals.
+type V8MetricReaderFactory func(generation uint64, spec V8MetricReaderSpec) (sdkmetric.Reader, error)
 
 // SamplingDecisionDebug is the bounded, content-free sampler decision exposed
 // to tests and diagnostics. Reason and Decision belong to closed vocabularies;
@@ -75,6 +95,11 @@ type V8ProviderOptions struct {
 	DiscoverySource       string
 	DeviceKeyFile         string
 	SpanProcessorFactory  V8SpanProcessorFactory
+	MetricReaderFactories []V8MetricReaderFactory
+	// PrepareCleanupTimeout bounds defensive cleanup when a later reader or
+	// runtimegraph acquisition rejects an otherwise prepared candidate.
+	// Zero uses the reviewed five-second default.
+	PrepareCleanupTimeout time.Duration
 	// SamplingObserver runs synchronously on the span-start path. It MUST be
 	// nonblocking. Panics are contained and cannot affect sampling decisions.
 	SamplingObserver func(SamplingDecisionDebug)
@@ -86,6 +111,7 @@ type V8ProviderErrorCode string
 const (
 	V8ProviderErrorInitialization          V8ProviderErrorCode = "initialization_failed"
 	V8ProviderErrorProcessorInitialization V8ProviderErrorCode = "processor_initialization_failed"
+	V8ProviderErrorReaderInitialization    V8ProviderErrorCode = "reader_initialization_failed"
 	V8ProviderErrorFlush                   V8ProviderErrorCode = "flush_failed"
 	V8ProviderErrorShutdown                V8ProviderErrorCode = "shutdown_failed"
 )
@@ -138,8 +164,41 @@ type v8ProviderState struct {
 	generation uint64
 	planDigest string
 	collect    map[observability.Bucket]bool
+	metrics    map[observability.Bucket]bool
+	metricSpec V8MetricReaderSpec
 	limits     config.ObservabilityV8TraceLimitsSource
 	debug      *v8SamplingDebug
+}
+
+// MetricBucketEnabled is the collection-before-construction predicate for
+// v8 instruments. Legacy providers preserve their process-wide behavior.
+func (p *Provider) MetricBucketEnabled(bucket observability.Bucket) bool {
+	if p == nil || !p.Enabled() || p.metrics == nil {
+		return false
+	}
+	if p.v8 == nil {
+		return p.meterProvider != nil
+	}
+	return observability.IsBucket(bucket) && p.v8.metrics[bucket]
+}
+
+// MeterForBucket returns the generation-owned meter only for a collected
+// bucket. Producers can therefore avoid constructing expensive attributes.
+func (p *Provider) MeterForBucket(bucket observability.Bucket) metric.Meter {
+	if !p.MetricBucketEnabled(bucket) {
+		return metricNoop.NewMeterProvider().Meter("defenseclaw")
+	}
+	if bounded, ok := p.meter.(*v8MetricMeter); ok {
+		return bounded.forBucket(bucket)
+	}
+	return p.meter
+}
+
+func (p *Provider) V8MetricPolicy() (V8MetricReaderSpec, bool) {
+	if p == nil || p.v8 == nil || len(p.v8.metrics) == 0 {
+		return V8MetricReaderSpec{}, false
+	}
+	return p.v8.metricSpec, true
 }
 
 // TraceLimits returns the effective complete v8 limits. The OTel SDK enforces
@@ -284,25 +343,138 @@ func NewProviderV8Inactive(
 	}
 	tracer := boundedTracerProvider.Tracer("defenseclaw", tracerOptions...)
 	logger := logNoop.NewLoggerProvider().Logger("defenseclaw")
-	meter := metricNoop.NewMeterProvider().Meter("defenseclaw")
-	metrics, metricsErr := newMetricsSet(meter)
-	if metricsErr != nil {
-		_ = tracerProvider.Shutdown(context.Background())
-		return nil, fmt.Errorf("telemetry: register v8 metrics: %w", metricsErr)
-	}
-
-	collect := make(map[observability.Bucket]bool, len(snapshot.Buckets))
+	traceCollect := make(map[observability.Bucket]bool, len(snapshot.Buckets))
+	metricCollect := make(map[observability.Bucket]bool, len(snapshot.Buckets))
 	for _, bucket := range snapshot.Buckets {
-		collect[bucket.Bucket] = bucket.Collect.Traces
+		if bucket.Collect.Traces {
+			traceCollect[bucket.Bucket] = true
+		}
+		if bucket.Collect.Metrics {
+			metricCollect[bucket.Bucket] = true
+		}
+	}
+	meter := metricNoop.NewMeterProvider().Meter("defenseclaw")
+	var meterProvider *sdkmetric.MeterProvider
+	var metrics *metricsSet
+	metricSpec := v8MetricReaderSpec(snapshot.MetricPolicy)
+	if len(metricCollect) > 0 {
+		meterOptions := []sdkmetric.Option{
+			sdkmetric.WithResource(res),
+			sdkmetric.WithCardinalityLimit(v8MetricCardinalityLimit),
+			sdkmetric.WithExemplarFilter(exemplar.AlwaysOffFilter),
+		}
+		preparedReaders := make([]sdkmetric.Reader, 0, len(options.MetricReaderFactories))
+		cleanupReaders := func() {
+			v8BoundedPrepareCleanup(options.PrepareCleanupTimeout, func(cleanupContext context.Context) {
+				for index := len(preparedReaders) - 1; index >= 0; index-- {
+					_ = preparedReaders[index].Shutdown(cleanupContext)
+				}
+			})
+		}
+		for _, readerFactory := range options.MetricReaderFactories {
+			if readerFactory == nil {
+				cleanupReaders()
+				v8BoundedPrepareCleanup(options.PrepareCleanupTimeout, func(cleanupContext context.Context) {
+					_ = tracerProvider.Shutdown(cleanupContext)
+				})
+				return nil, newV8ProviderError(V8ProviderErrorReaderInitialization, nil)
+			}
+			reader, readerErr := readerFactory(generation, metricSpec)
+			if readerErr != nil || reader == nil {
+				cleanupReaders()
+				v8BoundedPrepareCleanup(options.PrepareCleanupTimeout, func(cleanupContext context.Context) {
+					_ = tracerProvider.Shutdown(cleanupContext)
+				})
+				return nil, newV8ProviderError(V8ProviderErrorReaderInitialization, readerErr)
+			}
+			preparedReaders = append(preparedReaders, reader)
+			meterOptions = append(meterOptions, sdkmetric.WithReader(reader))
+		}
+		meterProvider = sdkmetric.NewMeterProvider(meterOptions...)
+		boundedMeter := newV8MetricMeter(meterProvider.Meter("defenseclaw"), metricCollect)
+		meter = boundedMeter
+		var metricsErr error
+		metrics, metricsErr = newMetricsSet(boundedMeter)
+		if metricsErr != nil {
+			v8BoundedPrepareCleanup(options.PrepareCleanupTimeout, func(cleanupContext context.Context) {
+				_ = meterProvider.Shutdown(cleanupContext)
+			})
+			v8BoundedPrepareCleanup(options.PrepareCleanupTimeout, func(cleanupContext context.Context) {
+				_ = tracerProvider.Shutdown(cleanupContext)
+			})
+			return nil, fmt.Errorf("telemetry: register v8 metrics: %w", metricsErr)
+		}
 	}
 	return &Provider{
-		res: res, tracerProvider: tracerProvider, tracer: tracer,
+		res: res, tracerProvider: tracerProvider, tracer: tracer, meterProvider: meterProvider,
 		logger: logger, meter: meter, metrics: metrics, enabled: true,
 		v8: &v8ProviderState{
-			generation: generation, planDigest: plan.Digest(), collect: collect,
-			limits: limits, debug: debug,
+			generation: generation, planDigest: plan.Digest(), collect: traceCollect,
+			metrics: metricCollect, metricSpec: metricSpec, limits: limits, debug: debug,
 		},
 	}, nil
+}
+
+const v8DefaultPrepareCleanupTimeout = 5 * time.Second
+
+func v8BoundedPrepareCleanup(timeout time.Duration, cleanup func(context.Context)) {
+	if cleanup == nil {
+		return
+	}
+	if timeout <= 0 {
+		timeout = v8DefaultPrepareCleanupTimeout
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		defer func() { _ = recover() }()
+		cleanup(ctx)
+	}()
+	select {
+	case <-done:
+	case <-ctx.Done():
+	}
+}
+
+func v8MetricReaderSpec(policy config.ObservabilityV8EffectiveMetricPolicy) V8MetricReaderSpec {
+	temporality := metricdata.DeltaTemporality
+	if policy.Temporality == "cumulative" {
+		temporality = metricdata.CumulativeTemporality
+	}
+	return V8MetricReaderSpec{
+		ExportInterval: time.Duration(policy.ExportIntervalSeconds) * time.Second,
+		ExportTimeout:  30 * time.Second, Temporality: temporality,
+		CardinalityLimit: v8MetricCardinalityLimit,
+	}
+}
+
+// NewV8PeriodicMetricReader builds a reader with no environment-derived
+// interval, timeout, temporality, or cardinality behavior.
+func NewV8PeriodicMetricReader(exporter sdkmetric.Exporter, spec V8MetricReaderSpec) (*sdkmetric.PeriodicReader, error) {
+	if exporter == nil || spec.ExportInterval <= 0 || spec.ExportTimeout <= 0 || spec.CardinalityLimit <= 0 ||
+		(spec.Temporality != metricdata.DeltaTemporality && spec.Temporality != metricdata.CumulativeTemporality) {
+		return nil, errors.New("telemetry: invalid v8 metric reader input")
+	}
+	for _, kind := range []sdkmetric.InstrumentKind{
+		sdkmetric.InstrumentKindCounter, sdkmetric.InstrumentKindUpDownCounter,
+		sdkmetric.InstrumentKindHistogram, sdkmetric.InstrumentKindGauge,
+		sdkmetric.InstrumentKindObservableCounter, sdkmetric.InstrumentKindObservableUpDownCounter,
+		sdkmetric.InstrumentKindObservableGauge,
+	} {
+		if exporter.Temporality(kind) != spec.Temporality {
+			return nil, errors.New("telemetry: metric exporter temporality conflicts with the v8 plan")
+		}
+	}
+	return sdkmetric.NewPeriodicReader(
+		exporter,
+		sdkmetric.WithInterval(spec.ExportInterval),
+		sdkmetric.WithTimeout(spec.ExportTimeout),
+		sdkmetric.WithCardinalityLimitSelector(func(sdkmetric.InstrumentKind) (int, bool) {
+			return spec.CardinalityLimit, false
+		}),
+	), nil
 }
 
 func buildV8Resource(snapshot config.ObservabilityV8EffectivePlan, options V8ProviderOptions) *resource.Resource {
@@ -381,6 +553,7 @@ func NewV8ProviderFactory(options V8ProviderOptions) *V8ProviderFactory {
 	if strings.TrimSpace(options.ServiceInstanceID) == "" {
 		options.ServiceInstanceID = uuid.NewString()
 	}
+	options.MetricReaderFactories = append([]V8MetricReaderFactory(nil), options.MetricReaderFactories...)
 	return &V8ProviderFactory{options: options}
 }
 
@@ -399,7 +572,9 @@ func (factory *V8ProviderFactory) Prepare(
 		return nil, err
 	}
 	if err := acquisitions.Register("otel-sdk-provider", provider.Shutdown); err != nil {
-		_ = provider.Shutdown(context.Background())
+		v8BoundedPrepareCleanup(factory.options.PrepareCleanupTimeout, func(cleanupContext context.Context) {
+			_ = provider.Shutdown(cleanupContext)
+		})
 		return nil, err
 	}
 	return &V8ProviderComponent{provider: provider}, nil
@@ -434,11 +609,18 @@ func (component *V8ProviderComponent) StopIntake(context.Context) error {
 }
 
 func (component *V8ProviderComponent) Drain(ctx context.Context) error {
-	if component == nil || component.provider == nil || component.provider.tracerProvider == nil {
+	if component == nil || component.provider == nil {
 		return nil
 	}
-	if err := component.provider.tracerProvider.ForceFlush(ctx); err != nil {
-		return newV8ProviderError(V8ProviderErrorFlush, err)
+	if component.provider.tracerProvider != nil {
+		if err := component.provider.tracerProvider.ForceFlush(ctx); err != nil {
+			return newV8ProviderError(V8ProviderErrorFlush, err)
+		}
+	}
+	if component.provider.meterProvider != nil {
+		if err := component.provider.meterProvider.ForceFlush(ctx); err != nil {
+			return newV8ProviderError(V8ProviderErrorFlush, err)
+		}
 	}
 	return nil
 }
