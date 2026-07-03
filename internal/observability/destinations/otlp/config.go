@@ -67,6 +67,7 @@ type BatchConfig struct {
 	MaxExportBatchBytes int
 	ScheduledDelay      time.Duration
 	ExportInterval      time.Duration
+	ExportTimeout       time.Duration
 }
 
 type SignalOutcome string
@@ -92,6 +93,21 @@ type SignalObserverFunc func(SignalEvent)
 
 func (function SignalObserverFunc) ObserveOTLPSignal(event SignalEvent) { function(event) }
 
+type CanaryAcknowledgement struct {
+	Destination string
+	TraceID     string
+}
+
+type CanaryAcknowledgementObserver interface {
+	ObserveOTLPCanaryAcknowledgement(CanaryAcknowledgement)
+}
+
+type CanaryAcknowledgementObserverFunc func(CanaryAcknowledgement)
+
+func (function CanaryAcknowledgementObserverFunc) ObserveOTLPCanaryAcknowledgement(event CanaryAcknowledgement) {
+	function(event)
+}
+
 // Config is a detached, already-secret-resolved compiled destination. Headers
 // are exact values for this destination; the factory never expands environment
 // variables or consults OTEL_EXPORTER_* state.
@@ -115,6 +131,7 @@ type Dependencies struct {
 	TemporalitySelector sdkmetric.TemporalitySelector
 	AggregationSelector sdkmetric.AggregationSelector
 	Observer            SignalObserver
+	CanaryObserver      CanaryAcknowledgementObserver
 }
 
 type signalConfig struct {
@@ -131,6 +148,7 @@ type signalConfig struct {
 	temporality sdkmetric.TemporalitySelector
 	aggregation sdkmetric.AggregationSelector
 	observer    SignalObserver
+	canary      CanaryAcknowledgementObserver
 	tracker     *dialOutcomeTracker
 }
 
@@ -208,6 +226,7 @@ func Prepare(ctx context.Context, config Config, dependencies Dependencies) (*Fa
 			resolved.aggregation = sdkmetric.DefaultAggregationSelector
 		}
 		resolved.observer = dependencies.Observer
+		resolved.canary = dependencies.CanaryObserver
 		resolved.tracker = &dialOutcomeTracker{}
 		signals[signal] = resolved
 	}

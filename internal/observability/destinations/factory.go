@@ -61,6 +61,7 @@ const (
 	ErrorSecretUnavailable   ErrorCode = "secret_unavailable"
 	ErrorCALoadFailed        ErrorCode = "ca_load_failed"
 	ErrorAdapterPrepare      ErrorCode = "adapter_prepare_failed"
+	ErrorUnsupportedPolicy   ErrorCode = "unsupported_policy"
 )
 
 // Error is safe for mandatory health reporting. It never includes a
@@ -131,6 +132,8 @@ type Factory struct {
 	resolver netguard.V8Resolver
 	dialer   netguard.V8Dialer
 	warnings push.WarningObserver
+	canaryMu sync.RWMutex
+	canary   map[uint64]*otlpGenerationCanaryRegistry
 }
 
 var _ observabilityruntime.DestinationAdapterFactory = (*Factory)(nil)
@@ -545,7 +548,7 @@ func validCompiledDestination(destination config.ObservabilityV8EffectiveDestina
 		return exactLogOnlyDestination(destination) && validHTTPJSONLTransport(destination.Transport)
 	case config.ObservabilityV8DestinationOTLP:
 		return effectiveDestinationSelectsLogs(destination) && destination.Capabilities.Supports(observability.SignalLogs) &&
-			validOTLPTransport(destination.Transport)
+			validOTLPTransport(destination.Transport, []observability.Signal{observability.SignalLogs})
 	default:
 		return false
 	}
@@ -647,7 +650,7 @@ func validHTTPJSONLTransport(transport config.ObservabilityV8TransportPlan) bool
 	return len(transport.Headers) <= 1_024
 }
 
-func validOTLPTransport(transport config.ObservabilityV8TransportPlan) bool {
+func validOTLPTransport(transport config.ObservabilityV8TransportPlan, requiredSignals []observability.Signal) bool {
 	if transport.Path != "" || transport.Rotation != nil || transport.Listen != "" ||
 		transport.Method != "" || transport.TokenEnv != "" || transport.BearerEnv != "" ||
 		transport.Index != "" || transport.Source != "" || transport.SourceType != "" ||
@@ -666,13 +669,18 @@ func validOTLPTransport(transport config.ObservabilityV8TransportPlan) bool {
 	if int64(transport.TimeoutMS) > maxDurationMilliseconds {
 		return false
 	}
-	logsOverride, hasLogsOverride := transport.SignalOverrides[observability.SignalLogs]
-	if transport.Endpoint == "" && (!hasLogsOverride || logsOverride.Endpoint == "") {
-		return false
+	for _, signal := range requiredSignals {
+		override, hasOverride := transport.SignalOverrides[signal]
+		if transport.Endpoint == "" && (!hasOverride || override.Endpoint == "") {
+			return false
+		}
 	}
-	if (transport.Protocol == otlp.ProtocolGRPC || transport.Protocol == otlp.ProtocolGRPCProtobuf) &&
-		hasLogsOverride && logsOverride.Path != "" {
-		return false
+	if transport.Protocol == otlp.ProtocolGRPC || transport.Protocol == otlp.ProtocolGRPCProtobuf {
+		for _, override := range transport.SignalOverrides {
+			if override.Path != "" {
+				return false
+			}
+		}
 	}
 	return true
 }

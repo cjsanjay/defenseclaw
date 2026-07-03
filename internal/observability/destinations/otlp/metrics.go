@@ -91,6 +91,23 @@ type MetricReader struct {
 }
 
 func (factory *Factory) NewPeriodicMetricReader(ctx context.Context) (*MetricReader, error) {
+	return factory.newPeriodicMetricReader(ctx, nil)
+}
+
+// NewFilteredPeriodicMetricReader filters the immutable SDK collection by the
+// exact selected metric-name set before encoding. The input set is detached.
+func (factory *Factory) NewFilteredPeriodicMetricReader(ctx context.Context, selected map[string]struct{}) (*MetricReader, error) {
+	if selected == nil {
+		return nil, newError(ErrorInvalidConfig, nil)
+	}
+	detached := make(map[string]struct{}, len(selected))
+	for name := range selected {
+		detached[name] = struct{}{}
+	}
+	return factory.newPeriodicMetricReader(ctx, detached)
+}
+
+func (factory *Factory) newPeriodicMetricReader(ctx context.Context, selected map[string]struct{}) (*MetricReader, error) {
 	exporter, err := factory.NewMetricExporter(ctx)
 	if err != nil {
 		return nil, err
@@ -102,7 +119,60 @@ func (factory *Factory) NewPeriodicMetricReader(ctx context.Context) (*MetricRea
 		cancel()
 		return nil, newError(ErrorInvalidConfig, nil)
 	}
-	return &MetricReader{reader: sdkmetric.NewPeriodicReader(exporter, sdkmetric.WithInterval(interval))}, nil
+	var sdkExporter sdkmetric.Exporter = exporter
+	if selected != nil {
+		sdkExporter = &filteredMetricExporter{inner: exporter, selected: selected}
+	}
+	options := []sdkmetric.PeriodicReaderOption{sdkmetric.WithInterval(interval)}
+	if timeout := factory.config.Batch.ExportTimeout; timeout > 0 {
+		options = append(options, sdkmetric.WithTimeout(timeout))
+	}
+	return &MetricReader{reader: sdkmetric.NewPeriodicReader(sdkExporter, options...)}, nil
+}
+
+type filteredMetricExporter struct {
+	inner    *MetricExporter
+	selected map[string]struct{}
+}
+
+func (exporter *filteredMetricExporter) Temporality(kind sdkmetric.InstrumentKind) metricdata.Temporality {
+	return exporter.inner.Temporality(kind)
+}
+
+func (exporter *filteredMetricExporter) Aggregation(kind sdkmetric.InstrumentKind) sdkmetric.Aggregation {
+	return exporter.inner.Aggregation(kind)
+}
+
+func (exporter *filteredMetricExporter) Export(ctx context.Context, source *metricdata.ResourceMetrics) error {
+	if source == nil {
+		return exporter.inner.Export(ctx, source)
+	}
+	filtered := &metricdata.ResourceMetrics{Resource: source.Resource}
+	filtered.ScopeMetrics = make([]metricdata.ScopeMetrics, 0, len(source.ScopeMetrics))
+	for _, sourceScope := range source.ScopeMetrics {
+		scope := metricdata.ScopeMetrics{Scope: sourceScope.Scope}
+		scope.Metrics = make([]metricdata.Metrics, 0, len(sourceScope.Metrics))
+		for _, metric := range sourceScope.Metrics {
+			if _, ok := exporter.selected[metric.Name]; ok {
+				scope.Metrics = append(scope.Metrics, metric)
+			}
+		}
+		if len(scope.Metrics) > 0 {
+			filtered.ScopeMetrics = append(filtered.ScopeMetrics, scope)
+		}
+	}
+	if len(filtered.ScopeMetrics) == 0 {
+		return nil
+	}
+	return exporter.inner.Export(ctx, filtered)
+}
+
+func (exporter *filteredMetricExporter) ForceFlush(ctx context.Context) error {
+	return exporter.inner.ForceFlush(ctx)
+}
+
+func (exporter *filteredMetricExporter) Shutdown(ctx context.Context) error {
+	return exporter.inner.Shutdown(ctx)
 }
 
 func (reader *MetricReader) SDKReader() sdkmetric.Reader {
