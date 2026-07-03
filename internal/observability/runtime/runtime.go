@@ -1,0 +1,268 @@
+// Copyright 2026 Cisco Systems, Inc. and its affiliates
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+// SPDX-License-Identifier: Apache-2.0
+
+package runtime
+
+import (
+	"context"
+	"reflect"
+
+	"github.com/defenseclaw/defenseclaw/internal/audit"
+	"github.com/defenseclaw/defenseclaw/internal/config"
+	"github.com/defenseclaw/defenseclaw/internal/observability"
+	"github.com/defenseclaw/defenseclaw/internal/observability/pipeline"
+	"github.com/defenseclaw/defenseclaw/internal/observability/redaction"
+	"github.com/defenseclaw/defenseclaw/internal/observability/router"
+	"github.com/defenseclaw/defenseclaw/internal/observability/runtimegraph"
+)
+
+// ErrorCode is a closed, content-free runtime-assembly failure identity.
+type ErrorCode string
+
+const (
+	ErrorInvalidDependency    ErrorCode = "invalid_dependency"
+	ErrorStorePathMismatch    ErrorCode = "store_path_mismatch"
+	ErrorComponentUnavailable ErrorCode = "component_unavailable"
+	ErrorOptionalWork         ErrorCode = "optional_work_unsupported"
+)
+
+// Error never retains a configured path, endpoint, record, projection, or
+// underlying persistence diagnostic.
+type Error struct{ code ErrorCode }
+
+type emitBuilderError struct{}
+
+func (*emitBuilderError) Error() string {
+	return "observability runtime record graph binding failed"
+}
+
+func (err *Error) Error() string {
+	if err == nil {
+		return "observability runtime operation failed"
+	}
+	return "observability runtime operation failed: " + string(err.code)
+}
+
+func (err *Error) Code() ErrorCode {
+	if err == nil {
+		return ""
+	}
+	return err.code
+}
+
+// Options supplies dependencies whose lifetime is the whole gateway process,
+// not one reload generation. The Store's immutable constructor path binds the
+// already-open caller-owned Store to the compiled local destination. A nil
+// Signer is an explicit unavailable-integrity state supported by audit storage;
+// callers should provide EventHistoryHealthReporter when they need that
+// degraded state bridged into mandatory health telemetry.
+type Options struct {
+	Store                      *audit.Store
+	Engine                     *redaction.Engine
+	Signer                     audit.ProjectionIntegritySigner
+	RecordBuilder              *observability.RecordBuilder
+	Reporter                   runtimegraph.Reporter
+	EventHistoryHealthReporter audit.EventHistoryHealthReporter
+	// GraphOptions is optional. When supplied, Reporter is still replaced by
+	// the process-stable Reporter above so one runtime cannot split reporting
+	// across inconsistent owners.
+	GraphOptions *runtimegraph.Options
+}
+
+// Runtime owns the immutable runtimegraph manager, but not the process-stable
+// dependencies supplied through Options. The caller must stop Runtime (and any
+// retention controller) before closing either SQLite store.
+type Runtime struct {
+	manager *runtimegraph.Manager
+	store   *audit.Store
+}
+
+// EmitContext is the exact immutable graph snapshot pinned for one Emit call.
+// Producers use its generation and digest when constructing provenance instead
+// of reading a separately mutable configuration object.
+type EmitContext struct {
+	plan       *config.ObservabilityV8Plan
+	digest     string
+	generation uint64
+}
+
+func (snapshot EmitContext) Plan() *config.ObservabilityV8Plan { return snapshot.plan }
+func (snapshot EmitContext) Digest() string                    { return snapshot.digest }
+func (snapshot EmitContext) Generation() uint64                { return snapshot.generation }
+
+// EmitBuilder is invoked at most once and only after collection admits the
+// signal. It receives the same graph generation whose local component persists
+// the resulting record. It is never called for AdmissionDrop.
+type EmitBuilder func(EmitContext, router.Admission) (observability.Record, error)
+
+// New builds and publishes generation one only after the local coordinator is
+// complete. The caller owns Store, Engine, Signer, RecordBuilder, and Reporter.
+func New(ctx context.Context, initial runtimegraph.Config, options Options) (*Runtime, error) {
+	if ctx == nil || options.Store == nil || !options.Store.Ready() ||
+		options.Store.DatabasePath() == "" || options.Engine == nil || options.RecordBuilder == nil ||
+		nilInterface(options.Reporter) ||
+		options.Signer != nil && nilInterface(options.Signer) ||
+		options.EventHistoryHealthReporter != nil && nilInterface(options.EventHistoryHealthReporter) ||
+		initial.Plan == nil {
+		return nil, &Error{code: ErrorInvalidDependency}
+	}
+	storePath := options.Store.DatabasePath()
+	if initial.LocalPath != storePath || initial.Plan.Snapshot().Local.Path != storePath {
+		return nil, &Error{code: ErrorStorePathMismatch}
+	}
+
+	graphOptions := runtimegraph.DefaultOptions(options.Reporter)
+	if options.GraphOptions != nil {
+		graphOptions = *options.GraphOptions
+		graphOptions.Reporter = options.Reporter
+	}
+	factory := &localLogFactory{
+		store: options.Store, storePath: storePath,
+		engine: options.Engine, signer: options.Signer,
+		recordBuilder:  options.RecordBuilder,
+		healthReporter: options.EventHistoryHealthReporter,
+	}
+	manager, err := runtimegraph.New(
+		ctx,
+		initial,
+		[]runtimegraph.ComponentFactory{factory},
+		graphOptions,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return &Runtime{manager: manager, store: options.Store}, nil
+}
+
+// Active returns the exact currently published graph pointer.
+func (runtime *Runtime) Active() *runtimegraph.Graph {
+	if runtime == nil || runtime.manager == nil {
+		return nil
+	}
+	return runtime.manager.Active()
+}
+
+// Emit pins exactly one graph, resolves that generation's local-log component,
+// processes once, and releases the lease on every path. Configuration is
+// rejected during graph preparation if any optional destination is active, so
+// OptionalWork here is an invariant failure rather than silently dropped work.
+func (runtime *Runtime) Emit(
+	ctx context.Context,
+	metadata router.Metadata,
+	builder EmitBuilder,
+) (pipeline.LocalLogOutcome, error) {
+	if runtime == nil || runtime.manager == nil || ctx == nil || builder == nil {
+		return pipeline.LocalLogOutcome{}, &Error{code: ErrorInvalidDependency}
+	}
+	lease, err := runtime.manager.Acquire(ctx)
+	if err != nil {
+		return pipeline.LocalLogOutcome{}, err
+	}
+	defer lease.Release()
+	graph := lease.Graph()
+	component, ok := lease.Component(LocalLogComponentName)
+	if graph == nil || !ok {
+		return pipeline.LocalLogOutcome{}, &Error{code: ErrorComponentUnavailable}
+	}
+	local, ok := component.(*localLogComponent)
+	if !ok || local.digest != graph.Digest() {
+		return pipeline.LocalLogOutcome{}, &Error{code: ErrorComponentUnavailable}
+	}
+	snapshot := EmitContext{
+		plan: graph.Plan(), digest: graph.Digest(), generation: graph.Generation(),
+	}
+	outcome, processErr := local.Process(ctx, metadata, func(admission router.Admission) (observability.Record, error) {
+		record, err := builder(snapshot, admission)
+		if err != nil {
+			return observability.Record{}, err
+		}
+		provenance := record.Provenance()
+		if provenance.ConfigDigest != snapshot.Digest() || provenance.ConfigGeneration < 0 ||
+			uint64(provenance.ConfigGeneration) != snapshot.Generation() {
+			return observability.Record{}, &emitBuilderError{}
+		}
+		return record, nil
+	})
+	if processErr != nil {
+		return outcome, processErr
+	}
+	if len(outcome.OptionalWork()) != 0 {
+		return outcome, &Error{code: ErrorOptionalWork}
+	}
+	return outcome, nil
+}
+
+// Reload exposes runtimegraph's exact rejected/applied/applied-degraded result.
+func (runtime *Runtime) Reload(
+	ctx context.Context,
+	candidate runtimegraph.Config,
+) (runtimegraph.ReloadResult, *runtimegraph.Error) {
+	if runtime == nil || runtime.manager == nil {
+		return runtimegraph.ReloadResult{}, invalidManagerError(ctx)
+	}
+	return runtime.manager.Reload(ctx, candidate)
+}
+
+// FlushReports waits for every report accepted before this call.
+func (runtime *Runtime) FlushReports(ctx context.Context) *runtimegraph.Error {
+	if runtime == nil || runtime.manager == nil {
+		return invalidManagerError(ctx)
+	}
+	return runtime.manager.FlushReports(ctx)
+}
+
+// Close stops intake, waits for generation cleanup and report delivery, and
+// closes only graph-owned components. Caller-owned stores and key material are
+// deliberately not closed.
+func (runtime *Runtime) Close(ctx context.Context) *runtimegraph.Error {
+	if runtime == nil || runtime.manager == nil {
+		return nil
+	}
+	first := runtime.manager.Close(ctx)
+	if err := runtime.manager.WaitCleanup(ctx); first == nil && err != nil {
+		first = err
+	}
+	if err := runtime.manager.FlushReports(ctx); first == nil && err != nil {
+		first = err
+	}
+	if err := runtime.manager.WaitReporter(ctx); first == nil && err != nil {
+		first = err
+	}
+	return first
+}
+
+// runtimegraph.Error deliberately has no public constructor. Reusing Acquire
+// on a nil manager returns the package's bounded invalid-dependency result.
+func invalidManagerError(ctx context.Context) *runtimegraph.Error {
+	var manager *runtimegraph.Manager
+	_, err := manager.Acquire(ctx)
+	return err
+}
+
+func nilInterface(value any) bool {
+	if value == nil {
+		return true
+	}
+	reflected := reflect.ValueOf(value)
+	switch reflected.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+		return reflected.IsNil()
+	default:
+		return false
+	}
+}
+
+var _ error = (*Error)(nil)
