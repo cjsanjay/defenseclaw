@@ -91,7 +91,7 @@ FIELD_CLASSES = (
     "credential",
 )
 FIELD_MODES = ("preserve", "detect", "whole", "hash", "remove")
-BUILT_IN_PROFILES = ("none", "sensitive", "content", "strict")
+BUILT_IN_PROFILES = ("none", "sensitive", "content", "strict", "legacy-v7")
 ROUTE_ACTIONS = ("send", "drop")
 SELECTOR_FIELDS = ("buckets", "sources", "connectors", "actions", "event_names", "min_severity")
 DESTINATION_CAPABILITIES: dict[str, tuple[str, ...]] = {
@@ -662,6 +662,25 @@ def _validate_destination(destination: dict[str, Any], path: str, source_name: s
 
     if any(signal not in capabilities for signal in selected):
         _semantic_error(source_name, f"{path}.signals", "select only signals supported by the destination kind")
+
+    logger_name = destination.get("logger_name", "")
+    if logger_name:
+        if len(logger_name.encode("utf-8")) > 256:
+            _semantic_error(
+                source_name,
+                f"{path}.logger_name",
+                "use an instrumentation-scope name of 256 bytes or fewer",
+            )
+        if "logs" not in selected:
+            _semantic_error(source_name, f"{path}.logger_name", "select logs or remove logger_name")
+
+    for producer, sourcetype in destination.get("sourcetype_overrides", {}).items():
+        if len(sourcetype.encode("utf-8")) > 256:
+            _semantic_error(
+                source_name,
+                f"{path}.sourcetype_overrides.{producer}",
+                "use a Splunk sourcetype of 256 bytes or fewer",
+            )
     overrides = destination.get("signal_overrides", {})
     if any(signal not in selected for signal in overrides):
         _semantic_error(source_name, f"{path}.signal_overrides", "remove overrides for unselected signals")
@@ -814,6 +833,16 @@ def _built_in_field_modes() -> dict[str, dict[str, str]]:
             "error": "remove",
             "path": "remove",
             "credential": "remove",
+        },
+        "legacy-v7": {
+            "metadata": "preserve",
+            "identifier": "whole",
+            "content": "whole",
+            "reason": "whole",
+            "evidence": "whole",
+            "error": "whole",
+            "path": "whole",
+            "credential": "whole",
         },
     }
 

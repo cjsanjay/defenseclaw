@@ -22,9 +22,9 @@ or ordered `routes` for selector-specific policy. Collection gates run first.
 | `jsonl` | logs | `name`, `kind`, `enabled`, `path`, `rotation`, `send`, `routes` |
 | `console` | logs | `name`, `kind`, `enabled`, `send`, `routes` |
 | `prometheus` | metrics | `name`, `kind`, `enabled`, `listen`, `path`, `send`, `routes` |
-| `splunk_hec` | logs | `name`, `kind`, `enabled`, `endpoint`, `token_env`, `index`, `source`, `sourcetype`, `tls`, `timeout_ms`, `network_safety`, `batch`, `send`, `routes` |
+| `splunk_hec` | logs | `name`, `kind`, `enabled`, `endpoint`, `token_env`, `index`, `source`, `sourcetype`, `sourcetype_overrides`, `tls`, `timeout_ms`, `network_safety`, `batch`, `send`, `routes` |
 | `http_jsonl` | logs | `name`, `kind`, `enabled`, `endpoint`, `method`, `bearer_env`, `headers`, `tls`, `timeout_ms`, `network_safety`, `batch`, `send`, `routes` |
-| `otlp` | logs, traces, metrics (Galileo preset: traces) | `name`, `kind`, `preset`, `enabled`, `protocol`, `endpoint`, `headers`, `tls`, `timeout_ms`, `network_safety`, `signal_overrides`, `batch`, `send`, `routes` |
+| `otlp` | logs, traces, metrics (Galileo preset: traces) | `name`, `kind`, `preset`, `enabled`, `protocol`, `endpoint`, `headers`, `logger_name`, `tls`, `timeout_ms`, `network_safety`, `signal_overrides`, `batch`, `send`, `routes` |
 
 ## Complete source field catalog
 
@@ -129,6 +129,8 @@ Constraints that span fields are enforced by the compiler in addition to JSON Sc
 | `observability.destinations[].index` | string |  |  |  |
 | `observability.destinations[].source` | string |  |  |  |
 | `observability.destinations[].sourcetype` | string |  |  |  |
+| `observability.destinations[].sourcetype_overrides` | object |  |  | Maps registered audit producer keys to Splunk sourcetypes. Registration and UTF-8 byte length are compiler-validated. |
+| `observability.destinations[].sourcetype_overrides.<name>` | string |  |  | User-named entry. |
 | `observability.destinations[].tls` | object |  |  |  |
 | `observability.destinations[].tls.insecure_skip_verify` | boolean | `false` |  |  |
 | `observability.destinations[].tls.ca_cert` | string |  |  |  |
@@ -147,6 +149,7 @@ Constraints that span fields are enforced by the compiler in addition to JSON Sc
 | `observability.destinations[].headers.<name>.env` | string |  |  | Required. |
 | `observability.destinations[].preset` | constant |  | `"galileo"` |  |
 | `observability.destinations[].protocol` | string | `"grpc"` | `grpc, grpc/protobuf, http, http/protobuf` |  |
+| `observability.destinations[].logger_name` | string |  |  | OTel log instrumentation-scope name. Valid only when this destination selects logs. |
 | `observability.destinations[].tls.insecure` | boolean | `false` |  |  |
 | `observability.destinations[].signal_overrides` | object |  |  |  |
 | `observability.destinations[].signal_overrides.logs` | object |  |  |  |

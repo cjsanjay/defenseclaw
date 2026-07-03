@@ -756,6 +756,7 @@ func compileObservabilityV8Transport(
 		Protocol: source.Protocol, Method: source.Method,
 		Headers: cloneObservabilityV8Headers(source.Headers), TokenEnv: source.TokenEnv, BearerEnv: source.BearerEnv,
 		Index: source.Index, Source: source.Source, SourceType: source.SourceType,
+		SourceTypeOverrides: cloneObservabilityV8SourceTypeOverrides(source.SourceTypeOverrides), LoggerName: source.LoggerName,
 		TimeoutMS:       source.TimeoutMS,
 		SignalOverrides: cloneObservabilityV8SignalOverrides(source.SignalOverrides),
 	}
@@ -791,6 +792,9 @@ func compileObservabilityV8Transport(
 		if strings.TrimSpace(source.TokenEnv) == "" {
 			return ObservabilityV8TransportPlan{}, fmt.Errorf("%s.token_env: required for splunk_hec", path)
 		}
+		if err := validateObservabilityV8SourceTypeOverrides(source.SourceTypeOverrides, path+".sourcetype_overrides"); err != nil {
+			return ObservabilityV8TransportPlan{}, err
+		}
 		if err := compileObservabilityV8PushDefaults(&result, source, path, true); err != nil {
 			return ObservabilityV8TransportPlan{}, err
 		}
@@ -805,6 +809,14 @@ func compileObservabilityV8Transport(
 			return ObservabilityV8TransportPlan{}, err
 		}
 	case ObservabilityV8DestinationOTLP:
+		if source.LoggerName != "" {
+			if len(source.LoggerName) > 256 {
+				return ObservabilityV8TransportPlan{}, fmt.Errorf("%s.logger_name: must contain 1 through 256 bytes", path)
+			}
+			if !observabilityV8SignalsContain(selected, observability.SignalLogs) {
+				return ObservabilityV8TransportPlan{}, fmt.Errorf("%s.logger_name: requires logs to be selected", path)
+			}
+		}
 		if result.Protocol == "" {
 			if source.Preset == "galileo" {
 				result.Protocol = "http/protobuf"
@@ -839,7 +851,8 @@ func validateObservabilityV8KindSpecificFields(source ObservabilityV8Destination
 		"listen": source.Listen != "", "endpoint": source.Endpoint != "", "protocol": source.Protocol != "",
 		"method": source.Method != "", "headers": source.Headers != nil, "token_env": source.TokenEnv != "",
 		"bearer_env": source.BearerEnv != "", "index": source.Index != "", "source": source.Source != "",
-		"sourcetype": source.SourceType != "", "timeout_ms": source.TimeoutMS != 0,
+		"sourcetype": source.SourceType != "", "sourcetype_overrides": source.SourceTypeOverrides != nil,
+		"logger_name": source.LoggerName != "", "timeout_ms": source.TimeoutMS != 0,
 		"tls": observabilityV8TLSConfigured(source.TLS), "batch": observabilityV8BatchConfigured(source.Batch),
 		"network_safety":   observabilityV8NetworkSafetyConfigured(source.NetworkSafety),
 		"signal_overrides": source.SignalOverrides != nil,
@@ -848,9 +861,9 @@ func validateObservabilityV8KindSpecificFields(source ObservabilityV8Destination
 		ObservabilityV8DestinationJSONL:      setObservabilityV8Fields("path", "rotation"),
 		ObservabilityV8DestinationConsole:    setObservabilityV8Fields(),
 		ObservabilityV8DestinationPrometheus: setObservabilityV8Fields("listen", "path"),
-		ObservabilityV8DestinationSplunkHEC:  setObservabilityV8Fields("endpoint", "token_env", "index", "source", "sourcetype", "timeout_ms", "tls", "batch", "network_safety"),
+		ObservabilityV8DestinationSplunkHEC:  setObservabilityV8Fields("endpoint", "token_env", "index", "source", "sourcetype", "sourcetype_overrides", "timeout_ms", "tls", "batch", "network_safety"),
 		ObservabilityV8DestinationHTTPJSONL:  setObservabilityV8Fields("endpoint", "method", "headers", "bearer_env", "timeout_ms", "tls", "batch", "network_safety"),
-		ObservabilityV8DestinationOTLP:       setObservabilityV8Fields("preset", "endpoint", "protocol", "headers", "timeout_ms", "tls", "batch", "network_safety", "signal_overrides"),
+		ObservabilityV8DestinationOTLP:       setObservabilityV8Fields("preset", "endpoint", "protocol", "headers", "logger_name", "timeout_ms", "tls", "batch", "network_safety", "signal_overrides"),
 	}
 	allowedFields, ok := allowed[source.Kind]
 	if !ok {
@@ -858,7 +871,7 @@ func validateObservabilityV8KindSpecificFields(source ObservabilityV8Destination
 	}
 	order := []string{
 		"preset", "path", "rotation", "listen", "endpoint", "protocol", "method", "headers",
-		"token_env", "bearer_env", "index", "source", "sourcetype", "timeout_ms", "tls", "batch",
+		"token_env", "bearer_env", "index", "source", "sourcetype", "sourcetype_overrides", "logger_name", "timeout_ms", "tls", "batch",
 		"network_safety", "signal_overrides",
 	}
 	for _, field := range order {
@@ -878,6 +891,37 @@ func setObservabilityV8Fields(fields ...string) map[string]struct{} {
 		result[field] = struct{}{}
 	}
 	return result
+}
+
+func validateObservabilityV8SourceTypeOverrides(overrides map[observability.ProducerKey]string, path string) error {
+	if len(overrides) > ObservabilityV8MaxMappingEntries {
+		return fmt.Errorf("%s: got %d entries, maximum is %d", path, len(overrides), ObservabilityV8MaxMappingEntries)
+	}
+	keys := make([]string, 0, len(overrides))
+	for key := range overrides {
+		keys = append(keys, string(key))
+	}
+	sort.Strings(keys)
+	for _, rawKey := range keys {
+		key := observability.ProducerKey(rawKey)
+		if _, registered := observability.AuditActionClassification(key); !registered {
+			return fmt.Errorf("%s: unregistered audit producer key %q", path, key)
+		}
+		value := overrides[key]
+		if len(value) < 1 || len(value) > 256 {
+			return fmt.Errorf("%s.%s: sourcetype must contain 1 through 256 bytes", path, key)
+		}
+	}
+	return nil
+}
+
+func observabilityV8SignalsContain(signals []observability.Signal, expected observability.Signal) bool {
+	for _, signal := range signals {
+		if signal == expected {
+			return true
+		}
+	}
+	return false
 }
 
 func observabilityV8RotationConfigured(source ObservabilityV8RotationSource) bool {
@@ -1409,7 +1453,7 @@ func compileObservabilityV8Profiles(source map[string]ObservabilityV8RedactionPr
 		known[name] = struct{}{}
 	}
 	result := make([]ObservabilityV8EffectiveProfile, 0, len(builtIns)+len(source))
-	for _, name := range []string{"none", "sensitive", "content", "strict"} {
+	for _, name := range []string{"none", "sensitive", "content", "strict", "legacy-v7"} {
 		result = append(result, cloneObservabilityV8Profile(builtIns[name]))
 	}
 	names := make([]string, 0, len(source))
@@ -1420,7 +1464,7 @@ func compileObservabilityV8Profiles(source map[string]ObservabilityV8RedactionPr
 	for _, name := range names {
 		profileSource := source[name]
 		base, ok := builtIns[profileSource.Extends]
-		if !ok || profileSource.Extends == "none" {
+		if !ok || profileSource.Extends == "none" || profileSource.Extends == "legacy-v7" {
 			return nil, nil, fmt.Errorf("observability.redaction_profiles.%s.extends: expected sensitive, content, or strict", name)
 		}
 		if profileSource.Detectors != nil && len(profileSource.Detectors) == 0 {
@@ -1473,11 +1517,18 @@ func observabilityV8BuiltInProfiles() map[string]ObservabilityV8EffectiveProfile
 		ObservabilityV8FieldEvidence: ObservabilityV8ModeRemove, ObservabilityV8FieldError: ObservabilityV8ModeRemove,
 		ObservabilityV8FieldPath: ObservabilityV8ModeRemove, ObservabilityV8FieldCredential: ObservabilityV8ModeRemove,
 	}
+	legacyV7 := map[ObservabilityV8FieldClass]ObservabilityV8FieldMode{
+		ObservabilityV8FieldMetadata: ObservabilityV8ModePreserve, ObservabilityV8FieldIdentifier: ObservabilityV8ModeWhole,
+		ObservabilityV8FieldContent: ObservabilityV8ModeWhole, ObservabilityV8FieldReason: ObservabilityV8ModeWhole,
+		ObservabilityV8FieldEvidence: ObservabilityV8ModeWhole, ObservabilityV8FieldError: ObservabilityV8ModeWhole,
+		ObservabilityV8FieldPath: ObservabilityV8ModeWhole, ObservabilityV8FieldCredential: ObservabilityV8ModeWhole,
+	}
 	return map[string]ObservabilityV8EffectiveProfile{
 		"none":      {Name: "none", BuiltIn: true, Detectors: []ObservabilityV8DetectorGroup{}, FieldClasses: preserveAll},
 		"sensitive": {Name: "sensitive", BuiltIn: true, Detectors: allDetectors, FieldClasses: sensitive},
 		"content":   {Name: "content", BuiltIn: true, Detectors: allDetectors, FieldClasses: content},
 		"strict":    {Name: "strict", BuiltIn: true, Detectors: allDetectors, FieldClasses: strict},
+		"legacy-v7": {Name: "legacy-v7", BuiltIn: true, Detectors: []ObservabilityV8DetectorGroup{}, FieldClasses: legacyV7},
 	}
 }
 

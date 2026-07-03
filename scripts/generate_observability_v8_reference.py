@@ -86,7 +86,7 @@ YAML_HEADER = """\
 # default redaction profile is none. Explicit send/routes replace the generated
 # destination default. Collection is evaluated before routing and sampling.
 #
-# Built-in redaction: none, sensitive, content, strict.
+# Built-in redaction: none, sensitive, content, strict, legacy-v7.
 # Route selectors: different fields AND; values inside one field OR.
 # Route evaluation: first match wins independently per destination and signal.
 # Secrets are references (for example token_env or {env: NAME}), never literals.
@@ -430,6 +430,10 @@ def _reference_document() -> dict[str, Any]:
                     "index": "main",
                     "source": "defenseclaw",
                     "sourcetype": "defenseclaw:event",
+                    "sourcetype_overrides": {
+                        "llm-judge-response": "defenseclaw:judge",
+                        "guardrail-verdict": "defenseclaw:verdict",
+                    },
                     "tls": {"insecure_skip_verify": False, "ca_cert": ""},
                     "timeout_ms": 10000,
                     "network_safety": {
@@ -489,6 +493,7 @@ def _reference_document() -> dict[str, Any]:
                         "Authorization": {"env": "OTEL_AUTHORIZATION"},
                         "X-Deployment": "production",
                     },
+                    "logger_name": "defenseclaw.audit",
                     "tls": {"insecure": False, "ca_cert": "/etc/defenseclaw/otel-ca.pem"},
                     "timeout_ms": 10000,
                     "network_safety": {
@@ -813,7 +818,7 @@ def _document_paths(value: Any, prefix: str = "") -> set[str]:
             "observability.redaction_profiles",
             "observability.connectors",
         }
-        dynamic_suffixes = (".headers",)
+        dynamic_suffixes = (".headers", ".sourcetype_overrides")
         for name, child in value.items():
             rendered = "*" if prefix in dynamic_parents or prefix.endswith(dynamic_suffixes) else str(name)
             path = f"{prefix}.{rendered}" if prefix else rendered

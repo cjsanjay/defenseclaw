@@ -231,6 +231,21 @@
         "path": "remove",
         "reason": "remove"
       }
+    },
+    {
+      "name": "legacy-v7",
+      "built_in": true,
+      "detectors": null,
+      "field_classes": {
+        "content": "whole",
+        "credential": "whole",
+        "error": "whole",
+        "evidence": "whole",
+        "identifier": "whole",
+        "metadata": "preserve",
+        "path": "whole",
+        "reason": "whole"
+      }
     }
   ],
   "destinations": [

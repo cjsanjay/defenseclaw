@@ -244,6 +244,87 @@ func TestCompileObservabilityV8TransportValidation(t *testing.T) {
 	}
 }
 
+func TestCompileObservabilityV8CompatibilityAdapterFields(t *testing.T) {
+	logs := []observability.Signal{observability.SignalLogs}
+	splunk := validObservabilityV8Destination("splunk", ObservabilityV8DestinationSplunkHEC)
+	splunk.SourceTypeOverrides = map[observability.ProducerKey]string{
+		"llm-judge-response": "defenseclaw:judge",
+		"guardrail-verdict":  "defenseclaw:verdict",
+	}
+	otlp := validObservabilityV8Destination("otel-logs", ObservabilityV8DestinationOTLP)
+	otlp.LoggerName = "defenseclaw.audit"
+	otlp.Send = &ObservabilityV8SendSource{Signals: logs, Buckets: []observability.Bucket{"*"}}
+
+	plan := mustCompileObservabilityV8(t, &ObservabilityV8Source{Destinations: []ObservabilityV8DestinationSource{splunk, otlp}})
+	compiledSplunk, _ := plan.RuntimeDestination("splunk")
+	if got := compiledSplunk.Transport.SourceTypeOverrides["llm-judge-response"]; got != "defenseclaw:judge" {
+		t.Fatalf("compiled sourcetype override = %q", got)
+	}
+	compiledOTLP, _ := plan.RuntimeDestination("otel-logs")
+	if compiledOTLP.Transport.LoggerName != "defenseclaw.audit" {
+		t.Fatalf("compiled logger_name = %q", compiledOTLP.Transport.LoggerName)
+	}
+
+	compiledSplunk.Transport.SourceTypeOverrides["llm-judge-response"] = "mutated"
+	again, _ := plan.RuntimeDestination("splunk")
+	if got := again.Transport.SourceTypeOverrides["llm-judge-response"]; got != "defenseclaw:judge" {
+		t.Fatalf("transport plan exposed mutable sourcetype overrides: %q", got)
+	}
+
+	tooLong := strings.Repeat("x", 257)
+	invalid := []struct {
+		name        string
+		destination ObservabilityV8DestinationSource
+		want        string
+	}{
+		{
+			name: "unregistered splunk producer",
+			destination: func() ObservabilityV8DestinationSource {
+				value := validObservabilityV8Destination("splunk", ObservabilityV8DestinationSplunkHEC)
+				value.SourceTypeOverrides = map[observability.ProducerKey]string{"not-registered": "defenseclaw:unknown"}
+				return value
+			}(),
+			want: "unregistered audit producer key",
+		},
+		{
+			name: "oversized splunk sourcetype",
+			destination: func() ObservabilityV8DestinationSource {
+				value := validObservabilityV8Destination("splunk", ObservabilityV8DestinationSplunkHEC)
+				value.SourceTypeOverrides = map[observability.ProducerKey]string{"guardrail-verdict": tooLong}
+				return value
+			}(),
+			want: "1 through 256 bytes",
+		},
+		{
+			name: "logger without logs",
+			destination: func() ObservabilityV8DestinationSource {
+				value := validObservabilityV8Destination("otel", ObservabilityV8DestinationOTLP)
+				value.LoggerName = "defenseclaw.audit"
+				value.Send = &ObservabilityV8SendSource{Signals: []observability.Signal{observability.SignalTraces}, Buckets: []observability.Bucket{"*"}}
+				return value
+			}(),
+			want: "requires logs",
+		},
+		{
+			name: "oversized logger",
+			destination: func() ObservabilityV8DestinationSource {
+				value := validObservabilityV8Destination("otel", ObservabilityV8DestinationOTLP)
+				value.LoggerName = tooLong
+				return value
+			}(),
+			want: "1 through 256 bytes",
+		},
+	}
+	for _, test := range invalid {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := CompileObservabilityV8(&ObservabilityV8Source{Destinations: []ObservabilityV8DestinationSource{test.destination}})
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("error = %v, want substring %q", err, test.want)
+			}
+		})
+	}
+}
+
 func TestCompileObservabilityV8EndpointNetworkSafety(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -417,12 +498,26 @@ func TestCompileObservabilityV8Profiles(t *testing.T) {
 		},
 	})
 	profiles := plan.Snapshot().Profiles
-	if len(profiles) != 5 || profiles[4].Name != "soc" || profiles[4].FieldClasses[ObservabilityV8FieldEvidence] != ObservabilityV8ModeWhole {
+	if len(profiles) != 6 || profiles[4].Name != "legacy-v7" || profiles[5].Name != "soc" || profiles[5].FieldClasses[ObservabilityV8FieldEvidence] != ObservabilityV8ModeWhole {
 		t.Fatalf("compiled profiles = %+v", profiles)
+	}
+	legacy := profiles[4]
+	if len(legacy.Detectors) != 0 || legacy.FieldClasses[ObservabilityV8FieldMetadata] != ObservabilityV8ModePreserve {
+		t.Fatalf("legacy-v7 metadata/detectors = %+v", legacy)
+	}
+	for _, fieldClass := range []ObservabilityV8FieldClass{
+		ObservabilityV8FieldIdentifier, ObservabilityV8FieldContent, ObservabilityV8FieldReason,
+		ObservabilityV8FieldEvidence, ObservabilityV8FieldError, ObservabilityV8FieldPath, ObservabilityV8FieldCredential,
+	} {
+		if legacy.FieldClasses[fieldClass] != ObservabilityV8ModeWhole {
+			t.Errorf("legacy-v7 %s mode = %q, want whole", fieldClass, legacy.FieldClasses[fieldClass])
+		}
 	}
 
 	invalid := []ObservabilityV8Source{
 		{RedactionProfiles: map[string]ObservabilityV8RedactionProfileSource{"raw": {Extends: "none"}}},
+		{RedactionProfiles: map[string]ObservabilityV8RedactionProfileSource{"legacy-v7": {Extends: "strict"}}},
+		{RedactionProfiles: map[string]ObservabilityV8RedactionProfileSource{"compat": {Extends: "legacy-v7"}}},
 		{RedactionProfiles: map[string]ObservabilityV8RedactionProfileSource{"a": {Extends: "b"}, "b": {Extends: "a"}}},
 		{RedactionProfiles: map[string]ObservabilityV8RedactionProfileSource{"bad": {Extends: "strict", Detectors: []ObservabilityV8DetectorGroup{"unknown"}}}},
 		{RedactionProfiles: map[string]ObservabilityV8RedactionProfileSource{"bad": {Extends: "sensitive", FieldClasses: map[ObservabilityV8FieldClass]ObservabilityV8FieldMode{ObservabilityV8FieldContent: ObservabilityV8ModePreserve}}}},

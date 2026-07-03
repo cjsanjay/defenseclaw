@@ -168,20 +168,22 @@ type ObservabilityV8DestinationSource struct {
 	Rotation ObservabilityV8RotationSource `json:"rotation,omitempty" mapstructure:"rotation" yaml:"rotation,omitempty"`
 	Listen   string                        `json:"listen,omitempty" mapstructure:"listen" yaml:"listen,omitempty"`
 
-	Endpoint        string                                                       `json:"endpoint,omitempty" mapstructure:"endpoint" yaml:"endpoint,omitempty"`
-	Protocol        string                                                       `json:"protocol,omitempty" mapstructure:"protocol" yaml:"protocol,omitempty"`
-	Method          string                                                       `json:"method,omitempty" mapstructure:"method" yaml:"method,omitempty"`
-	Headers         map[string]ObservabilityV8HeaderValue                        `json:"headers,omitempty" mapstructure:"headers" yaml:"headers,omitempty"`
-	TokenEnv        string                                                       `json:"token_env,omitempty" mapstructure:"token_env" yaml:"token_env,omitempty"`
-	BearerEnv       string                                                       `json:"bearer_env,omitempty" mapstructure:"bearer_env" yaml:"bearer_env,omitempty"`
-	Index           string                                                       `json:"index,omitempty" mapstructure:"index" yaml:"index,omitempty"`
-	Source          string                                                       `json:"source,omitempty" mapstructure:"source" yaml:"source,omitempty"`
-	SourceType      string                                                       `json:"sourcetype,omitempty" mapstructure:"sourcetype" yaml:"sourcetype,omitempty"`
-	TimeoutMS       int                                                          `json:"timeout_ms,omitempty" mapstructure:"timeout_ms" yaml:"timeout_ms,omitempty"`
-	TLS             ObservabilityV8TLSSource                                     `json:"tls,omitempty" mapstructure:"tls" yaml:"tls,omitempty"`
-	Batch           ObservabilityV8BatchSource                                   `json:"batch,omitempty" mapstructure:"batch" yaml:"batch,omitempty"`
-	NetworkSafety   ObservabilityV8NetworkSafetySource                           `json:"network_safety,omitempty" mapstructure:"network_safety" yaml:"network_safety,omitempty"`
-	SignalOverrides map[observability.Signal]ObservabilityV8SignalOverrideSource `json:"signal_overrides,omitempty" mapstructure:"signal_overrides" yaml:"signal_overrides,omitempty"`
+	Endpoint            string                                                       `json:"endpoint,omitempty" mapstructure:"endpoint" yaml:"endpoint,omitempty"`
+	Protocol            string                                                       `json:"protocol,omitempty" mapstructure:"protocol" yaml:"protocol,omitempty"`
+	Method              string                                                       `json:"method,omitempty" mapstructure:"method" yaml:"method,omitempty"`
+	Headers             map[string]ObservabilityV8HeaderValue                        `json:"headers,omitempty" mapstructure:"headers" yaml:"headers,omitempty"`
+	TokenEnv            string                                                       `json:"token_env,omitempty" mapstructure:"token_env" yaml:"token_env,omitempty"`
+	BearerEnv           string                                                       `json:"bearer_env,omitempty" mapstructure:"bearer_env" yaml:"bearer_env,omitempty"`
+	Index               string                                                       `json:"index,omitempty" mapstructure:"index" yaml:"index,omitempty"`
+	Source              string                                                       `json:"source,omitempty" mapstructure:"source" yaml:"source,omitempty"`
+	SourceType          string                                                       `json:"sourcetype,omitempty" mapstructure:"sourcetype" yaml:"sourcetype,omitempty"`
+	SourceTypeOverrides map[observability.ProducerKey]string                         `json:"sourcetype_overrides,omitempty" mapstructure:"sourcetype_overrides" yaml:"sourcetype_overrides,omitempty"`
+	LoggerName          string                                                       `json:"logger_name,omitempty" mapstructure:"logger_name" yaml:"logger_name,omitempty"`
+	TimeoutMS           int                                                          `json:"timeout_ms,omitempty" mapstructure:"timeout_ms" yaml:"timeout_ms,omitempty"`
+	TLS                 ObservabilityV8TLSSource                                     `json:"tls,omitempty" mapstructure:"tls" yaml:"tls,omitempty"`
+	Batch               ObservabilityV8BatchSource                                   `json:"batch,omitempty" mapstructure:"batch" yaml:"batch,omitempty"`
+	NetworkSafety       ObservabilityV8NetworkSafetySource                           `json:"network_safety,omitempty" mapstructure:"network_safety" yaml:"network_safety,omitempty"`
+	SignalOverrides     map[observability.Signal]ObservabilityV8SignalOverrideSource `json:"signal_overrides,omitempty" mapstructure:"signal_overrides" yaml:"signal_overrides,omitempty"`
 }
 
 // ObservabilityV8SecretRef is source-declared secret identity only. Resolution

@@ -133,23 +133,25 @@ type ObservabilityV8EffectiveRoute struct {
 }
 
 type ObservabilityV8TransportPlan struct {
-	Path            string                                                       `json:"path,omitempty"`
-	Rotation        *ObservabilityV8EffectiveRotation                            `json:"rotation,omitempty"`
-	Listen          string                                                       `json:"listen,omitempty"`
-	Endpoint        string                                                       `json:"endpoint,omitempty"`
-	Protocol        string                                                       `json:"protocol,omitempty"`
-	Method          string                                                       `json:"method,omitempty"`
-	Headers         map[string]ObservabilityV8HeaderValue                        `json:"headers,omitempty"`
-	TokenEnv        string                                                       `json:"token_env,omitempty"`
-	BearerEnv       string                                                       `json:"bearer_env,omitempty"`
-	Index           string                                                       `json:"index,omitempty"`
-	Source          string                                                       `json:"source,omitempty"`
-	SourceType      string                                                       `json:"sourcetype,omitempty"`
-	TimeoutMS       int                                                          `json:"timeout_ms,omitempty"`
-	TLS             *ObservabilityV8TLSSource                                    `json:"tls,omitempty"`
-	Batch           *ObservabilityV8BatchSource                                  `json:"batch,omitempty"`
-	NetworkSafety   *ObservabilityV8NetworkSafetySource                          `json:"network_safety,omitempty"`
-	SignalOverrides map[observability.Signal]ObservabilityV8SignalOverrideSource `json:"signal_overrides,omitempty"`
+	Path                string                                                       `json:"path,omitempty"`
+	Rotation            *ObservabilityV8EffectiveRotation                            `json:"rotation,omitempty"`
+	Listen              string                                                       `json:"listen,omitempty"`
+	Endpoint            string                                                       `json:"endpoint,omitempty"`
+	Protocol            string                                                       `json:"protocol,omitempty"`
+	Method              string                                                       `json:"method,omitempty"`
+	Headers             map[string]ObservabilityV8HeaderValue                        `json:"headers,omitempty"`
+	TokenEnv            string                                                       `json:"token_env,omitempty"`
+	BearerEnv           string                                                       `json:"bearer_env,omitempty"`
+	Index               string                                                       `json:"index,omitempty"`
+	Source              string                                                       `json:"source,omitempty"`
+	SourceType          string                                                       `json:"sourcetype,omitempty"`
+	SourceTypeOverrides map[observability.ProducerKey]string                         `json:"sourcetype_overrides,omitempty"`
+	LoggerName          string                                                       `json:"logger_name,omitempty"`
+	TimeoutMS           int                                                          `json:"timeout_ms,omitempty"`
+	TLS                 *ObservabilityV8TLSSource                                    `json:"tls,omitempty"`
+	Batch               *ObservabilityV8BatchSource                                  `json:"batch,omitempty"`
+	NetworkSafety       *ObservabilityV8NetworkSafetySource                          `json:"network_safety,omitempty"`
+	SignalOverrides     map[observability.Signal]ObservabilityV8SignalOverrideSource `json:"signal_overrides,omitempty"`
 }
 
 type ObservabilityV8EffectiveDestination struct {
@@ -366,6 +368,7 @@ func cloneObservabilityV8Destination(source ObservabilityV8EffectiveDestination)
 	}
 	result.Transport.Headers = cloneObservabilityV8Headers(source.Transport.Headers)
 	result.Transport.SignalOverrides = cloneObservabilityV8SignalOverrides(source.Transport.SignalOverrides)
+	result.Transport.SourceTypeOverrides = cloneObservabilityV8SourceTypeOverrides(source.Transport.SourceTypeOverrides)
 	if source.Transport.Rotation != nil {
 		rotation := *source.Transport.Rotation
 		result.Transport.Rotation = &rotation
@@ -420,6 +423,17 @@ func cloneObservabilityV8SignalOverrides(source map[observability.Signal]Observa
 		return nil
 	}
 	result := make(map[observability.Signal]ObservabilityV8SignalOverrideSource, len(source))
+	for key, value := range source {
+		result[key] = value
+	}
+	return result
+}
+
+func cloneObservabilityV8SourceTypeOverrides(source map[observability.ProducerKey]string) map[observability.ProducerKey]string {
+	if source == nil {
+		return nil
+	}
+	result := make(map[observability.ProducerKey]string, len(source))
 	for key, value := range source {
 		result[key] = value
 	}

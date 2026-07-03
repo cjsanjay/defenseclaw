@@ -57,6 +57,7 @@ def test_minimal_source_and_parity_contract_are_deterministic() -> None:
         name: list(signals) for name, signals in DESTINATION_CAPABILITIES.items()
     }
     assert contract["galileo_capabilities"] == ["traces"]
+    assert contract["profiles"] == ["none", "sensitive", "content", "strict", "legacy-v7"]
 
 
 def test_reference_source_validates_against_canonical_schema() -> None:
@@ -281,6 +282,102 @@ observability:
     with pytest.raises(V8ConfigError) as captured:
         load_validate_v8(partial)
     assert captured.value.path.endswith("signal_overrides.logs.endpoint")
+
+
+def test_legacy_v7_profile_and_adapter_compatibility_fields_validate() -> None:
+    source = """config_version: 8
+observability:
+  defaults: {redaction_profile: legacy-v7}
+  destinations:
+    - name: splunk
+      kind: splunk_hec
+      endpoint: https://splunk.example.test/services/collector/event
+      token_env: SPLUNK_HEC_TOKEN
+      sourcetype_overrides:
+        llm-judge-response: defenseclaw:judge
+        guardrail-verdict: defenseclaw:verdict
+    - name: otel-logs
+      kind: otlp
+      endpoint: https://otel.example.test
+      logger_name: defenseclaw.audit
+      send: {signals: [logs], buckets: ['*']}
+"""
+    validated = load_validate_v8(source)
+
+    assert validated.source["observability"]["defaults"]["redaction_profile"] == "legacy-v7"
+    assert validated.source["observability"]["destinations"][1]["logger_name"] == "defenseclaw.audit"
+
+
+@pytest.mark.parametrize(
+    "profile",
+    [
+        "redaction_profiles: {legacy-v7: {extends: strict}}",
+        "redaction_profiles: {compat: {extends: legacy-v7}}",
+    ],
+)
+def test_legacy_v7_is_reserved_and_not_extendable(profile: str) -> None:
+    with pytest.raises(V8ConfigError):
+        load_validate_v8(f"config_version: 8\nobservability:\n  {profile}\n")
+
+
+def test_logger_name_requires_selected_logs_and_is_otlp_only() -> None:
+    no_logs = """config_version: 8
+observability:
+  destinations:
+    - name: traces
+      kind: otlp
+      endpoint: https://otel.example.test
+      logger_name: defenseclaw.audit
+      send: {signals: [traces], buckets: ['*']}
+"""
+    with pytest.raises(V8ConfigError) as captured:
+        load_validate_v8(no_logs)
+    assert captured.value.path.endswith("logger_name")
+
+    wrong_kind = """config_version: 8
+observability:
+  destinations:
+    - name: archive
+      kind: http_jsonl
+      endpoint: https://archive.example.test
+      logger_name: defenseclaw.audit
+"""
+    with pytest.raises(V8ConfigError) as captured:
+        load_validate_v8(wrong_kind)
+    assert captured.value.keyword == "oneOf"
+
+
+def test_compatibility_adapter_fields_enforce_utf8_byte_bounds() -> None:
+    sourcetype = "é" * 129
+    source = {
+        "config_version": 8,
+        "observability": {
+            "destinations": [
+                {
+                    "name": "splunk",
+                    "kind": "splunk_hec",
+                    "endpoint": "https://splunk.example.test/services/collector/event",
+                    "token_env": "SPLUNK_HEC_TOKEN",
+                    "sourcetype_overrides": {"guardrail-verdict": sourcetype},
+                }
+            ]
+        },
+    }
+    with pytest.raises(V8ConfigError) as captured:
+        load_validate_v8(source)
+    assert captured.value.path.endswith("sourcetype_overrides.guardrail-verdict")
+
+    source["observability"]["destinations"] = [
+        {
+            "name": "otel",
+            "kind": "otlp",
+            "endpoint": "https://otel.example.test",
+            "logger_name": sourcetype,
+        }
+    ]
+    with pytest.raises(V8ConfigError) as captured:
+        load_validate_v8(source)
+    assert captured.value.path.endswith("logger_name")
 
 
 @pytest.mark.parametrize(

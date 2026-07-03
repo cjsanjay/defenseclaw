@@ -25,7 +25,7 @@
 # default redaction profile is none. Explicit send/routes replace the generated
 # destination default. Collection is evaluated before routing and sampling.
 #
-# Built-in redaction: none, sensitive, content, strict.
+# Built-in redaction: none, sensitive, content, strict, legacy-v7.
 # Route selectors: different fields AND; values inside one field OR.
 # Route evaluation: first match wins independently per destination and signal.
 # Secrets are references (for example token_env or {env: NAME}), never literals.
@@ -320,6 +320,9 @@ observability:
     index: main
     source: defenseclaw
     sourcetype: defenseclaw:event
+    sourcetype_overrides:
+      llm-judge-response: defenseclaw:judge
+      guardrail-verdict: defenseclaw:verdict
     # TLS verification defaults on. A CA path is read-only and may be shared.
     tls:
       insecure_skip_verify: false
@@ -402,6 +405,7 @@ observability:
       Authorization:
         env: OTEL_AUTHORIZATION
       X-Deployment: production
+    logger_name: defenseclaw.audit
     # TLS verification defaults on. A CA path is read-only and may be shared.
     tls:
       insecure: false

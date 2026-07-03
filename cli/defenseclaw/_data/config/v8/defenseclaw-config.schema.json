@@ -1293,7 +1293,8 @@
             "none",
             "sensitive",
             "content",
-            "strict"
+            "strict",
+            "legacy-v7"
           ]
         },
         {
@@ -1315,7 +1316,8 @@
                 "none",
                 "sensitive",
                 "content",
-                "strict"
+                "strict",
+                "legacy-v7"
               ]
             }
           }
@@ -1621,6 +1623,9 @@
           "type": "string",
           "maxLength": 256
         },
+        "sourcetype_overrides": {
+          "$ref": "#/$defs/sourcetypeOverrides"
+        },
         "tls": {
           "$ref": "#/$defs/httpTLS"
         },
@@ -1744,6 +1749,12 @@
         "headers": {
           "$ref": "#/$defs/headers"
         },
+        "logger_name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256,
+          "description": "OTel log instrumentation-scope name. Valid only when this destination selects logs."
+        },
         "tls": {
           "$ref": "#/$defs/otlpTLS"
         },
@@ -1797,6 +1808,19 @@
     "destinationEnabled": {
       "type": "boolean",
       "default": true
+    },
+    "sourcetypeOverrides": {
+      "type": "object",
+      "maxProperties": 1024,
+      "propertyNames": {
+        "$ref": "#/$defs/selectorToken"
+      },
+      "additionalProperties": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 256
+      },
+      "description": "Maps registered audit producer keys to Splunk sourcetypes. Registration and UTF-8 byte length are compiler-validated."
     },
     "sendRoutesExclusive": {
       "not": {
