@@ -428,6 +428,9 @@ func NewProviderV8Inactive(
 			sdkmetric.WithCardinalityLimit(v8MetricCardinalityLimit),
 			sdkmetric.WithExemplarFilter(exemplar.AlwaysOffFilter),
 		}
+		for _, reader := range preparedReaders {
+			meterOptions = append(meterOptions, sdkmetric.WithReader(reader))
+		}
 		cleanupReaders := func() {
 			v8BoundedPrepareCleanup(options.PrepareCleanupTimeout, func(cleanupContext context.Context) {
 				for index := len(preparedReaders) - 1; index >= 0; index-- {

@@ -704,6 +704,9 @@ func TestV8GenerationPipelineFactoryBindsExactCandidateAndOwnsChildren(t *testin
 		provider.DestinationAcknowledgedCanaryTrace("other", "0102030405060708090a0b0c0d0e0f10") {
 		t.Fatal("v8 provider did not use its generation-bound canary lookup")
 	}
+	if err := reader.Collect(context.Background(), &metricdata.ResourceMetrics{}); err != nil {
+		t.Fatalf("generation pipeline metric reader was not registered: %v", err)
+	}
 	_, span := provider.StartAgentSpan(context.Background(), "codex", "root", "root", "agent", "", "")
 	provider.EndAgentSpan(span, "")
 	if err := provider.Shutdown(context.Background()); err != nil {
