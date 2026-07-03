@@ -276,15 +276,18 @@ rules, and compatibility lifecycle. It references registered log identities and
 MUST NOT define a body schema, override a referenced family's bucket, or create an
 implicit family.
 
-The current declarative log-identity baseline contains 74 dotted event identities
-and twelve lifecycle/compatibility identities. Producer-derived default and
-contextual identities, including compatibility-window `legacy.audit.*` identities,
-are registered through the producer mappings rather than copied into another
-family list. The compiler fails if the current-state inventory of fourteen gateway
-types or 188 audit actions differs from the mappings, if a mapping can resolve to
-an unregistered identity, or if the resolved identity's bucket conflicts with its
-canonical family. Generated route/classification registries consume these mappings
-directly.
+The canonical log-identity baseline contains 75 dotted event identities and twelve
+lifecycle/compatibility identities. This includes `guardrail.judge.completed`,
+whose existing fixed `judge` producer mapping and distinct judge payload require a
+canonical guardrail log family rather than an alias to
+`guardrail.evaluation.completed`. Producer-derived contextual identities and
+compatibility-window `legacy.audit.*` identities are registered through producer
+mappings rather than copied into another family list. A `legacy.audit.*` identity
+is explicitly compatibility-only and has no generated family builder. The compiler
+fails if the current-state inventory of fourteen gateway types or 188 audit actions
+differs from the mappings, if a mapping can resolve to an unregistered identity, or
+if a non-legacy resolved identity's bucket conflicts with its canonical family.
+Generated route/classification registries consume these mappings directly.
 
 ## 6. Generated Public Artifacts
 

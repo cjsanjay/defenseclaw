@@ -690,7 +690,7 @@ Required cases:
 - Generated JSON Schema bundle, compact catalog, Markdown reference, Go/Python
   constants/builders, field-class maps, fixtures, and Galileo/OpenInference
   projections are deterministic and checked for drift.
-- Inventory tests preserve 25 trace families, 131 metric instruments, 74 dotted
+- Inventory tests preserve 25 trace families, 131 metric instruments, 75 dotted
   log identities, twelve lifecycle/compatibility identities, fourteen gateway
   event mappings, and 188 audit-action mappings. They prove producer mappings do
   not create implicit families or override canonical bucket ownership.
