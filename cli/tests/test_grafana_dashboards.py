@@ -186,8 +186,14 @@ def test_live_inventory_distinguishes_data_zero_empty_and_interactive(
         ],
     }
 
-    def fake_request(url: str, params: dict[str, str] | None = None) -> dict[str, object]:
+    def fake_request(
+        url: str,
+        params: dict[str, str] | None = None,
+        *,
+        timeout_seconds: float,
+    ) -> dict[str, object]:
         assert params is not None
+        assert timeout_seconds == audit.DEFAULT_LIVE_QUERY_TIMEOUT_SECONDS
         if "127.0.0.1:9090" in url:
             value = "2" if "fixture_data_total" in params["query"] else "0"
             return {
@@ -294,8 +300,14 @@ def test_live_inventory_checks_tempo_before_search(monkeypatch: pytest.MonkeyPat
         call_order.append("ready")
         return None
 
-    def fake_request(_url: str, params: dict[str, str] | None = None) -> dict[str, object]:
+    def fake_request(
+        _url: str,
+        params: dict[str, str] | None = None,
+        *,
+        timeout_seconds: float,
+    ) -> dict[str, object]:
         assert params is not None
+        assert timeout_seconds == audit.DEFAULT_LIVE_QUERY_TIMEOUT_SECONDS
         assert params["q"] == (
             '{ resource.service.name = "defenseclaw" '
             '&& name = "defenseclaw.ai.discovery" }'
@@ -311,6 +323,84 @@ def test_live_inventory_checks_tempo_before_search(monkeypatch: pytest.MonkeyPat
     assert errors == []
     assert call_order == ["ready", "search"]
     assert inventory[0]["panels"][0]["status"] == "data"
+
+
+def test_live_inventory_caps_each_query_by_shared_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    audit = _load_audit_module()
+    observed_timeouts: list[float] = []
+    dashboard = {
+        "uid": "deadline-fixture",
+        "title": "Deadline fixture",
+        "panels": [
+            {
+                "type": "stat",
+                "title": "Bounded query",
+                "datasource": {"type": "prometheus", "uid": "defenseclaw-prometheus"},
+                "targets": [{"expr": "fixture_total", "instant": True}],
+            },
+        ],
+    }
+
+    def fake_request(
+        _url: str,
+        _params: dict[str, str] | None = None,
+        *,
+        timeout_seconds: float,
+    ) -> dict[str, object]:
+        observed_timeouts.append(timeout_seconds)
+        return {"status": "success", "data": {"result": []}}
+
+    monkeypatch.setattr(audit.time, "monotonic", lambda: 100.0)
+    monkeypatch.setattr(audit, "request_json", fake_request)
+
+    inventory, errors = audit.live_inventory(
+        [(Path("fixture.json"), dashboard)],
+        deadline=112.5,
+        query_timeout_seconds=60,
+    )
+
+    assert errors == []
+    assert inventory[0]["status_counts"]["empty"] == 1
+    assert observed_timeouts == [12.5]
+
+
+def test_live_inventory_reports_genuine_backend_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    audit = _load_audit_module()
+    dashboard = {
+        "uid": "timeout-fixture",
+        "title": "Timeout fixture",
+        "panels": [
+            {
+                "type": "logs",
+                "title": "Hung backend",
+                "datasource": {"type": "loki", "uid": "defenseclaw-loki"},
+                "targets": [{"expr": '{service_name="defenseclaw"}'}],
+            },
+        ],
+    }
+
+    def fake_request(
+        _url: str,
+        _params: dict[str, str] | None = None,
+        *,
+        timeout_seconds: float,
+    ) -> dict[str, object]:
+        assert timeout_seconds == 7
+        raise audit.AuditError("timed out")
+
+    monkeypatch.setattr(audit, "request_json", fake_request)
+
+    inventory, errors = audit.live_inventory(
+        [(Path("fixture.json"), dashboard)],
+        query_timeout_seconds=7,
+    )
+
+    assert inventory[0]["status_counts"]["error"] == 1
+    assert errors == ["timeout-fixture/Hung backend: timed out"]
 
 
 def test_tempo_target_query_uses_operator_correct_multi_value_join() -> None:

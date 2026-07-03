@@ -137,6 +137,10 @@ class AuditError(RuntimeError):
     pass
 
 
+DEFAULT_REQUEST_TIMEOUT_SECONDS = 10.0
+DEFAULT_LIVE_QUERY_TIMEOUT_SECONDS = 60.0
+
+
 def load_dashboards(path: Path) -> list[tuple[Path, dict[str, Any]]]:
     dashboards: list[tuple[Path, dict[str, Any]]] = []
     for dashboard_path in sorted(path.glob("*.json")):
@@ -477,17 +481,39 @@ def static_audit(
     return dashboards, errors
 
 
-def request_json(url: str, params: dict[str, str] | None = None) -> dict[str, Any]:
+def request_json(
+    url: str,
+    params: dict[str, str] | None = None,
+    *,
+    timeout_seconds: float = DEFAULT_REQUEST_TIMEOUT_SECONDS,
+) -> dict[str, Any]:
     if params:
         url = f"{url}?{urllib.parse.urlencode(params)}"
     try:
-        with urllib.request.urlopen(url, timeout=10) as response:
+        with urllib.request.urlopen(url, timeout=timeout_seconds) as response:
             return json.load(response)
     except urllib.error.HTTPError as exc:
         body = exc.read().decode("utf-8", "replace")
         raise AuditError(f"{url}: HTTP {exc.code}: {body[:400]}") from exc
     except (OSError, json.JSONDecodeError) as exc:
         raise AuditError(f"{url}: {exc}") from exc
+
+
+def live_query_timeout_seconds(
+    *,
+    deadline: float | None,
+    configured_seconds: float,
+) -> float:
+    """Bound one backend request by both its configured and global budgets."""
+
+    if configured_seconds <= 0:
+        raise AuditError("live query timeout must be greater than zero")
+    if deadline is None:
+        return configured_seconds
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise AuditError("live dashboard audit exceeded its global deadline")
+    return min(configured_seconds, remaining)
 
 
 def _numeric_result_status(result: Any) -> str:
@@ -579,6 +605,7 @@ def live_inventory(
     *,
     range_seconds: int = 48 * 60 * 60,
     deadline: float | None = None,
+    query_timeout_seconds: float = DEFAULT_LIVE_QUERY_TIMEOUT_SECONDS,
 ) -> tuple[list[dict[str, Any]], list[str]]:
     """Measure whether every retained panel can render against the local stack.
 
@@ -653,7 +680,14 @@ def live_inventory(
                                 },
                             )
                             endpoint = "http://127.0.0.1:9090/api/v1/query_range"
-                        result = request_json(endpoint, params)
+                        result = request_json(
+                            endpoint,
+                            params,
+                            timeout_seconds=live_query_timeout_seconds(
+                                deadline=deadline,
+                                configured_seconds=query_timeout_seconds,
+                            ),
+                        )
                         if result.get("status") != "success":
                             raise AuditError(str(result))
                         target_statuses.append(
@@ -680,6 +714,10 @@ def live_inventory(
                         result = request_json(
                             endpoint,
                             params,
+                            timeout_seconds=live_query_timeout_seconds(
+                                deadline=deadline,
+                                configured_seconds=query_timeout_seconds,
+                            ),
                         )
                         if result.get("status") != "success":
                             raise AuditError(str(result))
@@ -703,6 +741,10 @@ def live_inventory(
                                     "start": str(int(start_seconds)),
                                     "end": str(int(now_seconds)),
                                 },
+                                timeout_seconds=live_query_timeout_seconds(
+                                    deadline=deadline,
+                                    configured_seconds=query_timeout_seconds,
+                                ),
                             )
                             target_statuses.append("data" if result.get("traces") else "empty")
                 except AuditError as exc:
@@ -773,6 +815,7 @@ def live_audit(
     dashboards: list[tuple[Path, dict[str, Any]]],
     *,
     deadline: float | None = None,
+    query_timeout_seconds: float = DEFAULT_LIVE_QUERY_TIMEOUT_SECONDS,
 ) -> list[str]:
     errors: list[str] = []
     try:
@@ -805,6 +848,10 @@ def live_audit(
                         result = request_json(
                             "http://127.0.0.1:9090/api/v1/query",
                             {"query": interpolate(expression)},
+                            timeout_seconds=live_query_timeout_seconds(
+                                deadline=deadline,
+                                configured_seconds=query_timeout_seconds,
+                            ),
                         )
                         if result.get("status") != "success":
                             raise AuditError(str(result))
@@ -822,7 +869,14 @@ def live_audit(
                         else:
                             params = {"query": query, "time": str(now_ns), "limit": "1"}
                             endpoint = "http://127.0.0.1:3100/loki/api/v1/query"
-                        result = request_json(endpoint, params)
+                        result = request_json(
+                            endpoint,
+                            params,
+                            timeout_seconds=live_query_timeout_seconds(
+                                deadline=deadline,
+                                configured_seconds=query_timeout_seconds,
+                            ),
+                        )
                         if result.get("status") != "success":
                             raise AuditError(str(result))
                     elif datasource == "tempo" and tempo_error is None:
@@ -831,6 +885,10 @@ def live_audit(
                             request_json(
                                 "http://127.0.0.1:3200/api/search",
                                 {"q": interpolate(query), "limit": "1"},
+                                timeout_seconds=live_query_timeout_seconds(
+                                    deadline=deadline,
+                                    configured_seconds=query_timeout_seconds,
+                                ),
                             )
                 except AuditError as exc:
                     errors.append(f"{uid}/{title}: {exc}")
@@ -863,25 +921,40 @@ def main() -> int:
         default=300,
         help="global deadline shared by live compilation and inventory (default: 300)",
     )
+    parser.add_argument(
+        "--live-query-timeout-seconds",
+        type=int,
+        default=int(DEFAULT_LIVE_QUERY_TIMEOUT_SECONDS),
+        help="maximum wait for one backend query, capped by the shared live deadline (default: 60)",
+    )
     args = parser.parse_args()
 
     if args.inventory_hours <= 0:
         parser.error("--inventory-hours must be greater than zero")
     if args.live_timeout_seconds <= 0:
         parser.error("--live-timeout-seconds must be greater than zero")
+    if args.live_query_timeout_seconds <= 0:
+        parser.error("--live-query-timeout-seconds must be greater than zero")
 
     dashboards, errors = static_audit(require_packaged=args.require_packaged)
     live_deadline = time.monotonic() + args.live_timeout_seconds
     if (args.live or args.inventory) and not errors:
         errors.extend(backend_readiness_errors())
     if args.live and not errors:
-        errors.extend(live_audit(dashboards, deadline=live_deadline))
+        errors.extend(
+            live_audit(
+                dashboards,
+                deadline=live_deadline,
+                query_timeout_seconds=args.live_query_timeout_seconds,
+            ),
+        )
     inventory: list[dict[str, Any]] = []
     if args.inventory and not errors:
         inventory, inventory_errors = live_inventory(
             dashboards,
             range_seconds=args.inventory_hours * 60 * 60,
             deadline=live_deadline,
+            query_timeout_seconds=args.live_query_timeout_seconds,
         )
         errors.extend(inventory_errors)
 
