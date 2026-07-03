@@ -1,0 +1,158 @@
+schema_version: 1
+cases:
+  - name: minimal-empty-observability
+    valid: true
+    source: |
+      config_version: 8
+      observability: {}
+
+  - name: absent-observability
+    valid: true
+    source: |
+      config_version: 8
+
+  - name: capability-default-otlp
+    valid: true
+    source: |
+      config_version: 8
+      observability:
+        destinations:
+          - name: collector
+            kind: otlp
+            enabled: false
+            endpoint: https://collector.example.test
+
+  - name: explicit-console-logs
+    valid: true
+    source: |
+      config_version: 8
+      observability:
+        destinations:
+          - name: console
+            kind: console
+            send: {signals: [logs], buckets: [platform.health]}
+
+  - name: galileo-traces-only
+    valid: true
+    source: |
+      config_version: 8
+      observability:
+        destinations:
+          - name: galileo
+            kind: otlp
+            preset: galileo
+            enabled: false
+            endpoint: https://collector.example.test/v1/traces
+
+  - name: custom-detector-groups
+    valid: true
+    source: |
+      config_version: 8
+      observability:
+        redaction_profiles:
+          soc:
+            extends: sensitive
+            detectors: [pii, credentials, secrets]
+            field_classes: {content: detect, credential: remove, path: hash}
+
+  - name: duplicate-top-level-key
+    valid: false
+    source: |
+      config_version: 8
+      observability: {}
+      observability: {}
+
+  - name: yaml-alias
+    valid: false
+    source: |
+      config_version: 8
+      source: &source {}
+      observability: *source
+
+  - name: yaml-merge
+    valid: false
+    source: |
+      config_version: 8
+      source: &source {}
+      observability:
+        <<: *source
+
+  - name: unknown-observability-field
+    valid: false
+    source: |
+      config_version: 8
+      observability:
+        mystery: true
+
+  - name: legacy-otel-block
+    valid: false
+    source: |
+      config_version: 8
+      otel: {}
+
+  - name: unknown-detector-group
+    valid: false
+    source: |
+      config_version: 8
+      observability:
+        redaction_profiles:
+          invalid:
+            extends: sensitive
+            detectors: [biometrics]
+
+  - name: unsupported-console-traces
+    valid: false
+    source: |
+      config_version: 8
+      observability:
+        destinations:
+          - name: console
+            kind: console
+            send: {signals: [traces], buckets: [agent.lifecycle]}
+
+  - name: unknown-profile-reference
+    valid: false
+    source: |
+      config_version: 8
+      observability:
+        buckets:
+          model.io: {redaction_profile: undefined}
+
+  - name: trace-family-limit-too-low
+    valid: false
+    source: |
+      config_version: 8
+      observability:
+        trace_policy:
+          limits: {max_attributes_per_span: 31}
+
+  - name: duplicate-destination-name
+    valid: false
+    source: |
+      config_version: 8
+      observability:
+        destinations:
+          - {name: duplicate, kind: console}
+          - {name: duplicate, kind: console}
+
+  - name: blocked-private-export-endpoint
+    valid: false
+    source: |
+      config_version: 8
+      observability:
+        destinations:
+          - name: archive
+            kind: http_jsonl
+            endpoint: https://10.1.2.3/events
+
+  - name: float-config-version
+    valid: false
+    source: |
+      config_version: 8.0
+
+  - name: non-finite-number
+    valid: false
+    source: |
+      config_version: 8
+      llm:
+        timeout: .nan
