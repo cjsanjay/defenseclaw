@@ -6,7 +6,7 @@ goal_status: active
 current_phase: P2
 target_config_version: 8
 baseline_commit: fd13acedfcffc0cc431d5a72f329b56b50b22baa
-last_verified_commit: c29cdddc4e785463d8f26da43df199897051c163
+last_verified_commit: b8a2a982366fc6e6040d39f0b726bc75286dcfa9
 last_updated: 2026-07-02
 ```
 
@@ -31,8 +31,8 @@ or a plausible-looking dashboard is not completion.
 
 | Field | Value |
 |---|---|
-| Active work package | `P2-WP01` — immutable generic canonical-record substrate and current classified-log builder |
-| Ready queue | `P2-WP02` after the canonical envelope, immutable payload, deterministic builder, and registration validation are complete |
+| Active work package | `P2-WP03` — central redaction profiles, detectors, field transforms, and cross-language `hash-v1` |
+| Ready queue | `P2-WP04` after the central projection/redaction engine and Go/Python parity gates are complete |
 | Blocked | None |
 | Next phase gate | `P2-GATE` — canonical router, redaction, SQLite, retention, and representative safe-path integration without producer-wide cutover |
 | Root coordinator | Primary Codex thread |
@@ -210,9 +210,9 @@ substitute a converter-local family list, `*`, or all-catalog-buckets fallback.
 
 | ID | Status | Owner | Depends on | Deliverable | Verification/evidence |
 |---|---|---|---|---|---|
-| `P2-WP01` | `READY` | root + subagents | `P1-GATE` | Immutable generic canonical record substrate, deterministic current classified-log builder, and strict registered-identity validation; generated trace/metric family builders remain `P5-WP02` | Schema/envelope/value immutability/builders/serialization/bounds/registration/exhaustiveness tests |
-| `P2-WP02` | `TODO` | unassigned | `P2-WP01` | Collection/floor gates and per-destination route compiler/evaluator | Routing/fan-out/collection tests |
-| `P2-WP03` | `TODO` | unassigned | `P2-WP01` | Central profiles/detectors/field transforms and cross-language `hash-v1` | Detector/property/Go-Python parity tests |
+| `P2-WP01` | `DONE` | root + subagents | `P1-GATE` | Immutable generic canonical record substrate, deterministic current classified-log builder, and strict registered-identity validation; generated trace/metric family builders remain `P5-WP02` | Commits `13fddfe7c..b328351a6`; lossless lexical JSON, exact union/classes/bounds, immutable values/records, registry-resolved builders, authenticated minimal floor, adversarial normal/race/vet gates |
+| `P2-WP02` | `DONE` | root + subagent | `P2-WP01` | Collection/floor gates and per-destination route compiler/evaluator | Commit `b8a2a9823`; immutable metadata, zero-allocation collection admission, floor over/understatement prevention, ordered selectors/drop/fan-out/capability tests, normal/race/vet gates |
+| `P2-WP03` | `READY` | root + subagents | `P2-WP01` | Central profiles/detectors/field transforms and cross-language `hash-v1` | Detector/property/Go-Python parity tests |
 | `P2-WP04` | `TODO` | unassigned | `P2-WP01..03` | Implicit SQLite store, projections, integrity, judge separation | Migration/transaction/query tests |
 | `P2-WP05` | `TODO` | unassigned | `P2-WP04` | Global retention reaper and immutable atomic runtime graph/reload/health | Fake-clock/race/failure tests |
 | `P2-GATE` | `TODO` | root | `P2-WP01..05` | Representative producers route once through safe canonical path | Exactly-once/failure-injection evidence |
@@ -324,6 +324,8 @@ only “passed.” A relevant change invalidates old evidence.
 | `V-0013` | 2026-07-02 | `c29cdddc4e785463d8f26da43df199897051c163` | P1-GATE | Broad v8 Python suite covering migration, compatibility, config, YAML, parity, reference, spec, config-v8 commands, plan, inspect, and environment-registry coverage | 334 passed in 13.92s | root |
 | `V-0014` | 2026-07-02 | `c29cdddc4e785463d8f26da43df199897051c163` | P1-GATE | `go test` normal and race plus `go vet` for `./internal/observability ./internal/config ./internal/cli ./schemas`; `make check` | Go normal/race/vet passed; v7 parity, 91-decision spec, inventory, 23 schemas/131 metrics, 14 dashboards/313 panels, Go/TS provider coverage, catalog, and upgrade manifest passed | root |
 | `V-0015` | 2026-07-02 | `c29cdddc4e785463d8f26da43df199897051c163` | P1-GATE | Build `/tmp/defenseclaw-v8`; convert and run `config-v8 validate` for full local-observability and multi-destination/audit/filter candidates | Both real Go compiler results returned `valid:true`; this proves candidate validity, not generated family mapping completeness | root |
+| `V-0016` | 2026-07-02 | `b328351a64554dcf47a046d5ed24fd1f0290d833` | P2-WP01 | `go test ./internal/observability -count=1`; `go test -race ./internal/observability -count=1`; `go vet ./internal/observability`; `git diff --check` | Canonical value/record/builder normal and race suites passed after two adversarial subagent passes; all nine original trust-boundary/serialization findings closed or explicitly assigned to generated P5 family validation | root + subagents |
+| `V-0017` | 2026-07-02 | `b8a2a982366fc6e6040d39f0b726bc75286dcfa9` | P2-WP02 | `make check-observability-v8-spec`; focused spec tests; `go test ./internal/observability ./internal/observability/router ./internal/config -count=1`; router/record race; vet; diff check | 92-decision spec and 5 tests passed; router/record/config normal suites, record/router race, and vet passed; disabled collection is lazy, current log floor eligibility is catalog-derived and immutable, floor is minimal/local-only, and destination routing is ordered independent fan-out | root + subagents |
 
 Final integration requires, at minimum:
 
@@ -355,6 +357,7 @@ and exact-trace canary acknowledgement against its conformance harness.
 | `C-0003` | 2026-07-02 | architecture | `P1-WP03`, `P5-WP01..02` | D-019, P-010, P-030, P-046 | Python validates source/schema semantics and renders the masked source; canonical effective compilation and registered action/event selector validation always run in Go. P5's sole registry compiler will generate the shared Python selector constants instead of introducing a hand-maintained duplicate in P1. | complete |
 | `C-0004` | 2026-07-02 | dependency | `P1-WP04`, `P1-GATE`, `P5-WP06`, `P7-WP01` | D-020, P-030, P-044, P-046, P-056, P-057 | Split converter-engine/API completion from generated family-selection integration: P1 may unblock canonical runtime work only after strict typed fail-closed engine tests; P5's sole compiler owns the complete compatibility artifact and mapping goldens, which remain mandatory before automatic migration or release. | complete |
 | `C-0005` | 2026-07-02 | gate | `P1-WP04`, `P1-GATE`, `P2-WP01`, `P5-WP06`, `P7-WP01` | D-020, P-030, P-044, P-046, P-056, P-057 | Close P1 at `c29cdddc4` after independent/subagent/Claude review and exact-HEAD gates. The immutable plan and converter engine/API may unblock P2; generated v7 family eligibility, complete migration goldens, PR #403/#412 dashboard equivalence, Galileo conformance, and activation remain mandatory in their existing P5/P6/P7 work packages. | complete |
+| `C-0006` | 2026-07-02 | security architecture | `P2-WP01..02`, `P5-WP02` | D-001, D-016, P-042, P-058 | Public generic construction requires complete exact leaf classes and cannot assert schema derivation or mandatory state. Current log metadata/builders resolve registered producer kind/key/typed facts internally; disabled-floor construction uses a separate content-free authenticated marker accepted only by local SQLite. Generated event-to-bucket ownership, family outcome subsets, schema-derived classes, and richer reviewed floor bodies remain solely P5 registry outputs. | complete |
 
 A new product choice requires a new decision ID and traceability row. A behavior
 change updates its contract and required test in the same change. Deferred release
