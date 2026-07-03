@@ -11,6 +11,7 @@ import (
 	"math"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -251,6 +252,168 @@ func TestRetentionUsesTwoBatchesFor1001RowsAndYieldsForInteractiveWrite(t *testi
 	}
 	if got := countRetentionRows(t, store.db, "activity_events"); got != 1 {
 		t.Fatalf("interactive row count=%d want 1", got)
+	}
+}
+
+func TestRetentionACKMaterializationUsesTheSameBoundedCandidateBatch(t *testing.T) {
+	store, judge := newRetentionStores(t)
+	now := time.Date(2026, 7, 3, 12, 0, 0, 0, time.UTC)
+	old := now.Add(-91 * 24 * time.Hour).Format(time.RFC3339Nano)
+	tx, err := store.db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	statement, err := tx.Prepare(`INSERT INTO audit_events
+		(id, timestamp, action, actor, details, severity)
+		VALUES (?, ?, ?, 'operator', 'ack', 'ACK')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for index := 0; index < 1001; index++ {
+		if _, err := statement.Exec(fmt.Sprintf("bounded-ack-%04d", index), old, string(ActionAlert)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_ = statement.Close()
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	yields := 0
+	reaper := newRetentionReaperAt(t, store, judge, 90, now, RetentionOptions{}, retentionHooks{
+		yield: func(ctx context.Context) error {
+			yields++
+			if yields == 1 {
+				if got := countRetentionRows(t, store.db, "alert_acknowledgement_baselines"); got != 1000 {
+					t.Fatalf("first ACK baseline batch=%d want 1000", got)
+				}
+				if got := countRetentionRows(t, store.db, "alert_acknowledgement_projection"); got != 1000 {
+					t.Fatalf("first ACK projection batch=%d want 1000", got)
+				}
+				if got := countRetentionLike(t, store.db, "audit_events", "bounded-ack-%"); got != 1 {
+					t.Fatalf("first ACK delete left %d candidates want 1", got)
+				}
+			}
+			return ctx.Err()
+		},
+	})
+	result, err := reaper.Run(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.RowsDeleted[RetentionAuditEvents] != 1001 || result.BatchCount != 2 || yields != 2 {
+		t.Fatalf("bounded ACK result=%#v batches=%d yields=%d",
+			result.RowsDeleted, result.BatchCount, yields)
+	}
+	if countRetentionRows(t, store.db, "alert_acknowledgement_baselines") != 1001 ||
+		countRetentionRows(t, store.db, "alert_acknowledgement_projection") != 1001 {
+		t.Fatal("bounded ACK materialization did not preserve every candidate baseline/projection")
+	}
+}
+
+func TestRetentionActiveDeleteTransactionAllowsReaderAndSerializesWriter(t *testing.T) {
+	store, judge := newRetentionStores(t)
+	now := time.Date(2026, 7, 3, 12, 0, 0, 0, time.UTC)
+	if _, err := store.db.Exec(`INSERT INTO activity_events
+		(id, timestamp, actor, action, target_type, target_id)
+		VALUES ('contention-old', ?, 'operator', 'config-update', 'config', 'old')`,
+		now.Add(-91*24*time.Hour).Format(time.RFC3339Nano)); err != nil {
+		t.Fatal(err)
+	}
+	external, err := openSQLite(store.dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = external.Close() })
+	if err := external.PingContext(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	transactionActive := make(chan struct{})
+	allowCommit := make(chan struct{})
+	reaper := newRetentionReaperAt(t, store, judge, 90, now, RetentionOptions{}, retentionHooks{
+		beforeAuditBatchCommit: func(class RetentionTableClass) error {
+			if class == RetentionActivityEvents {
+				close(transactionActive)
+				<-allowCommit
+			}
+			return nil
+		},
+	})
+	runDone := make(chan error, 1)
+	go func() {
+		_, err := reaper.Run(t.Context())
+		runDone <- err
+	}()
+	select {
+	case <-transactionActive:
+	case <-time.After(5 * time.Second):
+		close(allowCommit)
+		t.Fatal("retention deletion transaction did not become active")
+	}
+
+	var visible int
+	if err := external.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM activity_events
+		WHERE id='contention-old'`).Scan(&visible); err != nil {
+		close(allowCommit)
+		t.Fatal(err)
+	}
+	if visible != 1 {
+		close(allowCommit)
+		t.Fatalf("concurrent reader observed uncommitted deletion: %d", visible)
+	}
+
+	writerStarted := make(chan struct{})
+	writerDone := make(chan error, 1)
+	waitCountBefore := store.db.Stats().WaitCount
+	go func() {
+		close(writerStarted)
+		_, err := store.db.ExecContext(t.Context(), `INSERT INTO activity_events
+			(id, timestamp, actor, action, target_type, target_id)
+			VALUES ('contention-current', ?, 'operator', 'config-update', 'config', 'current')`,
+			now.Format(time.RFC3339Nano))
+		writerDone <- err
+	}()
+	<-writerStarted
+	waitDeadline := time.NewTimer(5 * time.Second)
+	defer waitDeadline.Stop()
+	for store.db.Stats().WaitCount <= waitCountBefore {
+		select {
+		case err := <-writerDone:
+			close(allowCommit)
+			t.Fatalf("concurrent writer completed before retention commit: %v", err)
+		case <-waitDeadline.C:
+			close(allowCommit)
+			t.Fatal("concurrent writer did not enter the store connection wait queue")
+		default:
+			runtime.Gosched()
+		}
+	}
+	select {
+	case err := <-writerDone:
+		close(allowCommit)
+		t.Fatalf("queued writer completed before retention commit: %v", err)
+	default:
+	}
+	close(allowCommit)
+	select {
+	case err := <-writerDone:
+		if err != nil {
+			t.Fatalf("serialized writer failed after retention commit: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("serialized writer did not resume after retention commit")
+	}
+	select {
+	case err := <-runDone:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("retention did not finish after releasing active transaction")
+	}
+	if countRetentionLike(t, store.db, "activity_events", "contention-old") != 0 ||
+		countRetentionLike(t, store.db, "activity_events", "contention-current") != 1 {
+		t.Fatal("contention test lost the committed retention delete or concurrent writer")
 	}
 }
 
@@ -641,7 +804,7 @@ func TestRetentionStartupRejectsForgedTimestampIndex(t *testing.T) {
 	}
 }
 
-func TestRetentionScanFindingCandidateDeduplicationPreservesBatchLimit(t *testing.T) {
+func TestRetentionScanFindingOwnAgePreservesBatchLimit(t *testing.T) {
 	store, judge := newRetentionStores(t)
 	now := time.Date(2026, 7, 3, 12, 0, 0, 0, time.UTC)
 	parentTime := now.Add(-100 * 24 * time.Hour)
@@ -683,6 +846,45 @@ func TestRetentionScanFindingCandidateDeduplicationPreservesBatchLimit(t *testin
 	}
 }
 
+func TestRetentionOldScanParentDoesNotDeleteBoundaryOrNewerChildren(t *testing.T) {
+	store, judge := newRetentionStores(t)
+	now := time.Date(2026, 7, 3, 12, 0, 0, 0, time.UTC)
+	cutoff := now.Add(-90 * 24 * time.Hour)
+	if _, err := store.db.Exec(`INSERT INTO scan_results
+		(id, scanner, target, timestamp) VALUES ('mixed-age-parent', 'scanner', 'target', ?)`,
+		cutoff.Add(-time.Nanosecond).Format(time.RFC3339Nano)); err != nil {
+		t.Fatal(err)
+	}
+	for _, fixture := range []struct {
+		id string
+		ts time.Time
+	}{
+		{id: "mixed-age-equal", ts: cutoff},
+		{id: "mixed-age-after", ts: cutoff.Add(time.Nanosecond)},
+	} {
+		if _, err := store.db.Exec(`INSERT INTO scan_findings
+			(id, scan_id, scanner, target, severity, timestamp)
+			VALUES (?, 'mixed-age-parent', 'scanner', 'target', 'LOW', ?)`,
+			fixture.id, fixture.ts.Format(time.RFC3339Nano)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	result, err := newRetentionReaperAt(
+		t, store, judge, 90, now, RetentionOptions{}, retentionHooks{},
+	).Run(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.RowsDeleted[RetentionScanFindings] != 0 ||
+		result.RowsDeleted[RetentionScanResults] != 0 {
+		t.Fatalf("mixed-age scan deletion result=%#v", result.RowsDeleted)
+	}
+	if countRetentionLike(t, store.db, "scan_findings", "mixed-age-%") != 2 ||
+		countRetentionLike(t, store.db, "scan_results", "mixed-age-parent") != 1 {
+		t.Fatal("old parent caused boundary/newer scan children to be deleted")
+	}
+}
+
 func assertRetentionDeletePlansUseIndexes(t *testing.T, store *Store, cutoff int64) {
 	t.Helper()
 	wantIndexes := map[RetentionTableClass][]string{
@@ -690,11 +892,7 @@ func assertRetentionDeletePlansUseIndexes(t *testing.T, store *Store, cutoff int
 		RetentionActivityEvents:      {"idx_retention_activity_events_timestamp"},
 		RetentionNetworkEgressEvents: {"idx_retention_network_egress_timestamp"},
 		RetentionSinkHealth:          {"idx_retention_sink_health_timestamp"},
-		RetentionScanFindings: {
-			"idx_retention_scan_findings_timestamp",
-			"idx_retention_scan_results_timestamp",
-			"idx_scan_findings_scan_id",
-		},
+		RetentionScanFindings:        {"idx_retention_scan_findings_timestamp"},
 		RetentionLegacyFindings: {
 			"idx_retention_scan_results_timestamp",
 			"idx_finding_scan",
@@ -702,9 +900,13 @@ func assertRetentionDeletePlansUseIndexes(t *testing.T, store *Store, cutoff int
 		RetentionScanResults: {"idx_retention_scan_results_timestamp"},
 	}
 	for class, indexes := range wantIndexes {
-		statement, err := retentionAuditDeleteStatement(class)
-		if err != nil {
-			t.Fatal(err)
+		statement := retentionAuditCandidateSelect
+		if class != RetentionAuditEvents {
+			var err error
+			statement, err = retentionAuditDeleteStatement(class)
+			if err != nil {
+				t.Fatal(err)
+			}
 		}
 		rows, err := store.db.Query(`EXPLAIN QUERY PLAN `+statement, cutoff, RetentionBatchSize)
 		if err != nil {

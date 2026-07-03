@@ -131,6 +131,7 @@ type retentionHooks struct {
 	now                           func() time.Time
 	yield                         func(context.Context) error
 	afterTimestampRepairs         func() error
+	beforeAuditBatchCommit        func(RetentionTableClass) error
 	beforeScanParentDrain         func() error
 	afterLegacyJudgeCommit        func() error
 	afterAuthoritativeJudgeCommit func() error
@@ -673,8 +674,14 @@ func (reaper *RetentionReaper) deleteAuditBatch(
 			return beginErr
 		}
 		defer tx.Rollback() //nolint:errcheck
+		var candidateCount int64
 		if spec.class == RetentionAuditEvents {
-			if baselineErr := materializeRetentionACKBaselines(ctx, tx, cutoff, baselineAt); baselineErr != nil {
+			var candidateErr error
+			candidateCount, candidateErr = materializeRetentionAuditCandidates(ctx, tx, cutoffUnixNano)
+			if candidateErr != nil {
+				return candidateErr
+			}
+			if baselineErr := materializeRetentionACKBaselines(ctx, tx, baselineAt); baselineErr != nil {
 				return baselineErr
 			}
 		}
@@ -682,7 +689,13 @@ func (reaper *RetentionReaper) deleteAuditBatch(
 		if statementErr != nil {
 			return statementErr
 		}
-		res, execErr := tx.ExecContext(ctx, statement, cutoffUnixNano, RetentionBatchSize)
+		var res sql.Result
+		var execErr error
+		if spec.class == RetentionAuditEvents {
+			res, execErr = tx.ExecContext(ctx, statement)
+		} else {
+			res, execErr = tx.ExecContext(ctx, statement, cutoffUnixNano, RetentionBatchSize)
+		}
 		if execErr != nil {
 			return execErr
 		}
@@ -692,6 +705,14 @@ func (reaper *RetentionReaper) deleteAuditBatch(
 		}
 		if rows > RetentionBatchSize {
 			return errors.New("retention batch exceeded fixed limit")
+		}
+		if spec.class == RetentionAuditEvents && rows != candidateCount {
+			return errors.New("retention audit candidate batch changed within transaction")
+		}
+		if rows > 0 && reaper.hooks.beforeAuditBatchCommit != nil {
+			if hookErr := reaper.hooks.beforeAuditBatchCommit(spec.class); hookErr != nil {
+				return hookErr
+			}
 		}
 		if commitErr := tx.Commit(); commitErr != nil {
 			return commitErr
@@ -706,9 +727,7 @@ func retentionAuditDeleteStatement(class RetentionTableClass) (string, error) {
 	switch class {
 	case RetentionAuditEvents:
 		return `DELETE FROM audit_events WHERE id IN (
-			SELECT id FROM audit_events
-			WHERE retention_timestamp_unix_nano < ?
-			ORDER BY retention_timestamp_unix_nano ASC, id ASC LIMIT ?
+			SELECT id FROM retention_v8_audit_candidates
 		)`, nil
 	case RetentionActivityEvents:
 		return `DELETE FROM activity_events WHERE id IN (
@@ -730,25 +749,9 @@ func retentionAuditDeleteStatement(class RetentionTableClass) (string, error) {
 		)`, nil
 	case RetentionScanFindings:
 		return `DELETE FROM scan_findings WHERE id IN (
-			SELECT candidate.id FROM (
-				SELECT matches.id AS id, MIN(matches.instant) AS instant
-				FROM (
-				SELECT finding.id AS id,
-				       finding.retention_timestamp_unix_nano AS instant
-				FROM scan_findings AS finding
-				     INDEXED BY idx_retention_scan_findings_timestamp
-				WHERE finding.retention_timestamp_unix_nano < ?1
-				UNION ALL
-				SELECT finding.id AS id, scan.retention_timestamp_unix_nano AS instant
-				FROM scan_results AS scan
-				     INDEXED BY idx_retention_scan_results_timestamp
-				JOIN scan_findings AS finding INDEXED BY idx_scan_findings_scan_id
-				  ON finding.scan_id = scan.id
-				WHERE scan.retention_timestamp_unix_nano < ?1
-				) AS matches
-				GROUP BY matches.id
-			) AS candidate
-			ORDER BY candidate.instant ASC, candidate.id ASC LIMIT ?2
+			SELECT id FROM scan_findings INDEXED BY idx_retention_scan_findings_timestamp
+			WHERE retention_timestamp_unix_nano < ?
+			ORDER BY retention_timestamp_unix_nano ASC, id ASC LIMIT ?
 		)`, nil
 	case RetentionLegacyFindings:
 		return `DELETE FROM findings WHERE id IN (
@@ -772,40 +775,64 @@ func retentionAuditDeleteStatement(class RetentionTableClass) (string, error) {
 	}
 }
 
+const retentionAuditCandidateSelect = `SELECT id FROM audit_events
+	WHERE retention_timestamp_unix_nano < ?
+	ORDER BY retention_timestamp_unix_nano ASC, id ASC LIMIT ?`
+
+func materializeRetentionAuditCandidates(
+	ctx context.Context,
+	tx *sql.Tx,
+	cutoffUnixNano int64,
+) (int64, error) {
+	if _, err := tx.ExecContext(ctx, `CREATE TEMP TABLE IF NOT EXISTS
+		retention_v8_audit_candidates (id TEXT PRIMARY KEY) WITHOUT ROWID`); err != nil {
+		return 0, fmt.Errorf("retention create bounded audit candidate set: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM retention_v8_audit_candidates`); err != nil {
+		return 0, fmt.Errorf("retention clear bounded audit candidate set: %w", err)
+	}
+	result, err := tx.ExecContext(ctx,
+		`INSERT INTO retention_v8_audit_candidates (id) `+retentionAuditCandidateSelect,
+		cutoffUnixNano, RetentionBatchSize)
+	if err != nil {
+		return 0, fmt.Errorf("retention materialize bounded audit candidate set: %w", err)
+	}
+	count, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("retention count bounded audit candidate set: %w", err)
+	}
+	if count > RetentionBatchSize {
+		return 0, errors.New("retention audit candidate set exceeded fixed batch size")
+	}
+	return count, nil
+}
+
 func materializeRetentionACKBaselines(
 	ctx context.Context,
 	tx *sql.Tx,
-	cutoff time.Time,
 	createdAt time.Time,
 ) error {
-	cutoffUnixNano, err := judgeBodyUnixNano(cutoff)
-	if err != nil {
-		return err
-	}
 	actions := legacyAlertEligibleActions()
 	if len(actions) == 0 {
 		return errors.New("retention legacy ACK action registry is empty")
 	}
 	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(actions)), ",")
-	args := []any{createdAt.Format(time.RFC3339Nano), cutoffUnixNano, RetentionBatchSize}
+	args := []any{createdAt.Format(time.RFC3339Nano)}
 	for _, action := range actions {
 		args = append(args, action)
 	}
-	_, err = tx.ExecContext(ctx, fmt.Sprintf(`
+	_, err := tx.ExecContext(ctx, fmt.Sprintf(`
 		INSERT OR IGNORE INTO alert_acknowledgement_baselines (
 			alert_id, baseline_version, disposition, actor, disposition_at,
 			legacy_event_id, raw_legacy_severity, legacy_original_severity,
 			timestamp_provenance, created_at
 		)
-		SELECT id, 1, 'acknowledged', COALESCE(NULLIF(actor,''), 'unknown'), timestamp,
-			id, 'ACK', 'unknown', 'legacy_occurrence_timestamp_unreliable', ?
-		FROM audit_events
-		WHERE id IN (
-			SELECT id FROM audit_events WHERE retention_timestamp_unix_nano < ?
-			ORDER BY retention_timestamp_unix_nano ASC, id ASC LIMIT ?
-		)
-		AND bucket IS NULL AND UPPER(COALESCE(severity,'')) = 'ACK'
-		AND action IN (%s)`, placeholders), args...)
+		SELECT event.id, 1, 'acknowledged', COALESCE(NULLIF(event.actor,''), 'unknown'), event.timestamp,
+			event.id, 'ACK', 'unknown', 'legacy_occurrence_timestamp_unreliable', ?
+		FROM audit_events AS event
+		JOIN retention_v8_audit_candidates AS candidate ON candidate.id = event.id
+		WHERE event.bucket IS NULL AND UPPER(COALESCE(event.severity,'')) = 'ACK'
+		AND event.action IN (%s)`, placeholders), args...)
 	if err != nil {
 		return fmt.Errorf("retention materialize legacy ACK baseline: %w", err)
 	}
@@ -819,8 +846,8 @@ func materializeRetentionACKBaselines(
 			'legacy_ack', baseline.legacy_event_id, ?
 		FROM alert_acknowledgement_baselines AS baseline
 		JOIN audit_events AS event ON event.id = baseline.alert_id
-		WHERE event.retention_timestamp_unix_nano < ?`,
-		createdAt.Format(time.RFC3339Nano), cutoffUnixNano)
+		JOIN retention_v8_audit_candidates AS candidate ON candidate.id = event.id`,
+		createdAt.Format(time.RFC3339Nano))
 	if err != nil {
 		return fmt.Errorf("retention materialize legacy ACK projection: %w", err)
 	}
