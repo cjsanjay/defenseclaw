@@ -53,10 +53,13 @@ func IsError(err error, code ErrorCode) bool {
 // DeliveryOutcome is the adapter's complete disposition. Only transient and
 // ambiguous outcomes are eligible for bounded retry. Ambiguous acknowledges
 // that the remote side may have committed before its acknowledgement was lost.
+// Partial is a terminal acknowledged split: its exact delivered/rejected item
+// counts prevent an accepted subset from being retried.
 type DeliveryOutcome string
 
 const (
 	OutcomeDelivered        DeliveryOutcome = "delivered"
+	OutcomePartial          DeliveryOutcome = "partial"
 	OutcomeTransient        DeliveryOutcome = "transient"
 	OutcomeAuthentication   DeliveryOutcome = "authentication"
 	OutcomePermanentPayload DeliveryOutcome = "permanent_payload"
@@ -64,8 +67,16 @@ const (
 	OutcomeAmbiguous        DeliveryOutcome = "ambiguous"
 )
 
-// DeliveryResult contains no free-form adapter diagnostics.
-type DeliveryResult struct{ Outcome DeliveryOutcome }
+// DeliveryResult contains no free-form adapter diagnostics. DeliveredItems and
+// RejectedItems must both be positive, non-overflowing, and sum to Batch.Len
+// only when Outcome is OutcomePartial. They must be zero for every other
+// outcome. The dispatcher rejects malformed adapter results without retrying or
+// over-reporting remote delivery.
+type DeliveryResult struct {
+	Outcome        DeliveryOutcome
+	DeliveredItems int
+	RejectedItems  int
+}
 
 // BatchItem is an immutable adapter view of one queued projection.
 type BatchItem struct{ payload Payload }
@@ -172,6 +183,7 @@ const (
 	HealthReasonActivated      HealthReason = "activated"
 	HealthReasonQueueFull      HealthReason = "queue_full"
 	HealthReasonRetryable      HealthReason = "retryable_delivery"
+	HealthReasonPartial        HealthReason = "partial_delivery"
 	HealthReasonDeliveryFailed HealthReason = "delivery_failed"
 	HealthReasonRecovered      HealthReason = "delivery_recovered"
 	HealthReasonIntakeStopped  HealthReason = "intake_stopped"

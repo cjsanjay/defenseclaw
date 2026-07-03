@@ -469,11 +469,29 @@ func (dispatcher *Dispatcher) deliver(payloads []Payload, encodedSize int) bool 
 		}
 		switch result.Outcome {
 		case OutcomeDelivered:
+			if result.DeliveredItems != 0 || result.RejectedItems != 0 {
+				dispatcher.rejectMalformedResult(payloads)
+				return true
+			}
 			dispatcher.counters.delivered.Add(uint64(len(payloads)))
 			dispatcher.release(payloads)
 			dispatcher.setOperationalHealth(HealthHealthy, HealthReasonRecovered)
 			return true
+		case OutcomePartial:
+			if !validPartialResult(result, len(payloads)) {
+				dispatcher.rejectMalformedResult(payloads)
+				return true
+			}
+			dispatcher.counters.delivered.Add(uint64(result.DeliveredItems))
+			dispatcher.counters.rejected.Add(uint64(result.RejectedItems))
+			dispatcher.release(payloads)
+			dispatcher.setOperationalHealth(HealthDegraded, HealthReasonPartial)
+			return true
 		case OutcomeTransient, OutcomeAmbiguous:
+			if result.DeliveredItems != 0 || result.RejectedItems != 0 {
+				dispatcher.rejectMalformedResult(payloads)
+				return true
+			}
 			if attempt == dispatcher.config.Retry.MaxAttempts {
 				dispatcher.counters.rejected.Add(uint64(len(payloads)))
 				dispatcher.release(payloads)
@@ -488,6 +506,10 @@ func (dispatcher *Dispatcher) deliver(payloads []Payload, encodedSize int) bool 
 				return false
 			}
 		case OutcomeAuthentication, OutcomePermanentPayload, OutcomeUnsafeEndpoint:
+			if result.DeliveredItems != 0 || result.RejectedItems != 0 {
+				dispatcher.rejectMalformedResult(payloads)
+				return true
+			}
 			dispatcher.counters.rejected.Add(uint64(len(payloads)))
 			dispatcher.release(payloads)
 			dispatcher.setOperationalHealth(HealthFailing, HealthReasonDeliveryFailed)
@@ -500,6 +522,18 @@ func (dispatcher *Dispatcher) deliver(payloads []Payload, encodedSize int) bool 
 		}
 	}
 	return true
+}
+
+func validPartialResult(result DeliveryResult, batchItems int) bool {
+	return batchItems > 1 && result.DeliveredItems > 0 && result.RejectedItems > 0 &&
+		result.DeliveredItems <= batchItems && result.RejectedItems <= batchItems-result.DeliveredItems &&
+		result.DeliveredItems+result.RejectedItems == batchItems
+}
+
+func (dispatcher *Dispatcher) rejectMalformedResult(payloads []Payload) {
+	dispatcher.counters.rejected.Add(uint64(len(payloads)))
+	dispatcher.release(payloads)
+	dispatcher.setOperationalHealth(HealthFailing, HealthReasonDeliveryFailed)
 }
 
 func (dispatcher *Dispatcher) encodedSize(sizes []int) (size int, ok bool) {

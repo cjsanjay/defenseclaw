@@ -72,6 +72,16 @@ func (adapter *undercountingAdapter) Deliver(context.Context, delivery.Batch) de
 	return delivery.DeliveryResult{Outcome: delivery.OutcomeDelivered}
 }
 
+type fixedResultAdapter struct{ result delivery.DeliveryResult }
+
+func (*fixedResultAdapter) EncodedSize(sizes []int) (int, bool) {
+	return delivery.DelimitedEncodedSize(sizes, 0, 0, 0)
+}
+
+func (adapter *fixedResultAdapter) Deliver(context.Context, delivery.Batch) delivery.DeliveryResult {
+	return adapter.result
+}
+
 type blockingSizerAdapter struct {
 	entered chan struct{}
 	release <-chan struct{}
@@ -469,6 +479,74 @@ func TestOnlyTransientAndAmbiguousOutcomesRetry(t *testing.T) {
 			if got := dispatcher.Counters(); got.Rejected != 1 || got.Retried != 0 {
 				t.Fatalf("counters=%+v", got)
 			}
+		})
+	}
+}
+
+func TestPartialOutcomeAccountsExactTerminalSplitWithoutRetry(t *testing.T) {
+	adapter := &fixedResultAdapter{result: delivery.DeliveryResult{
+		Outcome: delivery.OutcomePartial, DeliveredItems: 1, RejectedItems: 1,
+	}}
+	config := testConfig("partial")
+	config.ScheduledDelay = 25 * time.Millisecond
+	dispatcher, err := delivery.NewDispatcher(config, adapter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dispatcher.Activate()
+	for _, id := range []string{"accepted", "rejected"} {
+		if result := dispatcher.Enqueue(payload(t, id, "value")); !result.Accepted() {
+			t.Fatalf("enqueue %q = %+v", id, result)
+		}
+	}
+	waitFor(t, func() bool {
+		counters := dispatcher.Counters()
+		return counters.Delivered == 1 && counters.Rejected == 1
+	})
+	if got := dispatcher.Counters(); got.Accepted != 2 || got.Delivered != 1 || got.Rejected != 1 || got.Retried != 0 {
+		t.Fatalf("partial counters = %+v", got)
+	}
+	if got := dispatcher.Health(); got != delivery.HealthDegraded {
+		t.Fatalf("partial health = %q", got)
+	}
+	closeDispatcher(t, dispatcher)
+}
+
+func TestMalformedAdapterItemCountsFailClosedWithoutRetry(t *testing.T) {
+	tests := []struct {
+		name   string
+		result delivery.DeliveryResult
+	}{
+		{name: "partial-missing-delivered", result: delivery.DeliveryResult{Outcome: delivery.OutcomePartial, RejectedItems: 2}},
+		{name: "partial-missing-rejected", result: delivery.DeliveryResult{Outcome: delivery.OutcomePartial, DeliveredItems: 2}},
+		{name: "partial-under-count", result: delivery.DeliveryResult{Outcome: delivery.OutcomePartial, DeliveredItems: 1, RejectedItems: 1}},
+		{name: "partial-over-count", result: delivery.DeliveryResult{Outcome: delivery.OutcomePartial, DeliveredItems: 2, RejectedItems: 2}},
+		{name: "delivered-with-counts", result: delivery.DeliveryResult{Outcome: delivery.OutcomeDelivered, DeliveredItems: 3}},
+		{name: "retry-with-counts", result: delivery.DeliveryResult{Outcome: delivery.OutcomeTransient, RejectedItems: 3}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			adapter := &fixedResultAdapter{result: test.result}
+			config := testConfig("malformed-" + test.name)
+			config.ScheduledDelay = 25 * time.Millisecond
+			dispatcher, err := delivery.NewDispatcher(config, adapter)
+			if err != nil {
+				t.Fatal(err)
+			}
+			dispatcher.Activate()
+			for _, id := range []string{"one", "two", "three"} {
+				if result := dispatcher.Enqueue(payload(t, id, "value")); !result.Accepted() {
+					t.Fatalf("enqueue %q = %+v", id, result)
+				}
+			}
+			waitFor(t, func() bool { return dispatcher.Counters().Rejected == 3 })
+			if got := dispatcher.Counters(); got.Accepted != 3 || got.Delivered != 0 || got.Rejected != 3 || got.Retried != 0 {
+				t.Fatalf("malformed counters = %+v", got)
+			}
+			if got := dispatcher.Health(); got != delivery.HealthFailing {
+				t.Fatalf("malformed health = %q", got)
+			}
+			closeDispatcher(t, dispatcher)
 		})
 	}
 }
