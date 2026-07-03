@@ -20,14 +20,16 @@ type fakeRetentionResponse struct {
 }
 
 type fakeRetentionReaper struct {
-	mu        sync.Mutex
-	days      int64
-	runs      int
-	active    int
-	maxActive int
-	updates   []int64
-	started   chan struct{}
-	responses chan fakeRetentionResponse
+	mu            sync.Mutex
+	days          int64
+	runs          int
+	active        int
+	maxActive     int
+	updates       []int64
+	started       chan struct{}
+	responses     chan fakeRetentionResponse
+	updateStarted chan int64
+	updateRelease <-chan struct{}
 }
 
 func newFakeRetentionReaper(days int64) *fakeRetentionReaper {
@@ -48,10 +50,33 @@ func (reaper *fakeRetentionReaper) UpdateRetentionDays(days int64) error {
 		return errors.New("invalid fake retention age")
 	}
 	reaper.mu.Lock()
+	started := reaper.updateStarted
+	release := reaper.updateRelease
+	reaper.mu.Unlock()
+	if started != nil {
+		started <- days
+	}
+	if release != nil {
+		<-release
+	}
+	reaper.mu.Lock()
 	reaper.days = days
 	reaper.updates = append(reaper.updates, days)
 	reaper.mu.Unlock()
 	return nil
+}
+
+func (reaper *fakeRetentionReaper) gateUpdates(started chan int64, release <-chan struct{}) {
+	reaper.mu.Lock()
+	reaper.updateStarted = started
+	reaper.updateRelease = release
+	reaper.mu.Unlock()
+}
+
+func (reaper *fakeRetentionReaper) updateSnapshot() []int64 {
+	reaper.mu.Lock()
+	defer reaper.mu.Unlock()
+	return append([]int64(nil), reaper.updates...)
 }
 
 func (reaper *fakeRetentionReaper) Run(ctx context.Context) (audit.RetentionRunResult, error) {

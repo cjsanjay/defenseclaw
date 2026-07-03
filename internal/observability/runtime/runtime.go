@@ -19,6 +19,7 @@ package runtime
 import (
 	"context"
 	"reflect"
+	"sync"
 
 	"github.com/defenseclaw/defenseclaw/internal/audit"
 	"github.com/defenseclaw/defenseclaw/internal/config"
@@ -37,6 +38,7 @@ const (
 	ErrorStorePathMismatch    ErrorCode = "store_path_mismatch"
 	ErrorComponentUnavailable ErrorCode = "component_unavailable"
 	ErrorOptionalWork         ErrorCode = "optional_work_unsupported"
+	ErrorShutdown             ErrorCode = "shutdown_degraded"
 )
 
 // Error never retains a configured path, endpoint, record, projection, or
@@ -64,11 +66,13 @@ func (err *Error) Code() ErrorCode {
 }
 
 // Options supplies dependencies whose lifetime is the whole gateway process,
-// not one reload generation. The Store's immutable constructor path binds the
-// already-open caller-owned Store to the compiled local destination. A nil
-// Signer is an explicit unavailable-integrity state supported by audit storage;
-// callers should provide EventHistoryHealthReporter when they need that
-// degraded state bridged into mandatory health telemetry.
+// not one reload generation. RetentionController is required and its lifecycle
+// becomes exclusively Runtime-owned after New succeeds. The Store's immutable
+// constructor path binds the already-open caller-owned Store to the compiled
+// local destination. A nil Signer is an explicit unavailable-integrity state
+// supported by audit storage; callers should provide
+// EventHistoryHealthReporter when they need that degraded state bridged into
+// mandatory health telemetry.
 type Options struct {
 	Store                      *audit.Store
 	Engine                     *redaction.Engine
@@ -76,18 +80,22 @@ type Options struct {
 	RecordBuilder              *observability.RecordBuilder
 	Reporter                   runtimegraph.Reporter
 	EventHistoryHealthReporter audit.EventHistoryHealthReporter
+	RetentionController        *RetentionController
 	// GraphOptions is optional. When supplied, Reporter is still replaced by
 	// the process-stable Reporter above so one runtime cannot split reporting
 	// across inconsistent owners.
 	GraphOptions *runtimegraph.Options
 }
 
-// Runtime owns the immutable runtimegraph manager, but not the process-stable
-// dependencies supplied through Options. The caller must stop Runtime (and any
-// retention controller) before closing either SQLite store.
+// Runtime owns the immutable runtimegraph manager and the lifecycle of the
+// supplied process-stable retention controller after New succeeds. It does not
+// own caller-supplied stores or key material; Close must return before callers
+// close either SQLite store.
 type Runtime struct {
-	manager *runtimegraph.Manager
-	store   *audit.Store
+	manager     *runtimegraph.Manager
+	store       *audit.Store
+	retention   *RetentionController
+	lifecycleMu sync.Mutex
 }
 
 // EmitContext is the exact immutable graph snapshot pinned for one Emit call.
@@ -113,6 +121,7 @@ type EmitBuilder func(EmitContext, router.Admission) (observability.Record, erro
 func New(ctx context.Context, initial runtimegraph.Config, options Options) (*Runtime, error) {
 	if ctx == nil || options.Store == nil || !options.Store.Ready() ||
 		options.Store.DatabasePath() == "" || options.Engine == nil || options.RecordBuilder == nil ||
+		options.RetentionController == nil ||
 		nilInterface(options.Reporter) ||
 		options.Signer != nil && nilInterface(options.Signer) ||
 		options.EventHistoryHealthReporter != nil && nilInterface(options.EventHistoryHealthReporter) ||
@@ -123,6 +132,15 @@ func New(ctx context.Context, initial runtimegraph.Config, options Options) (*Ru
 	if initial.LocalPath != storePath || initial.Plan.Snapshot().Local.Path != storePath {
 		return nil, &Error{code: ErrorStorePathMismatch}
 	}
+	if err := options.RetentionController.claimRuntimeOwnership(); err != nil {
+		return nil, &Error{code: ErrorInvalidDependency}
+	}
+	owned := false
+	defer func() {
+		if !owned {
+			options.RetentionController.releaseRuntimeOwnership()
+		}
+	}()
 
 	graphOptions := runtimegraph.DefaultOptions(options.Reporter)
 	if options.GraphOptions != nil {
@@ -138,13 +156,32 @@ func New(ctx context.Context, initial runtimegraph.Config, options Options) (*Ru
 	manager, err := runtimegraph.New(
 		ctx,
 		initial,
-		[]runtimegraph.ComponentFactory{factory},
+		[]runtimegraph.ComponentFactory{
+			&retentionPolicyFactory{controller: options.RetentionController},
+			factory,
+		},
 		graphOptions,
 	)
 	if err != nil {
 		return nil, err
 	}
-	return &Runtime{manager: manager, store: options.Store}, nil
+	// runtimegraph.New returns only after every generation-one component has
+	// activated and the graph readiness gate is open. Starting here guarantees
+	// the retention worker's one startup run cannot race incomplete graph/store
+	// initialization.
+	if err := options.RetentionController.startRuntime(context.Background()); err != nil {
+		cleanupContext, cancel := context.WithTimeout(context.Background(), graphOptions.DrainTimeout)
+		defer cancel()
+		_ = manager.Close(cleanupContext)
+		_ = manager.WaitCleanup(cleanupContext)
+		_ = manager.FlushReports(cleanupContext)
+		_ = manager.WaitReporter(cleanupContext)
+		return nil, &Error{code: ErrorInvalidDependency}
+	}
+	owned = true
+	return &Runtime{
+		manager: manager, store: options.Store, retention: options.RetentionController,
+	}, nil
 }
 
 // Active returns the exact currently published graph pointer.
@@ -213,6 +250,8 @@ func (runtime *Runtime) Reload(
 	if runtime == nil || runtime.manager == nil {
 		return runtimegraph.ReloadResult{}, invalidManagerError(ctx)
 	}
+	runtime.lifecycleMu.Lock()
+	defer runtime.lifecycleMu.Unlock()
 	return runtime.manager.Reload(ctx, candidate)
 }
 
@@ -224,14 +263,25 @@ func (runtime *Runtime) FlushReports(ctx context.Context) *runtimegraph.Error {
 	return runtime.manager.FlushReports(ctx)
 }
 
-// Close stops intake, waits for generation cleanup and report delivery, and
-// closes only graph-owned components. Caller-owned stores and key material are
-// deliberately not closed.
-func (runtime *Runtime) Close(ctx context.Context) *runtimegraph.Error {
+// Close first cancels and waits for retention, then attempts every graph
+// cleanup/report phase even when an earlier phase fails. A non-nil result means
+// store ownership has not been safely returned: callers MUST retry Close with
+// a fresh context and MUST NOT close either SQLite store in the meantime.
+func (runtime *Runtime) Close(ctx context.Context) error {
 	if runtime == nil || runtime.manager == nil {
 		return nil
 	}
-	first := runtime.manager.Close(ctx)
+	runtime.lifecycleMu.Lock()
+	defer runtime.lifecycleMu.Unlock()
+	var first error
+	if runtime.retention != nil {
+		if err := runtime.retention.stopRuntime(ctx); err != nil {
+			first = &Error{code: ErrorShutdown}
+		}
+	}
+	if err := runtime.manager.Close(ctx); first == nil && err != nil {
+		first = err
+	}
 	if err := runtime.manager.WaitCleanup(ctx); first == nil && err != nil {
 		first = err
 	}

@@ -87,13 +87,14 @@ type RetentionController struct {
 	clock     func() time.Time
 	reporter  RetentionControllerReporter
 
-	lifecycleMu sync.Mutex
-	started     bool
-	stopped     bool
-	cancel      context.CancelFunc
-	done        chan struct{}
-	policyWake  chan struct{}
-	promptRun   bool
+	lifecycleMu  sync.Mutex
+	started      bool
+	stopped      bool
+	runtimeOwned bool
+	cancel       context.CancelFunc
+	done         chan struct{}
+	policyWake   chan struct{}
+	promptRun    bool
 
 	statusMu sync.Mutex
 	status   atomic.Pointer[RetentionControllerStatus]
@@ -141,6 +142,14 @@ func newRetentionController(
 // Start launches the one process worker. It is intentionally non-blocking;
 // readiness gating and the initial run happen in that worker.
 func (controller *RetentionController) Start(parent context.Context) error {
+	return controller.start(parent, false)
+}
+
+func (controller *RetentionController) startRuntime(parent context.Context) error {
+	return controller.start(parent, true)
+}
+
+func (controller *RetentionController) start(parent context.Context, runtimeOwner bool) error {
 	if controller == nil {
 		return errors.New("observability retention controller is not initialized")
 	}
@@ -149,6 +158,9 @@ func (controller *RetentionController) Start(parent context.Context) error {
 	}
 	controller.lifecycleMu.Lock()
 	defer controller.lifecycleMu.Unlock()
+	if controller.runtimeOwned != runtimeOwner {
+		return errors.New("observability retention controller lifecycle is owned elsewhere")
+	}
 	if controller.stopped {
 		return errors.New("observability retention controller is stopped")
 	}
@@ -171,9 +183,16 @@ func (controller *RetentionController) ApplyPolicy(retentionDays int64) error {
 	}
 	controller.lifecycleMu.Lock()
 	defer controller.lifecycleMu.Unlock()
+	if controller.runtimeOwned {
+		return errors.New("observability retention policy is runtime-owned")
+	}
 	if controller.stopped {
 		return errors.New("observability retention controller is stopped")
 	}
+	return controller.applyPolicyLocked(retentionDays)
+}
+
+func (controller *RetentionController) applyPolicyLocked(retentionDays int64) error {
 	previous := controller.reaper.RetentionDays()
 	if err := controller.reaper.UpdateRetentionDays(retentionDays); err != nil {
 		return errors.New("observability retention policy is invalid")
@@ -211,6 +230,14 @@ func (controller *RetentionController) Status() RetentionControllerStatus {
 // Stop cancels the scheduler and any active reaper run, then waits for all
 // controller work to release store ownership. Call it before closing stores.
 func (controller *RetentionController) Stop(ctx context.Context) error {
+	return controller.stop(ctx, false)
+}
+
+func (controller *RetentionController) stopRuntime(ctx context.Context) error {
+	return controller.stop(ctx, true)
+}
+
+func (controller *RetentionController) stop(ctx context.Context, runtimeOwner bool) error {
 	if controller == nil {
 		return nil
 	}
@@ -218,6 +245,10 @@ func (controller *RetentionController) Stop(ctx context.Context) error {
 		return errors.New("observability retention stop context is required")
 	}
 	controller.lifecycleMu.Lock()
+	if controller.runtimeOwned != runtimeOwner {
+		controller.lifecycleMu.Unlock()
+		return errors.New("observability retention controller lifecycle is owned elsewhere")
+	}
 	if !controller.started {
 		publishStopped := false
 		if !controller.stopped {

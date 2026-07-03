@@ -33,12 +33,15 @@ func (*discardGraphReporter) ComplianceActivity(*runtimegraph.Graph, runtimegrap
 }
 
 type runtimeTestDependencies struct {
-	storePath string
-	judgePath string
-	store     *audit.Store
-	engine    *redaction.Engine
-	builder   *observability.RecordBuilder
-	reporter  *discardGraphReporter
+	storePath           string
+	judgePath           string
+	store               *audit.Store
+	engine              *redaction.Engine
+	builder             *observability.RecordBuilder
+	reporter            *discardGraphReporter
+	retentionReaper     *fakeRetentionReaper
+	retentionController *RetentionController
+	retentionScheduler  *scriptedRetentionScheduler
 }
 
 func newRuntimeTestDependencies(t *testing.T) runtimeTestDependencies {
@@ -69,10 +72,21 @@ func newRuntimeTestDependencies(t *testing.T) runtimeTestDependencies {
 	if err != nil {
 		t.Fatal(err)
 	}
+	retentionReaper := newFakeRetentionReaper(90)
+	retentionScheduler := newScriptedRetentionScheduler()
+	retentionController, err := newRetentionController(
+		retentionReaper,
+		RetentionControllerOptions{Scheduler: retentionScheduler},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
 	return runtimeTestDependencies{
 		storePath: storePath,
 		judgePath: filepath.Join(directory, "judge-bodies.db"),
 		store:     store, engine: engine, builder: builder, reporter: &discardGraphReporter{},
+		retentionReaper: retentionReaper, retentionController: retentionController,
+		retentionScheduler: retentionScheduler,
 	}
 }
 
@@ -80,7 +94,7 @@ func (dependencies runtimeTestDependencies) options() Options {
 	return Options{
 		Store:  dependencies.store,
 		Engine: dependencies.engine, RecordBuilder: dependencies.builder,
-		Reporter: dependencies.reporter,
+		Reporter: dependencies.reporter, RetentionController: dependencies.retentionController,
 	}
 }
 
