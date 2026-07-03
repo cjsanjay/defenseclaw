@@ -59,6 +59,10 @@ from yaml.events import (
 )
 from yaml.nodes import MappingNode
 
+from defenseclaw.observability.detector_catalog_v1 import (
+    DETECTOR_GROUPS as CATALOG_DETECTOR_GROUPS,
+)
+
 MAX_SOURCE_BYTES = 4 * 1024 * 1024
 MAX_YAML_NODES = 65_536
 MAX_YAML_DEPTH = 32
@@ -87,6 +91,8 @@ BUCKETS = (
 SIGNALS = ("logs", "traces", "metrics")
 SEVERITIES = ("INFO", "LOW", "MEDIUM", "HIGH", "CRITICAL")
 DETECTOR_GROUPS = ("pii", "credentials", "secrets")
+if frozenset(DETECTOR_GROUPS) != frozenset(CATALOG_DETECTOR_GROUPS):
+    raise RuntimeError("Python v8 detector vocabulary drifted from detector catalog v1")
 FIELD_CLASSES = (
     "metadata",
     "identifier",

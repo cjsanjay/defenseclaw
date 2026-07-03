@@ -40,6 +40,9 @@ OBSERVABILITY_V8_REFERENCE_GENERATOR = (
 OBSERVABILITY_REDACTION_UNICODE_GENERATOR = (
     ROOT / "scripts" / "generate_unicode13_repertoire.py"
 )
+OBSERVABILITY_REDACTION_CATALOG_GENERATOR = (
+    ROOT / "scripts" / "generate_observability_redaction_catalog.py"
+)
 
 EXPECTED_ENVELOPE_EVENT_TYPES = {
     "verdict", "judge", "lifecycle", "error", "diagnostic",
@@ -573,6 +576,16 @@ def check_observability_redaction_unicode() -> bool:
     return result.returncode == 0
 
 
+def check_observability_redaction_catalog() -> bool:
+    """Reject detector catalog manifest or generated-Go drift."""
+    result = subprocess.run(
+        [sys.executable, str(OBSERVABILITY_REDACTION_CATALOG_GENERATOR), "--check"],
+        cwd=ROOT,
+        check=False,
+    )
+    return result.returncode == 0
+
+
 def main() -> int:
     if not SCHEMA_DIR.is_dir():
         print(f"check_schemas: schema dir not found: {SCHEMA_DIR}", file=sys.stderr)
@@ -664,6 +677,9 @@ def main() -> int:
         ok = False
 
     if not check_observability_redaction_unicode():
+        ok = False
+
+    if not check_observability_redaction_catalog():
         ok = False
 
     return 0 if ok else 1
