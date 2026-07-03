@@ -92,6 +92,9 @@ type Sidecar struct {
 	aiRestartCh        chan struct{}
 	runCancelMu        sync.Mutex
 	runCancel          context.CancelFunc
+	observabilityV8Mu  sync.Mutex
+	observabilityV8    sidecarRuntimeEmitter
+	observabilityV8Run bool
 
 	alertCtx    context.Context
 	alertCancel context.CancelFunc
@@ -580,6 +583,9 @@ func (s *Sidecar) swapAIDiscovery(next *inventory.ContinuousDiscoveryService) *i
 // in its own goroutine so that a gateway disconnect does not stop the watcher
 // or API server. Run blocks until ctx is cancelled, then shuts everything down.
 func (s *Sidecar) Run(ctx context.Context) error {
+	if err := s.beginObservabilityV8Run(); err != nil {
+		return err
+	}
 	runCtx, runCancel := context.WithCancel(ctx)
 	defer runCancel()
 	s.setRunCancel(runCancel)
@@ -588,6 +594,9 @@ func (s *Sidecar) Run(ctx context.Context) error {
 	runID := gatewaylog.ProcessRunID()
 	fmt.Fprintf(os.Stderr, "[sidecar] starting subsystems (auto_approve=%v watcher=%v api_port=%d guardrail=%v run_id=%s)\n",
 		s.currentConfig().Gateway.AutoApprove, s.currentConfig().Gateway.Watcher.Enabled, s.currentConfig().Gateway.APIPort, s.currentConfig().Guardrail.Enabled, runID)
+	if err := s.recordSidecarLifecycle(runCtx, audit.ActionSidecarStart); err != nil {
+		return err
+	}
 	emitLifecycle(runCtx, "sidecar", "start", map[string]string{
 		"run_id":       runID,
 		"auto_approve": fmt.Sprintf("%v", s.currentConfig().Gateway.AutoApprove),
@@ -595,7 +604,6 @@ func (s *Sidecar) Run(ctx context.Context) error {
 		"api_port":     fmt.Sprintf("%d", s.currentConfig().Gateway.APIPort),
 		"guardrail":    fmt.Sprintf("%v", s.currentConfig().Guardrail.Enabled),
 	})
-	_ = s.logger.LogAction(string(audit.ActionSidecarStart), "", "starting all subsystems")
 
 	if s.currentConfig().Guardrail.Enabled && s.currentConfig().Guardrail.Model == "" &&
 		proxyShouldBindForConfiguredConnector(s.currentConfig()) {
@@ -750,8 +758,10 @@ func (s *Sidecar) Run(ctx context.Context) error {
 	s.alertWg.Wait()
 
 	// Shutdown — ctx is already Done, but still carries correlation values.
-	emitLifecycle(runCtx, "gateway", "stop", nil)
-	_ = s.logger.LogAction(string(audit.ActionSidecarStop), "", "all subsystems stopped")
+	stopObservabilityErr := s.recordSidecarLifecycle(runCtx, audit.ActionSidecarStop)
+	if stopObservabilityErr == nil {
+		emitLifecycle(runCtx, "gateway", "stop", nil)
+	}
 	if webhooks := s.webhooksSnapshot(); webhooks != nil {
 		webhooks.Close()
 	}
@@ -844,8 +854,16 @@ func (s *Sidecar) Run(ctx context.Context) error {
 	case err := <-errCh:
 		return err
 	default:
-		return nil
+		return stopObservabilityErr
 	}
+}
+
+// logLegacySidecarLifecycle preserves the pre-v8 SQLite/OTel/sink call exactly
+// for Sidecars that have not bound an observability Runtime. It stays in this
+// file beside the structured emitLifecycle calls so the static dual-emission
+// coverage guard continues to prove the legacy path has a structured sibling.
+func (s *Sidecar) logLegacySidecarLifecycle(action audit.Action, details string) error {
+	return s.logger.LogAction(string(action), "", details)
 }
 
 // shutdownJudgeStore gives the persistence worker its own bounded drain
