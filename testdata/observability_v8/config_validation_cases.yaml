@@ -232,6 +232,20 @@ cases:
               logs: {path: /custom/logs}
             send: {signals: [logs], buckets: ['*']}
 
+  - name: http-signal-path-must-be-absolute
+    valid: false
+    source: |
+      config_version: 8
+      observability:
+        destinations:
+          - name: traces
+            kind: otlp
+            protocol: http/protobuf
+            endpoint: https://collector.example.test
+            signal_overrides:
+              traces: {path: v1/traces}
+            send: {signals: [traces], buckets: ['*']}
+
   - name: resource-home-path-is-prohibited
     valid: false
     source: |

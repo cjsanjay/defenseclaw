@@ -171,19 +171,80 @@ func (adapter *JSONL) Deliver(ctx context.Context, batch delivery.Batch) deliver
 		line := make([]byte, len(projected)+1)
 		copy(line, projected)
 		line[len(projected)] = '\n'
-		n, err := adapter.file.Write(line)
-		if n > 0 {
-			adapter.size += int64(n)
-			wroteAny = true
-		}
-		if err != nil || n != len(line) {
-			if wroteAny {
+		n, writeErr, rolledBack := appendJSONLLine(adapter.file, &adapter.size, line)
+		if writeErr != nil || n != len(line) {
+			// A failed rollback leaves an unterminated fragment at the leaf.
+			// Fail this generation closed so the dispatcher's exact-byte retry
+			// cannot concatenate a complete record onto that fragment.
+			if n > 0 && !rolledBack {
+				adapter.failClosedFile()
+			}
+			// Complete earlier records, a fully written current record whose
+			// acknowledgement failed, or a fragment that could not be removed
+			// all make final delivery ambiguous. A successfully removed first
+			// fragment is a clean pre-delivery transient failure.
+			if wroteAny || n == len(line) || n > 0 && !rolledBack {
 				return localResult(delivery.OutcomeAmbiguous)
 			}
 			return localResult(delivery.OutcomeTransient)
 		}
+		wroteAny = true
 	}
 	return localResult(delivery.OutcomeDelivered)
+}
+
+type jsonlAppendFile interface {
+	Write([]byte) (int, error)
+	Truncate(int64) error
+}
+
+// appendJSONLLine performs one append and removes an incomplete write before
+// the immutable batch can be retried. The caller serializes access to file and
+// size. rolledBack is true only when bytes from this attempt were removed.
+func appendJSONLLine(file jsonlAppendFile, size *int64, line []byte) (n int, err error, rolledBack bool) {
+	if file == nil || size == nil {
+		return 0, io.ErrClosedPipe, false
+	}
+	before := *size
+	n, err = file.Write(line)
+	if n < 0 || n > len(line) {
+		return n, io.ErrShortWrite, false
+	}
+	if n > 0 {
+		*size += int64(n)
+	}
+	if err == nil && n == len(line) {
+		return n, nil, false
+	}
+	if n == 0 {
+		if err == nil {
+			err = io.ErrShortWrite
+		}
+		return n, err, false
+	}
+	if truncateErr := file.Truncate(before); truncateErr != nil {
+		if err == nil {
+			err = io.ErrShortWrite
+		}
+		return n, err, false
+	}
+	*size = before
+	if err == nil {
+		err = io.ErrShortWrite
+	}
+	return n, err, true
+}
+
+func (adapter *JSONL) failClosedFile() {
+	if adapter == nil {
+		return
+	}
+	if adapter.file != nil {
+		_ = adapter.file.Close()
+	}
+	adapter.file = nil
+	adapter.identity = nil
+	adapter.closed = true
 }
 
 // Reopen synchronously closes and securely reopens the configured path. It is
