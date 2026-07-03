@@ -143,6 +143,13 @@ _RESERVED_NETWORKS = tuple(
     )
 )
 _CGNAT = ipaddress.ip_network("100.64.0.0/10")
+ENDPOINT_HOST_PUBLIC = "public"
+ENDPOINT_HOST_LOCALHOST = "localhost"
+ENDPOINT_HOST_PRIVATE = "private"
+ENDPOINT_HOST_CGNAT = "cgnat"
+ENDPOINT_HOST_METADATA = "metadata"
+ENDPOINT_HOST_PROHIBITED = "prohibited"
+ENDPOINT_HOST_INVALID = "invalid"
 _METADATA_ADDRESSES = frozenset(("169.254.169.254", "169.254.170.2", "100.100.100.200", "168.63.129.16"))
 _METADATA_HOSTS = frozenset(
     (
@@ -775,13 +782,38 @@ def _validate_endpoint(raw: str, protocol: str, safety: dict[str, bool], path: s
 
 
 def _validate_endpoint_host(host: str, safety: dict[str, bool], path: str, source_name: str) -> None:
-    normalized = host.strip().lower().rstrip(".")
-    if normalized == "localhost" or normalized.endswith(".localhost"):
+    classification = classify_endpoint_host(host)
+    if classification == ENDPOINT_HOST_LOCALHOST:
         if not safety["allow_private_networks"]:
             _semantic_error(source_name, path, "set allow_private_networks for an intentional localhost collector")
         return
-    if normalized in _METADATA_HOSTS:
+    if classification == ENDPOINT_HOST_METADATA:
         _semantic_error(source_name, path, "use a non-metadata collector endpoint")
+    if classification == ENDPOINT_HOST_INVALID:
+        _semantic_error(source_name, path, "use a syntactically valid collector hostname")
+    if classification == ENDPOINT_HOST_PROHIBITED:
+        _semantic_error(source_name, path, "reserved, link-local, unspecified, and multicast endpoints are prohibited")
+    if classification == ENDPOINT_HOST_CGNAT:
+        if not safety["allow_cgnat"]:
+            _semantic_error(source_name, path, "set allow_cgnat for an intentional RFC 6598 collector")
+        return
+    if classification == ENDPOINT_HOST_PRIVATE and not safety["allow_private_networks"]:
+        _semantic_error(source_name, path, "set allow_private_networks for an intentional private collector")
+
+
+def classify_endpoint_host(host: str) -> str:
+    """Classify one already-parsed collector host without resolving DNS.
+
+    The migration converter and source validator share this value-only helper so
+    private-network opt-ins cannot drift.  The return value never contains the
+    supplied host and is therefore safe to use in migration diagnostics.
+    """
+
+    normalized = host.strip().lower().rstrip(".")
+    if normalized == "localhost" or normalized.endswith(".localhost"):
+        return ENDPOINT_HOST_LOCALHOST
+    if normalized in _METADATA_HOSTS:
+        return ENDPOINT_HOST_METADATA
     try:
         address = ipaddress.ip_address(normalized)
     except ValueError:
@@ -791,23 +823,21 @@ def _validate_endpoint_host(host: str, safety: dict[str, bool], path: str, sourc
             or not _HOSTNAME.fullmatch(normalized)
             or any(len(label) > 63 or label.startswith("-") or label.endswith("-") for label in normalized.split("."))
         ):
-            _semantic_error(source_name, path, "use a syntactically valid collector hostname")
-        return
+            return ENDPOINT_HOST_INVALID
+        return ENDPOINT_HOST_PUBLIC
     if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped is not None:
         address = address.ipv4_mapped
     if str(address) in _METADATA_ADDRESSES:
-        _semantic_error(source_name, path, "use a non-metadata collector endpoint")
+        return ENDPOINT_HOST_METADATA
     if address.is_link_local or address.is_unspecified or address.is_multicast:
-        _semantic_error(source_name, path, "link-local, unspecified, and multicast endpoints are prohibited")
+        return ENDPOINT_HOST_PROHIBITED
     if any(address in network for network in _RESERVED_NETWORKS if address.version == network.version):
-        _semantic_error(source_name, path, "reserved and documentation-only endpoints are prohibited")
+        return ENDPOINT_HOST_PROHIBITED
     if address.version == 4 and address in _CGNAT:
-        if not safety["allow_cgnat"]:
-            _semantic_error(source_name, path, "set allow_cgnat for an intentional RFC 6598 collector")
-        return
+        return ENDPOINT_HOST_CGNAT
     if address.is_loopback or address.is_private:
-        if not safety["allow_private_networks"]:
-            _semantic_error(source_name, path, "set allow_private_networks for an intentional private collector")
+        return ENDPOINT_HOST_PRIVATE
+    return ENDPOINT_HOST_PUBLIC
 
 
 def _built_in_field_modes() -> dict[str, dict[str, str]]:

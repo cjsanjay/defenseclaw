@@ -31,10 +31,10 @@ or a plausible-looking dashboard is not completion.
 
 | Field | Value |
 |---|---|
-| Active work package | `P1-WP04` — deterministic v7-to-v8 converter and golden fixtures |
-| Ready queue | `P1-GATE` after converter equivalence, secret, idempotence, and failure tests |
+| Active work package | `P1-WP04` — deterministic v7-to-v8 converter engine and typed compatibility-artifact contract |
+| Ready queue | `P1-GATE` after converter engine, secret, environment-precedence, idempotence, and fail-closed artifact-contract tests |
 | Blocked | None |
-| Next phase gate | `P1-GATE` — validated immutable v8 runtime plan and deterministic converter |
+| Next phase gate | `P1-GATE` — validated immutable v8 runtime plan and deterministic converter engine/API; generated selection integration remains release-blocking in `P5-WP06` |
 | Root coordinator | Primary Codex thread |
 | Implementation branch | `codex/observability-v8-spec-implementation` from `main` |
 
@@ -162,20 +162,28 @@ A work package is `DONE` only when:
 
 ```text
 P0 specification import/freeze and baseline inventory
-  └─> P1 contracts, config compiler, strict validation, converter
+  └─> P1 contracts, config compiler, strict validation, converter engine/API
        └─> P2 canonical model, router, redaction, SQLite, retention
             ├─> P3 destinations, OTel signals, Galileo, local profile
             │    └─> P4 producer migration and duplicate-path removal
             └─> P5 telemetry registry and rich trace/schema generation
-                  └──────────────┐
-P4 ──────────────────────────────┴─> P6 operator UX, dashboards, docs
-P1 + P3 + P5 + P6 ─────────────────> P7 one-command upgrade integration
+                  └─> P5-WP06 generated v7 selection + converter goldens
+P4 + P5-WP06 ─────────────────────────> P6 operator UX, dashboards, docs
+P1 + P3 + P5-WP06 + P6 ───────────────> P7 one-command upgrade integration
 P0..P7 ────────────────────────────> P8 final security/perf/release gates
 ```
 
 P5 may begin after P2 while P3/P4 continue, but its destination projections depend
 on stable P3 contracts. No phase is complete merely because code exists; its phase
 gate must pass.
+
+`P1-GATE` approves the side-effect-free converter engine and the strict typed API
+that consumes generated compatibility data; it does not certify final v7 family
+eligibility, local-dashboard coverage, or the complete migration golden matrix.
+`P5-WP06` supplies those generated inputs from the sole registry compiler, proves
+every current exporter/family mapping, and completes the goldens. It is a hard
+dependency of automatic activation in P7 and final release, and neither phase may
+substitute a converter-local family list, `*`, or all-catalog-buckets fallback.
 
 ## Phase and Work-Package Ledger
 
@@ -195,8 +203,8 @@ gate must pass.
 | `P1-WP01` | `DONE` | subagent + root | `P0-GATE` | Bucket/signal/event/severity/source/selector types and classification contract | 14 gateway events and 188 audit actions exhaustively classified; focused Go tests/vet at `d15292434` |
 | `P1-WP02` | `DONE` | root + subagents | `P1-WP01` | Go v8 schema, defaults, compiler, capabilities, routes, profiles, strict legacy rejection | Closed schema and embedded registry; strict parser; immutable/masked plan; capability/preset/route/profile/secret/path/endpoint/provenance diagnostics; normal/race/vet/schema suites and `make check` passed at `780adcf72` |
 | `P1-WP03` | `DONE` | root + subagents | `P1-WP02` | Python source/schema parity with registry-owned selectors delegated to the canonical Go helper; comment-preserving writer; source/effective/reference/plan generation | Commits `3c9739c0c..c7234b5de`; 82 focused Python tests, normal/race Go tests, schema/reference drift gates, Ruff, and real Go/Python bridge passed |
-| `P1-WP04` | `IN_PROGRESS` | root + subagent | `P1-WP02..03` | Deterministic v7-to-v8 converter and golden fixtures | Candidate equivalence/secrets/idempotence tests |
-| `P1-GATE` | `TODO` | root | `P1-WP01..04` | Immutable validated runtime plan from YAML; runtime producers not switched | Phase test set recorded |
+| `P1-WP04` | `IN_PROGRESS` | root + subagent | `P1-WP02..03` | Side-effect-free deterministic v7-to-v8 converter engine plus a strict typed contract for generated v7 eligibility, exact filter predicates, adapter routes, and local-profile coverage; no generated registry data is hand-authored here | Engine/environment/secret/rewrite/protocol/filter tests; synthetic contract fixtures prove missing or ambiguous mappings fail closed and canonical Go candidate validation is required |
+| `P1-GATE` | `TODO` | root | `P1-WP01..04` | Immutable validated runtime plan plus converter engine/artifact API from YAML; runtime producers not switched and final generated selection/goldens explicitly remain in `P5-WP06` | Phase test set recorded; gate evidence must not claim complete v7 mapping or dashboard migration equivalence |
 
 ### P2 — Canonical Router, Redaction, SQLite, Retention
 
@@ -239,7 +247,8 @@ gate must pass.
 | `P5-WP03` | `TODO` | unassigned | `P5-WP01`, `P3-WP02` | Rich bounded spans/events/links/status/content/retry/timing | Golden topology/sampling tests |
 | `P5-WP04` | `TODO` | unassigned | `P5-WP02..03` | PR #403 lifecycle fixture migration and missing-data fidelity | Root/subagent real-producer goldens |
 | `P5-WP05` | `TODO` | unassigned | `P3-WP05`, `P5-WP02` | Galileo/OpenInference/local-observability generated projections | Vendor/dashboard inventory tests |
-| `P5-GATE` | `TODO` | root | `P5-WP01..05` | One canonical registry; no independently maintained telemetry schemas | Generated semantic diff reviewed |
+| `P5-WP06` | `TODO` | unassigned | `P1-WP04`, `P5-WP02..05` | Generate `compatibility/v7-exporter-selection.json`, integrate it and the generated local-observability/Galileo profiles with the converter engine, and complete the reviewed mapping-by-mapping v7-to-v8 golden matrix without wildcard broadening | Generated-artifact schema/determinism/drift tests; every current log/trace/metric/action/adapter path mapped exactly; full/partial local coverage, filter-predicate, canonical Go candidate, and missing-mapping goldens pass |
+| `P5-GATE` | `TODO` | root | `P5-WP01..06` | One canonical registry, complete generated migration selection, and no independently maintained telemetry schemas or converter family lists | Generated semantic diff and complete converter golden matrix reviewed |
 
 ### P6 — Operator Experience, Dashboards, and Documentation
 
@@ -255,7 +264,7 @@ gate must pass.
 
 | ID | Status | Owner | Depends on | Deliverable | Verification/evidence |
 |---|---|---|---|---|---|
-| `P7-WP01` | `TODO` | unassigned | `P1-GATE`, `P6-GATE` | Required migration registration and incompatible-start prevention | Manifest/cursor/failure tests |
+| `P7-WP01` | `TODO` | unassigned | `P1-GATE`, `P5-WP06`, `P6-GATE` | Required migration registration using the generated compatibility selection and incompatible-start prevention | Manifest/cursor/failure tests; activation cannot proceed with a missing, stale, or ambiguous generated selection |
 | `P7-WP02` | `TODO` | unassigned | `P7-WP01` | Exact backup, atomic config activation, restoration, idempotence | Fault-injection tests |
 | `P7-WP03` | `TODO` | unassigned | `P3-GATE`, `P6-GATE` | Local bundle backup/refresh/restart with custom files/volumes preserved | Bundle upgrade/live inventory tests |
 | `P7-WP04` | `TODO` | unassigned | `P7-WP01..03` | Historical baseline, permissions, retry, rollback matrix | Upgrade smoke matrix |
@@ -340,6 +349,7 @@ and exact-trace canary acknowledgement against its conformance harness.
 | `C-0001` | 2026-07-02 | setup | `P0-WP01` | D-022, P-045, P-046 | Track package in repository and use this root execution ledger | complete |
 | `C-0002` | 2026-07-02 | gate | `P0-WP02..03`, `P0-GATE` | D-001..022, S-001..012, P-001..047 | Approve the mechanically validated contract after current-state inventory, compatibility, and two CodeRabbit review passes | complete |
 | `C-0003` | 2026-07-02 | architecture | `P1-WP03`, `P5-WP01..02` | D-019, P-010, P-030, P-046 | Python validates source/schema semantics and renders the masked source; canonical effective compilation and registered action/event selector validation always run in Go. P5's sole registry compiler will generate the shared Python selector constants instead of introducing a hand-maintained duplicate in P1. | complete |
+| `C-0004` | 2026-07-02 | dependency | `P1-WP04`, `P1-GATE`, `P5-WP06`, `P7-WP01` | D-020, P-030, P-044, P-046, P-056, P-057 | Split converter-engine/API completion from generated family-selection integration: P1 may unblock canonical runtime work only after strict typed fail-closed engine tests; P5's sole compiler owns the complete compatibility artifact and mapping goldens, which remain mandatory before automatic migration or release. | complete |
 
 A new product choice requires a new decision ID and traceability row. A behavior
 change updates its contract and required test in the same change. Deferred release

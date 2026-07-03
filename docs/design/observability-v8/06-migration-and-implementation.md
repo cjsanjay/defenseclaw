@@ -183,8 +183,9 @@ delivery.
 The complete legacy OTel environment inventory is mechanical, not illustrative:
 `DEFENSECLAW_OTEL_ENABLED`; the DefenseClaw, OpenClaw, and standard OTel global
 endpoint/protocol names; their `LOGS`, `TRACES`, and `METRICS` endpoint/protocol
-forms; the DefenseClaw/OpenClaw TLS-insecure names; `OTEL_RESOURCE_ATTRIBUTES`; and
-`OTEL_EXPORTER_OTLP_HEADERS`. The converter applies the existing v7 precedence,
+forms; the DefenseClaw/OpenClaw TLS-insecure names; `OTEL_RESOURCE_ATTRIBUTES`;
+`OTEL_SERVICE_NAME`; and `OTEL_EXPORTER_OTLP_HEADERS`. The converter applies the
+existing v7 precedence,
 materializes all effective non-secret values, and records only the input names in
 its masked summary. Header values are secret-bearing: exact environment references
 remain references, while complete inline or interpolated values use the ancillary
@@ -201,9 +202,11 @@ without duplicate assignments. Preview reports only reference names and the fact
 that an ancillary edit would occur.
 
 When a v7 destination selects signals with different effective protocols, the
-converter creates one destination per protocol/signal group, preserves the source
-name on the first group, and uses `-<signal[-signal...]>` suffixes for the rest,
-with signals and groups ordered by the canonical `logs`, `traces`, `metrics` order.
+converter creates one destination per protocol/signal group and preserves the
+source name on the group using the destination's effective base protocol. If no
+selected signal uses that protocol, the first canonical group keeps the name. The
+remaining groups use `-<signal[-signal...]>` suffixes, with signals and otherwise
+tied groups ordered by the canonical `logs`, `traces`, `metrics` order.
 Endpoint, credentials, TLS, batching, routes, enabled state, and redaction are
 copied to each resulting destination before signal-specific overrides are applied.
 Metric export remains process-policy scoped in v8: two effective v7 metric

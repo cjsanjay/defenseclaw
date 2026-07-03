@@ -390,6 +390,18 @@ def test_compatibility_adapter_fields_enforce_utf8_byte_bounds() -> None:
             "network_safety: {allow_private_networks: true}",
             True,
         ),
+        ("https://collector.localhost:4318/v1/logs", "", False),
+        (
+            "https://collector.localhost:4318/v1/logs",
+            "network_safety: {allow_private_networks: true}",
+            True,
+        ),
+        ("https://[::ffff:127.0.0.1]:4318/v1/logs", "", False),
+        (
+            "https://[::ffff:127.0.0.1]:4318/v1/logs",
+            "network_safety: {allow_private_networks: true}",
+            True,
+        ),
         ("https://169.254.169.254/latest", "network_safety: {allow_private_networks: true}", False),
         ("https://user:password@collector.example.test/v1/logs", "", False),
     ],
