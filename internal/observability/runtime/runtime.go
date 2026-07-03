@@ -29,6 +29,7 @@ import (
 	"github.com/defenseclaw/defenseclaw/internal/observability/redaction"
 	"github.com/defenseclaw/defenseclaw/internal/observability/router"
 	"github.com/defenseclaw/defenseclaw/internal/observability/runtimegraph"
+	"github.com/defenseclaw/defenseclaw/internal/telemetry"
 )
 
 // ErrorCode is a closed, content-free runtime-assembly failure identity.
@@ -89,6 +90,11 @@ type Options struct {
 	// invariant transitions. Observer panics are isolated from producers and
 	// destination workers.
 	DestinationObserver delivery.Observer
+	// TelemetryProviderFactory is optional. When supplied, the exact plan-bound
+	// OTel provider is prepared and retired inside the same runtime graph as
+	// local persistence and destination dispatch; reload can therefore never
+	// pair producers with processors/readers from another generation.
+	TelemetryProviderFactory *telemetry.V8ProviderFactory
 	// GraphOptions is optional. When supplied, Reporter is still replaced by
 	// the process-stable Reporter above so one runtime cannot split reporting
 	// across inconsistent owners.
@@ -167,14 +173,20 @@ func New(ctx context.Context, initial runtimegraph.Config, options Options) (*Ru
 		adapters: options.DestinationAdapterFactory,
 		observer: destinationObserver,
 	}
+	factories := []runtimegraph.ComponentFactory{
+		&retentionPolicyFactory{controller: options.RetentionController},
+	}
+	if options.TelemetryProviderFactory != nil {
+		factories = append(factories, options.TelemetryProviderFactory)
+	}
+	factories = append(factories,
+		factory,
+		dispatchFactory,
+	)
 	manager, err := runtimegraph.New(
 		ctx,
 		initial,
-		[]runtimegraph.ComponentFactory{
-			&retentionPolicyFactory{controller: options.RetentionController},
-			factory,
-			dispatchFactory,
-		},
+		factories,
 		graphOptions,
 	)
 	if err != nil {

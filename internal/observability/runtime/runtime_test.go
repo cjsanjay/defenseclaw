@@ -20,6 +20,7 @@ import (
 	"github.com/defenseclaw/defenseclaw/internal/observability/redaction"
 	"github.com/defenseclaw/defenseclaw/internal/observability/router"
 	"github.com/defenseclaw/defenseclaw/internal/observability/runtimegraph"
+	"github.com/defenseclaw/defenseclaw/internal/telemetry"
 )
 
 type discardGraphReporter struct{}
@@ -311,6 +312,62 @@ func TestRuntimeRetentionOnlyReloadReplacesGraphAndReusesStore(t *testing.T) {
 	newLocal := newComponent.(*localLogComponent)
 	if newLocal == oldLocal || newLocal.store != dependencies.store || oldLocal.store != dependencies.store {
 		t.Fatal("retention reload did not replace only generation state around the stable store")
+	}
+}
+
+func TestRuntimeTelemetryProviderSharesExactGraphGenerationAndRetirement(t *testing.T) {
+	dependencies := newRuntimeTestDependencies(t)
+	initialPlan := runtimeTestPlan(t, dependencies.storePath, dependencies.judgePath, 90, nil)
+	options := dependencies.options()
+	options.TelemetryProviderFactory = telemetry.NewV8ProviderFactory(telemetry.V8ProviderOptions{
+		Version: "runtime-test", ServiceInstanceID: "runtime-test-instance",
+	})
+	runtime, err := New(t.Context(), runtimegraph.ConfigFromPlan(initialPlan, false), options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if closeErr := runtime.Close(ctx); closeErr != nil {
+			t.Errorf("close observability runtime: %v", closeErr)
+		}
+	})
+
+	providerForActiveGraph := func() (*telemetry.Provider, uint64) {
+		t.Helper()
+		graph := runtime.Active()
+		if graph == nil {
+			t.Fatal("runtime has no active graph")
+		}
+		lease, acquireErr := runtime.manager.Acquire(t.Context())
+		if acquireErr != nil {
+			t.Fatal(acquireErr)
+		}
+		defer lease.Release()
+		provider, ok := telemetry.V8ProviderFromLease(lease)
+		if !ok {
+			t.Fatal("runtime graph has no telemetry provider")
+		}
+		digest, generation, bound := provider.V8PlanBinding()
+		if !bound || digest != graph.Digest() || generation != graph.Generation() {
+			t.Fatalf("provider/graph binding = %q/%d and %q/%d", digest, generation, graph.Digest(), graph.Generation())
+		}
+		return provider, generation
+	}
+
+	first, firstGeneration := providerForActiveGraph()
+	candidate := runtimeTestPlan(t, dependencies.storePath, dependencies.judgePath, 30, nil)
+	result, reloadErr := runtime.Reload(t.Context(), runtimegraph.ConfigFromPlan(candidate, false))
+	if reloadErr != nil || result.Status() != runtimegraph.ReloadApplied {
+		t.Fatalf("reload=%s err=%v", result.Status(), reloadErr)
+	}
+	second, secondGeneration := providerForActiveGraph()
+	if first == second || secondGeneration != firstGeneration+1 {
+		t.Fatalf("provider/generation reused across reload: %p/%d -> %p/%d", first, firstGeneration, second, secondGeneration)
+	}
+	if first.Enabled() {
+		t.Fatal("retired runtime graph left telemetry provider enabled")
 	}
 }
 
