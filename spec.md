@@ -3,10 +3,10 @@
 ```yaml
 spec_status: approved-for-implementation
 goal_status: active
-current_phase: P2
+current_phase: P3
 target_config_version: 8
 baseline_commit: fd13acedfcffc0cc431d5a72f329b56b50b22baa
-last_verified_commit: 8d26ebd4f
+last_verified_commit: 1e8463ad6
 last_updated: 2026-07-03
 ```
 
@@ -31,10 +31,10 @@ or a plausible-looking dashboard is not completion.
 
 | Field | Value |
 |---|---|
-| Active work package | `P2-GATE` — representative producer exactly-once integration and failure injection |
-| Ready queue | `P3-WP01` after representative canonical routing is proven without producer-wide cutover |
+| Active work package | `P3-WP01` — isolated JSONL, console, Splunk HEC, and HTTP JSONL destination adapters |
+| Ready queue | `P3-WP02` OTLP signal routing after the shared destination queue/lifecycle contract is fixed |
 | Blocked | None |
-| Next phase gate | `P2-GATE` — canonical router, redaction, SQLite, retention, and representative safe-path integration without producer-wide cutover |
+| Next phase gate | `P3-GATE` — destination isolation plus Galileo and local-observability compatibility |
 | Root coordinator | Primary Codex thread |
 | Implementation branch | `codex/observability-v8-spec-implementation` from `main` |
 
@@ -215,13 +215,13 @@ substitute a converter-local family list, `*`, or all-catalog-buckets fallback.
 | `P2-WP03` | `DONE` | root + subagents + Claude review | `P2-WP01` | Central profiles/detectors/field transforms and cross-language `hash-v1` | Commits `ba0f56636..b5890a92c`; exact profiles, 14-detector conformance, Unicode/hash parity, pure legacy-v7, key custody, immutable projection, P-060/P-061 privacy hardening, config adapter, normal/race/vet/schema/spec gates |
 | `P2-WP04` | `DONE` | root + SQLite/judge/storage/graph subagents + Claude + CodeRabbit | `P2-WP01..03` | Implicit SQLite store, projections, integrity, judge separation | Commits `4f2a80166`, `1e0b9ea42`, `39fe480d1`: exact graph-bound local projections, mandatory all-bucket SQLite pipeline, hardened main/sidecar paths and readiness, correlation-key integrity, immutable finding plus mutable alert CAS/receipts/replay, retention-safe judge separation, post-commit reentrant health, and rollback-readable additive schemas. Normal/race/vet/Windows/make/spec/inventory gates passed; 12 of 16 CodeRabbit issues fixed and 4 contract/query-invalid suggestions rejected with evidence. |
 | `P2-WP05` | `DONE` | root + runtime/storage subagents + adversarial/Claude-assisted review | `P2-WP04` | Global retention reaper and immutable atomic runtime graph/reload/health | Commits `9a982e816..8d26ebd4f`: exact global age/cutover retention, process-stable readiness-gated scheduler, atomic graph swap/leases/rollback, lossless ordered reentrant reporting, real SQLite path identity, graph-bound local runtime, synchronous retention-policy activation, bounded retryable shutdown, and normal/race/vet/Windows/failure/stress evidence |
-| `P2-GATE` | `IN_PROGRESS` | root | `P2-WP01..05` | Representative producers route once through safe canonical path | Exactly-once/failure-injection evidence in progress |
+| `P2-GATE` | `DONE` | root + runtime/security subagents | `P2-WP01..05` | Representative producers route once through safe canonical path | Commit `1e8463ad6`: bound Sidecar start/stop persist exactly once through the real runtime; unbound v7 behavior remains exact; disabled collection and all ambiguous/failure paths never fall back; focused normal/race/stress, full gateway, vet, spec, and PR #412 dashboard gates passed |
 
 ### P3 — Destinations, OTel, Galileo, Local Observability
 
 | ID | Status | Owner | Depends on | Deliverable | Verification/evidence |
 |---|---|---|---|---|---|
-| `P3-WP01` | `TODO` | unassigned | `P2-GATE` | JSONL, console, Splunk HEC, HTTP JSONL adapters and isolated queues | Adapter/backpressure/network tests |
+| `P3-WP01` | `IN_PROGRESS` | root + destination subagent | `P2-GATE` | JSONL, console, Splunk HEC, HTTP JSONL adapters and isolated queues | Current adapter/queue/network inventory in progress; implementation follows the shared graph-owned lifecycle contract |
 | `P3-WP02` | `TODO` | unassigned | `P2-GATE` | OTLP log/trace/metric routing, projection, sampling, inbound normalization | OTel signal/sampling/loop tests |
 | `P3-WP03` | `TODO` | unassigned | `P3-WP02` | Metric catalog/gates/bounded attributes and native Prometheus option | Instrument/temporality tests |
 | `P3-WP04` | `TODO` | unassigned | `P3-WP02` | Galileo projection, delivery funnel, partial success, exact canary | Galileo schema/canary tests |
@@ -339,6 +339,7 @@ only “passed.” A relevant change invalidates old evidence.
 | `V-0028` | 2026-07-03 | `211b4d8c7` | P2-WP05 exact retention lifecycle | `go test ./internal/audit -count=1`; focused/full retention race; `go vet ./internal/audit`; repeated contention/failure tests | Global UTC cutoff, strict older-than semantics, 1,000-row transactions, child/parent age independence, protected-state exclusions/capacity, crash-resumable judge cleanup, exact timestamp repair, passive checkpoint, and active reader/writer contention passed. | root + storage subagent |
 | `V-0029` | 2026-07-03 | `8d26ebd4f` | P2-WP05 runtime graph and production assembly | `go test ./internal/config ./internal/audit ./internal/observability/... -count=1`; `go vet` for the same packages; focused runtimegraph/runtime stress | Normal suites passed (`config` 1.347s, `audit` 13.697s, runtime 2.891s, runtimegraph 1.592s); vet and diff checks passed. Deterministic tests cover atomic swap, old/new lease coherence, candidate rollback, global cleanup ownership, 300 queued/reentrant report batches, exact SQLite persistence, synchronous retention activation, rejected-policy preservation, and retryable shutdown. | root + runtime/storage subagents + adversarial review |
 | `V-0030` | 2026-07-03 | `8d26ebd4f` | P2-WP05 race/platform/spec gate | `go test -race ./internal/audit ./internal/observability/runtime ./internal/observability/runtimegraph -count=1`; Windows amd64 compile via `go test -exec=/usr/bin/true`; `make check-observability-v8-spec` | Race passed (`audit` 315.683s, runtime 33.133s, runtimegraph 1.539s); all three packages compiled for Windows amd64; 95 D-/S-/P- decisions validated. Multiple bounded Claude Opus xhigh attempts returned no usable output; independent adversarial reviews found and closed reporter-spool deadlock, opened-path identity, exclusive-controller ownership, and unbounded constructor-cleanup defects. | root + subagents |
+| `V-0031` | 2026-07-03 | `1e8463ad6` | P2 representative-producer gate | Focused Sidecar v8 normal, race, and 10-run stress tests; `go test ./internal/gateway -count=1`; `go vet ./internal/gateway`; static dual-emission coverage; `make check-observability-v8-spec`; packaged dashboard audit and focused Agent360/Grafana pytest | Focused normal passed in 4.084s, race in 16.475s, stress in 7.819s, and full gateway in 53.369s. Exactly one bound canonical start/stop row preserves action, actor, details, INFO severity, event/bucket ownership, correlation IDs, graph digest, and generation. Failure, ambiguous outcome, canceled shutdown, disabled collection, and unbound compatibility cases passed. Dashboard audit remained 14 dashboards/313 panels and 33 focused dashboard tests passed. A bounded Claude Opus xhigh pass emitted no usable review output and was not treated as evidence. | root + runtime/security subagents |
 
 Final integration requires, at minimum:
 
@@ -376,6 +377,7 @@ and exact-trace canary acknowledgement against its conformance harness.
 | `C-0009` | 2026-07-02 | storage architecture | `P2-WP04`, `P2-WP05` | P-021, P-045, P-047 | Preserve v7 audit column meanings while adding distinct exact-projection/hash/HMAC fields; cut retained raw judge bodies over once to an owner-only dedicated database with crash-resumable verification, normalized indexed instants, no audit.db writer fallback, and authoritative-first compatibility reads. Unix/Windows main and auxiliary SQLite paths fail closed across ownership, link/reparse, ACL, mutable-ancestor, and stale-sidecar hazards. The global age reaper and cutover-marker cleanup remain the next P2-WP05 scope. | complete |
 | `C-0010` | 2026-07-03 | gate | `P2-WP04`, `P2-WP05`, `P2-GATE` | D-013..016, S-012, P-005..008, P-021, P-045, P-047 | Close P2-WP04 at `39fe480d1` after implicit all-bucket SQLite persistence, exact runtime-graph projection binding, hardened readiness/path/sidecar handling, correlation-key integrity, protected alert receipts and streaming replay, post-lifecycle health dispatch, adversarial Claude/storage review, one consolidated CodeRabbit pass, and final normal/race/vet/cross-platform/repository gates. P2-WP05 now owns the global age reaper, protected-state exclusions/capacity health, atomic graph reload/swap, and cleanup markers; representative producer cutover remains P2-GATE. | complete |
 | `C-0011` | 2026-07-03 | gate | `P2-WP05`, `P2-GATE`, `P3-WP01` | D-017..019, S-012, P-021, P-045, P-047 | Close P2-WP05 at `8d26ebd4f` after exact global retention, readiness-gated six-hour scheduling, immutable atomic runtime generations, producer leases, rejection-safe reverse cleanup, lossless ordered/reentrant mandatory reporting, exact opened-SQLite path binding, graph-bound local persistence, and retention activation before producer readiness. Runtime exclusively owns controller lifecycle and shutdown is bounded/retryable without returning store ownership early. P2-GATE now owns only representative producer cutover/exactly-once failure injection; optional destinations remain rejected until P3. | complete |
+| `C-0012` | 2026-07-03 | gate | `P2-GATE`, `P3-WP01..05`, `P7-WP01` | D-004..006, D-013..019, S-012, P-021, P-032, P-045, P-047 | Close P2 at `1e8463ad6` after a real-runtime Sidecar start/stop integration proves canonical local persistence precedes optional structured fanout, exactly-once writes, bounded cancellation-independent shutdown, no legacy fallback after a v8 decision, and exact unbound compatibility. This is a representative seam, not early global activation: the CLI still owns production runtime construction/close and config-version cutover in P7; remote destination delivery and canonical metrics remain P3; producer-wide migration remains P4. Existing PR #403 identifiers are not fabricated for process boot events, and PR #412 packaged dashboard contracts remain unchanged. | complete |
 
 A new product choice requires a new decision ID and traceability row. A behavior
 change updates its contract and required test in the same change. Deferred release
