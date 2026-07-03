@@ -504,6 +504,15 @@ The generic P2 ceiling for either payload arm is:
 - at most 8,192 total object members plus array elements; and
 - at most 1,048,576 bytes (1 MiB) in the deterministic encoding defined below.
 
+The complete deterministic record encoding, including the envelope, payload arm,
+and explicit field-class map, is limited to 4,194,304 bytes (4 MiB). Envelope text
+is additionally bounded as follows: `record_id`, each correlation identifier, and
+`span_name` are at most 512 UTF-8 bytes; `binary_version` is at most 256 UTF-8
+bytes; and each optional provenance hexadecimal value is at most 128 ASCII bytes.
+There is no smaller arbitrary JSON-Pointer length limit: the payload and complete
+record ceilings bound pointer storage, and a valid pointer to a legal payload key
+must remain representable.
+
 Per-family schemas and destination projections MAY impose lower limits. The generic
 builder rejects a payload above a P2 ceiling; it does not truncate or partially
 accept canonical input. Later projection-specific truncation follows the registered
@@ -517,6 +526,13 @@ and negative zero emitted as `0`. The same immutable value always produces the s
 bytes. Record integrity and equality tests use this encoding; map iteration order,
 locale, process, and destination do not affect it.
 
+Number normalization is lossless over the accepted JSON decimal value. An
+implementation MUST NOT round a parsed decimal through binary floating point or
+silently change precision merely to obtain a shorter spelling. It removes
+insignificant decimal zeroes, normalizes the exponent, and chooses a shortest exact
+plain or scientific representation; native binary floating-point inputs use their
+shortest exact round-trippable decimal representation before this normalization.
+
 ### 3.4 Provenance
 
 `provenance` is an exact object with `additionalProperties: false` and these fields:
@@ -524,11 +540,11 @@ locale, process, and destination do not affect it.
 | Property | Requirement |
 |---|---|
 | `producer` | Required stable token matching `[a-z][a-z0-9_.-]{0,63}` |
-| `binary_version` | Required nonempty string |
+| `binary_version` | Required nonempty string, at most 256 UTF-8 bytes |
 | `registry_schema_version` | Required positive integer |
 | `config_generation` | Required nonnegative integer |
-| `build_commit` | Optional nonempty lowercase hexadecimal string |
-| `config_digest` | Optional nonempty lowercase hexadecimal string |
+| `build_commit` | Optional nonempty lowercase hexadecimal string, at most 128 ASCII bytes |
+| `config_digest` | Optional nonempty lowercase hexadecimal string, at most 128 ASCII bytes |
 
 The optional hexadecimal fields match `[0-9a-f]+`; uppercase, prefixes such as
 `0x`, separators, and mutable display labels are invalid. `producer` identifies the
@@ -544,11 +560,30 @@ or `credential`. An entry classifies the value at that exact pointer. Invalid
 pointers, pointers that do not resolve, unknown classes, and conflicting duplicate
 pointers are rejected.
 
+Classification is exact, not inherited: a class at the root or a parent container
+does not classify any descendant. Without generated schema proof, every scalar,
+null, empty-object, and empty-array leaf has its own explicit pointer entry. This
+prevents a caller from labelling a parent `metadata` and thereby upgrading unknown
+nested content to a safe class.
+
 The map MAY be empty only when the registered family schema derives a field class
 for every dynamic field in the selected payload. Otherwise every dynamic field not
 classified by that schema MUST have an explicit pointer entry. Schema-derived and
 explicit classifications MUST agree. This makes an empty map evidence of complete
 registered classification, not an unclassified-payload escape hatch.
+
+The ordinary generic constructor accepts only complete explicit classification.
+Schema-derived construction is an internal generated-builder capability backed by
+the registered family schema; it is not a public Boolean or caller assertion. In
+the same way, producers cannot set `mandatory` directly: the current classified-log
+builder resolves producer kind, registered key, and typed facts through the reviewed
+classification catalog. When collection is disabled, its separate floor builder
+accepts no ordinary body and emits an internally marked minimal placeholder body
+containing only `floor_only: true` and `detail_state: omitted`, both classified as
+metadata. The router requires this marker for floor admission and rejects it on the
+ordinary path. P5 generated family floor builders may replace that placeholder with
+additional reviewed safe fields, but can never admit ordinary content/evidence/
+credential bodies to the floor path.
 
 P2 owns the immutable generic record constructor, deterministic serializer,
 registered bucket/signal/event identity validation, canonical outcome validation,
@@ -556,8 +591,9 @@ and the current classified-log adapter needed to move representative producers o
 the router. The generic constructor accepts an already-typed payload object; it does
 not infer a family-specific body or instrument shape. P5-WP02 remains the sole owner
 of generated log/trace/metric family builders, their detailed required/conditional
-fields, lower family bounds, generated field-class maps, and family-schema
-validation. Generated builders MUST terminate at this same generic P2 constructor.
+fields, applicable outcome subsets, lower family bounds, generated field-class
+maps, and family-schema validation. Generated builders MUST terminate at this same
+generic P2 constructor.
 
 ## 4. Severity
 

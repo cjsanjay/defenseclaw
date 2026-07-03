@@ -112,40 +112,56 @@ copy after producer migration.
 
 ### 3.4 Canonical record substrate
 
-P2 acceptance MUST include all of the following:
+P2 generic-substrate acceptance MUST include all of the following. The bullets that
+explicitly name generated family ownership are completed by P5-WP02 rather than by
+a parallel hand-authored P2 registry:
 
-- Envelope fixtures accept only integer `schema_version: 1` and integer
-  `bucket_catalog_version: 1`; strings, zero, negative, and unsupported future
-  versions fail before routing.
+- The P2 constructor emits only integer `schema_version: 1` and integer
+  `bucket_catalog_version: 1` and exposes no caller-controlled version field. P5
+  generated envelope schemas reject strings, zero, negative, and unsupported future
+  versions before routing.
 - Table-driven union tests prove logs and traces require `body` and reject
   `instrument_data`, metrics require `instrument_data` and reject `body`, and every
   signal rejects both-arms-present and neither-arm-present records.
 - Constructor-input mutation, returned-value mutation attempts, concurrent
   destination projection, redaction, and repeated serialization leave a deeply
   equal canonical record unchanged and expose no mutable aliases.
-- Boundary fixtures cover exactly 32 levels, 8,192 members/elements, and 1 MiB of
-  deterministic payload bytes, plus one-over failures. Cycles, invalid UTF-8,
-  non-string keys, non-finite numbers, and implementation-specific values fail
-  without returning a partial record or echoing payload contents in errors.
+- Boundary fixtures cover exactly 32 levels, 8,192 members/elements, 1 MiB of
+  deterministic payload bytes, 4 MiB of complete record bytes, and every envelope
+  text bound in 02 §3.3, plus one-over failures. Cycles, invalid UTF-8, non-string
+  keys, non-finite numbers, and implementation-specific values fail without
+  returning a partial record or echoing payload or rejected metadata contents in
+  errors.
 - Golden deterministic-JSON vectors cover differently ordered nested maps, arrays,
-  Unicode keys and values, escaping, integers, finite non-integer numbers, and
-  negative zero. Repeated, concurrent, and cross-language implementations produce
-  byte-identical output independent of map iteration, locale, process, or
-  destination.
+  Unicode keys and values, escaping, integers, high-precision and large-exponent
+  finite decimal numbers, and negative zero. Exact envelope goldens prove recursive
+  lexical object-key order. Repeated, concurrent, and cross-language implementations
+  produce byte-identical output independent of map iteration, locale, process, or
+  destination; no decimal is silently rounded through binary floating point.
 - Correlation accepts the empty object and every §3.1 optional nonempty-string key,
   while rejecting unknown keys, null/numeric values, and invented IDs. Provenance
   accepts exactly its four required and two optional fields and rejects missing,
   extra, malformed-token, nonpositive-registry-version, negative-generation, and
   non-lowercase-hex cases.
-- Registered identity tests accept every registered bucket/signal/event tuple and
-  stable source/producer token, and reject unknown or mismatched identities before
-  any route or exporter observes the record.
-- Every canonical outcome in §3.2 is accepted only for a family whose registered
-  subset contains it; unregistered synonyms and family-inapplicable outcomes fail.
+- P2 registered-identity tests accept catalog buckets plus exact registered
+  signal/name membership and stable source/producer tokens, and reject unknown or
+  signal-mismatched identities before any route or exporter observes the record.
+  P5 generated-registry tests add exact event-to-bucket ownership.
+- P2 accepts every globally canonical outcome and rejects unregistered synonyms.
+  P5 generated family tests accept only each family's registered subset and reject
+  family-inapplicable outcomes.
 - Field-class tests cover all eight classes, JSON Pointer escaping/resolution,
-  unknown/conflicting/unresolved entries, complete schema derivation with an empty
-  map, and rejection when any dynamic field remains unclassified or disagrees with
-  its registered schema.
+  unknown/conflicting/unresolved entries, exact non-inherited leaf coverage, and
+  rejection when any dynamic field remains unclassified. Tests prove ordinary
+  callers cannot assert schema derivation. P5 generated-builder tests prove complete
+  schema derivation with an empty explicit map and reject explicit/schema conflicts.
+- Mandatory-floor tests prove producer kind/key/typed facts are resolved through
+  the reviewed catalog; public inputs cannot forge `mandatory`. Disabled ordinary
+  events never invoke a builder. A floor build accepts no ordinary body, carries the
+  internal floor marker and exact minimal placeholder schema, reaches SQLite only,
+  and is rejected if it contains or is replaced by an ordinary content, evidence,
+  credential, prompt/tool, or judge-body payload. An enabled mandatory event uses
+  one ordinary record and never emits the floor placeholder as a duplicate.
 - Builder-boundary tests prove the generic P2 constructor accepts already-typed
   JSON payload objects and the current classified-log adapter terminates at that
   constructor. P2 contains no hand-authored detailed trace/metric family builders;
