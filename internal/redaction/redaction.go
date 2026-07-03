@@ -213,6 +213,14 @@ func ForSinkString(s string) string {
 	if DisableAll() {
 		return s
 	}
+	return LegacyV7String(s)
+}
+
+// LegacyV7String applies the exact v7 arbitrary-string projection without
+// consulting environment variables or mutable package state. It exists only
+// for the immutable observability-v8 legacy-v7 migration profile; new policy
+// code should use the central v8 projection engine instead.
+func LegacyV7String(s string) string {
 	if s == "" {
 		return "<empty>"
 	}
@@ -322,6 +330,13 @@ func ForSinkEntity(value string) string {
 	if DisableAll() {
 		return value
 	}
+	return LegacyV7Entity(value)
+}
+
+// LegacyV7Entity applies the exact v7 entity projection without consulting
+// environment variables or mutable package state. The reviewed byte-length
+// threshold and first-rune preview are preserved for migration compatibility.
+func LegacyV7Entity(value string) string {
 	if value == "" {
 		return "<empty>"
 	}
@@ -361,6 +376,12 @@ func ForSinkMessageContent(content string) string {
 	if DisableAll() {
 		return content
 	}
+	return LegacyV7MessageContent(content)
+}
+
+// LegacyV7MessageContent applies the exact v7 model/tool-content projection
+// without consulting environment variables or mutable package state.
+func LegacyV7MessageContent(content string) string {
 	if content == "" {
 		return "<empty>"
 	}
@@ -396,6 +417,12 @@ func ForSinkReason(reason string) string {
 	if DisableAll() {
 		return reason
 	}
+	return LegacyV7Reason(reason)
+}
+
+// LegacyV7Reason applies the exact v7 bounded token-aware reason projection
+// without consulting environment variables or mutable package state.
+func LegacyV7Reason(reason string) string {
 	if reason == "" {
 		return ""
 	}
@@ -511,7 +538,7 @@ func redactReasonTokenDepth(t string, depth int) string {
 		if isSafeReasonToken(t) {
 			return t
 		}
-		return ForSinkString(t)
+		return LegacyV7String(t)
 	}
 	if idx := strings.Index(t, ": "); idx > 0 {
 		prefix := t[:idx]
@@ -545,7 +572,7 @@ func redactReasonTokenDepth(t string, depth int) string {
 			if isPlaceholder(rest) {
 				return prefix + ":" + rest
 			}
-			return prefix + ":" + ForSinkString(rest)
+			return prefix + ":" + LegacyV7String(rest)
 		}
 	}
 	if isSafeReasonToken(t) {
@@ -564,10 +591,10 @@ func redactReasonTokenDepth(t string, depth int) string {
 			if isPlaceholder(val) {
 				return key + "=" + val
 			}
-			return key + "=" + ForSinkString(val)
+			return key + "=" + LegacyV7String(val)
 		}
 	}
-	return ForSinkString(t)
+	return LegacyV7String(t)
 }
 
 // redactWhitespaceTokens handles "key=value [key=value …]" audit
@@ -583,7 +610,7 @@ func redactWhitespaceTokens(clause string) (string, bool) {
 		if i == 0 && start > 0 {
 			leading := strings.TrimSpace(clause[:start])
 			if leading != "" {
-				b.WriteString(ForSinkString(leading))
+				b.WriteString(LegacyV7String(leading))
 				b.WriteByte(' ')
 			}
 		}
@@ -595,7 +622,7 @@ func redactWhitespaceTokens(clause string) (string, bool) {
 		segment = strings.TrimRight(segment, " \t")
 		eq := strings.IndexByte(segment, '=')
 		if eq < 0 {
-			b.WriteString(ForSinkString(segment))
+			b.WriteString(LegacyV7String(segment))
 		} else {
 			key := segment[:eq]
 			value := segment[eq+1:]
@@ -608,7 +635,7 @@ func redactWhitespaceTokens(clause string) (string, bool) {
 			case isSafeKVValue(value):
 				b.WriteString(value)
 			default:
-				b.WriteString(ForSinkString(value))
+				b.WriteString(LegacyV7String(value))
 			}
 		}
 		if i+1 < len(boundaries) {
@@ -715,6 +742,14 @@ func ForSinkEvidence(content string, matchStart, matchEnd int) string {
 	if DisableAll() {
 		return content
 	}
+	return LegacyV7Evidence(content, matchStart, matchEnd)
+}
+
+// LegacyV7Evidence applies the exact v7 evidence projection without
+// consulting environment variables or mutable package state. Coordinates are
+// included only when supplied as a valid non-empty range; the helper never
+// derives or invents them.
+func LegacyV7Evidence(content string, matchStart, matchEnd int) string {
 	if content == "" {
 		return "<empty>"
 	}
