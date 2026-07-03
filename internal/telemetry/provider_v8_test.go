@@ -27,6 +27,8 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	logglobal "go.opentelemetry.io/otel/log/global"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	"go.opentelemetry.io/otel/trace"
@@ -653,6 +655,111 @@ func (*v8FailingProcessor) OnEnd(sdktrace.ReadOnlySpan)                     {}
 func (processor *v8FailingProcessor) Shutdown(context.Context) error        { return processor.shutdownError }
 func (processor *v8FailingProcessor) ForceFlush(context.Context) error {
 	return processor.forceFlushError
+}
+
+type v8TrackingProcessor struct{ shutdowns atomic.Uint64 }
+
+func (*v8TrackingProcessor) OnStart(context.Context, sdktrace.ReadWriteSpan) {}
+func (*v8TrackingProcessor) OnEnd(sdktrace.ReadOnlySpan)                     {}
+func (processor *v8TrackingProcessor) Shutdown(context.Context) error {
+	processor.shutdowns.Add(1)
+	return nil
+}
+func (*v8TrackingProcessor) ForceFlush(context.Context) error { return nil }
+
+func TestV8GenerationPipelineFactoryBindsExactCandidateAndOwnsChildren(t *testing.T) {
+	plan := v8PlanForTest(t, "always_on", "", nil)
+	processor := &v8TrackingProcessor{}
+	reader := sdkmetric.NewManualReader()
+	var calls atomic.Uint64
+	provider, err := NewProviderV8Inactive(context.Background(), plan, 17, V8ProviderOptions{
+		GenerationPipelines: func(
+			ctx context.Context,
+			gotPlan *config.ObservabilityV8Plan,
+			generation uint64,
+			spec V8MetricReaderSpec,
+		) (V8GenerationPipelines, error) {
+			calls.Add(1)
+			if ctx == nil || gotPlan != plan || generation != 17 ||
+				spec.ExportInterval != 60*time.Second || spec.Temporality != metricdata.DeltaTemporality {
+				t.Fatalf("pipeline input plan/generation/spec=%p/%d/%+v", gotPlan, generation, spec)
+			}
+			return V8GenerationPipelines{
+				SpanProcessors: []sdktrace.SpanProcessor{processor},
+				MetricReaders:  []sdkmetric.Reader{reader},
+			}, nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if calls.Load() != 1 {
+		t.Fatalf("pipeline factory calls = %d", calls.Load())
+	}
+	provider.v8.active.Store(true)
+	_, span := provider.StartAgentSpan(context.Background(), "codex", "root", "root", "agent", "", "")
+	provider.EndAgentSpan(span, "")
+	if err := provider.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if processor.shutdowns.Load() != 1 {
+		t.Fatalf("processor shutdowns = %d", processor.shutdowns.Load())
+	}
+}
+
+func TestV8GenerationPipelineFactoryInvalidPartialSetCleansReturnedChildren(t *testing.T) {
+	plan := v8PlanForTest(t, "always_on", "", nil)
+	processor := &v8TrackingProcessor{}
+	provider, err := NewProviderV8Inactive(context.Background(), plan, 1, V8ProviderOptions{
+		GenerationPipelines: func(
+			context.Context,
+			*config.ObservabilityV8Plan,
+			uint64,
+			V8MetricReaderSpec,
+		) (V8GenerationPipelines, error) {
+			return V8GenerationPipelines{
+				SpanProcessors: []sdktrace.SpanProcessor{processor},
+				MetricReaders:  []sdkmetric.Reader{nil},
+			}, nil
+		},
+	})
+	if provider != nil || err == nil {
+		t.Fatalf("provider/error = %v/%v, want rejected candidate", provider, err)
+	}
+	var providerError *V8ProviderError
+	if !errors.As(err, &providerError) || providerError.Code() != V8ProviderErrorPipelineInitialization {
+		t.Fatalf("pipeline error = %T/%v", err, providerError)
+	}
+	if processor.shutdowns.Load() != 1 {
+		t.Fatalf("partial processor shutdowns = %d", processor.shutdowns.Load())
+	}
+}
+
+func TestV8GenerationPipelineFactoryIsSkippedBeforeConstructionWhenSignalsUncollected(t *testing.T) {
+	no := false
+	plan := v8PlanForTest(t, "always_on", "", func(source *config.ObservabilityV8Source) {
+		source.Defaults.Collect.Traces = &no
+		source.Defaults.Collect.Metrics = &no
+	})
+	var calls atomic.Uint64
+	provider, err := NewProviderV8Inactive(context.Background(), plan, 1, V8ProviderOptions{
+		GenerationPipelines: func(
+			context.Context,
+			*config.ObservabilityV8Plan,
+			uint64,
+			V8MetricReaderSpec,
+		) (V8GenerationPipelines, error) {
+			calls.Add(1)
+			return V8GenerationPipelines{}, nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = provider.Shutdown(context.Background()) })
+	if calls.Load() != 0 {
+		t.Fatalf("uncollected signal pipeline calls = %d", calls.Load())
+	}
 }
 
 func TestV8BackendErrorsAreBoundedAndPreserveOnlyContextIdentity(t *testing.T) {

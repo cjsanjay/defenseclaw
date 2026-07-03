@@ -72,6 +72,28 @@ type V8MetricReaderSpec struct {
 // independent readers without sharing providers or mutating OTel globals.
 type V8MetricReaderFactory func(generation uint64, spec V8MetricReaderSpec) (sdkmetric.Reader, error)
 
+// V8GenerationPipelines is one detached set of signal pipelines prepared from
+// the exact immutable plan being installed. The provider takes ownership of
+// every returned non-nil processor and reader, including defensive cleanup of
+// a returned partial set when the factory reports failure. A factory must still
+// release any allocated child that it does not include in the returned set.
+type V8GenerationPipelines struct {
+	SpanProcessors []sdktrace.SpanProcessor
+	MetricReaders  []sdkmetric.Reader
+}
+
+// V8GenerationPipelineFactory is the production destination-assembly seam.
+// Unlike the lower-level test factories above, it receives the exact plan and
+// context for this candidate generation, allowing reload to prepare independent
+// OTLP/Prometheus processors and readers without ambient state or reusable
+// queues.
+type V8GenerationPipelineFactory func(
+	context.Context,
+	*config.ObservabilityV8Plan,
+	uint64,
+	V8MetricReaderSpec,
+) (V8GenerationPipelines, error)
+
 // SamplingDecisionDebug is the bounded, content-free sampler decision exposed
 // to tests and diagnostics. Reason and Decision belong to closed vocabularies;
 // names, identifiers, attributes, and trace IDs are never included.
@@ -96,6 +118,7 @@ type V8ProviderOptions struct {
 	DeviceKeyFile         string
 	SpanProcessorFactory  V8SpanProcessorFactory
 	MetricReaderFactories []V8MetricReaderFactory
+	GenerationPipelines   V8GenerationPipelineFactory
 	// PrepareCleanupTimeout bounds defensive cleanup when a later reader or
 	// runtimegraph acquisition rejects an otherwise prepared candidate.
 	// Zero uses the reviewed five-second default.
@@ -112,6 +135,7 @@ const (
 	V8ProviderErrorInitialization          V8ProviderErrorCode = "initialization_failed"
 	V8ProviderErrorProcessorInitialization V8ProviderErrorCode = "processor_initialization_failed"
 	V8ProviderErrorReaderInitialization    V8ProviderErrorCode = "reader_initialization_failed"
+	V8ProviderErrorPipelineInitialization  V8ProviderErrorCode = "signal_pipeline_initialization_failed"
 	V8ProviderErrorFlush                   V8ProviderErrorCode = "flush_failed"
 	V8ProviderErrorShutdown                V8ProviderErrorCode = "shutdown_failed"
 )
@@ -299,6 +323,17 @@ func NewProviderV8Inactive(
 	if snapshot.BucketCatalogVersion != observability.CurrentBucketCatalogVersion {
 		return nil, fmt.Errorf("telemetry: unsupported bucket catalog version %d", snapshot.BucketCatalogVersion)
 	}
+	traceCollect := make(map[observability.Bucket]bool, len(snapshot.Buckets))
+	metricCollect := make(map[observability.Bucket]bool, len(snapshot.Buckets))
+	for _, bucket := range snapshot.Buckets {
+		if bucket.Collect.Traces {
+			traceCollect[bucket.Bucket] = true
+		}
+		if bucket.Collect.Metrics {
+			metricCollect[bucket.Bucket] = true
+		}
+	}
+	metricSpec := v8MetricReaderSpec(snapshot.MetricPolicy)
 
 	debug := newV8SamplingDebug(options.SamplingObserver)
 	sampler, err := newV8Sampler(snapshot.TracePolicy.Sampler, snapshot.TracePolicy.SamplerArg, debug)
@@ -308,6 +343,45 @@ func NewProviderV8Inactive(
 
 	res := buildV8Resource(snapshot, options)
 	limits := snapshot.TracePolicy.Limits
+	preparedProcessors := make([]sdktrace.SpanProcessor, 0, 1)
+	preparedReaders := make([]sdkmetric.Reader, 0, len(options.MetricReaderFactories))
+	cleanupPrepared := func() {
+		v8BoundedPrepareCleanup(options.PrepareCleanupTimeout, func(cleanupContext context.Context) {
+			for index := len(preparedReaders) - 1; index >= 0; index-- {
+				if preparedReaders[index] != nil {
+					_ = preparedReaders[index].Shutdown(cleanupContext)
+				}
+			}
+		})
+		v8BoundedPrepareCleanup(options.PrepareCleanupTimeout, func(cleanupContext context.Context) {
+			for index := len(preparedProcessors) - 1; index >= 0; index-- {
+				if preparedProcessors[index] != nil {
+					_ = preparedProcessors[index].Shutdown(cleanupContext)
+				}
+			}
+		})
+	}
+	if options.GenerationPipelines != nil && (len(traceCollect) > 0 || len(metricCollect) > 0) {
+		pipelines, pipelineErr := options.GenerationPipelines(ctx, plan, generation, metricSpec)
+		preparedProcessors = append(preparedProcessors, pipelines.SpanProcessors...)
+		preparedReaders = append(preparedReaders, pipelines.MetricReaders...)
+		if pipelineErr != nil || !validV8GenerationPipelines(pipelines, len(traceCollect) > 0, len(metricCollect) > 0) {
+			cleanupPrepared()
+			return nil, newV8ProviderError(V8ProviderErrorPipelineInitialization, pipelineErr)
+		}
+		if err := ctx.Err(); err != nil {
+			cleanupPrepared()
+			return nil, newV8ProviderError(V8ProviderErrorPipelineInitialization, err)
+		}
+	}
+	if options.SpanProcessorFactory != nil {
+		processor, processorErr := options.SpanProcessorFactory(generation)
+		if processorErr != nil || processor == nil {
+			cleanupPrepared()
+			return nil, newV8ProviderError(V8ProviderErrorProcessorInitialization, processorErr)
+		}
+		preparedProcessors = append(preparedProcessors, processor)
+	}
 	traceOptions := []sdktrace.TracerProviderOption{
 		sdktrace.WithResource(res),
 		sdktrace.WithSampler(sampler),
@@ -320,14 +394,7 @@ func NewProviderV8Inactive(
 			AttributePerLinkCountLimit:  limits.MaxAttributesPerEvent,
 		}),
 	}
-	if options.SpanProcessorFactory != nil {
-		processor, processorErr := options.SpanProcessorFactory(generation)
-		if processorErr != nil {
-			return nil, newV8ProviderError(V8ProviderErrorProcessorInitialization, processorErr)
-		}
-		if processor == nil {
-			return nil, newV8ProviderError(V8ProviderErrorProcessorInitialization, nil)
-		}
+	for _, processor := range preparedProcessors {
 		traceOptions = append(traceOptions, sdktrace.WithSpanProcessor(processor))
 	}
 
@@ -343,27 +410,15 @@ func NewProviderV8Inactive(
 	}
 	tracer := boundedTracerProvider.Tracer("defenseclaw", tracerOptions...)
 	logger := logNoop.NewLoggerProvider().Logger("defenseclaw")
-	traceCollect := make(map[observability.Bucket]bool, len(snapshot.Buckets))
-	metricCollect := make(map[observability.Bucket]bool, len(snapshot.Buckets))
-	for _, bucket := range snapshot.Buckets {
-		if bucket.Collect.Traces {
-			traceCollect[bucket.Bucket] = true
-		}
-		if bucket.Collect.Metrics {
-			metricCollect[bucket.Bucket] = true
-		}
-	}
 	meter := metricNoop.NewMeterProvider().Meter("defenseclaw")
 	var meterProvider *sdkmetric.MeterProvider
 	var metrics *metricsSet
-	metricSpec := v8MetricReaderSpec(snapshot.MetricPolicy)
 	if len(metricCollect) > 0 {
 		meterOptions := []sdkmetric.Option{
 			sdkmetric.WithResource(res),
 			sdkmetric.WithCardinalityLimit(v8MetricCardinalityLimit),
 			sdkmetric.WithExemplarFilter(exemplar.AlwaysOffFilter),
 		}
-		preparedReaders := make([]sdkmetric.Reader, 0, len(options.MetricReaderFactories))
 		cleanupReaders := func() {
 			v8BoundedPrepareCleanup(options.PrepareCleanupTimeout, func(cleanupContext context.Context) {
 				for index := len(preparedReaders) - 1; index >= 0; index-- {
@@ -413,6 +468,30 @@ func NewProviderV8Inactive(
 			metrics: metricCollect, metricSpec: metricSpec, limits: limits, debug: debug,
 		},
 	}, nil
+}
+
+func validV8GenerationPipelines(
+	pipelines V8GenerationPipelines,
+	tracesCollected bool,
+	metricsCollected bool,
+) bool {
+	if !tracesCollected && len(pipelines.SpanProcessors) != 0 {
+		return false
+	}
+	if !metricsCollected && len(pipelines.MetricReaders) != 0 {
+		return false
+	}
+	for _, processor := range pipelines.SpanProcessors {
+		if processor == nil || reflect.ValueOf(processor).Kind() == reflect.Pointer && reflect.ValueOf(processor).IsNil() {
+			return false
+		}
+	}
+	for _, reader := range pipelines.MetricReaders {
+		if reader == nil || reflect.ValueOf(reader).Kind() == reflect.Pointer && reflect.ValueOf(reader).IsNil() {
+			return false
+		}
+	}
+	return true
 }
 
 const v8DefaultPrepareCleanupTimeout = 5 * time.Second
