@@ -236,6 +236,8 @@ Startup/reload validation MUST reject:
   `field_classes`, including size, scan, candidate, match, excerpt, report, key
   material, or key-path knobs; equivalent v8 environment inputs are also rejected.
 - Enabled OTLP destination with no selected signal or resolved endpoint.
+- A nonempty OTLP `signal_overrides.<signal>.path` with `grpc` or
+  `grpc/protobuf`; path overrides are HTTP/protobuf-only.
 - Legacy `signal_transports` or a transport-level `enabled` flag.
 - Invalid protocol, TLS, listener, queue, batch, interval, sampler, or retention.
 - A queue count outside 1..65,536, queue bytes outside

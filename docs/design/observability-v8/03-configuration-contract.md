@@ -591,7 +591,10 @@ operator tunable must not be presented as YAML knobs.
   capability-default send, explicit `send` block, or advanced routes. There is no
   second transport enablement switch.
 - `signal_overrides` may contain only selected signals and may change endpoint/path
-  details, not enable an otherwise unselected signal.
+  details, not enable an otherwise unselected signal. A `path` override is valid
+  only for `http`/`http/protobuf`; gRPC OTLP service method paths are fixed by the
+  protocol, so `grpc`/`grpc/protobuf` destinations with a nonempty path fail
+  validation instead of silently ignoring it.
 - A v8 OTLP destination has one protocol. Automatic migration of a v7 destination
   whose selected signals use different effective protocols creates deterministic
   signal-specific destinations instead of adding a hidden per-signal protocol

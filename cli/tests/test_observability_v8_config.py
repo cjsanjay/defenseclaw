@@ -414,6 +414,23 @@ observability:
     assert captured.value.path.endswith("signal_overrides.logs.endpoint")
 
 
+def test_grpc_otlp_rejects_signal_path_override() -> None:
+    source = """config_version: 8
+observability:
+  destinations:
+    - name: logs
+      kind: otlp
+      protocol: grpc
+      endpoint: collector.example.test:4317
+      signal_overrides:
+        logs: {path: /custom/logs}
+      send: {signals: [logs], buckets: ['*']}
+"""
+    with pytest.raises(V8ConfigError) as captured:
+        load_validate_v8(source)
+    assert captured.value.path.endswith("signal_overrides.logs.path")
+
+
 def test_legacy_v7_profile_and_adapter_compatibility_fields_validate() -> None:
     source = """config_version: 8
 observability:

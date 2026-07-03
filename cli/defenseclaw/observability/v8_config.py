@@ -940,7 +940,15 @@ def _validate_destination(destination: dict[str, Any], path: str, source_name: s
     if kind != "otlp":
         return
     for signal in selected:
-        resolved = overrides.get(signal, {}).get("endpoint") or endpoint
+        override = overrides.get(signal, {})
+        override_path = override.get("path", "")
+        if override_path and protocol in ("grpc", "grpc/protobuf"):
+            _semantic_error(
+                source_name,
+                f"{path}.signal_overrides.{signal}.path",
+                "remove path for gRPC or use http/protobuf",
+            )
+        resolved = override.get("endpoint") or endpoint
         signal_path = f"{path}.signal_overrides.{signal}.endpoint"
         if not resolved:
             _semantic_error(

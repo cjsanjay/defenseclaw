@@ -1123,8 +1123,13 @@ func validateObservabilityV8ResolvedOTLPEndpoints(
 		if err := validateObservabilityV8Endpoint(endpoint, transport.Protocol, networkSafety, path+".signal_overrides."+string(signal)+".endpoint"); err != nil {
 			return err
 		}
-		if override, ok := transport.SignalOverrides[signal]; ok && override.Path != "" && !strings.HasPrefix(override.Path, "/") {
-			return fmt.Errorf("%s.signal_overrides.%s.path: must begin with /", path, signal)
+		if override, ok := transport.SignalOverrides[signal]; ok && override.Path != "" {
+			if transport.Protocol == "grpc" || transport.Protocol == "grpc/protobuf" {
+				return fmt.Errorf("%s.signal_overrides.%s.path: gRPC OTLP service paths are fixed; remove path or use http/protobuf", path, signal)
+			}
+			if !strings.HasPrefix(override.Path, "/") {
+				return fmt.Errorf("%s.signal_overrides.%s.path: must begin with /", path, signal)
+			}
 		}
 	}
 	return nil

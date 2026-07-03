@@ -218,6 +218,20 @@ cases:
             endpoint: https://archive.example.test/events
             batch: {max_export_batch_bytes: 67108865}
 
+  - name: grpc-signal-path-override
+    valid: false
+    source: |
+      config_version: 8
+      observability:
+        destinations:
+          - name: logs
+            kind: otlp
+            protocol: grpc
+            endpoint: collector.example.test:4317
+            signal_overrides:
+              logs: {path: /custom/logs}
+            send: {signals: [logs], buckets: ['*']}
+
   - name: resource-home-path-is-prohibited
     valid: false
     source: |
