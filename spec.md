@@ -6,7 +6,7 @@ goal_status: active
 current_phase: P1
 target_config_version: 8
 baseline_commit: fd13acedfcffc0cc431d5a72f329b56b50b22baa
-last_verified_commit: 780adcf72bf3db0cd1041abf2855197fe95b39f9
+last_verified_commit: c7234b5de4baa4092761ad886a24ebcba8478af8
 last_updated: 2026-07-02
 ```
 
@@ -31,8 +31,8 @@ or a plausible-looking dashboard is not completion.
 
 | Field | Value |
 |---|---|
-| Active work package | `P1-WP03` — Python parity, comment-preserving writer, and generated config views |
-| Ready queue | `P1-WP04` after Python parity and the shared source/effective/reference corpus |
+| Active work package | `P1-WP04` — deterministic v7-to-v8 converter and golden fixtures |
+| Ready queue | `P1-GATE` after converter equivalence, secret, idempotence, and failure tests |
 | Blocked | None |
 | Next phase gate | `P1-GATE` — validated immutable v8 runtime plan and deterministic converter |
 | Root coordinator | Primary Codex thread |
@@ -194,8 +194,8 @@ gate must pass.
 |---|---|---|---|---|---|
 | `P1-WP01` | `DONE` | subagent + root | `P0-GATE` | Bucket/signal/event/severity/source/selector types and classification contract | 14 gateway events and 188 audit actions exhaustively classified; focused Go tests/vet at `d15292434` |
 | `P1-WP02` | `DONE` | root + subagents | `P1-WP01` | Go v8 schema, defaults, compiler, capabilities, routes, profiles, strict legacy rejection | Closed schema and embedded registry; strict parser; immutable/masked plan; capability/preset/route/profile/secret/path/endpoint/provenance diagnostics; normal/race/vet/schema suites and `make check` passed at `780adcf72` |
-| `P1-WP03` | `IN_PROGRESS` | root + subagents | `P1-WP02` | Python parity, comment-preserving writer, source/effective/reference generation | Python parity/comment tests |
-| `P1-WP04` | `TODO` | unassigned | `P1-WP02..03` | Deterministic v7-to-v8 converter and golden fixtures | Candidate equivalence/secrets/idempotence tests |
+| `P1-WP03` | `DONE` | root + subagents | `P1-WP02` | Python source/schema parity with registry-owned selectors delegated to the canonical Go helper; comment-preserving writer; source/effective/reference/plan generation | Commits `3c9739c0c..c7234b5de`; 82 focused Python tests, normal/race Go tests, schema/reference drift gates, Ruff, and real Go/Python bridge passed |
+| `P1-WP04` | `IN_PROGRESS` | root + subagent | `P1-WP02..03` | Deterministic v7-to-v8 converter and golden fixtures | Candidate equivalence/secrets/idempotence tests |
 | `P1-GATE` | `TODO` | root | `P1-WP01..04` | Immutable validated runtime plan from YAML; runtime producers not switched | Phase test set recorded |
 
 ### P2 — Canonical Router, Redaction, SQLite, Retention
@@ -235,7 +235,7 @@ gate must pass.
 | ID | Status | Owner | Depends on | Deliverable | Verification/evidence |
 |---|---|---|---|---|---|
 | `P5-WP01` | `TODO` | unassigned | `P2-GATE` | Registry authoring model, dependency lock, sole compiler | `make check-schemas` drift checks |
-| `P5-WP02` | `TODO` | unassigned | `P5-WP01` | Generated bundle/catalog/docs/constants/builders/field classes/fixtures | Determinism and conformance tests |
+| `P5-WP02` | `TODO` | unassigned | `P5-WP01` | Generated bundle/catalog/docs/constants/builders/field classes/selector registries/fixtures | Determinism and conformance tests |
 | `P5-WP03` | `TODO` | unassigned | `P5-WP01`, `P3-WP02` | Rich bounded spans/events/links/status/content/retry/timing | Golden topology/sampling tests |
 | `P5-WP04` | `TODO` | unassigned | `P5-WP02..03` | PR #403 lifecycle fixture migration and missing-data fidelity | Root/subagent real-producer goldens |
 | `P5-WP05` | `TODO` | unassigned | `P3-WP05`, `P5-WP02` | Galileo/OpenInference/local-observability generated projections | Vendor/dashboard inventory tests |
@@ -308,6 +308,9 @@ only “passed.” A relevant change invalidates old evidence.
 | `V-0006` | 2026-07-02 | `d152924345426208223a07c75be6d8853b86a41c` | P1 | `go test ./internal/audit ./internal/gatewaylog ./internal/observability -count=1 && go vet ./internal/observability` | 14 gateway events and 188 audit actions classified; tests and vet passed | root |
 | `V-0007` | 2026-07-02 | `705b185c982e9e6a83c292443689bf6abac06bf1` | P1-WP02 | `go test ./internal/observability -count=1` | Canonical event registry matched 14 gateway/188 audit classifications, 25 trace families, 131 metric instruments, and lifecycle aliases; passed | root + subagent |
 | `V-0008` | 2026-07-02 | `780adcf72bf3db0cd1041abf2855197fe95b39f9` | P1-WP02 | `go test ./internal/observability ./internal/config ./schemas -count=1`; focused config race; vet; schema/spec checks; `make check` | Normal/race/vet passed; 23 JSON schemas plus v8 semantic lock passed; 83 decisions valid; v7 parity, 14 dashboards/313 panels, Go/TS provider coverage, LLM catalog, and upgrade manifest passed | root + subagents |
+| `V-0009` | 2026-07-02 | `c7234b5de4baa4092761ad886a24ebcba8478af8` | P1-WP03 | `go test ./internal/observability ./internal/config ./internal/cli ./schemas -count=1`; `go test -race ./internal/config ./internal/cli -count=1`; focused v8 Python suite | Normal and race suites passed; 82 Python validator/writer/reference/parity/bridge/CLI tests passed | root + subagents |
+| `V-0010` | 2026-07-02 | `c7234b5de4baa4092761ad886a24ebcba8478af8` | P1-WP03 | `uv run python scripts/generate_observability_v8_reference.py --check`; `uv run python scripts/check_schemas.py`; focused Ruff | Six generated/reference/wheel mirrors, 23 JSON schemas, 131-metric catalog, schema mirrors, and all Python lint checks passed | root + subagent |
+| `V-0011` | 2026-07-02 | `c7234b5de4baa4092761ad886a24ebcba8478af8` | P1-WP03 | Build real gateway; run `defenseclaw config validate/show/reference` and `defenseclaw observability plan` against a temporary v8 install | Versioned Go/Python bridge, full-capability OTLP expansion, generated reference, and filtered canonical-plan rendering passed | root |
 
 Final integration requires, at minimum:
 
@@ -336,6 +339,7 @@ and exact-trace canary acknowledgement against its conformance harness.
 |---|---|---|---|---|---|---|
 | `C-0001` | 2026-07-02 | setup | `P0-WP01` | D-022, P-045, P-046 | Track package in repository and use this root execution ledger | complete |
 | `C-0002` | 2026-07-02 | gate | `P0-WP02..03`, `P0-GATE` | D-001..022, S-001..012, P-001..047 | Approve the mechanically validated contract after current-state inventory, compatibility, and two CodeRabbit review passes | complete |
+| `C-0003` | 2026-07-02 | architecture | `P1-WP03`, `P5-WP01..02` | D-019, P-010, P-030, P-046 | Python validates source/schema semantics and renders the masked source; canonical effective compilation and registered action/event selector validation always run in Go. P5's sole registry compiler will generate the shared Python selector constants instead of introducing a hand-maintained duplicate in P1. | complete |
 
 A new product choice requires a new decision ID and traceability row. A behavior
 change updates its contract and required test in the same change. Deferred release
