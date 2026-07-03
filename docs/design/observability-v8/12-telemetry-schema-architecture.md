@@ -365,12 +365,22 @@ ambiguous unqualified `state` canonical. Alias collisions, unknown profiles, and
 unqualified custom canonical attributes fail.
 
 Ordinary metric families reject high-cardinality labels and content, credential,
-path, reason, evidence, and error classes. The only v8 exception is the exact six
-Agent360 native families and their exact label sets in `local-observability-v1`.
-That exception is profile-scoped and carries the existing Collector limits:
+path, reason, evidence, and error classes. The only application-metric exceptions
+are the exact six Agent360 native families and the two pinned GenAI client families
+listed by `local-observability-v1`, with their exact label sets. Each remains under
+the current 2,048-tuple application-family cardinality limit. Separately, the
+derived Agent360 spanmetrics projection retains its existing Collector limits:
 10,000 dimension-cache entries, 1,000 resource-metrics-cache entries, and 24-hour
-series expiration. It has no wildcard, set composition, or effect on ordinary OTLP
-metric schemas.
+series expiration. Neither exception has a wildcard, set composition, or effect on
+unlisted OTLP metric schemas.
+
+The registry metric default is `cardinality_limit: 2048`, enforced on each
+ordinary family's distinct canonical label tuple before export. A non-Agent360
+string label uses `enum-v1`, or uses `bounded-v1`/`identifier-v1` with an effective
+`max_utf8_bytes` bound and the family tuple cap; a `low`/`bounded` declaration or
+human note alone is insufficient. Known status, type, severity, code, and subsystem
+vocabularies use closed enums. The eight exact compatibility families above retain
+the same 2,048 application limit and do not raise it globally.
 
 ## 6. Generated Public Artifacts
 

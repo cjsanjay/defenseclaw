@@ -352,39 +352,53 @@ Collector/exporter projection rather than the canonical OTel instrument name.
 
 The six native Agent360 canonical label sets are exact:
 
-- `defenseclaw.agent.last_seen`: `connector`,
+- `defenseclaw.agent.last_seen`: `defenseclaw.connector.source`,
   `defenseclaw.agent.execution.id`, `defenseclaw.agent.lifecycle.id`,
   `defenseclaw.agent.parent.id`, `defenseclaw.agent.root.id`,
   `defenseclaw.session.root.id`, `gen_ai.agent.id`, `gen_ai.agent.name`, and
   `defenseclaw.agent.type`.
-- `defenseclaw.agent.lifecycle.transitions`: `connector`,
+- `defenseclaw.agent.lifecycle.transitions`: `defenseclaw.connector.source`,
   `defenseclaw.agent.depth`, `defenseclaw.agent.execution.id`,
   `defenseclaw.agent.lifecycle.event`, `defenseclaw.agent.lifecycle.id`,
   `defenseclaw.agent.lifecycle.state`, `defenseclaw.agent.parent.id`,
   `defenseclaw.agent.root.id`, `defenseclaw.session.root.id`, `gen_ai.agent.id`,
   `gen_ai.agent.name`, `defenseclaw.agent.type`, `gen_ai.provider.name`, and
   `gen_ai.request.model`.
-- `defenseclaw.agent.phase.current`: `connector`,
+- `defenseclaw.agent.phase.current`: `defenseclaw.connector.source`,
   `defenseclaw.agent.execution.id`, `defenseclaw.agent.lifecycle.id`,
   `defenseclaw.agent.root.id`, `gen_ai.agent.id`, and `gen_ai.agent.name`.
-- `defenseclaw.agent.phase.transitions`: `connector`,
+- `defenseclaw.agent.phase.transitions`: `defenseclaw.connector.source`,
   `defenseclaw.agent.execution.id`, `defenseclaw.agent.phase.from`,
   `defenseclaw.agent.phase.to`, `defenseclaw.agent.root.id`, `gen_ai.agent.id`,
   and `gen_ai.agent.name`.
-- `defenseclaw.agent.reported_cost`: `connector`,
+- `defenseclaw.agent.reported_cost`: `defenseclaw.connector.source`,
   `defenseclaw.agent.execution.id`, `defenseclaw.agent.lifecycle.id`,
   `defenseclaw.agent.root.id`, `gen_ai.agent.id`, `gen_ai.agent.name`,
   `gen_ai.provider.name`, and `gen_ai.request.model`.
-- `defenseclaw.agent.token.usage`: `connector`,
+- `defenseclaw.agent.token.usage`: `defenseclaw.connector.source`,
   `defenseclaw.agent.execution.id`, `defenseclaw.agent.lifecycle.id`,
   `defenseclaw.agent.root.id`, `gen_ai.agent.id`, `gen_ai.agent.name`,
-  `gen_ai.provider.name`, `gen_ai.request.model`, and `kind`.
+  `gen_ai.provider.name`, `gen_ai.request.model`, and `gen_ai.token.type`.
 
-The local projection renames canonical `defenseclaw.agent.type` to the frozen
-`gen_ai.agent.type` compatibility label. These six families alone may use their
-reviewed high-cardinality identity labels under the profile's 10,000-entry
-dimension cache, 1,000-entry resource-metrics cache, and 24-hour series expiration.
-No other metric family inherits that exception.
+The local projection renames canonical `defenseclaw.connector.source`,
+`defenseclaw.agent.type`, and `gen_ai.token.type` to the frozen `connector`,
+`gen_ai.agent.type`, and `kind` labels. These six application families may use
+their reviewed high-cardinality identity labels only under the 2,048-tuple
+per-family cap.
+
+Two standard GenAI client families retain the same narrow 2,048-tuple
+compatibility exception:
+
+- `gen_ai.client.operation.duration`: `gen_ai.agent.id`, `gen_ai.agent.name`,
+  `gen_ai.operation.name`, `gen_ai.provider.name`, and `gen_ai.request.model`.
+- `gen_ai.client.token.usage`: `gen_ai.agent.id`, `gen_ai.agent.name`,
+  `gen_ai.conversation.id`, `gen_ai.operation.name`, `gen_ai.provider.name`,
+  `gen_ai.request.model`, and `gen_ai.token.type`.
+
+The separate derived `spanmetrics/agent360` pipeline uses the Collector's
+10,000-entry dimension cache, 1,000-entry resource-metrics cache, and 24-hour
+series expiration. No other native or derived metric family inherits either
+exception.
 
 The current `defenseclaw.inspect.*` and connector-hook dual emission remains until
 every bundled and documented query is migrated in one release. It may then be

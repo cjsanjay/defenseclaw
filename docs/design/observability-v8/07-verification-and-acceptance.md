@@ -713,12 +713,15 @@ Required cases:
   label set compare exactly; an undeclared, missing, extra, dynamic, or silently
   dropped key fails. After generated per-family recorders replace current
   callsites, the bootstrap extractor is retired rather than becoming a second
-  source of truth.
-- The high-cardinality Agent360 exception accepts only the six named native
-  families, their exact canonical/projected labels, and the pinned cache/series
-  limits. Moving one allowed label to another family, adding a seventh family, or
-  omitting a limit fails. Ordinary metric families still reject high cardinality
-  and content, credential, path, reason, evidence, and error classes.
+  source of truth. Open string labels without an effective byte bound or ordinary
+  2,048-tuple family cap fail; enum labels reject values outside their closed set.
+- The high-cardinality application exception accepts only the six named Agent360
+  native families, the two named GenAI client families, their exact
+  canonical/projected labels, and the 2,048-tuple family limit. The separate
+  derived spanmetrics exception accepts only its exact dimensions and pinned
+  Collector cache/series limits. Moving an allowed label, adding a ninth native
+  family, or omitting a limit fails. Ordinary metric families still reject high
+  cardinality and content, credential, path, reason, evidence, and error classes.
 - Every one of the 25 span name patterns compiles. Each placeholder resolves to a
   declared inherited low/bounded-cardinality metadata or identifier field; unknown,
   alias, content, path, credential, reason, evidence, error, and high-cardinality
