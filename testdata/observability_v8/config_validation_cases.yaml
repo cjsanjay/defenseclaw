@@ -218,6 +218,15 @@ cases:
             endpoint: https://archive.example.test/events
             batch: {max_export_batch_bytes: 67108865}
 
+  - name: resource-home-path-is-prohibited
+    valid: false
+    source: |
+      config_version: 8
+      observability:
+        resource:
+          attributes:
+            defenseclaw.claw.home_dir: /Users/operator/private
+
   - name: unknown-profile-reference
     valid: false
     source: |

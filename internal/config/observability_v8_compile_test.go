@@ -582,6 +582,30 @@ func TestCompileObservabilityV8RejectsSecretBearingResourceAttributes(t *testing
 	}
 }
 
+func TestCompileObservabilityV8RejectsFilesystemResourceAttributes(t *testing.T) {
+	for _, attributes := range []map[string]string{
+		{"defenseclaw.claw.home_dir": "opaque"},
+		{"service.note": "/Users/operator/private"},
+		{"service.note": `C:\Users\operator\private`},
+		{"service.note": `\\server\share\private`},
+		{"service.note": "file:///var/lib/defenseclaw"},
+	} {
+		_, err := CompileObservabilityV8(&ObservabilityV8Source{
+			Resource: ObservabilityV8ResourceSource{Attributes: attributes},
+		})
+		if err == nil || !strings.Contains(err.Error(), "paths are prohibited") {
+			t.Fatalf("resource path error=%v for attributes=%v", err, attributes)
+		}
+	}
+	for _, value := range []string{"production/us-east", "tenant-a", "relative-label"} {
+		if _, err := CompileObservabilityV8(&ObservabilityV8Source{
+			Resource: ObservabilityV8ResourceSource{Attributes: map[string]string{"service.note": value}},
+		}); err != nil {
+			t.Fatalf("stable non-path resource value %q was rejected: %v", value, err)
+		}
+	}
+}
+
 func TestCompileObservabilityV8ConciseSendAndDerivedSignals(t *testing.T) {
 	plan := mustCompileObservabilityV8(t, &ObservabilityV8Source{Destinations: []ObservabilityV8DestinationSource{{
 		Name: "otel", Kind: ObservabilityV8DestinationOTLP, Endpoint: "https://otel.example.test",

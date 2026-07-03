@@ -180,6 +180,25 @@ def test_batch_kind_and_boundary_validation(destination: dict[str, Any]) -> None
 
 
 @pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        ("defenseclaw.claw.home_dir", "opaque"),
+        ("service.note", "/Users/operator/private"),
+        ("service.note", r"C:\Users\operator\private"),
+        ("service.note", r"\\server\share\private"),
+        ("service.note", "file:///var/lib/defenseclaw"),
+    ],
+)
+def test_resource_attributes_reject_filesystem_paths(name: str, value: str) -> None:
+    source = {
+        "config_version": 8,
+        "observability": {"resource": {"attributes": {name: value}}},
+    }
+    with pytest.raises(V8ConfigError, match="filesystem and home-directory paths"):
+        load_validate_v8(source)
+
+
+@pytest.mark.parametrize(
     "legacy",
     [
         "otel: {}",

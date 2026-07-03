@@ -1279,6 +1279,9 @@ func validateObservabilityV8ResourceAttributes(attributes map[string]string) err
 		if observabilityV8SecretBearingResourceKey(name) {
 			return fmt.Errorf("observability.resource.attributes.%s: secret-bearing resource attributes are prohibited", name)
 		}
+		if observabilityV8PathBearingResourceKey(name) || observabilityV8LooksFilesystemPathResourceValue(value) {
+			return fmt.Errorf("observability.resource.attributes.%s: filesystem and home-directory paths are prohibited", name)
+		}
 		if observabilityV8LooksSecretResourceValue(value) {
 			return fmt.Errorf("observability.resource.attributes.%s: value resembles credential material and is prohibited", name)
 		}
@@ -1310,6 +1313,32 @@ func observabilityV8SecretBearingResourceKey(name string) bool {
 		}
 	}
 	return strings.Contains(normalized, "api.key")
+}
+
+func observabilityV8PathBearingResourceKey(name string) bool {
+	normalized := strings.NewReplacer("-", ".", "_", ".", "/", ".").Replace(strings.ToLower(name))
+	for _, segment := range strings.Split(normalized, ".") {
+		switch segment {
+		case "cwd", "dir", "directory", "file", "filepath", "home", "path", "workdir":
+			return true
+		}
+	}
+	return false
+}
+
+func observabilityV8LooksFilesystemPathResourceValue(value string) bool {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return false
+	}
+	lower := strings.ToLower(trimmed)
+	if strings.HasPrefix(trimmed, "/") || strings.HasPrefix(trimmed, "~/") ||
+		strings.HasPrefix(trimmed, `\\`) || strings.HasPrefix(lower, "file://") {
+		return true
+	}
+	return len(trimmed) >= 3 &&
+		((trimmed[0] >= 'a' && trimmed[0] <= 'z') || (trimmed[0] >= 'A' && trimmed[0] <= 'Z')) &&
+		trimmed[1] == ':' && (trimmed[2] == '\\' || trimmed[2] == '/')
 }
 
 func compileObservabilityV8Warnings(

@@ -834,8 +834,29 @@ def _validate_resource_attributes(attributes: dict[str, str], source_name: str) 
                 f"observability.resource.attributes.{name}",
                 "remove secret-bearing resource attributes",
             )
-        upper = value.strip().upper()
-        parsed = urlsplit(value.strip())
+        if any(
+            segment in {"cwd", "dir", "directory", "file", "filepath", "home", "path", "workdir"}
+            for segment in segments
+        ):
+            _semantic_error(
+                source_name,
+                f"observability.resource.attributes.{name}",
+                "remove filesystem and home-directory paths from resource attributes",
+            )
+        trimmed = value.strip()
+        lower = trimmed.lower()
+        if (
+            trimmed.startswith(("/", "~/", "\\\\"))
+            or lower.startswith("file://")
+            or re.match(r"^[A-Za-z]:[\\/]", trimmed)
+        ):
+            _semantic_error(
+                source_name,
+                f"observability.resource.attributes.{name}",
+                "remove filesystem and home-directory paths from resource attributes",
+            )
+        upper = trimmed.upper()
+        parsed = urlsplit(trimmed)
         if (
             ("PRIVATE KEY" in upper and "-----BEGIN" in upper)
             or upper.startswith(("BEARER ", "BASIC "))
