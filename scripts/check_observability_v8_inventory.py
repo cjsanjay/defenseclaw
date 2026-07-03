@@ -167,10 +167,24 @@ def discover_schema_files(root: Path, inventory_class: dict[str, Any]) -> set[st
     directory = root / directory_value
     if not directory.is_dir():
         raise InventoryError(f"schema source directory does not exist: {directory_value}")
+
+    excluded_value = inventory_class.get("excluded_target_directories", [])
+    if not isinstance(excluded_value, list) or not all(
+        isinstance(item, str) and item for item in excluded_value
+    ):
+        raise InventoryError(
+            "classes.schema_files.excluded_target_directories must be a string list",
+        )
+    excluded = tuple((root / item).resolve() for item in excluded_value)
+
+    def is_excluded(path: Path) -> bool:
+        resolved = path.resolve()
+        return any(resolved.is_relative_to(prefix) for prefix in excluded)
+
     return {
         path.relative_to(root).as_posix()
         for path in directory.rglob("*.json")
-        if path.is_file()
+        if path.is_file() and not is_excluded(path)
     }
 
 

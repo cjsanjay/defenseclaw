@@ -136,8 +136,10 @@ The following query-oriented projections remain supported:
 - Legacy `findings` during compatibility reads.
 - `scan_findings` for `security.finding` detail.
 - `activity_events` for `compliance.activity` mutations.
-- Alert acknowledgement/dismissal state and operation-idempotency records keyed to
-  immutable occurrence/event IDs.
+- Alert acknowledgement/dismissal current state, immutable operation receipts used
+  for replay/idempotency, legacy baselines, and bounded current health keyed to
+  immutable occurrence/event IDs. These are protected correctness state, not
+  retention-bound event history.
 - `network_egress_events` for `network.egress` queries.
 - `sink_health`, renamed in API vocabulary to destination health while retaining
   the table for migration compatibility.
@@ -150,6 +152,17 @@ rolls back the event insert when the API requires the projection for correctness
 otherwise it creates a mandatory projection-health failure with explicit degraded
 state.
 
+Failure and degraded-state reporters MUST be invoked only after the failed SQLite
+transaction has rolled back or the successful transaction has committed **and** the
+originating operation has released Store lifecycle ownership. Reporter
+implementations are allowed to query, persist a mandatory health event through, or
+close the same single-connection store; invoking them while the originating
+transaction or lifecycle lock remains active would self-deadlock. Signed/unsigned
+integrity state is staged in commit order, and external callbacks use a bounded,
+serialized, reentrancy-safe queue that coalesces identical pending health states
+without dropping a later unsigned transition separated by signed recovery. Reporter
+failures do not reopen or change the already completed transaction.
+
 ### 2.5 State tables are not event history
 
 The following are current-state stores and MUST NOT be deleted by event retention:
@@ -157,6 +170,19 @@ The following are current-state stores and MUST NOT be deleted by event retentio
 - `actions`
 - `target_snapshots`
 - `schema_version`
+- `observability_store_readiness`
+- `alert_acknowledgement_projection`
+- `alert_acknowledgement_operations`
+- `alert_acknowledgement_baselines`
+- `alert_acknowledgement_health`
+
+The immutable operation rows are retained as correctness state because v8 promises
+timeless exact operation-ID retries and uses their gap-free applied sequence to
+rebuild mutable alert state after corresponding `audit_events` age out. They contain
+only bounded command/result controls and the locally projected actor representation,
+are never remote-exported directly, and are included in capacity reporting. This is
+an intentional unbounded-cardinality tradeoff; changing it requires a separately
+specified finite idempotency window and transactional reconciliation checkpoint.
 
 Any new current-state table must explicitly declare retention ownership before
 being added.
@@ -177,10 +203,18 @@ being added.
   `02-taxonomy-and-data-model.md` section 5.6. A first-seen command atomically stores
   its idempotency result and immutable `compliance.activity` event and, only for an
   applied transition, advances the projection. It never rewrites the finding row or
-  its severity. Projection rebuild uses the gap-free per-alert version sequence,
-  not timestamps; ambiguous or contradictory history fails closed and emits
-  mandatory projection health. Legacy `ACK` severity rows are interpreted as a
-  versioned compatibility baseline using the same section's rule.
+  its severity. Projection rebuild uses the protected gap-free applied receipt
+  sequence, not timestamps or retention-bound audit rows; ambiguous receipts or a
+  retained event that contradicts its receipt fail closed and emit mandatory
+  projection health. Legacy `ACK` severity rows are interpreted as a versioned
+  compatibility baseline using the same section's rule. The idempotent baseline
+  scan runs on every v8 startup so an `ACK` written by the previous supported binary
+  during rollback is captured before retention.
+- A first-seen mutation is accepted only for a locally known finding occurrence,
+  recognized legacy alert occurrence, or target already represented by protected
+  alert state/receipts. The protected operation receipt stores a domain-separated,
+  correlation-keyed HMAC command fingerprint; the canonical compliance event does
+  not store or export that fingerprint.
 
 If a later case-management feature introduces mutable finding cases, it must use a
 separate table and event stream rather than changing the meaning of occurrence rows.
@@ -281,6 +315,12 @@ The reaper covers:
 New event-history/projection tables MUST be added to the reaper registry in the same
 change that creates them. A completeness test compares the table registry with the
 migration catalog.
+
+The protected tables in section 2.5 are explicitly excluded. In particular,
+retention may delete an alert's `compliance.activity` audit event while preserving
+its operation receipt; exact retry returns the original opaque event ID and
+timestamp without recreating the deleted event. Before deleting an eligible legacy
+`ACK` occurrence, the reaper MUST successfully materialize its baseline.
 
 ### 5.3 Deletion order
 

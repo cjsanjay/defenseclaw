@@ -279,6 +279,7 @@ type Evaluator struct {
 	collection       map[collectionKey]bool
 	destinations     []compiledDestination
 	localDestination int
+	planDigest       string
 }
 
 // New snapshots and indexes an already compiled v8 plan. Structural checks here
@@ -297,6 +298,7 @@ func New(plan *config.ObservabilityV8Plan) (*Evaluator, error) {
 		collection:       make(map[collectionKey]bool, len(snapshot.Buckets)*len(observability.Signals())),
 		destinations:     make([]compiledDestination, 0, len(snapshot.Destinations)),
 		localDestination: -1,
+		planDigest:       plan.Digest(),
 	}
 	seenBuckets := make(map[observability.Bucket]struct{}, len(snapshot.Buckets))
 	for _, policy := range snapshot.Buckets {
@@ -348,6 +350,16 @@ func New(plan *config.ObservabilityV8Plan) (*Evaluator, error) {
 		return nil, fmt.Errorf("compiled plan omits the required local SQLite destination")
 	}
 	return evaluator, nil
+}
+
+// PlanDigest identifies the immutable compiled plan captured by this evaluator.
+// Coordinators use it to reject dependencies assembled from different runtime
+// graph generations without exposing any mutable routing state.
+func (evaluator *Evaluator) PlanDigest() string {
+	if evaluator == nil {
+		return ""
+	}
+	return evaluator.planDigest
 }
 
 func validateDestinationIndex(destination compiledDestination) error {

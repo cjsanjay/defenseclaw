@@ -55,7 +55,7 @@ Section references are to this specification package.
 | S-009 | 02 §5.5; 05 §3 | 07 §§2,3.2,7, including immutable repeated observations and absence of synthetic status |
 | S-010 | 02 §5; 04 §8 | 07 §§2,6 |
 | S-011 | 02 §§2.1,2.12-2.13; 01 §6.1 | 07 §3.2 |
-| S-012 | 01 §6.1; 02 §§3.2,4,5.6; 05 §§2.3-2.4,3,9 | 07 §§3.2,7,11, including legacy `ACK` reads and immutable acknowledgement/dismissal events |
+| S-012 | 01 §6.1; 02 §§3.2,4,5.6; 05 §§2.3-2.5,3,5.2,9 | 07 §§3.2,7,11, including eligible-target enforcement, keyed non-exported command fingerprints, immutable acknowledgement/dismissal events and receipts, retry/rebuild after audit-event retention, retained-event contradiction, and rollback-era legacy `ACK` baseline refresh |
 
 ## 4. Ambiguity-removal and implementation decisions
 

@@ -56,6 +56,19 @@ def test_observability_v8_inventory_uses_default_path_without_arguments() -> Non
     assert "check_observability_v8_inventory: ok" in result.stdout
 
 
+def test_observability_v8_inventory_excludes_canonical_v8_target_schemas(tmp_path: Path) -> None:
+    document = yaml.safe_load(INVENTORY.read_text(encoding="utf-8"))
+    del document["classes"]["schema_files"]["excluded_target_directories"]
+    tampered = tmp_path / "current-state-inventory.yaml"
+    tampered.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+
+    result = _run(tampered)
+
+    assert result.returncode == 1
+    assert "schema_files: untracked source item" in result.stderr
+    assert "schemas/telemetry/v8/" in result.stderr
+
+
 def test_observability_v8_inventory_is_portable_without_git(tmp_path: Path) -> None:
     environment = dict(os.environ)
     environment["PATH"] = str(tmp_path)

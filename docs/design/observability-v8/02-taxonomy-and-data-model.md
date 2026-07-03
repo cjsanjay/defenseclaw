@@ -747,6 +747,20 @@ command that already requests the current disposition succeeds with outcome
 independently to every target and report per-target outcomes; they cannot perform a
 blind last-write-wins update.
 
+The target MUST identify either an immutable
+`security.finding / finding.observed` occurrence already present in local event
+history, a recognized legacy alert occurrence, or an alert that already has
+protected acknowledgement state or receipts. A first-seen command for an absent
+identifier, a non-finding event, or an arbitrary caller-supplied string fails before
+creating an operation receipt, compliance event, or projection. Age retention of
+the event-history row does not make an alert ineligible after protected alert state
+or receipts exist.
+For an unbucketed v7 row, “recognized legacy alert” means the explicit legacy
+`alert` action or an action whose fixed audit-action classification is
+`security.finding`; severity alone is not sufficient. A protected baseline already
+created from a historical `ACK` remains eligible because v7 irreversibly erased the
+original severity/action context and rollback compatibility cannot reconstruct it.
+
 The first accepted use of an operation ID creates exactly one immutable, mandatory
 `compliance.activity` event with canonical severity `INFO`. Its event name is
 `alert.acknowledgement.requested` or `alert.dismissal.requested`; its body records the
@@ -763,18 +777,31 @@ target, actor, action, expected version, or requested disposition is an idempote
 conflict: it cannot mutate the projection or replace the original event and is
 audited as a rejected request through the ordinary request-audit path.
 
-For one alert, applied compliance events are ordered by
+The normalized command fingerprint MUST be a domain-separated HMAC-SHA-256 over a
+deterministic encoding of the complete normalized command, including the governed
+actor value, using the stable process correlation key. Its protected receipt value
+records the algorithm/version and key identity with the digest. An unavailable or
+inconsistent key fails the first-seen operation closed. Neither the fingerprint nor
+raw key material is part of the canonical compliance-event body, exported telemetry,
+health diagnostics, or error text; an unkeyed digest would permit offline guessing
+of low-entropy actor identities and is forbidden.
+
+For one alert, applied operation receipts are ordered by
 `projection_version_after`, with every transition satisfying `before = N` and
 `after = N + 1`; timestamps and record IDs are not ordering authorities. Rejected
-and `no_change` events carry the version they observed but do not enter the applied
-transition sequence. The immutable event history, including a versioned baseline
-derived from legacy acknowledgement evidence, is authoritative. Reconciliation
-MUST derive expected state from that contiguous applied sequence and transactionally
-rebuild a missing or stale projection. A gap, conflicting event at one version, or
-projection state ahead of the evidence MUST produce a mandatory `platform.health`
-record, block further mutation of that alert, and never be resolved by guessing
-from timestamps. Reconciliation does not fabricate a modern operator action for a
-legacy baseline.
+and `no_change` receipts carry the version they observed but do not enter the
+applied transition sequence. The immutable operation receipt ledger, including a
+versioned baseline derived from legacy acknowledgement evidence, is authoritative
+for the alert state machine and exact retries. Matching `audit_events` remain the
+authoritative observability representations while retained, but age retention may
+remove them without invalidating a receipt. Reconciliation MUST derive expected
+state from the contiguous applied receipt sequence, transactionally rebuild a
+missing or stale projection, accept a missing age-reaped audit representation, and
+fail closed when a still-retained audit event contradicts its receipt. A receipt
+gap, conflicting receipt at one version, or projection state ahead of the receipt
+ledger MUST produce a mandatory `platform.health` record, block further mutation of
+that alert, and never be resolved by guessing from timestamps. Reconciliation does
+not fabricate a modern operator action for a legacy baseline.
 
 Legacy v7 `audit_events` rows whose `severity` was overwritten with `ACK` are read
 as compatibility evidence of acknowledgement, not as a sixth canonical severity.

@@ -184,7 +184,14 @@ type ActionEntry struct {
 }
 
 type Store struct {
-	db *sql.DB
+	db     *sql.DB
+	dbPath string
+
+	// lifecycleMu serializes initialization/close and lets mandatory v8
+	// event-history transactions pin a ready store until commit or rollback.
+	lifecycleMu sync.RWMutex
+	ready       atomic.Bool
+	closed      bool
 }
 
 // auditPragmas is the pragma set applied to every connection in the
@@ -218,13 +225,31 @@ type Store struct {
 //     findings and scan_results; turning
 //     this off at the DSN level would be a
 //     silent correctness regression.
-const auditPragmas = "?_pragma=journal_mode(WAL)" +
-	"&_pragma=busy_timeout(5000)" +
-	"&_pragma=synchronous(NORMAL)" +
-	"&_pragma=cache_size(-20000)" +
-	"&_pragma=temp_store(MEMORY)" +
-	"&_pragma=mmap_size(268435456)" +
-	"&_pragma=foreign_keys(ON)"
+type auditIntegerPragma struct {
+	name     string
+	dsnValue string
+	want     int64
+}
+
+var auditMandatoryIntegerPragmas = [...]auditIntegerPragma{
+	{name: "busy_timeout", dsnValue: "5000", want: 5000},
+	{name: "synchronous", dsnValue: "NORMAL", want: 1},
+	{name: "cache_size", dsnValue: "-20000", want: -20000},
+	{name: "temp_store", dsnValue: "MEMORY", want: 2},
+	{name: "foreign_keys", dsnValue: "ON", want: 1},
+}
+
+var auditPragmas = buildAuditPragmas()
+
+func buildAuditPragmas() string {
+	var result strings.Builder
+	result.WriteString("?_pragma=journal_mode(WAL)")
+	for _, pragma := range auditMandatoryIntegerPragmas {
+		fmt.Fprintf(&result, "&_pragma=%s(%s)", pragma.name, pragma.dsnValue)
+	}
+	result.WriteString("&_pragma=mmap_size(268435456)")
+	return result.String()
+}
 
 // openSQLite opens a SQLite connection with the audit-tier hardening
 // applied (DSN pragmas + a single-connection pool). Sharing this
@@ -252,13 +277,11 @@ func openSQLite(dbPath string) (*sql.DB, error) {
 }
 
 func NewStore(dbPath string) (*Store, error) {
-	db, err := openSQLite(dbPath)
+	db, err := openHardenedAuditSQLite(dbPath, auditDBPathHooks{})
 	if err != nil {
 		return nil, err
 	}
-	st := &Store{db: db}
-	telemetry.RegisterAuditDB(db)
-	return st, nil
+	return &Store{db: db, dbPath: dbPath}, nil
 }
 
 // sqliteCoded is the structural interface implemented by the
@@ -296,10 +319,24 @@ func isSQLiteBusy(err error) bool {
 			return true
 		}
 	}
-	s := err.Error()
-	return strings.Contains(s, "database is locked") ||
-		strings.Contains(s, "SQLITE_BUSY") ||
-		strings.Contains(s, "SQLITE_LOCKED")
+	// Sanitizing wrappers intentionally hide driver diagnostics from callers.
+	// Walk the bounded unwrap chain for message-only legacy drivers so privacy
+	// wrappers do not accidentally disable contention retries.
+	current := err
+	for depth := 0; current != nil && depth < 32; depth++ {
+		message := strings.ToLower(current.Error())
+		if strings.Contains(message, "database is locked") ||
+			strings.Contains(message, "sqlite_busy") ||
+			strings.Contains(message, "sqlite_locked") {
+			return true
+		}
+		next := errors.Unwrap(current)
+		if next == current {
+			break
+		}
+		current = next
+	}
+	return false
 }
 
 // SQLite BUSY retry policy. Even with busy_timeout=5000 some bursts
@@ -1438,6 +1475,115 @@ var migrations = []migration{
 			return migrateJudgeBodyTimestampUnixNano(ex, legacyJudgeTimestampUnixNanoIndex)
 		},
 	},
+	{
+		// Alert disposition is mutable operator state, deliberately separate
+		// from immutable finding occurrences and v8 audit_events. Operation
+		// results and legacy baselines are protected state needed to make
+		// retries and reconciliation deterministic; they are not event-history
+		// retention targets.
+		description: "alert acknowledgements: add CAS projection and reconciliation state",
+		apply: func(ex dbExecer) error {
+			_, err := ex.Exec(`
+			CREATE TABLE IF NOT EXISTS alert_acknowledgement_projection (
+				alert_id TEXT PRIMARY KEY,
+				disposition TEXT NOT NULL CHECK (disposition IN ('acknowledged','dismissed')),
+				actor TEXT NOT NULL,
+				disposition_at DATETIME NOT NULL,
+				projection_version INTEGER NOT NULL CHECK (projection_version > 0),
+				source TEXT NOT NULL CHECK (source IN ('modern','legacy_ack')),
+				source_event_id TEXT NOT NULL,
+				updated_at DATETIME NOT NULL
+			);
+			CREATE TABLE IF NOT EXISTS alert_acknowledgement_operations (
+				operation_id TEXT PRIMARY KEY,
+				command_fingerprint TEXT NOT NULL,
+				alert_id TEXT NOT NULL,
+				requested_disposition TEXT NOT NULL CHECK (requested_disposition IN ('acknowledged','dismissed')),
+				actor TEXT NOT NULL,
+				expected_projection_version INTEGER NOT NULL CHECK (expected_projection_version >= 0),
+				outcome TEXT NOT NULL CHECK (outcome IN ('applied','no_change','rejected')),
+				rejection_reason TEXT,
+				observed_projection_version INTEGER NOT NULL CHECK (observed_projection_version >= 0),
+				projection_version_before INTEGER NOT NULL CHECK (projection_version_before >= 0),
+				projection_version_after INTEGER NOT NULL CHECK (projection_version_after >= 0),
+				event_id TEXT NOT NULL UNIQUE,
+				created_at DATETIME NOT NULL,
+				CHECK (observed_projection_version = projection_version_before),
+				CHECK (
+					(outcome = 'applied' AND rejection_reason IS NULL AND
+					 projection_version_after = projection_version_before + 1) OR
+					(outcome = 'no_change' AND rejection_reason IS NULL AND
+					 projection_version_after = projection_version_before) OR
+					(outcome = 'rejected' AND rejection_reason IN
+					 ('stale_projection_version','idempotency_conflict') AND
+					 projection_version_after = projection_version_before)
+				)
+			);
+			CREATE INDEX IF NOT EXISTS idx_alert_ack_operations_alert
+				ON alert_acknowledgement_operations(alert_id, created_at);
+			CREATE INDEX IF NOT EXISTS idx_alert_ack_operations_replay
+				ON alert_acknowledgement_operations(
+					alert_id, outcome, projection_version_after, event_id
+				);
+			CREATE TABLE IF NOT EXISTS alert_acknowledgement_baselines (
+				alert_id TEXT PRIMARY KEY,
+				baseline_version INTEGER NOT NULL CHECK (baseline_version = 1),
+				disposition TEXT NOT NULL CHECK (disposition = 'acknowledged'),
+				actor TEXT NOT NULL,
+				disposition_at DATETIME NOT NULL,
+				legacy_event_id TEXT NOT NULL UNIQUE,
+				raw_legacy_severity TEXT NOT NULL CHECK (raw_legacy_severity = 'ACK'),
+				legacy_original_severity TEXT NOT NULL CHECK (legacy_original_severity = 'unknown'),
+				timestamp_provenance TEXT NOT NULL,
+				created_at DATETIME NOT NULL
+			);
+			CREATE TABLE IF NOT EXISTS alert_acknowledgement_health (
+				alert_id TEXT PRIMARY KEY,
+				code TEXT NOT NULL,
+				health_event_id TEXT NOT NULL UNIQUE,
+				detected_at DATETIME NOT NULL
+			);
+			CREATE TRIGGER IF NOT EXISTS alert_ack_operations_no_update
+				BEFORE UPDATE ON alert_acknowledgement_operations
+				BEGIN SELECT RAISE(ABORT, 'alert acknowledgement operation history is immutable'); END;
+			CREATE TRIGGER IF NOT EXISTS alert_ack_operations_no_delete
+				BEFORE DELETE ON alert_acknowledgement_operations
+				BEGIN SELECT RAISE(ABORT, 'alert acknowledgement operation history is immutable'); END;
+			CREATE TRIGGER IF NOT EXISTS alert_ack_baselines_no_update
+				BEFORE UPDATE ON alert_acknowledgement_baselines
+				BEGIN SELECT RAISE(ABORT, 'alert acknowledgement baseline history is immutable'); END;
+			CREATE TRIGGER IF NOT EXISTS alert_ack_baselines_no_delete
+				BEFORE DELETE ON alert_acknowledgement_baselines
+				BEGIN SELECT RAISE(ABORT, 'alert acknowledgement baseline history is immutable'); END;
+			`)
+			if err != nil {
+				return fmt.Errorf("create alert acknowledgement projection tables: %w", err)
+			}
+			return materializeLegacyAlertAcknowledgementBaselines(ex)
+		},
+	},
+	{
+		// This singleton is protected current state, not event history. Init
+		// commits an update before publishing readiness so a read-only,
+		// quota-full, or otherwise unwritable database cannot serve traffic.
+		description: "observability v8: add mandatory SQLite readiness state",
+		apply: func(ex dbExecer) error {
+			_, err := ex.Exec(`
+			CREATE TABLE IF NOT EXISTS observability_store_readiness (
+				id INTEGER PRIMARY KEY CHECK (id = 1),
+				verification_generation INTEGER NOT NULL CHECK (verification_generation >= 0),
+				last_verified_at DATETIME NOT NULL
+			);
+			INSERT OR IGNORE INTO observability_store_readiness (
+				id, verification_generation, last_verified_at
+			) VALUES (1, 0, '1970-01-01T00:00:00Z');
+			`)
+			if err != nil {
+				return fmt.Errorf("create observability store readiness state: %w", err)
+			}
+			return nil
+		},
+	},
 }
 
 // tableExists reports whether the given SQLite table is present.
@@ -1455,6 +1601,22 @@ func tableExists(ex dbExecer, table string) (bool, error) {
 }
 
 func (s *Store) Init() error {
+	if s == nil || s.db == nil {
+		return fmt.Errorf("audit: store is not initialized")
+	}
+	s.lifecycleMu.Lock()
+	defer s.lifecycleMu.Unlock()
+	if s.closed {
+		return fmt.Errorf("audit: store is closed")
+	}
+	if s.ready.Load() {
+		return nil
+	}
+	// Readiness is published only after every check below succeeds. Keeping the
+	// flag false on retry also prevents a partially migrated store from being
+	// captured by a new event-history writer.
+	s.ready.Store(false)
+
 	// Ensure the schema_version tracking table exists.
 	if _, err := s.execDB(context.Background(), "audit", `CREATE TABLE IF NOT EXISTS schema_version (
 		version INTEGER PRIMARY KEY,
@@ -1480,6 +1642,12 @@ func (s *Store) Init() error {
 	if err := ensureJudgeBodyTimestampUnixNano(s.db, legacyJudgeTimestampUnixNanoIndex); err != nil {
 		return fmt.Errorf("audit: verify judge timestamp retention index: %w", err)
 	}
+	// The previous supported binary may have written another legacy ACK row
+	// after an operator rolled back. Re-scan idempotently on every current
+	// startup before retention or alert mutation can proceed.
+	if err := materializeLegacyAlertAcknowledgementBaselines(s.db); err != nil {
+		return fmt.Errorf("audit: refresh legacy alert acknowledgement baselines: %w", err)
+	}
 	// The v8 local event-history anchor is mandatory. Some migration unit
 	// fixtures intentionally exercise table-scoped migrations against partial
 	// schemas, so individual migration functions remain replayable there; a
@@ -1504,7 +1672,119 @@ func (s *Store) Init() error {
 			return fmt.Errorf("audit: mandatory event-history column %s is missing", column)
 		}
 	}
+	for _, table := range []string{
+		"alert_acknowledgement_projection",
+		"alert_acknowledgement_operations",
+		"alert_acknowledgement_baselines",
+		"alert_acknowledgement_health",
+		"observability_store_readiness",
+	} {
+		present, err := tableExists(s.db, table)
+		if err != nil {
+			return fmt.Errorf("audit: verify mandatory SQLite table %s: %w", table, err)
+		}
+		if !present {
+			return fmt.Errorf("audit: mandatory SQLite table %s is missing", table)
+		}
+	}
+	if err := s.verifyMandatoryPragmas(context.Background()); err != nil {
+		return err
+	}
+	if err := s.proveDurableWrite(context.Background()); err != nil {
+		return err
+	}
+	if err := revalidateHardenedAuditSQLite(s.dbPath, auditDBPathHooks{}); err != nil {
+		return fmt.Errorf("audit: revalidate database paths after initialization: %w", err)
+	}
 
+	telemetry.RegisterAuditDB(s.db)
+	s.ready.Store(true)
+	return nil
+}
+
+// Ready reports whether migrations, mandatory schema/pragmas, a committed
+// write, and post-migration path checks all succeeded and the store remains
+// open. It is intentionally safe for health/readiness polling.
+func (s *Store) Ready() bool {
+	return s != nil && s.db != nil && s.ready.Load()
+}
+
+// acquireReady pins the store against Close for one mandatory v8 transaction.
+// The returned release function must be called on every successful acquire.
+func (s *Store) acquireReady() (func(), error) {
+	if s == nil || s.db == nil {
+		return nil, fmt.Errorf("audit: mandatory SQLite event history is unavailable")
+	}
+	s.lifecycleMu.RLock()
+	if s.closed || !s.ready.Load() {
+		s.lifecycleMu.RUnlock()
+		return nil, fmt.Errorf("audit: mandatory SQLite event history is not ready")
+	}
+	return s.lifecycleMu.RUnlock, nil
+}
+
+func (s *Store) verifyMandatoryPragmas(ctx context.Context) error {
+	if ctx == nil {
+		return fmt.Errorf("audit: SQLite pragma verification context is required")
+	}
+	for _, pragma := range auditMandatoryIntegerPragmas {
+		var got int64
+		row := s.db.QueryRowContext(ctx, "PRAGMA "+pragma.name)
+		if err := s.scanRow(ctx, "audit_pragma_"+pragma.name, row, &got); err != nil {
+			return fmt.Errorf("audit: verify SQLite %s pragma: %w", pragma.name, err)
+		}
+		if got != pragma.want {
+			return fmt.Errorf("audit: SQLite %s pragma is %d, want %d", pragma.name, got, pragma.want)
+		}
+	}
+	var journalMode string
+	if err := s.scanRow(ctx, "audit_pragma_journal_mode",
+		s.db.QueryRowContext(ctx, "PRAGMA journal_mode"), &journalMode); err != nil {
+		return fmt.Errorf("audit: verify SQLite journal_mode pragma: %w", err)
+	}
+	wantJournalMode := "wal"
+	if s.dbPath == ":memory:" {
+		wantJournalMode = "memory"
+	}
+	if !strings.EqualFold(journalMode, wantJournalMode) {
+		return fmt.Errorf("audit: SQLite journal_mode is %q, want %q", journalMode, wantJournalMode)
+	}
+	return nil
+}
+
+func (s *Store) proveDurableWrite(ctx context.Context) error {
+	if ctx == nil {
+		return fmt.Errorf("audit: SQLite readiness write context is required")
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("audit: begin mandatory SQLite readiness write: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+	result, err := txExecContext(ctx, tx, "audit_readiness_write", `
+		UPDATE observability_store_readiness
+		SET verification_generation = verification_generation + 1,
+			last_verified_at = ?
+		WHERE id = 1`, time.Now().UTC().Format(time.RFC3339Nano))
+	if err != nil {
+		return fmt.Errorf("audit: mandatory SQLite readiness write failed: %w", err)
+	}
+	changed, err := result.RowsAffected()
+	if err != nil || changed != 1 {
+		return fmt.Errorf("audit: mandatory SQLite readiness state is invalid")
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("audit: commit mandatory SQLite readiness write: %w", err)
+	}
+	var generation int64
+	if err := s.scanRow(ctx, "audit_readiness_readback",
+		s.db.QueryRowContext(ctx, `SELECT verification_generation
+			FROM observability_store_readiness WHERE id = 1`), &generation); err != nil {
+		return fmt.Errorf("audit: verify mandatory SQLite readiness write: %w", err)
+	}
+	if generation <= 0 {
+		return fmt.Errorf("audit: mandatory SQLite readiness write was not durable")
+	}
 	return nil
 }
 
@@ -1583,6 +1863,12 @@ var knownTables = map[string]bool{
 	"scan_findings":   true,
 	"activity_events": true,
 	"sink_health":     true,
+	// Observability v8 alert acknowledgement protected state.
+	"alert_acknowledgement_projection": true,
+	"alert_acknowledgement_operations": true,
+	"alert_acknowledgement_baselines":  true,
+	"alert_acknowledgement_health":     true,
+	"observability_store_readiness":    true,
 }
 
 func (s *Store) hasColumn(table, column string) (bool, error) {
@@ -3395,7 +3681,19 @@ func (s *Store) GetTargetSnapshot(targetType, targetPath string) (*SnapshotRow, 
 }
 
 func (s *Store) Close() error {
-	telemetry.RegisterAuditDB(nil)
+	if s == nil || s.db == nil {
+		return nil
+	}
+	s.lifecycleMu.Lock()
+	defer s.lifecycleMu.Unlock()
+	if s.closed {
+		return nil
+	}
+	// Prevent new mandatory writes before waiting for already-pinned v8
+	// transactions to release the lifecycle read lock.
+	s.ready.Store(false)
+	s.closed = true
+	telemetry.UnregisterAuditDB(s.db)
 	return s.db.Close()
 }
 

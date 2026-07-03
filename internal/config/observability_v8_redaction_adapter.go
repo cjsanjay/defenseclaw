@@ -22,6 +22,28 @@ func (plan *ObservabilityV8Plan) RedactionProfileCatalog() (observabilityredacti
 	return buildObservabilityV8RedactionProfileCatalog(plan.effective.Profiles)
 }
 
+// ResolveLocalRedactionProfile exposes the immutable compiled local SQLite
+// bucket binding without exposing mutable route maps. It satisfies the audit
+// event-history resolver boundary while keeping config independent of storage.
+func (plan *ObservabilityV8Plan) ResolveLocalRedactionProfile(
+	bucket observability.Bucket,
+) (observabilityredaction.ProfileName, error) {
+	if plan == nil {
+		return "", fmt.Errorf("observability v8 local profile: plan is nil")
+	}
+	for _, policy := range plan.effective.Buckets {
+		if policy.Bucket != bucket {
+			continue
+		}
+		profile := observabilityredaction.ProfileName(policy.RedactionProfile)
+		if !observability.IsStableToken(string(profile)) {
+			return "", fmt.Errorf("observability v8 local profile: bucket %s has an invalid profile", bucket)
+		}
+		return profile, nil
+	}
+	return "", fmt.Errorf("observability v8 local profile: bucket %s is not in the compiled catalog", bucket)
+}
+
 func buildObservabilityV8RedactionProfileCatalog(
 	profiles []ObservabilityV8EffectiveProfile,
 ) (observabilityredaction.ProfileCatalog, error) {

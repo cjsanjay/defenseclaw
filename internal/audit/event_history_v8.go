@@ -29,7 +29,7 @@ import (
 	"fmt"
 	"io"
 	"reflect"
-	"sync/atomic"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -112,27 +112,181 @@ type EventHistoryHealthReporter interface {
 	ReportEventHistoryHealth(EventHistoryHealthCode)
 }
 
+type eventHistoryWriteError struct{ cause error }
+
+func (*eventHistoryWriteError) Error() string { return "audit: insert v8 event-history row failed" }
+func (err *eventHistoryWriteError) Unwrap() error {
+	if err == nil {
+		return nil
+	}
+	return err.cause
+}
+
+type eventHistoryHealthError struct {
+	code  EventHistoryHealthCode
+	cause error
+}
+
+func (err *eventHistoryHealthError) Error() string {
+	if err == nil || err.cause == nil {
+		return "audit: event-history operation failed"
+	}
+	return err.cause.Error()
+}
+
+func (err *eventHistoryHealthError) Unwrap() error {
+	if err == nil {
+		return nil
+	}
+	return err.cause
+}
+
+type eventHistoryAppendOutcome struct {
+	signed   bool
+	unsigned bool
+}
+
+func eventHistoryFailure(code EventHistoryHealthCode, err error) error {
+	if err == nil {
+		return nil
+	}
+	return &eventHistoryHealthError{code: code, cause: err}
+}
+
+// LocalProjectionBinding is a sealed immutable runtime-graph binding. External
+// packages obtain one through NewTrustedLocalProjectionBinding; the unexported
+// snapshot method prevents an arbitrary resolver from weakening event-history
+// validation to profile-name equality.
+type LocalProjectionBinding interface {
+	eventHistoryProjectionBinding() localProjectionBindingSnapshot
+}
+
+type localProjectionBindingSnapshot struct {
+	graphDigest string
+	profiles    map[observability.Bucket]observabilityredaction.Profile
+	engine      *observabilityredaction.Engine
+}
+
+// TrustedLocalProjectionBinding captures one compiled graph's digest, exact
+// resolved profile values, and exact redaction engine. Profiles are immutable
+// values and both construction and writer initialization clone the bucket map.
+type TrustedLocalProjectionBinding struct {
+	snapshot localProjectionBindingSnapshot
+}
+
+// NewTrustedLocalProjectionBinding constructs the only production-capable
+// EventHistoryWriter binding. The writer later uses Engine.Reproject to prove
+// every projection came from this exact engine/profile/key/catalog tuple.
+func NewTrustedLocalProjectionBinding(
+	graphDigest string,
+	engine *observabilityredaction.Engine,
+	profiles map[observability.Bucket]observabilityredaction.Profile,
+) (*TrustedLocalProjectionBinding, error) {
+	if !observability.IsStableToken(graphDigest) || engine == nil ||
+		len(profiles) != len(observability.Buckets()) {
+		return nil, fmt.Errorf("audit: local projection graph binding is invalid")
+	}
+	snapshot := localProjectionBindingSnapshot{
+		graphDigest: graphDigest,
+		profiles:    make(map[observability.Bucket]observabilityredaction.Profile, len(profiles)),
+		engine:      engine,
+	}
+	for _, bucket := range observability.Buckets() {
+		profile, ok := profiles[bucket]
+		if !ok || !observability.IsStableToken(string(profile.Name())) {
+			return nil, fmt.Errorf("audit: local projection profile binding for bucket %s is invalid", bucket)
+		}
+		snapshot.profiles[bucket] = profile
+	}
+	return &TrustedLocalProjectionBinding{snapshot: snapshot}, nil
+}
+
+func (binding *TrustedLocalProjectionBinding) eventHistoryProjectionBinding() localProjectionBindingSnapshot {
+	if binding == nil {
+		return localProjectionBindingSnapshot{}
+	}
+	snapshot := binding.snapshot
+	snapshot.profiles = cloneLocalProjectionProfiles(snapshot.profiles)
+	return snapshot
+}
+
+// GraphDigest identifies the compiled graph snapshotted by this binding.
+func (binding *TrustedLocalProjectionBinding) GraphDigest() string {
+	if binding == nil {
+		return ""
+	}
+	return binding.snapshot.graphDigest
+}
+
+func cloneLocalProjectionProfiles(
+	profiles map[observability.Bucket]observabilityredaction.Profile,
+) map[observability.Bucket]observabilityredaction.Profile {
+	result := make(map[observability.Bucket]observabilityredaction.Profile, len(profiles))
+	for bucket, profile := range profiles {
+		result[bucket] = profile
+	}
+	return result
+}
+
 // EventHistoryWriter appends immutable v8 log projections to audit_events. A
 // nil signer is valid and produces an explicitly unsigned row.
 type EventHistoryWriter struct {
 	store            *Store
 	signer           ProjectionIntegritySigner
 	healthReporter   EventHistoryHealthReporter
-	healthReporting  atomic.Bool
-	unsignedReported atomic.Bool
+	localProfiles    map[observability.Bucket]observabilityredaction.Profile
+	projectionEngine *observabilityredaction.Engine
+	graphDigest      string
+	appendCommitMu   sync.Mutex
+	healthMu         sync.Mutex
+	healthQueue      []EventHistoryHealthCode
+	healthPending    map[EventHistoryHealthCode]bool
+	healthDraining   bool
+	healthActive     EventHistoryHealthCode
+	unsignedReported bool
 }
 
-// NewEventHistoryWriter injects the mandatory local store and optional
-// integrity signer without changing the legacy Store constructor or APIs.
+// NewEventHistoryWriter snapshots the compiled runtime graph's complete local
+// profile binding. Append callers can therefore never attest or override the
+// profile used by mandatory SQLite persistence.
 func NewEventHistoryWriter(
 	store *Store,
 	signer ProjectionIntegritySigner,
 	healthReporter EventHistoryHealthReporter,
+	binding LocalProjectionBinding,
 ) (*EventHistoryWriter, error) {
-	if store == nil || store.db == nil {
-		return nil, fmt.Errorf("audit: v8 event-history store is required")
+	if store == nil || store.db == nil || !store.Ready() {
+		return nil, fmt.Errorf("audit: ready v8 event-history store is required")
 	}
-	return &EventHistoryWriter{store: store, signer: signer, healthReporter: healthReporter}, nil
+	if binding == nil {
+		return nil, fmt.Errorf("audit: local projection binding is required")
+	}
+	snapshot := binding.eventHistoryProjectionBinding()
+	if !observability.IsStableToken(snapshot.graphDigest) || snapshot.engine == nil ||
+		len(snapshot.profiles) != len(observability.Buckets()) {
+		return nil, fmt.Errorf("audit: local projection graph binding is invalid")
+	}
+	profiles := make(map[observability.Bucket]observabilityredaction.Profile, len(observability.Buckets()))
+	for _, bucket := range observability.Buckets() {
+		profile, ok := snapshot.profiles[bucket]
+		if !ok || !observability.IsStableToken(string(profile.Name())) {
+			return nil, fmt.Errorf("audit: local redaction profile binding for bucket %s is invalid", bucket)
+		}
+		profiles[bucket] = profile
+	}
+	return &EventHistoryWriter{
+		store: store, signer: signer, healthReporter: healthReporter, localProfiles: profiles,
+		projectionEngine: snapshot.engine, graphDigest: snapshot.graphDigest,
+	}, nil
+}
+
+// GraphDigest identifies the immutable compiled graph that owns this writer.
+// Runtime assembly rejects evaluators and factories from any other generation.
+func (writer *EventHistoryWriter) GraphDigest() string {
+	if writer == nil {
+		return ""
+	}
+	return writer.graphDigest
 }
 
 // Append persists exactly one local event-history row using a background
@@ -140,9 +294,8 @@ func NewEventHistoryWriter(
 func (writer *EventHistoryWriter) Append(
 	record observability.Record,
 	projection observabilityredaction.Projection,
-	expectedProfile observabilityredaction.ProfileName,
 ) error {
-	return writer.AppendContext(context.Background(), record, projection, expectedProfile)
+	return writer.AppendContext(context.Background(), record, projection)
 }
 
 // AppendContext validates that projection is the immutable local projection of
@@ -153,7 +306,6 @@ func (writer *EventHistoryWriter) AppendContext(
 	ctx context.Context,
 	record observability.Record,
 	projection observabilityredaction.Projection,
-	expectedProfile observabilityredaction.ProfileName,
 ) error {
 	if writer == nil || writer.store == nil || writer.store.db == nil {
 		return fmt.Errorf("audit: v8 event-history writer is not initialized")
@@ -164,23 +316,122 @@ func (writer *EventHistoryWriter) AppendContext(
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	release, err := writer.store.acquireReady()
+	if err != nil {
+		writer.reportHealth(EventHistoryHealthWriteFailed)
+		return err
+	}
+	released := false
+	releaseReady := func() {
+		if !released {
+			release()
+			released = true
+		}
+	}
+	defer releaseReady()
+	tx, err := writer.store.db.BeginTx(ctx, nil)
+	if err != nil {
+		releaseReady()
+		writer.reportHealth(EventHistoryHealthWriteFailed)
+		return fmt.Errorf("audit: begin v8 event-history write: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+	outcome, err := writer.appendContextTx(ctx, tx, record, projection)
+	if err != nil {
+		// Health reporters may persist their own mandatory record through the
+		// same single-connection Store. End this transaction before invoking
+		// external code so failure reporting cannot self-deadlock.
+		_ = tx.Rollback()
+		releaseReady()
+		writer.reportAppendError(err)
+		return err
+	}
+	if err := writer.commitAppendTransaction(tx, outcome); err != nil {
+		releaseReady()
+		writer.flushHealth()
+		return fmt.Errorf("audit: commit v8 event-history row: %w", err)
+	}
+	releaseReady()
+	writer.flushHealth()
+	return nil
+}
+
+// appendContextTx is the one authoritative prepare-and-insert path for both
+// ordinary event-history appends and storage operations that require the event
+// plus a normalized projection to commit atomically. Callers own tx commit or
+// rollback; this method performs the same canonical-record correspondence,
+// local-profile, projection hash, and HMAC validation as AppendContext.
+func (writer *EventHistoryWriter) appendContextTx(
+	ctx context.Context,
+	tx *sql.Tx,
+	record observability.Record,
+	projection observabilityredaction.Projection,
+) (eventHistoryAppendOutcome, error) {
+	if writer == nil || writer.store == nil || !writer.store.Ready() || writer.localProfiles == nil ||
+		writer.projectionEngine == nil || writer.graphDigest == "" {
+		return eventHistoryAppendOutcome{}, eventHistoryFailure(
+			EventHistoryHealthWriteFailed,
+			fmt.Errorf("audit: trusted local event-history writer is not ready"),
+		)
+	}
+	expectedProfile, ok := writer.localProfiles[record.Bucket()]
+	if !ok {
+		return eventHistoryAppendOutcome{}, eventHistoryFailure(
+			EventHistoryHealthProjectionRejected,
+			fmt.Errorf("audit: no effective local redaction profile for bucket %s", record.Bucket()),
+		)
+	}
+	trustedProjection, _, err := writer.projectionEngine.Reproject(projection, expectedProfile)
+	if err != nil {
+		return eventHistoryAppendOutcome{}, eventHistoryFailure(
+			EventHistoryHealthProjectionRejected,
+			fmt.Errorf("audit: local log projection does not belong to the active graph"),
+		)
+	}
+	return writer.appendContextTxResolvedProfile(ctx, tx, record, trustedProjection, expectedProfile.Name())
+}
+
+func (writer *EventHistoryWriter) appendContextTxResolvedProfile(
+	ctx context.Context,
+	tx *sql.Tx,
+	record observability.Record,
+	projection observabilityredaction.Projection,
+	expectedProfile observabilityredaction.ProfileName,
+) (eventHistoryAppendOutcome, error) {
+	if writer == nil || writer.store == nil || writer.store.db == nil || tx == nil {
+		return eventHistoryAppendOutcome{}, eventHistoryFailure(
+			EventHistoryHealthWriteFailed,
+			fmt.Errorf("audit: v8 event-history transaction writer is not initialized"),
+		)
+	}
+	if ctx == nil {
+		return eventHistoryAppendOutcome{}, fmt.Errorf("audit: v8 event-history context is required")
+	}
+	if err := ctx.Err(); err != nil {
+		return eventHistoryAppendOutcome{}, err
+	}
 	if record.Signal() != observability.SignalLogs {
-		writer.reportHealth(EventHistoryHealthProjectionRejected)
-		return fmt.Errorf("audit: v8 event history accepts log records only")
+		return eventHistoryAppendOutcome{}, eventHistoryFailure(
+			EventHistoryHealthProjectionRejected,
+			fmt.Errorf("audit: v8 event history accepts log records only"),
+		)
 	}
 
 	projectedEnvelope, payloadJSON, err := validateLocalProjection(record, projection, expectedProfile)
 	if err != nil {
-		writer.reportHealth(EventHistoryHealthProjectionRejected)
-		return err
+		return eventHistoryAppendOutcome{}, eventHistoryFailure(EventHistoryHealthProjectionRejected, err)
 	}
 	contentDigest := sha256.Sum256(projectedEnvelope)
 	projectionHash := ProjectionHashAlgorithm + ":" + hex.EncodeToString(contentDigest[:])
 
-	payloadHMAC, integrityAlgorithm, integrityKeyID, err := writer.integrity(ctx, projectedEnvelope)
+	payloadHMAC, integrityAlgorithm, integrityKeyID, unsigned, err := writer.integrity(ctx, projectedEnvelope)
 	if err != nil {
-		return err
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return eventHistoryAppendOutcome{}, err
+		}
+		return eventHistoryAppendOutcome{}, eventHistoryFailure(EventHistoryHealthSigningFailed, err)
 	}
+	outcome := eventHistoryAppendOutcome{signed: !unsigned, unsigned: unsigned}
 
 	correlation := record.Correlation()
 	provenance := record.Provenance()
@@ -201,13 +452,6 @@ func (writer *EventHistoryWriter) AppendContext(
 		record.Outcome() == observability.OutcomeQuarantined ||
 		record.Outcome() == observability.OutcomeRevoked ||
 		record.Outcome() == observability.OutcomeTerminated
-
-	tx, err := writer.store.db.BeginTx(ctx, nil)
-	if err != nil {
-		writer.reportHealth(EventHistoryHealthWriteFailed)
-		return fmt.Errorf("audit: begin v8 event-history write: %w", err)
-	}
-	defer tx.Rollback() //nolint:errcheck
 
 	_, err = txExec(tx, "v8_event_history_insert", `
 		INSERT INTO audit_events (
@@ -246,27 +490,128 @@ func (writer *EventHistoryWriter) AppendContext(
 		nullStr(payloadHMAC), nullStr(integrityAlgorithm), nullStr(integrityKeyID),
 	)
 	if err != nil {
-		writer.reportHealth(EventHistoryHealthWriteFailed)
-		return errors.New("audit: insert v8 event-history row failed")
+		return eventHistoryAppendOutcome{}, eventHistoryFailure(
+			EventHistoryHealthWriteFailed,
+			&eventHistoryWriteError{cause: err},
+		)
 	}
+	return outcome, nil
+}
+
+func (writer *EventHistoryWriter) reportAppendError(err error) {
+	var healthErr *eventHistoryHealthError
+	if errors.As(err, &healthErr) {
+		writer.enqueueHealth(healthErr.code)
+	}
+	writer.flushHealth()
+}
+
+// commitAppendTransaction serializes commit order with signed/unsigned health
+// state staging. It never invokes external reporter code; callers must release
+// Store lifecycle ownership before flushHealth.
+func (writer *EventHistoryWriter) commitAppendTransaction(
+	tx *sql.Tx,
+	outcome eventHistoryAppendOutcome,
+) error {
+	if writer == nil || tx == nil {
+		return fmt.Errorf("audit: event-history commit transaction is unavailable")
+	}
+	writer.appendCommitMu.Lock()
+	defer writer.appendCommitMu.Unlock()
 	if err := tx.Commit(); err != nil {
-		writer.reportHealth(EventHistoryHealthWriteFailed)
-		return fmt.Errorf("audit: commit v8 event-history row: %w", err)
+		writer.enqueueHealth(EventHistoryHealthWriteFailed)
+		return err
 	}
+	writer.stageAppendOutcome(outcome)
 	return nil
 }
 
-func (writer *EventHistoryWriter) reportHealth(code EventHistoryHealthCode) {
-	if writer == nil || writer.healthReporter == nil || !writer.healthReporting.CompareAndSwap(false, true) {
+func (writer *EventHistoryWriter) stageAppendOutcome(outcome eventHistoryAppendOutcome) {
+	if writer == nil {
 		return
 	}
-	defer writer.healthReporting.Store(false)
-	writer.healthReporter.ReportEventHistoryHealth(code)
+	writer.healthMu.Lock()
+	defer writer.healthMu.Unlock()
+	if outcome.signed {
+		writer.unsignedReported = false
+		return
+	}
+	if outcome.unsigned && !writer.unsignedReported {
+		writer.unsignedReported = true
+		// A signed commit can restore health while an earlier unsigned
+		// transition is still being reported. Preserve one later unsigned
+		// transition behind the active callback instead of dropping it.
+		writer.enqueueHealthLocked(EventHistoryHealthUnsigned, true)
+	}
 }
 
-func (writer *EventHistoryWriter) reportUnsigned() {
-	if writer != nil && writer.unsignedReported.CompareAndSwap(false, true) {
-		writer.reportHealth(EventHistoryHealthUnsigned)
+func (writer *EventHistoryWriter) reportHealth(code EventHistoryHealthCode) {
+	writer.enqueueHealth(code)
+	writer.flushHealth()
+}
+
+func (writer *EventHistoryWriter) enqueueHealth(code EventHistoryHealthCode) {
+	if writer == nil || writer.healthReporter == nil {
+		return
+	}
+	writer.healthMu.Lock()
+	defer writer.healthMu.Unlock()
+	writer.enqueueHealthLocked(code, false)
+}
+
+func (writer *EventHistoryWriter) enqueueHealthLocked(
+	code EventHistoryHealthCode,
+	allowAfterActive bool,
+) {
+	if writer.healthReporter == nil || code == "" || (code == writer.healthActive && !allowAfterActive) {
+		return
+	}
+	if writer.healthPending == nil {
+		writer.healthPending = make(map[EventHistoryHealthCode]bool, 4)
+	}
+	if writer.healthPending[code] {
+		return
+	}
+	// The vocabulary has four values. Coalescing one pending transition per
+	// code makes the queue bounded even if a reporter re-enters this writer.
+	if len(writer.healthQueue) >= 4 {
+		return
+	}
+	writer.healthPending[code] = true
+	writer.healthQueue = append(writer.healthQueue, code)
+}
+
+func (writer *EventHistoryWriter) flushHealth() {
+	if writer == nil || writer.healthReporter == nil {
+		return
+	}
+	writer.healthMu.Lock()
+	if writer.healthDraining {
+		writer.healthMu.Unlock()
+		return
+	}
+	writer.healthDraining = true
+	writer.healthMu.Unlock()
+
+	for {
+		writer.healthMu.Lock()
+		if len(writer.healthQueue) == 0 {
+			writer.healthActive = ""
+			writer.healthDraining = false
+			writer.healthMu.Unlock()
+			return
+		}
+		code := writer.healthQueue[0]
+		writer.healthQueue = writer.healthQueue[1:]
+		delete(writer.healthPending, code)
+		writer.healthActive = code
+		writer.healthMu.Unlock()
+
+		writer.healthReporter.ReportEventHistoryHealth(code)
+
+		writer.healthMu.Lock()
+		writer.healthActive = ""
+		writer.healthMu.Unlock()
 	}
 }
 
@@ -295,15 +640,13 @@ func projectedCompatibilityDetails(projection observabilityredaction.Projection,
 func (writer *EventHistoryWriter) integrity(
 	ctx context.Context,
 	projectedEnvelope []byte,
-) (payloadHMAC, algorithm, keyID string, err error) {
+) (payloadHMAC, algorithm, keyID string, unsigned bool, err error) {
 	if writer.signer == nil {
-		writer.reportUnsigned()
-		return "", "", "", nil
+		return "", "", "", true, nil
 	}
 	keyID = writer.signer.KeyID()
 	if err := validateIntegrityKeyID(keyID); err != nil {
-		writer.reportHealth(EventHistoryHealthSigningFailed)
-		return "", "", "", err
+		return "", "", "", false, err
 	}
 	message := projectionIntegrityMessage(projectedEnvelope, ProjectionIntegrityAlgorithm, keyID)
 	signature, signErr := writer.signer.HMACSHA256(ctx, message)
@@ -311,19 +654,18 @@ func (writer *EventHistoryWriter) integrity(
 		message[index] = 0
 	}
 	if errors.Is(signErr, ErrIntegrityKeyUnavailable) {
-		writer.reportUnsigned()
-		return "", "", "", nil
+		return "", "", "", true, nil
 	}
 	if signErr != nil {
-		writer.reportHealth(EventHistoryHealthSigningFailed)
-		return "", "", "", errors.New("audit: sign v8 event-history projection failed")
+		if errors.Is(signErr, context.Canceled) || errors.Is(signErr, context.DeadlineExceeded) {
+			return "", "", "", false, signErr
+		}
+		return "", "", "", false, errors.New("audit: sign v8 event-history projection failed")
 	}
 	if len(signature) != sha256.Size {
-		writer.reportHealth(EventHistoryHealthSigningFailed)
-		return "", "", "", fmt.Errorf("audit: projection integrity signer returned an invalid digest")
+		return "", "", "", false, fmt.Errorf("audit: projection integrity signer returned an invalid digest")
 	}
-	writer.unsignedReported.Store(false)
-	return hex.EncodeToString(signature), ProjectionIntegrityAlgorithm, keyID, nil
+	return hex.EncodeToString(signature), ProjectionIntegrityAlgorithm, keyID, false, nil
 }
 
 func validateIntegrityKeyID(keyID string) error {

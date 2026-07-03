@@ -485,6 +485,13 @@ and prove their projected outputs contain no prohibited canary while a parallel
   local route profile passed by the compiled runtime graph.
 - Atomic event plus required projection insert.
 - Projection failure rollback/degraded behavior.
+- Projection, signing, unsigned, and SQLite-write health callbacks run only after
+  their originating transaction ends and Store lifecycle ownership is released. A
+  reporter that queries, writes through, or closes the same single-connection Store
+  completes without deadlock and cannot change the committed/rolled-back event
+  result. A blocked/reentrant reporter plus concurrent signed recovery and a later
+  unsigned commit preserves commit-ordered state, bounded dispatch, and the later
+  unsigned transition under the race detector.
 - Concurrent readers and writers under WAL.
 - SQLite initialization and disk/write failure behavior.
 - Judge-body database initialization is required and fatal when capture is enabled
@@ -497,11 +504,31 @@ and prove their projected outputs contain no prohibited canary while a parallel
   controlled transaction order proves the first committed compare-and-swap wins,
   with one immutable compliance event per first-seen operation and no finding-row
   mutation.
-- Per-alert applied compliance events form a gap-free version sequence regardless
+- Per-alert applied operation receipts form a gap-free version sequence regardless
   of equal or skewed timestamps. Reconciliation repairs a missing/stale projection,
-  ignores rejected and `no_change` events for state replay, preserves the legacy
-  baseline provenance, and fails closed with mandatory health on a gap, conflicting
-  version, or projection ahead of evidence.
+  ignores rejected and `no_change` receipts for state replay, preserves the legacy
+  baseline provenance, accepts a missing age-reaped audit event, and fails closed
+  with mandatory health on a receipt gap/conflict, projection ahead of receipts, or
+  a retained audit event that contradicts its receipt.
+- Reaping every alert compliance event, or only a prefix, leaves receipt-based
+  reconstruction and the next `N -> N+1` transition valid. Exact retry after event
+  deletion returns the original result/event ID/timestamp and does not recreate
+  history. A previous-release `ACK` written after the original v8 migration is
+  baselined on the next startup before it can be reaped.
+- A first-seen operation against a missing identifier or non-finding v8 event is
+  rejected without an operation receipt, compliance event, or projection; the same
+  target remains eligible after event retention when protected alert state/receipts
+  exist.
+- A generic unbucketed v7 audit row with canonical severity is rejected. Only the
+  explicit legacy `alert` action or an action with a fixed `security.finding`
+  classification is eligible before protected state exists; a rollback-era `ACK`
+  baseline remains eligible without guessing erased provenance.
+- Command fingerprints use the stable correlation key and a versioned,
+  domain-separated HMAC-SHA-256 encoding. Tests prove that the protected receipt
+  changes when any normalized command field changes, that low-entropy raw actor
+  values cannot be recovered by comparing an unkeyed digest, that key
+  unavailability fails closed, and that no fingerprint appears in the canonical
+  event payload or an export projection.
 - No raw judge body in ordinary event/projection tables.
 - New and migrated DB files preserve required owner/managed permissions, reject
   untrusted/symlinked paths, and never widen existing permissions.
@@ -858,6 +885,8 @@ Assertions:
 - Seed both databases and all event tables around a fake cutoff.
 - Run reaper.
 - Verify exact rows removed/preserved and current state unchanged.
+- Verify the four protected alert tables and readiness state are never reaped, and
+  report their capacity separately from age-retained event history.
 
 ### E2E-8: Atomic reload
 

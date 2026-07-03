@@ -62,6 +62,30 @@ func TestObservabilityV8RedactionProfileCatalogDefaultParity(t *testing.T) {
 	}
 }
 
+func TestObservabilityV8PlanResolvesImmutableLocalProfiles(t *testing.T) {
+	plan := mustCompileObservabilityV8(t, &ObservabilityV8Source{
+		Buckets: map[observability.Bucket]ObservabilityV8BucketPolicySource{
+			observability.BucketSecurityFinding: {RedactionProfile: "strict"},
+		},
+	})
+	for _, bucket := range observability.Buckets() {
+		got, err := plan.ResolveLocalRedactionProfile(bucket)
+		if err != nil {
+			t.Fatalf("bucket %s: %v", bucket, err)
+		}
+		want := observabilityredaction.ProfileNone
+		if bucket == observability.BucketSecurityFinding {
+			want = observabilityredaction.ProfileStrict
+		}
+		if got != want {
+			t.Errorf("bucket %s local profile = %q, want %q", bucket, got, want)
+		}
+	}
+	if _, err := plan.ResolveLocalRedactionProfile("future.unreviewed"); err == nil {
+		t.Fatal("unreviewed bucket resolved a local profile")
+	}
+}
+
 func TestObservabilityV8RedactionProfileCatalogCustomParityAndCopySafety(t *testing.T) {
 	plan := mustCompileObservabilityV8(t, &ObservabilityV8Source{
 		RedactionProfiles: map[string]ObservabilityV8RedactionProfileSource{

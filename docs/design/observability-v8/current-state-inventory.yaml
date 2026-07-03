@@ -556,6 +556,10 @@ classes:
 
   schema_files:
     source_directory: schemas
+    # Canonical v8 registry inputs/generated support data are implementation
+    # targets, not v7 migration sources. They have their own drift gates.
+    excluded_target_directories:
+      - schemas/telemetry/v8
     migration_disposition: per_item
     items:
       - path: schemas/config/v8/defenseclaw-config.schema.json

@@ -23,6 +23,8 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -89,6 +91,74 @@ type testEventHistoryHealthReporter struct {
 
 func (reporter *testEventHistoryHealthReporter) ReportEventHistoryHealth(code EventHistoryHealthCode) {
 	reporter.codes = append(reporter.codes, code)
+}
+
+type queryingEventHistoryHealthReporter struct {
+	store       *Store
+	closeOnCode EventHistoryHealthCode
+	codes       []EventHistoryHealthCode
+	errors      []error
+	closeErrors []error
+}
+
+type toggleProjectionSigner struct {
+	key         [sha256.Size]byte
+	unavailable atomic.Bool
+}
+
+func (*toggleProjectionSigner) KeyID() string { return "toggle-key-v1" }
+
+func (signer *toggleProjectionSigner) HMACSHA256(
+	ctx context.Context,
+	message []byte,
+) ([]byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if signer.unavailable.Load() {
+		return nil, ErrIntegrityKeyUnavailable
+	}
+	mac := hmac.New(sha256.New, signer.key[:])
+	_, _ = mac.Write(message)
+	return mac.Sum(nil), nil
+}
+
+type blockingEventHistoryHealthReporter struct {
+	started chan EventHistoryHealthCode
+	release chan struct{}
+	once    sync.Once
+	mu      sync.Mutex
+	codes   []EventHistoryHealthCode
+}
+
+func (reporter *blockingEventHistoryHealthReporter) ReportEventHistoryHealth(
+	code EventHistoryHealthCode,
+) {
+	reporter.mu.Lock()
+	reporter.codes = append(reporter.codes, code)
+	reporter.mu.Unlock()
+	reporter.once.Do(func() {
+		reporter.started <- code
+		<-reporter.release
+	})
+}
+
+func (reporter *blockingEventHistoryHealthReporter) snapshot() []EventHistoryHealthCode {
+	reporter.mu.Lock()
+	defer reporter.mu.Unlock()
+	return append([]EventHistoryHealthCode(nil), reporter.codes...)
+}
+
+func (reporter *queryingEventHistoryHealthReporter) ReportEventHistoryHealth(code EventHistoryHealthCode) {
+	reporter.codes = append(reporter.codes, code)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	var count int
+	reporter.errors = append(reporter.errors,
+		reporter.store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM audit_events`).Scan(&count))
+	if code == reporter.closeOnCode {
+		reporter.closeErrors = append(reporter.closeErrors, reporter.store.Close())
+	}
 }
 
 func (signer *testProjectionSigner) KeyID() string { return signer.keyID }
@@ -187,10 +257,16 @@ func projectV8HistoryRecord(
 	profileName observabilityredaction.ProfileName,
 ) observabilityredaction.Projection {
 	t.Helper()
-	engine, err := observabilityredaction.NewEngine(bytes.Repeat([]byte{0x42}, 32))
-	if err != nil {
-		t.Fatal(err)
-	}
+	return projectV8HistoryRecordWithEngine(t, testEventHistoryProjectionEngine, record, profileName)
+}
+
+func projectV8HistoryRecordWithEngine(
+	t *testing.T,
+	engine *observabilityredaction.Engine,
+	record observability.Record,
+	profileName observabilityredaction.ProfileName,
+) observabilityredaction.Projection {
+	t.Helper()
 	profile, ok := observabilityredaction.BuiltInProfile(profileName)
 	if !ok {
 		t.Fatalf("profile %q is unavailable", profileName)
@@ -200,6 +276,24 @@ func projectV8HistoryRecord(
 		t.Fatal(err)
 	}
 	return projection
+}
+
+func newTestTrustedLocalProjectionBinding(
+	t *testing.T,
+	digest string,
+	engine *observabilityredaction.Engine,
+	profile observabilityredaction.Profile,
+) *TrustedLocalProjectionBinding {
+	t.Helper()
+	profiles := make(map[observability.Bucket]observabilityredaction.Profile, len(observability.Buckets()))
+	for _, bucket := range observability.Buckets() {
+		profiles[bucket] = profile
+	}
+	binding, err := NewTrustedLocalProjectionBinding(digest, engine, profiles)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return binding
 }
 
 func loadV8HistoryRow(t *testing.T, store *Store, id string) v8HistoryRow {
@@ -253,7 +347,7 @@ func TestV8EventHistoryMigrationIsAdditiveAndIdempotent(t *testing.T) {
 
 	var historyMigration *migration
 	for index := range migrations {
-		if strings.Contains(migrations[index].description, "observability v8") {
+		if migrations[index].description == "observability v8: add canonical local event-history projection columns" {
 			if historyMigration != nil {
 				t.Fatal("multiple observability v8 event-history migrations found")
 			}
@@ -354,6 +448,9 @@ func TestStoreInitFailsWhenMandatoryV8EventHistoryAnchorIsMissing(t *testing.T) 
 	if err := store.Init(); err == nil || !strings.Contains(err.Error(), "mandatory event-history table is missing") {
 		t.Fatalf("Store.Init missing-anchor error = %v", err)
 	}
+	if store.Ready() {
+		t.Fatal("store published readiness after missing-anchor failure")
+	}
 }
 
 func TestStoreInitFailsWhenMandatoryV8EventHistoryColumnIsMissing(t *testing.T) {
@@ -374,17 +471,20 @@ func TestStoreInitFailsWhenMandatoryV8EventHistoryColumnIsMissing(t *testing.T) 
 	if err := store.Init(); err == nil || !strings.Contains(err.Error(), "mandatory event-history column bucket is missing") {
 		t.Fatalf("Store.Init missing-column error = %v", err)
 	}
+	if store.Ready() {
+		t.Fatal("store published readiness after missing-column failure")
+	}
 }
 
 func TestEventHistoryWriterPersistsExactCanonicalProjectionAndLegacyView(t *testing.T) {
 	store := newV8HistoryStore(t)
-	writer, err := NewEventHistoryWriter(store, nil, nil)
+	writer, err := NewEventHistoryWriter(store, nil, nil, testLocalProfileResolver{profile: observabilityredaction.ProfileNone})
 	if err != nil {
 		t.Fatal(err)
 	}
 	record := newV8HistoryRecord(t, "history-exact", "projected local message")
 	projection := projectV8HistoryRecord(t, record, observabilityredaction.ProfileNone)
-	if err := writer.Append(record, projection, observabilityredaction.ProfileNone); err != nil {
+	if err := writer.Append(record, projection); err != nil {
 		t.Fatal(err)
 	}
 
@@ -438,13 +538,13 @@ func TestEventHistoryWriterPersistsExactCanonicalProjectionAndLegacyView(t *test
 
 func TestLegacyAlertQueriesAndAcknowledgementCannotMutateV8History(t *testing.T) {
 	store := newV8HistoryStore(t)
-	writer, err := NewEventHistoryWriter(store, nil, nil)
+	writer, err := NewEventHistoryWriter(store, nil, nil, testLocalProfileResolver{profile: observabilityredaction.ProfileNone})
 	if err != nil {
 		t.Fatal(err)
 	}
 	record := newV8HistoryRecord(t, "history-immutable-alert", "immutable v8 finding")
 	projection := projectV8HistoryRecord(t, record, observabilityredaction.ProfileNone)
-	if err := writer.Append(record, projection, observabilityredaction.ProfileNone); err != nil {
+	if err := writer.Append(record, projection); err != nil {
 		t.Fatal(err)
 	}
 	alerts, err := store.ListAlerts(10)
@@ -472,13 +572,13 @@ func TestEventHistoryWriterSignedAndUnavailableIntegrity(t *testing.T) {
 	store := newV8HistoryStore(t)
 	key := bytes.Repeat([]byte{0x24}, 32)
 	signer := &testProjectionSigner{key: key, keyID: "integrity-key-v1"}
-	writer, err := NewEventHistoryWriter(store, signer, nil)
+	writer, err := NewEventHistoryWriter(store, signer, nil, testLocalProfileResolver{profile: observabilityredaction.ProfileNone})
 	if err != nil {
 		t.Fatal(err)
 	}
 	record := newV8HistoryRecord(t, "history-signed", "signed projected message")
 	projection := projectV8HistoryRecord(t, record, observabilityredaction.ProfileNone)
-	if err := writer.Append(record, projection, observabilityredaction.ProfileNone); err != nil {
+	if err := writer.Append(record, projection); err != nil {
 		t.Fatal(err)
 	}
 	row := loadV8HistoryRow(t, store, record.RecordID())
@@ -503,7 +603,7 @@ func TestEventHistoryWriterSignedAndUnavailableIntegrity(t *testing.T) {
 	}
 	rotatedWriter, err := NewEventHistoryWriter(store, &testProjectionSigner{
 		key: bytes.Repeat([]byte{0x25}, 32), keyID: "integrity-key-v2",
-	}, nil)
+	}, nil, testLocalProfileResolver{profile: observabilityredaction.ProfileNone})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -519,13 +619,13 @@ func TestEventHistoryWriterSignedAndUnavailableIntegrity(t *testing.T) {
 		keyID: "integrity-key-v1",
 		err:   fmt.Errorf("custody not ready: %w", ErrIntegrityKeyUnavailable),
 	}
-	unsignedWriter, err := NewEventHistoryWriter(store, unavailable, nil)
+	unsignedWriter, err := NewEventHistoryWriter(store, unavailable, nil, testLocalProfileResolver{profile: observabilityredaction.ProfileNone})
 	if err != nil {
 		t.Fatal(err)
 	}
 	unsignedRecord := newV8HistoryRecord(t, "history-key-unavailable", "unsigned projected message")
 	unsignedProjection := projectV8HistoryRecord(t, unsignedRecord, observabilityredaction.ProfileNone)
-	if err := unsignedWriter.Append(unsignedRecord, unsignedProjection, observabilityredaction.ProfileNone); err != nil {
+	if err := unsignedWriter.Append(unsignedRecord, unsignedProjection); err != nil {
 		t.Fatal(err)
 	}
 	unsignedRow := loadV8HistoryRow(t, store, unsignedRecord.RecordID())
@@ -545,7 +645,7 @@ func TestEventHistoryWriterSignedAndUnavailableIntegrity(t *testing.T) {
 func TestEventHistoryVerificationDetectsStoredTamperingAndSupportsRange(t *testing.T) {
 	store := newV8HistoryStore(t)
 	signer := &testProjectionSigner{key: bytes.Repeat([]byte{0x31}, 32), keyID: "integrity-key-v1"}
-	writer, err := NewEventHistoryWriter(store, signer, nil)
+	writer, err := NewEventHistoryWriter(store, signer, nil, testLocalProfileResolver{profile: observabilityredaction.ProfileNone})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -554,7 +654,7 @@ func TestEventHistoryVerificationDetectsStoredTamperingAndSupportsRange(t *testi
 	second := newV8HistoryRecordAt(t, "history-range-b", "second projected message", base.Add(500*time.Millisecond))
 	for _, record := range []observability.Record{first, second} {
 		projection := projectV8HistoryRecord(t, record, observabilityredaction.ProfileNone)
-		if err := writer.Append(record, projection, observabilityredaction.ProfileNone); err != nil {
+		if err := writer.Append(record, projection); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -638,12 +738,13 @@ func TestEventHistoryIntegrityDiffersForDifferentRedactionProjections(t *testing
 	noneStore := newV8HistoryStore(t)
 	noneWriter, err := NewEventHistoryWriter(
 		noneStore, &testProjectionSigner{key: key, keyID: "integrity-key-v1"}, nil,
+		testLocalProfileResolver{profile: observabilityredaction.ProfileNone},
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
 	noneProjection := projectV8HistoryRecord(t, record, observabilityredaction.ProfileNone)
-	if err := noneWriter.Append(record, noneProjection, observabilityredaction.ProfileNone); err != nil {
+	if err := noneWriter.Append(record, noneProjection); err != nil {
 		t.Fatal(err)
 	}
 	noneRow := loadV8HistoryRow(t, noneStore, record.RecordID())
@@ -651,12 +752,13 @@ func TestEventHistoryIntegrityDiffersForDifferentRedactionProjections(t *testing
 	contentStore := newV8HistoryStore(t)
 	contentWriter, err := NewEventHistoryWriter(
 		contentStore, &testProjectionSigner{key: key, keyID: "integrity-key-v1"}, nil,
+		testLocalProfileResolver{profile: observabilityredaction.ProfileContent},
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
 	contentProjection := projectV8HistoryRecord(t, record, observabilityredaction.ProfileContent)
-	if err := contentWriter.Append(record, contentProjection, observabilityredaction.ProfileContent); err != nil {
+	if err := contentWriter.Append(record, contentProjection); err != nil {
 		t.Fatal(err)
 	}
 	contentRow := loadV8HistoryRow(t, contentStore, record.RecordID())
@@ -678,18 +780,19 @@ func TestEventHistoryIntegrityCoversAlgorithmAndKeyIdentity(t *testing.T) {
 	key := bytes.Repeat([]byte{0x3a}, 32)
 	writer, err := NewEventHistoryWriter(
 		store, &testProjectionSigner{key: key, keyID: "integrity-key-v1"}, nil,
+		testLocalProfileResolver{profile: observabilityredaction.ProfileNone},
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
 	record := newV8HistoryRecord(t, "history-integrity-metadata", "signed metadata")
 	projection := projectV8HistoryRecord(t, record, observabilityredaction.ProfileNone)
-	if err := writer.Append(record, projection, observabilityredaction.ProfileNone); err != nil {
+	if err := writer.Append(record, projection); err != nil {
 		t.Fatal(err)
 	}
 	unavailableVerifier, err := NewEventHistoryWriter(store, &testProjectionSigner{
 		keyID: "integrity-key-v1", err: ErrIntegrityKeyUnavailable,
-	}, nil)
+	}, nil, testLocalProfileResolver{profile: observabilityredaction.ProfileNone})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -707,6 +810,7 @@ func TestEventHistoryIntegrityCoversAlgorithmAndKeyIdentity(t *testing.T) {
 	}
 	verifier, err := NewEventHistoryWriter(
 		store, &testProjectionSigner{key: key, keyID: "integrity-key-v2"}, nil,
+		testLocalProfileResolver{profile: observabilityredaction.ProfileNone},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -752,7 +856,7 @@ func TestEventHistoryIntegrityCoversAlgorithmAndKeyIdentity(t *testing.T) {
 
 func TestEventHistoryWriterPersistsMandatoryClassification(t *testing.T) {
 	store := newV8HistoryStore(t)
-	writer, err := NewEventHistoryWriter(store, nil, nil)
+	writer, err := NewEventHistoryWriter(store, nil, nil, testLocalProfileResolver{profile: observabilityredaction.ProfileNone})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -799,7 +903,7 @@ func TestEventHistoryWriterPersistsMandatoryClassification(t *testing.T) {
 		t.Fatal("fixture classification is not mandatory")
 	}
 	projection := projectV8HistoryRecord(t, record, observabilityredaction.ProfileNone)
-	if err := writer.Append(record, projection, observabilityredaction.ProfileNone); err != nil {
+	if err := writer.Append(record, projection); err != nil {
 		t.Fatal(err)
 	}
 	row := loadV8HistoryRow(t, store, record.RecordID())
@@ -811,7 +915,7 @@ func TestEventHistoryWriterPersistsMandatoryClassification(t *testing.T) {
 
 func TestEventHistoryWriterRejectsMalformedOrMismatchedInputs(t *testing.T) {
 	store := newV8HistoryStore(t)
-	writer, err := NewEventHistoryWriter(store, nil, nil)
+	writer, err := NewEventHistoryWriter(store, nil, nil, testLocalProfileResolver{profile: observabilityredaction.ProfileNone})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -830,20 +934,24 @@ func TestEventHistoryWriterRejectsMalformedOrMismatchedInputs(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			if err := writer.Append(test.record, test.projection, observabilityredaction.ProfileNone); err == nil {
+			if err := writer.Append(test.record, test.projection); err == nil {
 				t.Fatal("expected rejection")
 			}
 		})
 	}
-	if err := writer.Append(recordA, projectionA, observabilityredaction.ProfileStrict); err == nil {
+	strictWriter, err := NewEventHistoryWriter(store, nil, nil, testLocalProfileResolver{profile: observabilityredaction.ProfileStrict})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := strictWriter.Append(recordA, projectionA); err == nil {
 		t.Fatal("projection with a profile different from the effective local route was accepted")
 	}
-	if err := writer.AppendContext(nil, recordA, projectionA, observabilityredaction.ProfileNone); err == nil {
+	if err := writer.AppendContext(nil, recordA, projectionA); err == nil {
 		t.Fatal("nil context was accepted")
 	}
 	cancelled, cancel := context.WithCancel(context.Background())
 	cancel()
-	if err := writer.AppendContext(cancelled, recordA, projectionA, observabilityredaction.ProfileNone); !errors.Is(err, context.Canceled) {
+	if err := writer.AppendContext(cancelled, recordA, projectionA); !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancelled context error = %v", err)
 	}
 	trace, err := observability.NewRecord(observability.RecordInput{
@@ -871,7 +979,7 @@ func TestEventHistoryWriterRejectsMalformedOrMismatchedInputs(t *testing.T) {
 		t.Fatal(err)
 	}
 	traceProjection := projectV8HistoryRecord(t, trace, observabilityredaction.ProfileNone)
-	if err := writer.Append(trace, traceProjection, observabilityredaction.ProfileNone); err == nil {
+	if err := writer.Append(trace, traceProjection); err == nil {
 		t.Fatal("trace projection was accepted by the SQLite log history writer")
 	}
 	var count int
@@ -880,18 +988,100 @@ func TestEventHistoryWriterRejectsMalformedOrMismatchedInputs(t *testing.T) {
 	}
 }
 
+func TestEventHistoryWriterRejectsCrossGenerationProjectionContext(t *testing.T) {
+	store := newV8HistoryStore(t)
+	boundEngine, err := observabilityredaction.NewEngine(bytes.Repeat([]byte{0x21}, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	none, _ := observabilityredaction.BuiltInProfile(observabilityredaction.ProfileNone)
+	writer, err := NewEventHistoryWriter(
+		store, nil, nil,
+		newTestTrustedLocalProjectionBinding(t, strings.Repeat("1", 64), boundEngine, none),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if writer.GraphDigest() != strings.Repeat("1", 64) {
+		t.Fatalf("writer graph digest = %q", writer.GraphDigest())
+	}
+
+	for _, test := range []struct {
+		name string
+		key  []byte
+	}{
+		{name: "foreign engine same key", key: bytes.Repeat([]byte{0x21}, 32)},
+		{name: "foreign engine different key", key: bytes.Repeat([]byte{0x22}, 32)},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			foreign, engineErr := observabilityredaction.NewEngine(test.key)
+			if engineErr != nil {
+				t.Fatal(engineErr)
+			}
+			record := newV8HistoryRecord(t, "cross-generation-"+strings.ReplaceAll(test.name, " ", "-"), "private")
+			projection, _, projectErr := foreign.Project(record, none)
+			if projectErr != nil {
+				t.Fatal(projectErr)
+			}
+			if appendErr := writer.Append(record, projection); appendErr == nil ||
+				!strings.Contains(appendErr.Error(), "active graph") {
+				t.Fatalf("foreign projection error = %v", appendErr)
+			}
+		})
+	}
+
+	profileA, err := observabilityredaction.NewCustomProfile(
+		"same-name", observabilityredaction.ProfileSensitive, nil,
+		map[observability.FieldClass]observabilityredaction.TransformationMode{
+			observability.FieldClassContent: observabilityredaction.ModeWhole,
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	profileB, err := observabilityredaction.NewCustomProfile(
+		"same-name", observabilityredaction.ProfileSensitive, nil,
+		map[observability.FieldClass]observabilityredaction.TransformationMode{
+			observability.FieldClassContent: observabilityredaction.ModeRemove,
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	customWriter, err := NewEventHistoryWriter(
+		store, nil, nil,
+		newTestTrustedLocalProjectionBinding(t, strings.Repeat("2", 64), boundEngine, profileA),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record := newV8HistoryRecord(t, "same-name-different-definition", "private")
+	projection, _, err := boundEngine.Project(record, profileB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := customWriter.Append(record, projection); err == nil || !strings.Contains(err.Error(), "active graph") {
+		t.Fatalf("same-name different-definition projection error = %v", err)
+	}
+
+	var count int
+	if err := store.db.QueryRow(`SELECT COUNT(*) FROM audit_events`).Scan(&count); err != nil || count != 0 {
+		t.Fatalf("cross-generation projections left %d rows, err=%v", count, err)
+	}
+}
+
 func TestEventHistoryWriterRollsBackFailuresAndInsertsOnce(t *testing.T) {
 	store := newV8HistoryStore(t)
-	writer, err := NewEventHistoryWriter(store, nil, nil)
+	writer, err := NewEventHistoryWriter(store, nil, nil, testLocalProfileResolver{profile: observabilityredaction.ProfileNone})
 	if err != nil {
 		t.Fatal(err)
 	}
 	record := newV8HistoryRecord(t, "history-once", "one projected message")
 	projection := projectV8HistoryRecord(t, record, observabilityredaction.ProfileNone)
-	if err := writer.Append(record, projection, observabilityredaction.ProfileNone); err != nil {
+	if err := writer.Append(record, projection); err != nil {
 		t.Fatal(err)
 	}
-	if err := writer.Append(record, projection, observabilityredaction.ProfileNone); err == nil {
+	if err := writer.Append(record, projection); err == nil {
 		t.Fatal("duplicate record ID was accepted")
 	}
 	var count int
@@ -909,7 +1099,7 @@ func TestEventHistoryWriterRollsBackFailuresAndInsertsOnce(t *testing.T) {
 	}
 	rejected := newV8HistoryRecord(t, "history-rejected", "rejected projected message")
 	rejectedProjection := projectV8HistoryRecord(t, rejected, observabilityredaction.ProfileNone)
-	if err := writer.Append(rejected, rejectedProjection, observabilityredaction.ProfileNone); err == nil {
+	if err := writer.Append(rejected, rejectedProjection); err == nil {
 		t.Fatal("triggered insert failure was hidden")
 	}
 	if err := store.db.QueryRow(`SELECT COUNT(*) FROM audit_events WHERE id=?`, rejected.RecordID()).Scan(&count); err != nil || count != 0 {
@@ -919,7 +1109,7 @@ func TestEventHistoryWriterRollsBackFailuresAndInsertsOnce(t *testing.T) {
 
 func TestEventHistoryWriterNeverFallsBackToRawRecord(t *testing.T) {
 	store := newV8HistoryStore(t)
-	writer, err := NewEventHistoryWriter(store, nil, nil)
+	writer, err := NewEventHistoryWriter(store, nil, nil, testLocalProfileResolver{profile: observabilityredaction.ProfileContent})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -929,7 +1119,7 @@ func TestEventHistoryWriterNeverFallsBackToRawRecord(t *testing.T) {
 	if bytes.Contains(mustProjectionBytes(t, projection), []byte(rawMarker)) {
 		t.Fatal("test projection unexpectedly contains the raw marker")
 	}
-	if err := writer.Append(record, projection, observabilityredaction.ProfileContent); err != nil {
+	if err := writer.Append(record, projection); err != nil {
 		t.Fatal(err)
 	}
 	row := loadV8HistoryRow(t, store, record.RecordID())
@@ -953,13 +1143,13 @@ func TestEventHistoryWriterSigningFailureLeavesNoRow(t *testing.T) {
 	store := newV8HistoryStore(t)
 	signer := &testProjectionSigner{keyID: "integrity-key-v1", err: errors.New("signing failed")}
 	health := &testEventHistoryHealthReporter{}
-	writer, err := NewEventHistoryWriter(store, signer, health)
+	writer, err := NewEventHistoryWriter(store, signer, health, testLocalProfileResolver{profile: observabilityredaction.ProfileNone})
 	if err != nil {
 		t.Fatal(err)
 	}
 	record := newV8HistoryRecord(t, "history-sign-failed", "projected message")
 	projection := projectV8HistoryRecord(t, record, observabilityredaction.ProfileNone)
-	if err := writer.Append(record, projection, observabilityredaction.ProfileNone); err == nil {
+	if err := writer.Append(record, projection); err == nil {
 		t.Fatal("signing failure was hidden")
 	}
 	var count int
@@ -968,6 +1158,50 @@ func TestEventHistoryWriterSigningFailureLeavesNoRow(t *testing.T) {
 	}
 	if len(health.codes) != 1 || health.codes[0] != EventHistoryHealthSigningFailed {
 		t.Fatalf("signing failure health = %#v", health.codes)
+	}
+}
+
+func TestEventHistoryWriterPreservesSignerCancellationWithoutDegradingHealth(t *testing.T) {
+	for _, cancellation := range []error{context.Canceled, context.DeadlineExceeded} {
+		t.Run(cancellation.Error(), func(t *testing.T) {
+			store := newV8HistoryStore(t)
+			health := &testEventHistoryHealthReporter{}
+			writer, err := NewEventHistoryWriter(
+				store,
+				&testProjectionSigner{keyID: "integrity-key-v1", err: cancellation},
+				health,
+				testLocalProfileResolver{profile: observabilityredaction.ProfileNone},
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			record := newV8HistoryRecord(t, "history-sign-cancelled-"+strings.ReplaceAll(cancellation.Error(), " ", "-"), "private")
+			projection := projectV8HistoryRecord(t, record, observabilityredaction.ProfileNone)
+			if err := writer.Append(record, projection); !errors.Is(err, cancellation) {
+				t.Fatalf("signer cancellation = %v, want %v", err, cancellation)
+			}
+			var count int
+			if err := store.db.QueryRow(`SELECT COUNT(*) FROM audit_events WHERE id=?`, record.RecordID()).
+				Scan(&count); err != nil || count != 0 {
+				t.Fatalf("cancelled signer left %d rows, err=%v", count, err)
+			}
+			if len(health.codes) != 0 {
+				t.Fatalf("request cancellation degraded event-history health: %#v", health.codes)
+			}
+		})
+	}
+}
+
+func TestEventHistorySanitizedWriteErrorPreservesMessageOnlyBusyDetection(t *testing.T) {
+	err := eventHistoryFailure(
+		EventHistoryHealthWriteFailed,
+		&eventHistoryWriteError{cause: errors.New("database is locked")},
+	)
+	if strings.Contains(strings.ToLower(err.Error()), "locked") {
+		t.Fatalf("sanitized event-history error exposed driver diagnostics: %v", err)
+	}
+	if !isSQLiteBusy(err) {
+		t.Fatal("sanitized event-history wrapper hid message-only SQLite BUSY from retry detection")
 	}
 }
 
@@ -987,13 +1221,13 @@ func TestEventHistoryWriterRejectsInvalidSignerDigestAndKeyID(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			store := newV8HistoryStore(t)
 			health := &testEventHistoryHealthReporter{}
-			writer, err := NewEventHistoryWriter(store, test.signer, health)
+			writer, err := NewEventHistoryWriter(store, test.signer, health, testLocalProfileResolver{profile: observabilityredaction.ProfileNone})
 			if err != nil {
 				t.Fatal(err)
 			}
 			record := newV8HistoryRecord(t, fmt.Sprintf("history-invalid-signer-%d", index), "private")
 			projection := projectV8HistoryRecord(t, record, observabilityredaction.ProfileNone)
-			if err := writer.Append(record, projection, observabilityredaction.ProfileNone); err == nil {
+			if err := writer.Append(record, projection); err == nil {
 				t.Fatal("invalid signer output was accepted")
 			}
 			var count int
@@ -1010,16 +1244,20 @@ func TestEventHistoryWriterRejectsInvalidSignerDigestAndKeyID(t *testing.T) {
 func TestEventHistoryWriterReportsBoundedProjectionUnsignedAndWriteHealth(t *testing.T) {
 	store := newV8HistoryStore(t)
 	health := &testEventHistoryHealthReporter{}
-	writer, err := NewEventHistoryWriter(store, nil, health)
+	writer, err := NewEventHistoryWriter(store, nil, health, testLocalProfileResolver{profile: observabilityredaction.ProfileNone})
 	if err != nil {
 		t.Fatal(err)
 	}
 	record := newV8HistoryRecord(t, "history-health", "private value must not enter health")
 	projection := projectV8HistoryRecord(t, record, observabilityredaction.ProfileNone)
-	if err := writer.Append(record, projection, observabilityredaction.ProfileStrict); err == nil {
+	strictWriter, err := NewEventHistoryWriter(store, nil, health, testLocalProfileResolver{profile: observabilityredaction.ProfileStrict})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := strictWriter.Append(record, projection); err == nil {
 		t.Fatal("wrong-profile projection was accepted")
 	}
-	if err := writer.Append(record, projection, observabilityredaction.ProfileNone); err != nil {
+	if err := writer.Append(record, projection); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := store.db.Exec(`CREATE TRIGGER reject_health_write BEFORE INSERT ON audit_events
@@ -1028,7 +1266,7 @@ func TestEventHistoryWriterReportsBoundedProjectionUnsignedAndWriteHealth(t *tes
 	}
 	writeRecord := newV8HistoryRecord(t, "history-health-write", "another private value")
 	writeProjection := projectV8HistoryRecord(t, writeRecord, observabilityredaction.ProfileNone)
-	writeErr := writer.Append(writeRecord, writeProjection, observabilityredaction.ProfileNone)
+	writeErr := writer.Append(writeRecord, writeProjection)
 	if writeErr == nil {
 		t.Fatal("triggered write failure was hidden")
 	}
@@ -1052,6 +1290,134 @@ func TestEventHistoryWriterReportsBoundedProjectionUnsignedAndWriteHealth(t *tes
 		if bytes.Contains(encoded, []byte(secret)) {
 			t.Fatalf("health output leaked %q", secret)
 		}
+	}
+}
+
+func TestEventHistoryWriterReportsHealthOnlyAfterTransactionEnds(t *testing.T) {
+	store := newV8HistoryStore(t)
+	health := &queryingEventHistoryHealthReporter{
+		store: store, closeOnCode: EventHistoryHealthWriteFailed,
+	}
+	engine, err := observabilityredaction.NewEngine(bytes.Repeat([]byte{0x71}, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	noneBinding := testLocalProfileResolver{
+		profile: observabilityredaction.ProfileNone, engine: engine,
+	}
+	noneWriter, err := NewEventHistoryWriter(store, nil, health, noneBinding)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record := newV8HistoryRecord(t, "history-querying-health", "private value")
+	noneProjection := projectV8HistoryRecordWithEngine(
+		t, engine, record, observabilityredaction.ProfileNone,
+	)
+
+	strictWriter, err := NewEventHistoryWriter(store, nil, health, testLocalProfileResolver{
+		profile: observabilityredaction.ProfileStrict, engine: engine,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := strictWriter.Append(record, noneProjection); err == nil {
+		t.Fatal("foreign-profile projection was accepted")
+	}
+	if err := noneWriter.Append(record, noneProjection); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.Exec(`CREATE TRIGGER reject_querying_health_write BEFORE INSERT ON audit_events
+		WHEN NEW.id = 'history-querying-health-write'
+		BEGIN SELECT RAISE(ABORT, 'value-bearing internal error'); END`); err != nil {
+		t.Fatal(err)
+	}
+	failedRecord := newV8HistoryRecord(t, "history-querying-health-write", "another private value")
+	failedProjection := projectV8HistoryRecordWithEngine(
+		t, engine, failedRecord, observabilityredaction.ProfileNone,
+	)
+	if err := noneWriter.Append(failedRecord, failedProjection); err == nil {
+		t.Fatal("injected write failure was hidden")
+	}
+
+	wantCodes := []EventHistoryHealthCode{
+		EventHistoryHealthProjectionRejected,
+		EventHistoryHealthUnsigned,
+		EventHistoryHealthWriteFailed,
+	}
+	if !reflect.DeepEqual(health.codes, wantCodes) {
+		t.Fatalf("health codes = %#v, want %#v", health.codes, wantCodes)
+	}
+	if len(health.errors) != len(wantCodes) {
+		t.Fatalf("health query count = %d, want %d", len(health.errors), len(wantCodes))
+	}
+	for index, err := range health.errors {
+		if err != nil {
+			t.Fatalf("health callback %d could not query single-connection store after transaction: %v", index, err)
+		}
+	}
+	if len(health.closeErrors) != 1 || health.closeErrors[0] != nil {
+		t.Fatalf("health callback could not close store after lifecycle release: %#v", health.closeErrors)
+	}
+}
+
+func TestEventHistoryWriterSerializesSignedUnsignedTransitionsWhileReporterBlocked(t *testing.T) {
+	store := newV8HistoryStore(t)
+	reporter := &blockingEventHistoryHealthReporter{
+		started: make(chan EventHistoryHealthCode, 1), release: make(chan struct{}),
+	}
+	signer := &toggleProjectionSigner{}
+	for index := range signer.key {
+		signer.key[index] = 0x5a
+	}
+	signer.unavailable.Store(true)
+	writer, err := NewEventHistoryWriter(
+		store, signer, reporter,
+		testLocalProfileResolver{profile: observabilityredaction.ProfileNone},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	buildRecord := func(id string) (observability.Record, observabilityredaction.Projection) {
+		record := newV8HistoryRecord(t, id, "private value")
+		projection := projectV8HistoryRecord(t, record, observabilityredaction.ProfileNone)
+		return record, projection
+	}
+	firstRecord, firstProjection := buildRecord("history-transition-unsigned-1")
+	signedRecord, signedProjection := buildRecord("history-transition-signed")
+	secondRecord, secondProjection := buildRecord("history-transition-unsigned-2")
+	firstDone := make(chan error, 1)
+	go func() { firstDone <- writer.Append(firstRecord, firstProjection) }()
+	select {
+	case code := <-reporter.started:
+		if code != EventHistoryHealthUnsigned {
+			t.Fatalf("first health code = %q, want unsigned", code)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("unsigned reporter did not start")
+	}
+
+	// The first callback is blocked after its transaction and lifecycle lock
+	// ended. A signed recovery and a later unsigned transition must both commit
+	// without racing health state or losing the later transition.
+	signer.unavailable.Store(false)
+	if err := writer.Append(signedRecord, signedProjection); err != nil {
+		t.Fatal(err)
+	}
+	signer.unavailable.Store(true)
+	if err := writer.Append(secondRecord, secondProjection); err != nil {
+		t.Fatal(err)
+	}
+	close(reporter.release)
+	if err := <-firstDone; err != nil {
+		t.Fatal(err)
+	}
+	want := []EventHistoryHealthCode{
+		EventHistoryHealthUnsigned,
+		EventHistoryHealthUnsigned,
+	}
+	if got := reporter.snapshot(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("signed/unsigned health sequence = %#v, want %#v", got, want)
 	}
 }
 

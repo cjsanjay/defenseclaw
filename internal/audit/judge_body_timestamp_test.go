@@ -27,6 +27,16 @@ import (
 
 func TestJudgeTimestampMigrationsBackfillExactInstantsAndIndexedPlan(t *testing.T) {
 	cutoff := time.Date(2026, 7, 3, 12, 0, 0, 0, time.UTC)
+	var legacyTimestampMigration migration
+	for _, candidate := range migrations {
+		if candidate.description == "judge bodies: normalize timestamps for indexed retention" {
+			legacyTimestampMigration = candidate
+			break
+		}
+	}
+	if legacyTimestampMigration.apply == nil {
+		t.Fatal("legacy judge timestamp migration not found")
+	}
 	cases := []struct {
 		name      string
 		migration migration
@@ -34,7 +44,7 @@ func TestJudgeTimestampMigrationsBackfillExactInstantsAndIndexedPlan(t *testing.
 	}{
 		{
 			name:      "legacy-audit",
-			migration: migrations[len(migrations)-1],
+			migration: legacyTimestampMigration,
 			indexName: legacyJudgeTimestampUnixNanoIndex,
 		},
 		{
