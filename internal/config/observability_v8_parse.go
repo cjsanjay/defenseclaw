@@ -60,6 +60,10 @@ func ParseCompileObservabilityV8(
 	if dataDir == "" {
 		return nil, annotateObservabilityV8SemanticError(document, fmt.Errorf("config: v8 compilation requires a data_dir or explicit DefaultDataDir option"))
 	}
+	dataDir, err = normalizeObservabilityV8FilePath("data_dir", dataDir)
+	if err != nil {
+		return nil, annotateObservabilityV8SemanticError(document, err)
+	}
 	source := ObservabilityV8Source{}
 	if envelope.Observability != nil {
 		source = *envelope.Observability
@@ -77,6 +81,9 @@ func ParseCompileObservabilityV8(
 		configuredFiles = append(configuredFiles, sourceName)
 	}
 	if err := validateObservabilityV8FilePaths(&source, configuredFiles); err != nil {
+		return nil, annotateObservabilityV8SemanticError(document, err)
+	}
+	if err := normalizeObservabilityV8EffectiveFilePaths(&source); err != nil {
 		return nil, annotateObservabilityV8SemanticError(document, err)
 	}
 	if err := validateObservabilityV8Secrets(&source, options.Secrets); err != nil {

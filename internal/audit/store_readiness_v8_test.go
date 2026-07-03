@@ -18,6 +18,7 @@ package audit
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -26,10 +27,62 @@ import (
 	observabilityredaction "github.com/defenseclaw/defenseclaw/internal/observability/redaction"
 )
 
-func TestStorePublishesReadinessOnlyAfterPragmasAndDurableWrite(t *testing.T) {
-	store, err := NewStore(filepath.Join(t.TempDir(), "audit.db"))
+func TestStoreRetainsOpenedPathIdentityAcrossWorkingDirectoryChange(t *testing.T) {
+	original, err := os.Getwd()
 	if err != nil {
 		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(original); err != nil {
+			t.Errorf("restore working directory: %v", err)
+		}
+	})
+	root := t.TempDir()
+	openedFrom := filepath.Join(root, "opened-from")
+	initializedFrom := filepath.Join(root, "initialized-from")
+	for _, directory := range []string{openedFrom, initializedFrom} {
+		if err := os.Mkdir(directory, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Chdir(openedFrom); err != nil {
+		t.Fatal(err)
+	}
+	openedIdentity, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := NewStore(filepath.Join("nested", "..", "audit.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	want := filepath.Join(openedIdentity, "audit.db")
+	if store.DatabasePath() != want {
+		t.Fatalf("opened database identity = %q, want %q", store.DatabasePath(), want)
+	}
+	if err := os.Chdir(initializedFrom); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Init(); err != nil {
+		t.Fatalf("initialize after cwd change: %v", err)
+	}
+	if store.DatabasePath() != want || !store.Ready() {
+		t.Fatalf("ready store identity = %q ready=%t", store.DatabasePath(), store.Ready())
+	}
+	if _, err := os.Stat(filepath.Join(initializedFrom, "audit.db")); !os.IsNotExist(err) {
+		t.Fatalf("readiness revalidated or created a different cwd-relative database: %v", err)
+	}
+}
+
+func TestStorePublishesReadinessOnlyAfterPragmasAndDurableWrite(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "audit.db")
+	store, err := NewStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if store.DatabasePath() != path {
+		t.Fatalf("database path identity = %q, want constructor identity", store.DatabasePath())
 	}
 	if store.Ready() {
 		t.Fatal("new store reported ready before Init")
@@ -62,6 +115,9 @@ func TestStorePublishesReadinessOnlyAfterPragmasAndDurableWrite(t *testing.T) {
 	}
 	if store.Ready() {
 		t.Fatal("closed store remained ready")
+	}
+	if store.DatabasePath() != path {
+		t.Fatal("immutable database path identity changed after close")
 	}
 	if err := store.Init(); err == nil {
 		t.Fatal("closed store accepted Init")

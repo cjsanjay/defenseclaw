@@ -277,11 +277,11 @@ func openSQLite(dbPath string) (*sql.DB, error) {
 }
 
 func NewStore(dbPath string) (*Store, error) {
-	db, err := openHardenedAuditSQLite(dbPath, auditDBPathHooks{})
+	db, identity, err := openHardenedAuditSQLiteWithIdentity(dbPath, auditDBPathHooks{})
 	if err != nil {
 		return nil, err
 	}
-	return &Store{db: db, dbPath: dbPath}, nil
+	return &Store{db: db, dbPath: identity}, nil
 }
 
 // sqliteCoded is the structural interface implemented by the
@@ -1719,6 +1719,17 @@ func (s *Store) Init() error {
 // open. It is intentionally safe for health/readiness polling.
 func (s *Store) Ready() bool {
 	return s != nil && s.db != nil && s.ready.Load()
+}
+
+// DatabasePath returns the immutable constructor path identity for internal
+// runtime binding checks. Callers must not include it in telemetry or errors;
+// it exists so an already-open process-stable Store cannot be paired with an
+// observability plan that names a different SQLite database.
+func (s *Store) DatabasePath() string {
+	if s == nil {
+		return ""
+	}
+	return s.dbPath
 }
 
 // acquireReady pins the store against Close for one mandatory v8 transaction.

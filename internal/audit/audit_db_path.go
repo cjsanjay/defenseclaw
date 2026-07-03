@@ -58,36 +58,49 @@ func (prepared *preparedAuditDatabasePath) close() {
 // preserves the existing pool/pragma behavior in openSQLite while adding a
 // fail-closed filesystem trust boundary around the lazy database/sql open.
 func openHardenedAuditSQLite(dbPath string, hooks auditDBPathHooks) (*sql.DB, error) {
+	db, _, err := openHardenedAuditSQLiteWithIdentity(dbPath, hooks)
+	return db, err
+}
+
+// openHardenedAuditSQLiteWithIdentity also returns the exact normalized path
+// passed to SQLite. Store retains that immutable identity for post-migration
+// revalidation and runtime-plan binding instead of reinterpreting a relative
+// constructor path after the process working directory changes.
+func openHardenedAuditSQLiteWithIdentity(
+	dbPath string,
+	hooks auditDBPathHooks,
+) (*sql.DB, string, error) {
 	prepared, err := prepareAuditDatabasePath(dbPath, hooks)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	defer prepared.close()
 
 	if prepared.inMemory {
-		return openSQLite(prepared.path)
+		db, err := openSQLite(prepared.path)
+		return db, prepared.path, err
 	}
 	if hooks.beforeSQLiteOpen != nil {
 		if err := hooks.beforeSQLiteOpen(prepared.path); err != nil {
-			return nil, fmt.Errorf("audit: pre-open path check: %w", err)
+			return nil, "", fmt.Errorf("audit: pre-open path check: %w", err)
 		}
 	}
 	db, err := openSQLite(prepared.path)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	// sql.Open is lazy. Ping forces SQLite's DSN pragmas and filesystem open
 	// while the validated leaf remains pinned, making permission/open errors a
 	// constructor failure instead of a later write-path surprise.
 	if err := db.Ping(); err != nil {
 		_ = db.Close()
-		return nil, fmt.Errorf("audit: verify database open %s: %w", prepared.path, err)
+		return nil, "", fmt.Errorf("audit: verify database open %s: %w", prepared.path, err)
 	}
 	if err := prepared.validateAfterOpen(); err != nil {
 		_ = db.Close()
-		return nil, err
+		return nil, "", err
 	}
-	return db, nil
+	return db, prepared.path, nil
 }
 
 // revalidateHardenedAuditSQLite repeats the filesystem trust checks after

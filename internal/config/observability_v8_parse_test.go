@@ -19,6 +19,10 @@ import (
 )
 
 func TestParseCompileObservabilityV8Minimal(t *testing.T) {
+	wantDataDir, err := normalizeObservabilityV8FilePath("data_dir", "/var/lib/defenseclaw")
+	if err != nil {
+		t.Fatal(err)
+	}
 	compiled, err := ParseCompileObservabilityV8(
 		"config.yaml",
 		[]byte("config_version: 8\nobservability: {}\n"),
@@ -27,7 +31,7 @@ func TestParseCompileObservabilityV8Minimal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if compiled.DataDir != "/var/lib/defenseclaw" {
+	if compiled.DataDir != wantDataDir {
 		t.Fatalf("data dir = %q", compiled.DataDir)
 	}
 	snapshot := compiled.Plan.Snapshot()
@@ -263,6 +267,44 @@ func TestParseCompileObservabilityV8ResolvesSymlinkedParentForNewFiles(t *testin
 	_, err := ParseCompileObservabilityV8("config.yaml", []byte(raw), ObservabilityV8CompileOptions{})
 	if err == nil || !semanticV8CauseContains(err, "distinct files") {
 		t.Fatalf("symlinked-parent alias error = %v", err)
+	}
+}
+
+func TestParseCompileObservabilityV8FreezesNormalizedEffectiveFilePaths(t *testing.T) {
+	directory := t.TempDir()
+	realDirectory := filepath.Join(directory, "real")
+	aliasDirectory := filepath.Join(directory, "alias")
+	if err := os.Mkdir(realDirectory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(realDirectory, aliasDirectory); err != nil {
+		t.Skipf("symlinks are unavailable: %v", err)
+	}
+	relativeJSONL := filepath.Join("testdata", "future-observability-v8.jsonl")
+	relativeJSONLAbsolute, err := normalizeObservabilityV8FilePath(
+		"observability.destinations[0].path", relativeJSONL,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw := "config_version: 8\ndata_dir: " + directory + "\nobservability:\n" +
+		"  local:\n    path: " + filepath.Join(aliasDirectory, "audit.db") +
+		"\n    judge_bodies_path: " + filepath.Join(realDirectory, "judge.db") +
+		"\n  destinations:\n    - name: local-jsonl\n      kind: jsonl\n      path: " + relativeJSONL + "\n"
+	compiled, err := ParseCompileObservabilityV8(
+		"config.yaml", []byte(raw), ObservabilityV8CompileOptions{},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot := compiled.Plan.Snapshot()
+	if snapshot.Local.Path != filepath.Join(aliasDirectory, "audit.db") ||
+		snapshot.Local.JudgeBodiesPath != filepath.Join(realDirectory, "judge.db") {
+		t.Fatalf("normalized local paths = %#v", snapshot.Local)
+	}
+	destination, ok := compiled.Plan.Destination("local-jsonl")
+	if !ok || destination.Transport.Path != filepath.Clean(relativeJSONLAbsolute) {
+		t.Fatalf("normalized JSONL destination = %#v", destination)
 	}
 }
 

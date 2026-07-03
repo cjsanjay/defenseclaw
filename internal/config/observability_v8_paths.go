@@ -96,6 +96,59 @@ func validateObservabilityV8FilePaths(source *ObservabilityV8Source, configuredF
 	return nil
 }
 
+// normalizeObservabilityV8EffectiveFilePaths freezes every configured runtime
+// file identity after alias validation. Effective plans must not retain paths
+// whose meaning can change if the process working directory changes between
+// compilation, store construction, readiness verification, and reload.
+func normalizeObservabilityV8EffectiveFilePaths(source *ObservabilityV8Source) error {
+	if source == nil {
+		return nil
+	}
+	normalize := func(name string, value *string) error {
+		if value == nil || strings.TrimSpace(*value) == "" {
+			return nil
+		}
+		resolved, err := normalizeObservabilityV8FilePath(name, *value)
+		if err != nil {
+			return err
+		}
+		*value = resolved
+		return nil
+	}
+	if err := normalize("observability.local.path", &source.Local.Path); err != nil {
+		return err
+	}
+	if err := normalize("observability.local.judge_bodies_path", &source.Local.JudgeBodiesPath); err != nil {
+		return err
+	}
+	for index := range source.Destinations {
+		destination := &source.Destinations[index]
+		if destination.Kind == ObservabilityV8DestinationJSONL {
+			if err := normalize(
+				fmt.Sprintf("observability.destinations[%d].path", index),
+				&destination.Path,
+			); err != nil {
+				return err
+			}
+		}
+		if err := normalize(
+			fmt.Sprintf("observability.destinations[%d].tls.ca_cert", index),
+			&destination.TLS.CACert,
+		); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func normalizeObservabilityV8FilePath(name, value string) (string, error) {
+	absolute, err := filepath.Abs(filepath.Clean(value))
+	if err != nil {
+		return "", fmt.Errorf("%s: cannot normalize configured path", name)
+	}
+	return absolute, nil
+}
+
 func observabilityV8ResolveExistingPathPrefix(absolute string) (string, error) {
 	candidate := absolute
 	var suffix []string
