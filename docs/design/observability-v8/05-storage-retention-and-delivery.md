@@ -86,24 +86,36 @@ operator-facing columns remain readable. A v8 migration adds or standardizes:
 | `signal` | `logs`; reserved for explicit future local signal summaries |
 | `bucket_catalog_version` | Catalog version governing the stored bucket assignment |
 | `payload_json` | Complete redacted typed body for the SQLite projection |
+| `projected_record_json` | Complete deterministic projected record used for local hash/HMAC verification; contains only the already-projected body and delivery metadata, never a hidden raw body |
+| `record_schema_version` | Canonical v8 record-envelope version; separate from the legacy v7 `schema_version` compatibility column |
+| `projection_hash` | SHA-256 identity of `projected_record_json`; separate from the legacy v7 `content_hash` configuration fingerprint |
 | `redaction_profile` | Effective profile name used for persistence |
 | `mandatory` | Whether the event belongs to the compliance floor |
 | `request_id`, `session_id`, `turn_id`, `trace_id` | Direct indexed correlation keys |
 | `evaluation_id`, `scan_id`, `finding_id`, `enforcement_action_id` | Direct semantic join keys |
-| `schema_version`, `content_hash`, `generation`, `binary_version` | Provenance/integrity metadata |
+| `schema_version`, `content_hash`, `generation`, `binary_version` | Legacy-compatible provenance metadata; `schema_version` and `content_hash` retain their v7 meanings and are never repurposed as canonical-record version or projection digest |
 
 `action`, `target`, `actor`, `details`, `structured_json`, `severity`, and existing
 correlation fields remain populated where meaningful during compatibility. New v8
 readers use bucket, event name, and typed payload rather than parsing `details`.
 
-The `audit_events.schema_version` column projects the canonical record envelope
-version, which is integer `1` for this contract; detailed family schemas have their
-own independent versions. The SQLite table named `schema_version` is
-database-migration state. They are unrelated despite the shared name; the table is
-protected current state and is never reaped.
+The `audit_events.record_schema_version` column projects the canonical record
+envelope version, which is integer `1` for this contract; detailed family schemas
+have their own independent versions. The legacy `audit_events.schema_version`
+column remains the v7 event-wire provenance version so rollback readers do not see
+its meaning change. The SQLite table named `schema_version` is database-migration
+state. These three version surfaces are unrelated despite the similar names; the
+table is protected current state and is never reaped.
 
-Payload JSON MUST be bounded, deterministic for integrity purposes, and already
-redacted. Content hash is computed from the projected canonical serialization.
+Payload JSON and projected-record JSON MUST be bounded, deterministic, and already
+redacted. `payload_json` is the query-oriented typed body. `projected_record_json`
+is the exact canonical projection byte sequence used for `projection_hash` and HMAC,
+so local verification never needs to reconstruct omitted envelope fields or consult
+the current registry/configuration. The writer MUST reject a projection whose
+profile does not match the effective local route profile supplied by the compiled
+runtime graph. `projection_hash` is computed from this stored projected canonical
+serialization. Existing `content_hash` readers continue to observe the v7
+configuration-fingerprint meaning.
 
 ### 2.4 Normalized projections
 
@@ -357,7 +369,8 @@ Detailed attempt counters remain metrics/projections.
 - SQLite: required local durability after a successful transaction.
 - Optional remote push destinations: at-most-once enqueue with bounded in-process
   retry; duplicates MAY occur after ambiguous transport acknowledgements.
-- The record ID and content hash permit downstream deduplication.
+- The record ID and per-projection hash permit downstream deduplication without
+  overloading the legacy SQLite `content_hash` provenance column.
 - No claim of exactly-once remote delivery is made.
 
 ## 7. JSONL and Console
@@ -405,11 +418,11 @@ preserves this capability but moves it after route-specific redaction.
 
 - Every log destination projection MAY carry `payload_hmac`, `integrity_algorithm`,
   and `integrity_key_id` when an integrity key is available.
-- The HMAC covers the final canonical serialized envelope and redacted body, excluding
-  the HMAC field itself.
+- The HMAC covers the final canonical serialized envelope and redacted body plus the
+  integrity algorithm and key ID, excluding only the HMAC field itself.
 - SQLite stores the HMAC for its own projection. A Splunk/OTLP/JSONL projection with
   different redaction has a different valid HMAC.
-- Content hash is useful for equality/deduplication but is not a substitute for a
+- A projection hash is useful for equality/deduplication but is not a substitute for a
   keyed integrity value.
 - Key derivation remains domain-separated from other device-key uses. Key material
   is never placed in config, logs, errors, or destination payloads.
@@ -421,6 +434,12 @@ preserves this capability but moves it after route-specific redaction.
   records whose prior key is unavailable rather than labeling them corrupt.
 - Provide local verification by record ID/range and machine-readable results without
   exposing redacted content.
+- Local verification reads `projected_record_json`, recomputes `projection_hash` and,
+  when a matching integrity key is available, the HMAC. It reports bounded status
+  and reason codes only; it never returns the stored body as part of a verification
+  result. Bounded range results explicitly report `truncated: true` when more rows
+  matched than were returned, so callers cannot mistake a limited page for a
+  complete attestation.
 
 Per-record HMAC does not prove that a row was never deleted and does not make SQLite
 an append-only ledger. Normal retention intentionally deletes history. A chained or

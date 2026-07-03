@@ -1354,6 +1354,76 @@ var migrations = []migration{
 			return err
 		},
 	},
+	{
+		// Observability v8 keeps audit_events as the compatibility anchor. Every
+		// column here is additive and nullable so a v8-migrated database remains
+		// readable by the immediately previous binary and legacy rows retain their
+		// original meaning. The writer in event_history_v8.go is the only path that
+		// requires and populates the new canonical local-projection fields.
+		description: "observability v8: add canonical local event-history projection columns",
+		apply: func(ex dbExecer) error {
+			// Some legacy component-test and recovery databases intentionally
+			// contain only one projection table while sharing the global migration
+			// cursor. Preserve that historical migration behavior: a missing
+			// compatibility anchor is not created or mutated by this additive step.
+			present, err := tableExists(ex, "audit_events")
+			if err != nil || !present {
+				return err
+			}
+			for _, spec := range []struct {
+				column string
+				kind   string
+			}{
+				{"bucket", "TEXT"},
+				{"event_name", "TEXT"},
+				{"source", "TEXT"},
+				{"signal", "TEXT"},
+				{"bucket_catalog_version", "INTEGER"},
+				{"payload_json", "TEXT"},
+				{"projected_record_json", "TEXT"},
+				{"record_schema_version", "INTEGER"},
+				{"projection_hash", "TEXT"},
+				{"redaction_profile", "TEXT"},
+				{"mandatory", "INTEGER"},
+				{"turn_id", "TEXT"},
+				{"evaluation_id", "TEXT"},
+				{"scan_id", "TEXT"},
+				{"finding_id", "TEXT"},
+				{"enforcement_action_id", "TEXT"},
+				{"payload_hmac", "TEXT"},
+				{"integrity_algorithm", "TEXT"},
+				{"integrity_key_id", "TEXT"},
+			} {
+				exists, err := hasColumnDB(ex, "audit_events", spec.column)
+				if err != nil {
+					return err
+				}
+				if exists {
+					continue
+				}
+				if _, err := ex.Exec(fmt.Sprintf(
+					"ALTER TABLE audit_events ADD COLUMN %s %s", spec.column, spec.kind,
+				)); err != nil {
+					return fmt.Errorf("alter audit_events.%s: %w", spec.column, err)
+				}
+			}
+			for _, stmt := range []string{
+				`CREATE INDEX IF NOT EXISTS idx_audit_bucket_timestamp ON audit_events(bucket, timestamp)`,
+				`CREATE INDEX IF NOT EXISTS idx_audit_event_name_timestamp ON audit_events(event_name, timestamp)`,
+				`CREATE INDEX IF NOT EXISTS idx_audit_source_timestamp ON audit_events(source, timestamp)`,
+				`CREATE INDEX IF NOT EXISTS idx_audit_turn_id ON audit_events(turn_id)`,
+				`CREATE INDEX IF NOT EXISTS idx_audit_evaluation_id ON audit_events(evaluation_id)`,
+				`CREATE INDEX IF NOT EXISTS idx_audit_scan_id ON audit_events(scan_id)`,
+				`CREATE INDEX IF NOT EXISTS idx_audit_finding_id ON audit_events(finding_id)`,
+				`CREATE INDEX IF NOT EXISTS idx_audit_enforcement_action_id ON audit_events(enforcement_action_id)`,
+			} {
+				if _, err := ex.Exec(stmt); err != nil {
+					return fmt.Errorf("create observability v8 audit index: %w", err)
+				}
+			}
+			return nil
+		},
+	},
 }
 
 // tableExists reports whether the given SQLite table is present.
@@ -1391,6 +1461,30 @@ func (s *Store) Init() error {
 		fmt.Fprintf(os.Stderr, "[audit] applying migration %d: %s\n", ver, m.description)
 		if err := s.applyMigration(ver, m); err != nil {
 			return err
+		}
+	}
+	// The v8 local event-history anchor is mandatory. Some migration unit
+	// fixtures intentionally exercise table-scoped migrations against partial
+	// schemas, so individual migration functions remain replayable there; a
+	// production Store.Init must nevertheless fail readiness rather than advance
+	// successfully with no usable audit_events projection.
+	present, err := tableExists(s.db, "audit_events")
+	if err != nil {
+		return fmt.Errorf("audit: verify mandatory event-history table: %w", err)
+	}
+	if !present {
+		return fmt.Errorf("audit: mandatory event-history table is missing")
+	}
+	for _, column := range []string{
+		"bucket", "event_name", "source", "signal", "payload_json", "projected_record_json",
+		"record_schema_version", "projection_hash", "redaction_profile", "mandatory",
+	} {
+		exists, err := s.hasColumn("audit_events", column)
+		if err != nil {
+			return fmt.Errorf("audit: verify mandatory event-history column %s: %w", column, err)
+		}
+		if !exists {
+			return fmt.Errorf("audit: mandatory event-history column %s is missing", column)
 		}
 	}
 
@@ -2655,7 +2749,8 @@ func (s *Store) ListAlerts(limit int) ([]Event, error) {
 	rows, err := s.queryDB(context.Background(), "audit",
 		`SELECT id, timestamp, action, target, actor, details, structured_json, severity, run_id, trace_id, request_id
 		 FROM audit_events
-		 WHERE severity IN ('CRITICAL','HIGH','MEDIUM','LOW','ERROR','INFO')
+		 WHERE bucket IS NULL
+		   AND severity IN ('CRITICAL','HIGH','MEDIUM','LOW','ERROR','INFO')
 		   AND action NOT LIKE 'dismiss%'
 		 ORDER BY timestamp DESC LIMIT ?`, limit,
 	)
@@ -2695,11 +2790,11 @@ func (s *Store) AcknowledgeAlerts(severityFilter string) (int64, error) {
 	if severityFilter == "" || severityFilter == "all" {
 		res, err = s.execDB(context.Background(), "audit",
 			`UPDATE audit_events SET severity = 'ACK'
-			 WHERE severity IN ('CRITICAL','HIGH','MEDIUM','LOW')`)
+			 WHERE bucket IS NULL AND severity IN ('CRITICAL','HIGH','MEDIUM','LOW')`)
 	} else {
 		res, err = s.execDB(context.Background(), "audit",
 			`UPDATE audit_events SET severity = 'ACK'
-			 WHERE severity = ?`, severityFilter)
+			 WHERE bucket IS NULL AND severity = ?`, severityFilter)
 	}
 	if err != nil {
 		return 0, fmt.Errorf("audit: acknowledge alerts: %w", err)
@@ -2728,7 +2823,7 @@ func (s *Store) AcknowledgeByIDs(ids []string) (int64, error) {
 		args[i] = id
 	}
 	query := fmt.Sprintf(
-		`UPDATE audit_events SET severity = 'ACK' WHERE id IN (%s) AND severity IN ('CRITICAL','HIGH','MEDIUM','LOW')`,
+		`UPDATE audit_events SET severity = 'ACK' WHERE bucket IS NULL AND id IN (%s) AND severity IN ('CRITICAL','HIGH','MEDIUM','LOW')`,
 		strings.Join(placeholders, ","))
 	res, err := s.execDB(context.Background(), "audit", query, args...)
 	if err != nil {

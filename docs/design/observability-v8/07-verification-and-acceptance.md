@@ -476,7 +476,13 @@ and prove their projected outputs contain no prohibited canary while a parallel
 - One event-history row for every collected log.
 - Correct bucket/event/source/profile/mandatory/provenance columns.
 - Correct record schema and bucket catalog versions for historical interpretation.
-- Correct redacted `payload_json` and content hash.
+- Correct redacted `payload_json`, exact stored `projected_record_json`, unchanged
+  v7 `schema_version`/`content_hash` provenance semantics, and distinct
+  `record_schema_version`/`projection_hash` values; verification by record ID/range
+  recomputes the projection hash/HMAC from stored bytes
+  without returning content.
+- SQLite rejects a projection whose metadata profile differs from the effective
+  local route profile passed by the compiled runtime graph.
 - Atomic event plus required projection insert.
 - Projection failure rollback/degraded behavior.
 - Concurrent readers and writers under WAL.

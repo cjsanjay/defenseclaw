@@ -577,7 +577,17 @@ func TestAgent360NetworkEgressMigrationUpgradesAlreadyMigratedDatabase(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	for version := 1; version < len(migrations); version++ {
+	agent360Version := 0
+	for index, candidate := range migrations {
+		if candidate.description == "agent360: correlate network egress with root agent, parent agent, and root session" {
+			agent360Version = index + 1
+			break
+		}
+	}
+	if agent360Version == 0 {
+		t.Fatal("agent360 migration not found")
+	}
+	for version := 1; version < agent360Version; version++ {
 		if _, err := db.Exec(`INSERT INTO schema_version(version, applied_at) VALUES (?, CURRENT_TIMESTAMP)`, version); err != nil {
 			t.Fatal(err)
 		}
@@ -591,8 +601,12 @@ func TestAgent360NetworkEgressMigrationUpgradesAlreadyMigratedDatabase(t *testin
 		t.Fatal(err)
 	}
 	defer store.Close()
-	if err := store.Init(); err != nil {
-		t.Fatalf("Init upgrade: %v", err)
+	// This is deliberately a table-scoped component fixture, not a production
+	// audit database. Apply the migration under test directly; Store.Init now
+	// enforces the mandatory v8 audit_events readiness anchor and correctly
+	// rejects partial schemas.
+	if err := store.applyMigration(agent360Version, migrations[agent360Version-1]); err != nil {
+		t.Fatalf("apply agent360 upgrade: %v", err)
 	}
 	for _, column := range []string{"root_agent_id", "parent_agent_id", "root_session_id"} {
 		exists, err := store.hasColumn("network_egress_events", column)
