@@ -84,6 +84,87 @@ func TestEventNamesAreSortedUniqueAndCopySafe(t *testing.T) {
 	}
 }
 
+func TestEventNameSignalMembershipIsExhaustiveAndDisjoint(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		signal Signal
+		names  []EventName
+	}{
+		{
+			signal: SignalLogs,
+			names: append(
+				append([]EventName(nil), documentedLogEventNames[:]...),
+				compatibilityEventNames[:]...,
+			),
+		},
+		{signal: SignalTraces, names: spanFamilyEventNames[:]},
+		{signal: SignalMetrics, names: metricInstrumentEventNames[:]},
+	}
+	for _, test := range tests {
+		for _, name := range test.names {
+			if !IsRegisteredEventNameForSignal(test.signal, name) {
+				t.Errorf("%q is not registered for %q", name, test.signal)
+			}
+			for _, other := range Signals() {
+				if other != test.signal && IsRegisteredEventNameForSignal(other, name) {
+					t.Errorf("%q is unexpectedly registered for both %q and %q", name, test.signal, other)
+				}
+			}
+		}
+	}
+
+	for _, name := range classificationDefaultEventNames() {
+		if !IsRegisteredEventNameForSignal(SignalLogs, name) {
+			t.Errorf("classification default %q is not registered for logs", name)
+		}
+		if IsRegisteredEventNameForSignal(SignalTraces, name) ||
+			IsRegisteredEventNameForSignal(SignalMetrics, name) {
+			t.Errorf("classification default %q leaked into another signal", name)
+		}
+	}
+
+	for _, signal := range []Signal{"", "profiles"} {
+		if IsRegisteredEventNameForSignal(signal, "session_start") {
+			t.Errorf("unknown signal %q accepted an event name", signal)
+		}
+	}
+}
+
+func TestRegisteredIdentityRequiresCatalogBucketAndMatchingSignal(t *testing.T) {
+	t.Parallel()
+
+	valid := []EventIdentity{
+		{Bucket: BucketAgentLifecycle, Signal: SignalLogs, Name: "session_start"},
+		{Bucket: BucketAgentLifecycle, Signal: SignalTraces, Name: "span.agent.invoke"},
+		{Bucket: BucketAgentLifecycle, Signal: SignalMetrics, Name: "defenseclaw.agent.lifecycle.transitions"},
+	}
+	for _, identity := range valid {
+		if !IsRegisteredEventIdentity(identity) {
+			t.Errorf("registered identity predicate rejected %+v", identity)
+		}
+		if err := identity.Validate(); err != nil {
+			t.Errorf("registered identity validation rejected %+v: %v", identity, err)
+		}
+	}
+
+	invalid := []EventIdentity{
+		{Bucket: "not-a-bucket", Signal: SignalLogs, Name: "session_start"},
+		{Bucket: BucketAgentLifecycle, Signal: "profiles", Name: "session_start"},
+		{Bucket: BucketAgentLifecycle, Signal: SignalLogs, Name: "span.agent.invoke"},
+		{Bucket: BucketAgentLifecycle, Signal: SignalTraces, Name: "session_start"},
+		{Bucket: BucketAgentLifecycle, Signal: SignalMetrics, Name: "plausible.metric"},
+	}
+	for _, identity := range invalid {
+		if IsRegisteredEventIdentity(identity) {
+			t.Errorf("registered identity predicate accepted %+v", identity)
+		}
+		if err := identity.Validate(); err == nil {
+			t.Errorf("registered identity validation accepted %+v", identity)
+		}
+	}
+}
+
 func TestClassifiedDefaultEventNamesMatchReviewedSnapshot(t *testing.T) {
 	t.Parallel()
 

@@ -88,6 +88,17 @@ func TestClassificationMetadataIsValid(t *testing.T) {
 				if err := classification.DefaultEventName.Validate(); err != nil {
 					t.Errorf("%s/%s has invalid default event name: %v", test.kind, key, err)
 				}
+				if !observability.IsRegisteredEventNameForSignal(
+					observability.SignalLogs,
+					classification.DefaultEventName,
+				) {
+					t.Errorf(
+						"%s/%s default event name %q is not registered for logs",
+						test.kind,
+						key,
+						classification.DefaultEventName,
+					)
+				}
 			}
 			switch classification.EventNamePolicy {
 			case observability.EventNameFixed, observability.EventNameContextOptional:
@@ -200,7 +211,7 @@ func TestClassificationResolution(t *testing.T) {
 		}
 		resolved, err := classification.Resolve(observability.ClassificationContext{
 			Bucket:      observability.BucketEnforcementAction,
-			EventName:   "enforcement.blocked",
+			EventName:   "enforcement.block.applied",
 			RawSeverity: "HIGH",
 			Enforced:    true,
 			MandatoryFacts: observability.MandatoryFacts{
@@ -212,6 +223,22 @@ func TestClassificationResolution(t *testing.T) {
 		}
 		if !resolved.Mandatory || len(resolved.RequiredCompanions) != 0 {
 			t.Fatalf("enforcement block resolution = %+v", resolved)
+		}
+	})
+
+	t.Run("contextual identity must be a registered log event", func(t *testing.T) {
+		classification := mustGatewayClassification(t, "lifecycle")
+		for _, name := range []observability.EventName{
+			"plausible.but.unregistered",
+			"span.agent.invoke",
+			"defenseclaw.agent.lifecycle.transitions",
+		} {
+			if _, err := classification.Resolve(observability.ClassificationContext{
+				Bucket:    observability.BucketAgentLifecycle,
+				EventName: name,
+			}); err == nil {
+				t.Errorf("contextual lifecycle accepted non-log identity %q", name)
+			}
 		}
 	})
 
@@ -255,6 +282,92 @@ func TestClassificationResolution(t *testing.T) {
 			t.Fatal("overwritten legacy severity was synthesized as a canonical record")
 		}
 	})
+}
+
+func TestEveryClassificationResolvesOnlyRegisteredLogIdentity(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		kind observability.ProducerKind
+		get  func(observability.ProducerKey) (observability.Classification, bool)
+	}{
+		{kind: observability.ProducerGatewayEvent, get: observability.GatewayEventClassification},
+		{kind: observability.ProducerAuditAction, get: observability.AuditActionClassification},
+	}
+	for _, test := range tests {
+		for _, key := range observability.ClassificationKeys(test.kind) {
+			classification, ok := test.get(key)
+			if !ok {
+				t.Fatalf("lookup failed for %s/%s", test.kind, key)
+			}
+			bucket := classification.Bucket
+			if bucket == "" {
+				bucket = classification.AllowedContextBuckets[0]
+			}
+			eventName := classification.DefaultEventName
+			if classification.EventNamePolicy == observability.EventNameContextRequired {
+				eventName = representativeLogEvent(bucket)
+			}
+			resolved, err := classification.Resolve(observability.ClassificationContext{
+				Bucket:      bucket,
+				EventName:   eventName,
+				RawSeverity: "HIGH",
+			})
+			if err != nil {
+				t.Errorf("resolve %s/%s: %v", test.kind, key, err)
+				continue
+			}
+			if err := resolved.Identity.Validate(); err != nil {
+				t.Errorf("resolved identity for %s/%s is invalid: %v", test.kind, key, err)
+			}
+
+			if classification.EventNamePolicy == observability.EventNameFixed {
+				continue
+			}
+			if _, err := classification.Resolve(observability.ClassificationContext{
+				Bucket:      bucket,
+				EventName:   "plausible.but.unregistered",
+				RawSeverity: "HIGH",
+			}); err == nil {
+				t.Errorf("%s/%s accepted an unregistered contextual event name", test.kind, key)
+			}
+		}
+	}
+}
+
+func representativeLogEvent(bucket observability.Bucket) observability.EventName {
+	switch bucket {
+	case observability.BucketComplianceActivity:
+		return "config.change.attempted"
+	case observability.BucketSecurityFinding:
+		return "finding.observed"
+	case observability.BucketGuardrailEvaluation:
+		return "guardrail.evaluation.completed"
+	case observability.BucketEnforcementAction:
+		return "enforcement.block.requested"
+	case observability.BucketModelIO:
+		return "model.request"
+	case observability.BucketToolActivity:
+		return "tool.invocation.requested"
+	case observability.BucketAssetScan:
+		return "scan.started"
+	case observability.BucketAssetLifecycle:
+		return "asset.discovered"
+	case observability.BucketNetworkEgress:
+		return "egress.requested"
+	case observability.BucketAgentLifecycle:
+		return "session_start"
+	case observability.BucketAIDiscovery:
+		return "ai_component.discovered"
+	case observability.BucketTelemetryIngest:
+		return "telemetry.batch.accepted"
+	case observability.BucketPlatformHealth:
+		return "subsystem.ready"
+	case observability.BucketDiagnostic:
+		return "diagnostic.message"
+	default:
+		return ""
+	}
 }
 
 func mustGatewayClassification(t *testing.T, key observability.ProducerKey) observability.Classification {

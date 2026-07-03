@@ -282,7 +282,8 @@ var metricInstrumentEventNames = [...]EventName{
 	"gen_ai.client.token.usage",
 }
 
-var registeredEventNameSet, registeredEventNameOrder = buildEventNameRegistry(
+var registeredEventNameSet, registeredEventNameOrder, registeredLogEventNameSet,
+	registeredTraceEventNameSet, registeredMetricEventNameSet = buildEventNameRegistry(
 	gatewayEventClassifications,
 	auditActionClassifications,
 )
@@ -290,31 +291,44 @@ var registeredEventNameSet, registeredEventNameOrder = buildEventNameRegistry(
 func buildEventNameRegistry(
 	gateway map[ProducerKey]Classification,
 	audit map[ProducerKey]Classification,
-) (map[EventName]struct{}, []EventName) {
+) (
+	map[EventName]struct{},
+	[]EventName,
+	map[EventName]struct{},
+	map[EventName]struct{},
+	map[EventName]struct{},
+) {
 	registered := make(map[EventName]struct{},
 		len(documentedLogEventNames)+len(compatibilityEventNames)+
 			len(spanFamilyEventNames)+len(metricInstrumentEventNames)+len(gateway)+len(audit),
 	)
-	add := func(name EventName) {
+	logs := make(map[EventName]struct{},
+		len(documentedLogEventNames)+len(compatibilityEventNames)+len(gateway)+len(audit),
+	)
+	traces := make(map[EventName]struct{}, len(spanFamilyEventNames))
+	metrics := make(map[EventName]struct{}, len(metricInstrumentEventNames))
+	add := func(target map[EventName]struct{}, name EventName) {
 		if err := name.Validate(); err != nil {
 			panic("invalid registered observability event name: " + err.Error())
 		}
 		registered[name] = struct{}{}
+		target[name] = struct{}{}
 	}
-	for _, names := range [][]EventName{
-		documentedLogEventNames[:],
-		compatibilityEventNames[:],
-		spanFamilyEventNames[:],
-		metricInstrumentEventNames[:],
-	} {
+	for _, names := range [][]EventName{documentedLogEventNames[:], compatibilityEventNames[:]} {
 		for _, name := range names {
-			add(name)
+			add(logs, name)
 		}
+	}
+	for _, name := range spanFamilyEventNames {
+		add(traces, name)
+	}
+	for _, name := range metricInstrumentEventNames {
+		add(metrics, name)
 	}
 	for _, classifications := range []map[ProducerKey]Classification{gateway, audit} {
 		for _, classification := range classifications {
 			if classification.DefaultEventName != "" {
-				add(classification.DefaultEventName)
+				add(logs, classification.DefaultEventName)
 			}
 		}
 	}
@@ -324,7 +338,7 @@ func buildEventNameRegistry(
 		ordered = append(ordered, name)
 	}
 	sort.Slice(ordered, func(left, right int) bool { return ordered[left] < ordered[right] })
-	return registered, ordered
+	return registered, ordered, logs, traces, metrics
 }
 
 // IsRegisteredEventName reports whether name is a declared v8 routing identity.
@@ -332,6 +346,36 @@ func buildEventNameRegistry(
 func IsRegisteredEventName(name EventName) bool {
 	_, ok := registeredEventNameSet[name]
 	return ok
+}
+
+// IsRegisteredEventNameForSignal reports whether name belongs to the closed
+// family vocabulary for signal. Bucket ownership remains generated-registry
+// data; P2 must not duplicate that future P5 source of truth.
+func IsRegisteredEventNameForSignal(signal Signal, name EventName) bool {
+	var registered map[EventName]struct{}
+	switch signal {
+	case SignalLogs:
+		registered = registeredLogEventNameSet
+	case SignalTraces:
+		registered = registeredTraceEventNameSet
+	case SignalMetrics:
+		registered = registeredMetricEventNameSet
+	default:
+		return false
+	}
+	_, ok := registered[name]
+	return ok
+}
+
+// IsRegisteredEventIdentity is the predicate form of EventIdentity.Validate.
+// It validates the catalog bucket and exact signal-family membership. Exact
+// event-to-bucket ownership is intentionally deferred to the generated P5
+// telemetry registry rather than hand-authored here.
+func IsRegisteredEventIdentity(identity EventIdentity) bool {
+	return IsBucket(identity.Bucket) &&
+		IsSignal(identity.Signal) &&
+		identity.Name.Validate() == nil &&
+		IsRegisteredEventNameForSignal(identity.Signal, identity.Name)
 }
 
 // EventNames returns the complete registry in deterministic lexical order. The

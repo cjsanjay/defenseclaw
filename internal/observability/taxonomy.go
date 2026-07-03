@@ -223,6 +223,142 @@ func SeverityRank(severity Severity) (int, bool) {
 	return 0, false
 }
 
+// Outcome is the observed result of a canonical record's subject. Domain
+// decisions such as allow or block remain separate typed body fields.
+type Outcome string
+
+const (
+	OutcomeAttempted   Outcome = "attempted"
+	OutcomeValidated   Outcome = "validated"
+	OutcomeApplied     Outcome = "applied"
+	OutcomeCompleted   Outcome = "completed"
+	OutcomeAllowed     Outcome = "allowed"
+	OutcomeBlocked     Outcome = "blocked"
+	OutcomeDenied      Outcome = "denied"
+	OutcomeApproved    Outcome = "approved"
+	OutcomeQuarantined Outcome = "quarantined"
+	OutcomeRedacted    Outcome = "redacted"
+	OutcomeRevoked     Outcome = "revoked"
+	OutcomeReleased    Outcome = "released"
+	OutcomeTerminated  Outcome = "terminated"
+	OutcomeRejected    Outcome = "rejected"
+	OutcomeFailed      Outcome = "failed"
+	OutcomeTimedOut    Outcome = "timed_out"
+	OutcomeCancelled   Outcome = "cancelled"
+	OutcomePartial     Outcome = "partial"
+	OutcomeSkipped     Outcome = "skipped"
+	OutcomeNoChange    Outcome = "no_change"
+)
+
+var canonicalOutcomeOrder = [...]Outcome{
+	OutcomeAttempted,
+	OutcomeValidated,
+	OutcomeApplied,
+	OutcomeCompleted,
+	OutcomeAllowed,
+	OutcomeBlocked,
+	OutcomeDenied,
+	OutcomeApproved,
+	OutcomeQuarantined,
+	OutcomeRedacted,
+	OutcomeRevoked,
+	OutcomeReleased,
+	OutcomeTerminated,
+	OutcomeRejected,
+	OutcomeFailed,
+	OutcomeTimedOut,
+	OutcomeCancelled,
+	OutcomePartial,
+	OutcomeSkipped,
+	OutcomeNoChange,
+}
+
+// Outcomes returns the canonical v8 vocabulary in specification order.
+func Outcomes() []Outcome {
+	return append([]Outcome(nil), canonicalOutcomeOrder[:]...)
+}
+
+// IsOutcome reports whether outcome belongs to the canonical v8 vocabulary.
+func IsOutcome(outcome Outcome) bool {
+	for _, candidate := range canonicalOutcomeOrder {
+		if candidate == outcome {
+			return true
+		}
+	}
+	return false
+}
+
+// FieldClass controls how a dynamic canonical-record field is projected and
+// redacted. This observability-owned type prevents record code from depending
+// on the configuration package's source-form types.
+type FieldClass string
+
+const (
+	FieldClassMetadata   FieldClass = "metadata"
+	FieldClassIdentifier FieldClass = "identifier"
+	FieldClassContent    FieldClass = "content"
+	FieldClassReason     FieldClass = "reason"
+	FieldClassEvidence   FieldClass = "evidence"
+	FieldClassError      FieldClass = "error"
+	FieldClassPath       FieldClass = "path"
+	FieldClassCredential FieldClass = "credential"
+)
+
+var canonicalFieldClassOrder = [...]FieldClass{
+	FieldClassMetadata,
+	FieldClassIdentifier,
+	FieldClassContent,
+	FieldClassReason,
+	FieldClassEvidence,
+	FieldClassError,
+	FieldClassPath,
+	FieldClassCredential,
+}
+
+// FieldClasses returns the redaction-contract vocabulary in specification
+// order. The returned slice is safe for the caller to modify.
+func FieldClasses() []FieldClass {
+	return append([]FieldClass(nil), canonicalFieldClassOrder[:]...)
+}
+
+// IsFieldClass reports whether fieldClass belongs to the v8 redaction contract.
+func IsFieldClass(fieldClass FieldClass) bool {
+	for _, candidate := range canonicalFieldClassOrder {
+		if candidate == fieldClass {
+			return true
+		}
+	}
+	return false
+}
+
+const MaxStableTokenBytes = 128
+
+var stableTokenPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_.-]*$`)
+
+// ValidateStableToken validates bounded record metadata such as source,
+// connector, action, and phase. It deliberately does not echo a rejected value
+// because producer-validation errors must not disclose invalid payload data.
+func ValidateStableToken(field, value string) error {
+	if field == "" {
+		field = "stable token"
+	}
+	if value == "" {
+		return fmt.Errorf("%s must not be empty", field)
+	}
+	if len(value) > MaxStableTokenBytes {
+		return fmt.Errorf("%s exceeds %d bytes", field, MaxStableTokenBytes)
+	}
+	if !stableTokenPattern.MatchString(value) {
+		return fmt.Errorf("%s must contain only lower-case ASCII letters, digits, dot, underscore, or hyphen and start with a letter or digit", field)
+	}
+	return nil
+}
+
+// IsStableToken is the predicate form of ValidateStableToken.
+func IsStableToken(value string) bool {
+	return ValidateStableToken("stable token", value) == nil
+}
+
 // Source is a stable producer identity. It is intentionally extensible: adding a
 // producer does not add a bucket.
 type Source string
@@ -301,7 +437,13 @@ func (identity EventIdentity) Validate() error {
 	if !IsSignal(identity.Signal) {
 		return fmt.Errorf("unknown signal %q", identity.Signal)
 	}
-	return identity.Name.Validate()
+	if err := identity.Name.Validate(); err != nil {
+		return err
+	}
+	if !IsRegisteredEventNameForSignal(identity.Signal, identity.Name) {
+		return fmt.Errorf("event name is not registered for signal %q", identity.Signal)
+	}
+	return nil
 }
 
 // Selector is the typed metadata-only routing selector. Values in one field are

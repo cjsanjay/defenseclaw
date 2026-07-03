@@ -12,6 +12,7 @@ package observability_test
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 
 	observability "github.com/defenseclaw/defenseclaw/internal/observability"
@@ -76,6 +77,62 @@ func TestCanonicalTaxonomy(t *testing.T) {
 			t.Errorf("SeverityRank(%q) = (%d, %t), want (%d, true)", severity, rank, ok, index+1)
 		}
 	}
+
+	wantOutcomes := [...]observability.Outcome{
+		observability.OutcomeAttempted,
+		observability.OutcomeValidated,
+		observability.OutcomeApplied,
+		observability.OutcomeCompleted,
+		observability.OutcomeAllowed,
+		observability.OutcomeBlocked,
+		observability.OutcomeDenied,
+		observability.OutcomeApproved,
+		observability.OutcomeQuarantined,
+		observability.OutcomeRedacted,
+		observability.OutcomeRevoked,
+		observability.OutcomeReleased,
+		observability.OutcomeTerminated,
+		observability.OutcomeRejected,
+		observability.OutcomeFailed,
+		observability.OutcomeTimedOut,
+		observability.OutcomeCancelled,
+		observability.OutcomePartial,
+		observability.OutcomeSkipped,
+		observability.OutcomeNoChange,
+	}
+	if got := observability.Outcomes(); !reflect.DeepEqual(got, wantOutcomes[:]) {
+		t.Fatalf("outcome order = %v, want %v", got, wantOutcomes)
+	}
+	for _, outcome := range wantOutcomes {
+		if !observability.IsOutcome(outcome) {
+			t.Errorf("canonical outcome %q is not recognized", outcome)
+		}
+	}
+	if observability.IsOutcome("succeeded") || observability.IsOutcome("") {
+		t.Fatal("non-canonical outcome was recognized")
+	}
+
+	wantFieldClasses := [...]observability.FieldClass{
+		observability.FieldClassMetadata,
+		observability.FieldClassIdentifier,
+		observability.FieldClassContent,
+		observability.FieldClassReason,
+		observability.FieldClassEvidence,
+		observability.FieldClassError,
+		observability.FieldClassPath,
+		observability.FieldClassCredential,
+	}
+	if got := observability.FieldClasses(); !reflect.DeepEqual(got, wantFieldClasses[:]) {
+		t.Fatalf("field-class order = %v, want %v", got, wantFieldClasses)
+	}
+	for _, fieldClass := range wantFieldClasses {
+		if !observability.IsFieldClass(fieldClass) {
+			t.Errorf("canonical field class %q is not recognized", fieldClass)
+		}
+	}
+	if observability.IsFieldClass("unknown") || observability.IsFieldClass("") {
+		t.Fatal("non-canonical field class was recognized")
+	}
 }
 
 func TestCanonicalOrdersReturnCopies(t *testing.T) {
@@ -94,6 +151,16 @@ func TestCanonicalOrdersReturnCopies(t *testing.T) {
 	if observability.Severities()[0] != observability.SeverityInfo {
 		t.Fatal("severity catalog was mutable through returned slice")
 	}
+	outcomes := observability.Outcomes()
+	outcomes[0] = observability.OutcomeFailed
+	if observability.Outcomes()[0] != observability.OutcomeAttempted {
+		t.Fatal("outcome catalog was mutable through returned slice")
+	}
+	fieldClasses := observability.FieldClasses()
+	fieldClasses[0] = observability.FieldClassCredential
+	if observability.FieldClasses()[0] != observability.FieldClassMetadata {
+		t.Fatal("field-class catalog was mutable through returned slice")
+	}
 	sources := observability.BuiltInSources()
 	sources[0] = observability.SourceSystem
 	if observability.BuiltInSources()[0] != observability.SourceGateway {
@@ -102,6 +169,49 @@ func TestCanonicalOrdersReturnCopies(t *testing.T) {
 	if !observability.IsBuiltInSource(observability.SourceScanner) ||
 		observability.IsBuiltInSource("custom_integration") {
 		t.Fatal("built-in source recognition is incorrect")
+	}
+}
+
+func TestStableTokenValidation(t *testing.T) {
+	t.Parallel()
+
+	for _, value := range []string{
+		"gateway",
+		"operator_api",
+		"claude-code",
+		"config.change",
+		"0",
+		strings.Repeat("a", observability.MaxStableTokenBytes),
+	} {
+		if err := observability.ValidateStableToken("metadata", value); err != nil {
+			t.Errorf("ValidateStableToken(%q): %v", value, err)
+		}
+		if !observability.IsStableToken(value) {
+			t.Errorf("IsStableToken(%q) = false", value)
+		}
+	}
+
+	for _, value := range []string{
+		"",
+		"UPPER",
+		" leading",
+		"trailing ",
+		"slash/value",
+		"colon:value",
+		"nonascii-\u00e9",
+		strings.Repeat("a", observability.MaxStableTokenBytes+1),
+	} {
+		err := observability.ValidateStableToken("metadata", value)
+		if err == nil {
+			t.Errorf("ValidateStableToken(%q) succeeded", value)
+			continue
+		}
+		if value != "" && strings.Contains(err.Error(), value) {
+			t.Errorf("validation error disclosed rejected value %q: %v", value, err)
+		}
+		if observability.IsStableToken(value) {
+			t.Errorf("IsStableToken(%q) = true", value)
+		}
 	}
 }
 
@@ -159,15 +269,30 @@ func TestEventIdentityAndSelectorValidation(t *testing.T) {
 	validIdentity := observability.EventIdentity{
 		Bucket: observability.BucketAgentLifecycle,
 		Signal: observability.SignalTraces,
-		Name:   "agent.session_start",
+		Name:   "span.agent.invoke",
 	}
 	if err := validIdentity.Validate(); err != nil {
 		t.Fatalf("valid identity: %v", err)
 	}
+	if !observability.IsRegisteredEventIdentity(validIdentity) {
+		t.Fatal("valid identity predicate returned false")
+	}
 	invalidIdentity := validIdentity
 	invalidIdentity.Name = "Agent Session Start"
 	if err := invalidIdentity.Validate(); err == nil {
-		t.Fatal("identity with an unregistered name shape passed validation")
+		t.Fatal("identity with an invalid name shape passed validation")
+	}
+	invalidIdentity.Name = "plausible.but.unregistered"
+	if err := invalidIdentity.Validate(); err == nil {
+		t.Fatal("identity with a well-shaped unregistered name passed validation")
+	}
+	invalidIdentity.Name = "session_start"
+	if err := invalidIdentity.Validate(); err == nil {
+		t.Fatal("log event name passed trace-family validation")
+	}
+	invalidIdentity.Signal = observability.SignalLogs
+	if err := invalidIdentity.Validate(); err != nil {
+		t.Fatalf("registered log identity: %v", err)
 	}
 
 	validSelector := observability.Selector{
