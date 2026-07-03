@@ -32,8 +32,14 @@ import (
 	"github.com/defenseclaw/defenseclaw/internal/observability"
 	"github.com/defenseclaw/defenseclaw/internal/observability/delivery"
 	"github.com/defenseclaw/defenseclaw/internal/observability/destinations/local"
+	"github.com/defenseclaw/defenseclaw/internal/observability/destinations/otlp"
 	"github.com/defenseclaw/defenseclaw/internal/observability/destinations/push"
 	observabilityruntime "github.com/defenseclaw/defenseclaw/internal/observability/runtime"
+	collectorlogpb "go.opentelemetry.io/proto/otlp/collector/logs/v1"
+	commonpb "go.opentelemetry.io/proto/otlp/common/v1"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/metadata"
+	"google.golang.org/protobuf/proto"
 )
 
 type secretResolver struct {
@@ -127,6 +133,28 @@ type trackingConnection struct {
 	once   sync.Once
 }
 
+type factoryGRPCLogCapture struct {
+	collectorlogpb.UnimplementedLogsServiceServer
+	requests chan *collectorlogpb.ExportLogsServiceRequest
+	headers  chan metadata.MD
+}
+
+func (capture *factoryGRPCLogCapture) Export(ctx context.Context, request *collectorlogpb.ExportLogsServiceRequest) (*collectorlogpb.ExportLogsServiceResponse, error) {
+	headers, _ := metadata.FromIncomingContext(ctx)
+	capture.headers <- headers
+	capture.requests <- request
+	return &collectorlogpb.ExportLogsServiceResponse{}, nil
+}
+
+func protoAttribute(attributes []*commonpb.KeyValue, key string) string {
+	for _, attribute := range attributes {
+		if attribute != nil && attribute.Key == key && attribute.Value != nil {
+			return attribute.Value.GetStringValue()
+		}
+	}
+	return ""
+}
+
 type panickingResolver struct{}
 
 func (panickingResolver) LookupIPAddr(context.Context, string) ([]net.IPAddr, error) {
@@ -186,13 +214,20 @@ func compileDestination(
 }
 
 func deliverOne(t *testing.T, name string, adapter delivery.Adapter, projection string) delivery.Counters {
+	return deliverOneWithAttempts(t, name, adapter, projection, 1)
+}
+
+func deliverOneWithAttempts(t *testing.T, name string, adapter delivery.Adapter, projection string, attempts int) delivery.Counters {
 	t.Helper()
 	dispatcher, err := delivery.NewDispatcher(delivery.Config{
 		Destination: name, Enabled: true,
 		MaxQueueItems: 4, MaxQueueBytes: 8 * 1024 * 1024,
 		MaxBatchItems: 1, MaxBatchBytes: 8 * 1024 * 1024,
 		AttemptTimeout: 2 * time.Second,
-		Retry:          delivery.RetryPolicy{MaxAttempts: 1},
+		Retry: delivery.RetryPolicy{
+			MaxAttempts: attempts, InitialBackoff: time.Millisecond, MaxBackoff: time.Millisecond,
+			Jitter: func(delay time.Duration, _ int) time.Duration { return delay },
+		},
 	}, adapter)
 	if err != nil {
 		t.Fatal(err)
@@ -540,6 +575,278 @@ func TestFactoryLoadsCABundleOnceAndDoesNotRequestDuringPrepare(t *testing.T) {
 	}
 }
 
+func TestFactoryPreparesHTTPOTLPLogsWithDetachedSecretsCAOverridesAndExactRetry(t *testing.T) {
+	type captured struct {
+		path, authorization string
+		body                []byte
+	}
+	var mu sync.Mutex
+	var requests []captured
+	server := httptest.NewTLSServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		body, _ := io.ReadAll(request.Body)
+		mu.Lock()
+		requests = append(requests, captured{
+			path: request.URL.Path, authorization: request.Header.Get("Authorization"),
+			body: append([]byte(nil), body...),
+		})
+		attempt := len(requests)
+		mu.Unlock()
+		if attempt == 1 {
+			writer.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		writer.Header().Set("Content-Type", "application/x-protobuf")
+		writer.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+	certificate := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: server.Certificate().Raw})
+	const caPath = "/trusted/otlp-ca.pem"
+	secrets := &secretResolver{values: map[string]string{"OTLP_AUTH": "Bearer resolved-once"}, calls: map[string]int{}}
+	loader := &caLoader{bundles: map[string][]byte{caPath: certificate}, errors: map[string]error{}, calls: map[string]int{}}
+	warnings := &warningCollector{}
+	factory := newTestFactory(t, io.Discard, secrets, loader, net.Dialer{}, warnings)
+	destination := compileDestination(t, config.ObservabilityV8DestinationSource{
+		Name: "otel-logs", Kind: config.ObservabilityV8DestinationOTLP,
+		Protocol: "http/protobuf", Endpoint: server.URL,
+		Send: &config.ObservabilityV8SendSource{
+			Signals: []observability.Signal{observability.SignalLogs}, Buckets: []observability.Bucket{"*"},
+		},
+		Headers: map[string]config.ObservabilityV8HeaderValue{
+			"Authorization": config.ObservabilityV8EnvironmentHeader("OTLP_AUTH"),
+		},
+		LoggerName: "defenseclaw.factory", TLS: config.ObservabilityV8TLSSource{CACert: caPath},
+		NetworkSafety: config.ObservabilityV8NetworkSafetySource{AllowPrivateNetworks: true},
+		Batch:         config.ObservabilityV8BatchSource{ScheduledDelayMS: 1},
+	})
+	before := cloneDestination(t, destination)
+	adapter, cleanup, err := factory.PrepareDestination(context.Background(), destination)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := adapter.(*otlp.LogAdapter); !ok {
+		t.Fatalf("adapter = %T", adapter)
+	}
+	mu.Lock()
+	preparedRequests := len(requests)
+	mu.Unlock()
+	if preparedRequests != 0 || secrets.callCount("OTLP_AUTH") != 1 || loader.callCount(caPath) != 1 {
+		t.Fatalf("prepare requests=%d secret calls=%d CA calls=%d", preparedRequests, secrets.callCount("OTLP_AUTH"), loader.callCount(caPath))
+	}
+	if !reflect.DeepEqual(destination, before) {
+		t.Fatal("factory mutated compiled OTLP destination")
+	}
+	projection := `{"record_id":"otlp-record","body":{"message":"projected-only"}}`
+	if counters := deliverOneWithAttempts(t, "otel-logs", adapter, projection, 3); counters.Delivered != 1 || counters.Retried != 1 {
+		t.Fatalf("delivery counters = %+v", counters)
+	}
+	mu.Lock()
+	got := append([]captured(nil), requests...)
+	mu.Unlock()
+	if len(got) != 2 || got[0].path != "/v1/logs" || got[1].path != "/v1/logs" ||
+		got[0].authorization != "Bearer resolved-once" || !bytes.Equal(got[0].body, got[1].body) {
+		t.Fatalf("OTLP requests = %+v", got)
+	}
+	var decoded collectorlogpb.ExportLogsServiceRequest
+	if err := proto.Unmarshal(got[0].body, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	record := decoded.ResourceLogs[0].ScopeLogs[0].LogRecords[0]
+	if record.Body.GetStringValue() != projection || decoded.ResourceLogs[0].ScopeLogs[0].Scope.Name != "defenseclaw.factory" ||
+		protoAttribute(record.Attributes, "defenseclaw.record.id") != "record" ||
+		protoAttribute(record.Attributes, "defenseclaw.bucket") != "diagnostic" ||
+		protoAttribute(record.Attributes, "defenseclaw.event.name") != "diagnostic.message" {
+		t.Fatalf("OTLP record identity/body mismatch: %+v", record)
+	}
+	if warnings.count(push.WarningPrivateNetworksAllowed) != 1 || warnings.count(push.WarningPlaintextCredentials) != 0 {
+		t.Fatalf("warnings = %+v", warnings.warnings)
+	}
+	if err := cleanup(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := cleanup(context.Background()); err != nil {
+		t.Fatalf("idempotent cleanup: %v", err)
+	}
+}
+
+func TestFactoryHTTPOTLPLogOverrideAndUnsafeWarnings(t *testing.T) {
+	paths := make(chan string, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		_, _ = io.Copy(io.Discard, request.Body)
+		paths <- request.URL.Path
+		writer.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+	warnings := &warningCollector{}
+	factory := newTestFactory(t, io.Discard, nil, nil, net.Dialer{}, warnings)
+	destination := compileDestination(t, config.ObservabilityV8DestinationSource{
+		Name: "otel-override", Kind: config.ObservabilityV8DestinationOTLP,
+		Protocol: "http/protobuf", Endpoint: server.URL,
+		Send:          &config.ObservabilityV8SendSource{Signals: []observability.Signal{observability.SignalLogs}, Buckets: []observability.Bucket{"*"}},
+		Headers:       map[string]config.ObservabilityV8HeaderValue{"X-API-Key": config.ObservabilityV8StaticHeader("credential")},
+		TLS:           config.ObservabilityV8TLSSource{Insecure: true},
+		NetworkSafety: config.ObservabilityV8NetworkSafetySource{AllowPrivateNetworks: true, AllowCGNAT: true},
+		SignalOverrides: map[observability.Signal]config.ObservabilityV8SignalOverrideSource{
+			observability.SignalLogs: {Path: "/tenant/logs"},
+		},
+	})
+	adapter, cleanup, err := factory.PrepareDestination(context.Background(), destination)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if counters := deliverOne(t, "otel-override", adapter, `{"record_id":"record"}`); counters.Delivered != 1 {
+		t.Fatalf("counters = %+v", counters)
+	}
+	select {
+	case path := <-paths:
+		if path != "/tenant/logs" {
+			t.Fatalf("path = %q", path)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("OTLP request not received")
+	}
+	for _, code := range []push.WarningCode{
+		push.WarningTLSVerificationDisabled, push.WarningPrivateNetworksAllowed,
+		push.WarningCGNATAllowed, push.WarningPlaintextCredentials,
+	} {
+		if warnings.count(code) != 1 {
+			t.Fatalf("warning %s count = %d", code, warnings.count(code))
+		}
+	}
+	_ = cleanup(context.Background())
+}
+
+func TestFactoryOTLPDefaultAllSignalsBuildsOnlyItsLogAdapter(t *testing.T) {
+	requests := make(chan struct{}, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		_, _ = io.Copy(io.Discard, request.Body)
+		requests <- struct{}{}
+		writer.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+	factory := newTestFactory(t, io.Discard, nil, nil, net.Dialer{}, nil)
+	destination := compileDestination(t, config.ObservabilityV8DestinationSource{
+		Name: "otel-default-all", Kind: config.ObservabilityV8DestinationOTLP,
+		Protocol: "http/protobuf", Endpoint: server.URL,
+		TLS:           config.ObservabilityV8TLSSource{Insecure: true},
+		NetworkSafety: config.ObservabilityV8NetworkSafetySource{AllowPrivateNetworks: true},
+	})
+	if !destination.Capabilities.Supports(observability.SignalLogs) ||
+		!destination.Capabilities.Supports(observability.SignalTraces) ||
+		!destination.Capabilities.Supports(observability.SignalMetrics) ||
+		len(destination.SelectedSignals) != 3 {
+		t.Fatalf("default OTLP signals = %v", destination.SelectedSignals)
+	}
+	adapter, cleanup, err := factory.PrepareDestination(context.Background(), destination)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := adapter.(*otlp.LogAdapter); !ok {
+		t.Fatalf("adapter = %T", adapter)
+	}
+	if counters := deliverOne(t, destination.Name, adapter, `{"record_id":"default-all"}`); counters.Delivered != 1 {
+		t.Fatalf("counters = %+v", counters)
+	}
+	select {
+	case <-requests:
+	case <-time.After(time.Second):
+		t.Fatal("default-all OTLP log request not received")
+	}
+	_ = cleanup(context.Background())
+}
+
+func TestFactoryRejectsInvalidOTLPCABundleAfterSingleResolution(t *testing.T) {
+	const caPath = "/trusted/invalid-otlp-ca.pem"
+	loader := &caLoader{bundles: map[string][]byte{caPath: []byte("invalid certificate")}, errors: map[string]error{}, calls: map[string]int{}}
+	factory := newTestFactory(t, io.Discard, nil, loader, net.Dialer{}, nil)
+	destination := compileDestination(t, config.ObservabilityV8DestinationSource{
+		Name: "otel-invalid-ca", Kind: config.ObservabilityV8DestinationOTLP,
+		Protocol: "http/protobuf", Endpoint: "https://8.8.8.8:4318",
+		Send: &config.ObservabilityV8SendSource{Signals: []observability.Signal{observability.SignalLogs}, Buckets: []observability.Bucket{"*"}},
+		TLS:  config.ObservabilityV8TLSSource{CACert: caPath},
+	})
+	adapter, cleanup, err := factory.PrepareDestination(context.Background(), destination)
+	if adapter != nil || cleanup == nil || !IsError(err, ErrorAdapterPrepare) || loader.callCount(caPath) != 1 {
+		t.Fatalf("adapter=%T cleanup=%t error=%v CA calls=%d", adapter, cleanup != nil, err, loader.callCount(caPath))
+	}
+}
+
+func TestFactoryPreparesGRPCOTLPLogsAndCleanupClosesGenerationConnection(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := grpc.NewServer()
+	capture := &factoryGRPCLogCapture{requests: make(chan *collectorlogpb.ExportLogsServiceRequest, 1), headers: make(chan metadata.MD, 1)}
+	collectorlogpb.RegisterLogsServiceServer(server, capture)
+	go server.Serve(listener)
+	t.Cleanup(func() {
+		server.Stop()
+		_ = listener.Close()
+	})
+	dialer := &trackingDialer{}
+	secrets := &secretResolver{values: map[string]string{"GRPC_AUTH": "Bearer grpc-exact"}, calls: map[string]int{}}
+	warnings := &warningCollector{}
+	factory, err := NewFactory(Options{
+		ConsoleStream: ConsoleStderr, Stdout: io.Discard, Stderr: io.Discard,
+		Secrets:  secrets,
+		CALoader: &caLoader{bundles: map[string][]byte{}, errors: map[string]error{}, calls: map[string]int{}},
+		Resolver: net.DefaultResolver, Dialer: dialer, Warnings: warnings,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	destination := compileDestination(t, config.ObservabilityV8DestinationSource{
+		Name: "otel-grpc", Kind: config.ObservabilityV8DestinationOTLP,
+		Protocol: "grpc", Endpoint: listener.Addr().String(),
+		Send:       &config.ObservabilityV8SendSource{Signals: []observability.Signal{observability.SignalLogs}, Buckets: []observability.Bucket{"*"}},
+		Headers:    map[string]config.ObservabilityV8HeaderValue{"Authorization": config.ObservabilityV8EnvironmentHeader("GRPC_AUTH")},
+		LoggerName: "defenseclaw.grpc.factory", TLS: config.ObservabilityV8TLSSource{Insecure: true},
+		NetworkSafety: config.ObservabilityV8NetworkSafetySource{AllowPrivateNetworks: true},
+	})
+	adapter, cleanup, err := factory.PrepareDestination(context.Background(), destination)
+	if err != nil {
+		t.Fatal(err)
+	}
+	projection := `{"record_id":"grpc-record","body":{"message":"grpc-projected"}}`
+	if counters := deliverOne(t, "otel-grpc", adapter, projection); counters.Delivered != 1 {
+		t.Fatalf("counters = %+v", counters)
+	}
+	select {
+	case request := <-capture.requests:
+		record := request.ResourceLogs[0].ScopeLogs[0].LogRecords[0]
+		if request.ResourceLogs[0].ScopeLogs[0].Scope.Name != "defenseclaw.grpc.factory" ||
+			record.Body.GetStringValue() != projection || protoAttribute(record.Attributes, "defenseclaw.record.id") != "record" {
+			t.Fatalf("gRPC request mismatch: %+v", request)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("gRPC OTLP request not received")
+	}
+	select {
+	case headers := <-capture.headers:
+		if got := headers.Get("authorization"); len(got) != 1 || got[0] != "Bearer grpc-exact" {
+			t.Fatalf("authorization = %v", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("gRPC metadata not received")
+	}
+	if secrets.callCount("GRPC_AUTH") != 1 || warnings.count(push.WarningPlaintextCredentials) != 1 {
+		t.Fatalf("secret calls=%d plaintext warnings=%d", secrets.callCount("GRPC_AUTH"), warnings.count(push.WarningPlaintextCredentials))
+	}
+	if err := cleanup(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(time.Second)
+	for dialer.closed.Load() == 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if dialer.closed.Load() != 1 {
+		t.Fatalf("closed connections = %d", dialer.closed.Load())
+	}
+	if err := cleanup(context.Background()); err != nil || dialer.closed.Load() != 1 {
+		t.Fatalf("idempotent cleanup error=%v closes=%d", err, dialer.closed.Load())
+	}
+}
+
 func TestFactoryPushCleanupClosesIdleConnectionAndIsIdempotent(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		_, _ = io.Copy(io.Discard, request.Body)
@@ -593,11 +900,12 @@ func TestFactoryRejectsUnownedKindsAndInvalidCompiledDestinations(t *testing.T) 
 		Name: "metrics", Kind: config.ObservabilityV8DestinationPrometheus,
 		Listen: "127.0.0.1:9464", Path: "/metrics",
 	})
-	logs := []observability.Signal{observability.SignalLogs}
 	otlp := compileDestination(t, config.ObservabilityV8DestinationSource{
 		Name: "otlp", Kind: config.ObservabilityV8DestinationOTLP,
 		Endpoint: "https://collector.example.test",
-		Send:     &config.ObservabilityV8SendSource{Signals: logs, Buckets: []observability.Bucket{"*"}},
+		Send: &config.ObservabilityV8SendSource{
+			Signals: []observability.Signal{observability.SignalTraces}, Buckets: []observability.Bucket{"*"},
+		},
 	})
 	unknown := compileDestination(t, config.ObservabilityV8DestinationSource{
 		Name: "archive", Kind: config.ObservabilityV8DestinationHTTPJSONL,

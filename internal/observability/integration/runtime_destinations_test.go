@@ -39,6 +39,10 @@ import (
 	"github.com/defenseclaw/defenseclaw/internal/observability/router"
 	observabilityruntime "github.com/defenseclaw/defenseclaw/internal/observability/runtime"
 	"github.com/defenseclaw/defenseclaw/internal/observability/runtimegraph"
+	collectorlogpb "go.opentelemetry.io/proto/otlp/collector/logs/v1"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/metadata"
+	"google.golang.org/protobuf/proto"
 )
 
 const (
@@ -154,6 +158,27 @@ type capturedRequest struct {
 	sqliteCount int
 }
 
+type capturedGRPCLogRequest struct {
+	request     *collectorlogpb.ExportLogsServiceRequest
+	headers     metadata.MD
+	sqliteCount int
+}
+
+type integrationGRPCLogServer struct {
+	collectorlogpb.UnimplementedLogsServiceServer
+	requests   chan capturedGRPCLogRequest
+	localCount func() int
+}
+
+func (server *integrationGRPCLogServer) Export(ctx context.Context, request *collectorlogpb.ExportLogsServiceRequest) (*collectorlogpb.ExportLogsServiceResponse, error) {
+	headers, _ := metadata.FromIncomingContext(ctx)
+	server.requests <- capturedGRPCLogRequest{
+		request: proto.Clone(request).(*collectorlogpb.ExportLogsServiceRequest),
+		headers: headers, sqliteCount: server.localCount(),
+	}
+	return &collectorlogpb.ExportLogsServiceResponse{}, nil
+}
+
 func TestRuntimeRealDestinationBoundaryExactlyOnceAndReloadRemoval(t *testing.T) {
 	directory := t.TempDir()
 	storePath := filepath.Join(directory, "audit.db")
@@ -189,6 +214,20 @@ func TestRuntimeRealDestinationBoundaryExactlyOnceAndReloadRemoval(t *testing.T)
 		}
 		return count
 	}
+	grpcListener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	grpcRequests := make(chan capturedGRPCLogRequest, 1)
+	grpcServer := grpc.NewServer()
+	collectorlogpb.RegisterLogsServiceServer(grpcServer, &integrationGRPCLogServer{
+		requests: grpcRequests, localCount: localCount,
+	})
+	go grpcServer.Serve(grpcListener)
+	t.Cleanup(func() {
+		grpcServer.Stop()
+		_ = grpcListener.Close()
+	})
 
 	remoteRequests := make(chan capturedRequest, 4)
 	remoteServer := httptest.NewTLSServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
@@ -233,7 +272,9 @@ func TestRuntimeRealDestinationBoundaryExactlyOnceAndReloadRemoval(t *testing.T)
 	secrets := &integrationSecrets{
 		values: map[string]string{
 			"ARCHIVE_BEARER": "archive-secret", "ARCHIVE_TENANT": "tenant-a",
-			"SPLUNK_TOKEN": "splunk-secret",
+			"SPLUNK_TOKEN": "splunk-secret", "OTLP_AUTH": "Bearer otlp-secret",
+			"TRACE_ONLY_AUTH": "Bearer must-not-resolve-in-log-factory",
+			"GRPC_OTLP_AUTH":  "Bearer grpc-runtime-secret",
 		},
 		calls: map[string]int{},
 	}
@@ -279,6 +320,40 @@ func TestRuntimeRealDestinationBoundaryExactlyOnceAndReloadRemoval(t *testing.T)
 				destination.NetworkSafety.AllowPrivateNetworks = true
 				destination.Batch.ScheduledDelayMS = 1
 			}),
+			logDestination("security-otlp", config.ObservabilityV8DestinationOTLP, "sensitive", func(destination *config.ObservabilityV8DestinationSource) {
+				destination.Protocol = "http/protobuf"
+				destination.Endpoint = remoteServer.URL
+				destination.Headers = map[string]config.ObservabilityV8HeaderValue{
+					"Authorization": config.ObservabilityV8EnvironmentHeader("OTLP_AUTH"),
+				}
+				destination.LoggerName = "defenseclaw.integration"
+				destination.TLS.CACert = caPath
+				destination.NetworkSafety.AllowPrivateNetworks = true
+				destination.Batch.ScheduledDelayMS = 1
+			}),
+			logDestination("security-otlp-grpc", config.ObservabilityV8DestinationOTLP, "content", func(destination *config.ObservabilityV8DestinationSource) {
+				destination.Protocol = "grpc"
+				destination.Endpoint = grpcListener.Addr().String()
+				destination.Headers = map[string]config.ObservabilityV8HeaderValue{
+					"Authorization": config.ObservabilityV8EnvironmentHeader("GRPC_OTLP_AUTH"),
+				}
+				destination.LoggerName = "defenseclaw.integration.grpc"
+				destination.TLS.Insecure = true
+				destination.NetworkSafety.AllowPrivateNetworks = true
+				destination.Batch.ScheduledDelayMS = 1
+			}),
+			{
+				Name: "trace-only-otlp", Kind: config.ObservabilityV8DestinationOTLP,
+				Protocol: "http/protobuf", Endpoint: remoteServer.URL,
+				Send: &config.ObservabilityV8SendSource{
+					Signals: []observability.Signal{observability.SignalTraces}, Buckets: []observability.Bucket{"*"},
+				},
+				Headers: map[string]config.ObservabilityV8HeaderValue{
+					"Authorization": config.ObservabilityV8EnvironmentHeader("TRACE_ONLY_AUTH"),
+				},
+				TLS:           config.ObservabilityV8TLSSource{CACert: caPath},
+				NetworkSafety: config.ObservabilityV8NetworkSafetySource{AllowPrivateNetworks: true},
+			},
 			logDestination("security-slow", config.ObservabilityV8DestinationHTTPJSONL, "legacy-v7", func(destination *config.ObservabilityV8DestinationSource) {
 				destination.Endpoint = slowServer.URL + "/slow"
 				destination.NetworkSafety.AllowPrivateNetworks = true
@@ -387,17 +462,27 @@ func TestRuntimeRealDestinationBoundaryExactlyOnceAndReloadRemoval(t *testing.T)
 	slow := receiveRequest(t, slowStarted)
 	firstRemote := receiveRequest(t, remoteRequests)
 	secondRemote := receiveRequest(t, remoteRequests)
-	remoteByPath := map[string]capturedRequest{firstRemote.path: firstRemote, secondRemote.path: secondRemote}
-	for _, request := range []capturedRequest{slow, firstRemote, secondRemote} {
+	thirdRemote := receiveRequest(t, remoteRequests)
+	grpcRemote := receiveRequest(t, grpcRequests)
+	remoteByPath := map[string]capturedRequest{
+		firstRemote.path: firstRemote, secondRemote.path: secondRemote, thirdRemote.path: thirdRemote,
+	}
+	for _, request := range []capturedRequest{slow, firstRemote, secondRemote, thirdRemote} {
 		if request.sqliteCount != 1 {
 			t.Fatalf("optional request %s observed SQLite count %d", request.path, request.sqliteCount)
 		}
+	}
+	if grpcRemote.sqliteCount != 1 {
+		t.Fatalf("optional gRPC request observed SQLite count %d", grpcRemote.sqliteCount)
 	}
 	if _, ok := remoteByPath["/archive"]; !ok {
 		t.Fatal("HTTP JSONL request missing")
 	}
 	if _, ok := remoteByPath["/splunk"]; !ok {
 		t.Fatal("Splunk request missing")
+	}
+	if _, ok := remoteByPath["/v1/logs"]; !ok {
+		t.Fatal("OTLP log request missing")
 	}
 
 	waitFor(t, func() bool {
@@ -412,9 +497,11 @@ func TestRuntimeRealDestinationBoundaryExactlyOnceAndReloadRemoval(t *testing.T)
 	consoleBytes := console.Bytes()
 	archive := remoteByPath["/archive"]
 	splunk := remoteByPath["/splunk"]
+	otlpRequest := remoteByPath["/v1/logs"]
 	if archive.headers.Get("Authorization") != "Bearer archive-secret" ||
 		archive.headers.Get("X-Tenant") != "tenant-a" ||
-		splunk.headers.Get("Authorization") != "Splunk splunk-secret" {
+		splunk.headers.Get("Authorization") != "Splunk splunk-secret" ||
+		otlpRequest.headers.Get("Authorization") != "Bearer otlp-secret" {
 		t.Fatal("resolved destination authorization/header mismatch")
 	}
 
@@ -424,17 +511,21 @@ func TestRuntimeRealDestinationBoundaryExactlyOnceAndReloadRemoval(t *testing.T)
 	archiveProjection := bytes.TrimSuffix(archive.body, []byte{'\n'})
 	slowProjection := bytes.TrimSuffix(slow.body, []byte{'\n'})
 	splunkProjection, splunkEvent, splunkSourceType := readSplunkProjection(t, splunk.body)
+	otlpProjection := readOTLPProjection(t, otlpRequest.body)
+	grpcOTLPProjection := readOTLPLogRequest(t, grpcRemote.request, "defenseclaw.integration.grpc")
 	projections := map[string][]byte{
 		"sqlite": sqliteProjection, "jsonl": jsonlProjection,
 		"console": consoleProjection, "http": archiveProjection,
-		"splunk": splunkProjection, "slow": slowProjection,
+		"splunk": splunkProjection, "otlp": otlpProjection,
+		"otlp-grpc": grpcOTLPProjection, "slow": slowProjection,
 	}
 	for name, projection := range projections {
 		assertProjectionIdentity(t, name, projection, correlation)
 	}
 	for name, wantProfile := range map[string]string{
 		"sqlite": "none", "jsonl": "none", "console": "content",
-		"http": "sensitive", "splunk": "strict", "slow": "legacy-v7",
+		"http": "sensitive", "splunk": "strict", "otlp": "sensitive",
+		"otlp-grpc": "content", "slow": "legacy-v7",
 	} {
 		if got := projectionProfile(t, projections[name]); got != wantProfile {
 			t.Fatalf("%s projection profile=%s want=%s", name, got, wantProfile)
@@ -444,7 +535,7 @@ func TestRuntimeRealDestinationBoundaryExactlyOnceAndReloadRemoval(t *testing.T)
 		!bytes.Contains(jsonlProjection, []byte(findingEmail)) {
 		t.Fatal("unredacted local/JSONL projection was not preserved")
 	}
-	for _, name := range []string{"console", "http", "splunk", "slow"} {
+	for _, name := range []string{"console", "http", "splunk", "otlp", "otlp-grpc", "slow"} {
 		if bytes.Contains(projections[name], []byte(findingEmail)) {
 			t.Fatalf("%s projection leaked destination-redacted email", name)
 		}
@@ -477,6 +568,9 @@ func TestRuntimeRealDestinationBoundaryExactlyOnceAndReloadRemoval(t *testing.T)
 	if bytes.Contains(splunk.body, []byte(findingEmail)) || bytes.Contains(splunk.body, []byte("_splunk_hec_events")) {
 		t.Fatal("Splunk full wrapper contains removed or opaque content")
 	}
+	if got := grpcRemote.headers.Get("authorization"); len(got) != 1 || got[0] != "Bearer grpc-runtime-secret" {
+		t.Fatalf("gRPC OTLP authorization=%v", got)
+	}
 
 	releaseSlow()
 	select {
@@ -491,13 +585,22 @@ func TestRuntimeRealDestinationBoundaryExactlyOnceAndReloadRemoval(t *testing.T)
 		t.Fatalf("optional failure changed SQLite count=%d", count)
 	}
 	if secrets.Calls("ARCHIVE_BEARER") != 1 || secrets.Calls("ARCHIVE_TENANT") != 1 ||
-		secrets.Calls("SPLUNK_TOKEN") != 1 || caLoader.Calls() != 2 {
-		t.Fatalf("secret/CA resolution counts bearer=%d tenant=%d splunk=%d CA=%d",
+		secrets.Calls("SPLUNK_TOKEN") != 1 || secrets.Calls("OTLP_AUTH") != 1 ||
+		secrets.Calls("GRPC_OTLP_AUTH") != 1 || caLoader.Calls() != 3 {
+		t.Fatalf("secret/CA resolution counts bearer=%d tenant=%d splunk=%d otlp=%d grpc=%d CA=%d",
 			secrets.Calls("ARCHIVE_BEARER"), secrets.Calls("ARCHIVE_TENANT"),
-			secrets.Calls("SPLUNK_TOKEN"), caLoader.Calls())
+			secrets.Calls("SPLUNK_TOKEN"), secrets.Calls("OTLP_AUTH"),
+			secrets.Calls("GRPC_OTLP_AUTH"), caLoader.Calls())
 	}
-	if warnings.Count(push.WarningPrivateNetworksAllowed) != 3 {
+	if secrets.Calls("TRACE_ONLY_AUTH") != 0 {
+		t.Fatalf("trace-only destination entered log factory %d times", secrets.Calls("TRACE_ONLY_AUTH"))
+	}
+	if warnings.Count(push.WarningPrivateNetworksAllowed) != 5 {
 		t.Fatalf("private destination warnings=%d", warnings.Count(push.WarningPrivateNetworksAllowed))
+	}
+	if warnings.Count(push.WarningTLSVerificationDisabled) != 1 || warnings.Count(push.WarningPlaintextCredentials) != 1 {
+		t.Fatalf("OTLP insecure/plaintext warnings TLS=%d credentials=%d",
+			warnings.Count(push.WarningTLSVerificationDisabled), warnings.Count(push.WarningPlaintextCredentials))
 	}
 
 	activeBeforeRejectedReload := runtime.Active()
@@ -596,7 +699,7 @@ func logDestination(
 
 func assertCompiledDefaults(t *testing.T, plan *config.ObservabilityV8Plan) {
 	t.Helper()
-	for _, name := range []string{"security-file", "security-console", "security-http", "security-splunk", "security-slow"} {
+	for _, name := range []string{"security-file", "security-console", "security-http", "security-splunk", "security-otlp", "security-otlp-grpc", "security-slow"} {
 		destination, ok := plan.RuntimeDestination(name)
 		if !ok || destination.Transport.Batch == nil {
 			t.Fatalf("destination %s has no compiled batch", name)
@@ -697,6 +800,30 @@ func readSplunkProjection(t *testing.T, body []byte) ([]byte, map[string]any, st
 		aliases[key] = value
 	}
 	return record, aliases, envelope.SourceType
+}
+
+func readOTLPProjection(t *testing.T, body []byte) []byte {
+	t.Helper()
+	var request collectorlogpb.ExportLogsServiceRequest
+	if err := proto.Unmarshal(body, &request); err != nil {
+		t.Fatal(err)
+	}
+	return readOTLPLogRequest(t, &request, "defenseclaw.integration")
+}
+
+func readOTLPLogRequest(t *testing.T, request *collectorlogpb.ExportLogsServiceRequest, scope string) []byte {
+	t.Helper()
+	if request == nil {
+		t.Fatal("nil OTLP log request")
+	}
+	if len(request.ResourceLogs) != 1 || len(request.ResourceLogs[0].ScopeLogs) != 1 ||
+		len(request.ResourceLogs[0].ScopeLogs[0].LogRecords) != 1 {
+		t.Fatalf("unexpected OTLP log shape: %+v", request.ResourceLogs)
+	}
+	if got := request.ResourceLogs[0].ScopeLogs[0].Scope.Name; got != scope {
+		t.Fatalf("OTLP scope = %q", got)
+	}
+	return []byte(request.ResourceLogs[0].ScopeLogs[0].LogRecords[0].Body.GetStringValue())
 }
 
 func assertProjectionIdentity(

@@ -1054,15 +1054,126 @@ func TestLogPartialSuccessReportsExactAcceptedAndRejectedCountsWithoutRetry(t *t
 	if got := observer.count(observability.SignalLogs, SignalOutcomePartialRejected); got != 1 {
 		t.Fatalf("partial rejection observation = %d", got)
 	}
-	// The generic dispatcher has a batch-level DeliveryResult and therefore
-	// records both items as rejected even though the OTLP response identified
-	// one accepted record. The adapter's counters above preserve the exact OTLP
-	// split, and the permanent outcome guarantees the accepted subset is never
-	// retried.
-	if got := dispatcher.Counters(); got.Retried != 0 || got.Rejected != 2 || got.Delivered != 0 {
+	if got := dispatcher.Counters(); got.Retried != 0 || got.Rejected != 1 || got.Delivered != 1 {
 		t.Fatalf("dispatcher counters = %+v", got)
 	}
 	_ = adapter.Close(context.Background())
+}
+
+func TestMalformedNegativeLogPartialSuccessIsTerminalForHTTPAndGRPC(t *testing.T) {
+	t.Run("HTTP", func(t *testing.T) {
+		var calls atomic.Uint64
+		server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+			calls.Add(1)
+			encoded, _ := proto.Marshal(&collectorlogpb.ExportLogsServiceResponse{
+				PartialSuccess: &collectorlogpb.ExportLogsPartialSuccess{RejectedLogRecords: -1},
+			})
+			_, _ = writer.Write(encoded)
+		}))
+		defer server.Close()
+		observer := &signalEventCapture{}
+		factory := prepareTestFactory(t, Config{
+			Destination: "negative-http-partial", Protocol: ProtocolHTTP, Endpoint: server.URL,
+			Selected: []observability.Signal{observability.SignalLogs}, Timeout: time.Second,
+			TLS: TLSConfig{Insecure: true}, NetworkSafety: NetworkSafety{AllowPrivateNetworks: true},
+		}, Dependencies{Observer: observer})
+		adapter, err := factory.NewLogAdapter(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		dispatcher := newOTLPDispatcher(t, "negative-http-partial", adapter)
+		enqueueOTLP(t, dispatcher, "negative-http-record", `{"message":"malformed partial"}`)
+		drainOTLP(t, dispatcher)
+		assertMalformedPartialResult(t, calls.Load(), dispatcher.Counters(), adapter.Counters(), observer)
+		_ = adapter.Close(context.Background())
+	})
+
+	t.Run("gRPC", func(t *testing.T) {
+		listener, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		server := grpc.NewServer()
+		capture := &negativePartialGRPCLogServer{}
+		collectorlogpb.RegisterLogsServiceServer(server, capture)
+		go server.Serve(listener)
+		t.Cleanup(func() {
+			server.Stop()
+			_ = listener.Close()
+		})
+		observer := &signalEventCapture{}
+		factory := prepareTestFactory(t, Config{
+			Destination: "negative-grpc-partial", Protocol: ProtocolGRPC, Endpoint: listener.Addr().String(),
+			Selected: []observability.Signal{observability.SignalLogs}, Timeout: time.Second,
+			TLS: TLSConfig{Insecure: true}, NetworkSafety: NetworkSafety{AllowPrivateNetworks: true},
+		}, Dependencies{Observer: observer})
+		adapter, err := factory.NewLogAdapter(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		dispatcher := newOTLPDispatcher(t, "negative-grpc-partial", adapter)
+		enqueueOTLP(t, dispatcher, "negative-grpc-record", `{"message":"malformed partial"}`)
+		drainOTLP(t, dispatcher)
+		assertMalformedPartialResult(t, capture.calls.Load(), dispatcher.Counters(), adapter.Counters(), observer)
+		_ = adapter.Close(context.Background())
+	})
+}
+
+func TestLogPartialSuccessAboveBatchCountClampsToAllRejected(t *testing.T) {
+	var calls atomic.Uint64
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		calls.Add(1)
+		encoded, _ := proto.Marshal(&collectorlogpb.ExportLogsServiceResponse{
+			PartialSuccess: &collectorlogpb.ExportLogsPartialSuccess{RejectedLogRecords: 99},
+		})
+		_, _ = writer.Write(encoded)
+	}))
+	defer server.Close()
+	factory := prepareTestFactory(t, Config{
+		Destination: "over-count-partial", Protocol: ProtocolHTTP, Endpoint: server.URL,
+		Selected: []observability.Signal{observability.SignalLogs}, Timeout: time.Second,
+		TLS: TLSConfig{Insecure: true}, NetworkSafety: NetworkSafety{AllowPrivateNetworks: true},
+	}, Dependencies{})
+	adapter, err := factory.NewLogAdapter(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	dispatcher := newOTLPDispatcherWithDelay(t, "over-count-partial", adapter, time.Hour)
+	enqueueOTLP(t, dispatcher, "over-count-record-1", `{"message":"one"}`)
+	enqueueOTLP(t, dispatcher, "over-count-record-2", `{"message":"two"}`)
+	drainOTLP(t, dispatcher)
+	if calls.Load() != 1 {
+		t.Fatalf("calls = %d", calls.Load())
+	}
+	if got := dispatcher.Counters(); got.Retried != 0 || got.Delivered != 0 || got.Rejected != 2 {
+		t.Fatalf("dispatcher counters = %+v", got)
+	}
+	if got := adapter.Counters(); got.Exported != 0 || got.RejectedPartial != 2 {
+		t.Fatalf("adapter counters = %+v", got)
+	}
+	_ = adapter.Close(context.Background())
+}
+
+func assertMalformedPartialResult(
+	t *testing.T,
+	calls uint64,
+	dispatcher delivery.Counters,
+	adapter ExportCounters,
+	observer *signalEventCapture,
+) {
+	t.Helper()
+	if calls != 1 {
+		t.Fatalf("calls = %d, want terminal single attempt", calls)
+	}
+	if dispatcher.Retried != 0 || dispatcher.Delivered != 0 || dispatcher.Rejected != 1 {
+		t.Fatalf("dispatcher counters = %+v", dispatcher)
+	}
+	if adapter.Exported != 0 || adapter.RejectedPartial != 0 || adapter.Failed != 1 {
+		t.Fatalf("adapter counters = %+v", adapter)
+	}
+	if got := observer.count(observability.SignalLogs, SignalOutcomeExportFailed); got != 1 {
+		t.Fatalf("failure observation = %d", got)
+	}
 }
 
 func TestHTTPLogAcknowledgementAndPostWriteFailureClassification(t *testing.T) {
@@ -1316,6 +1427,18 @@ type grpcLogCapture struct {
 	collectorlogpb.UnimplementedLogsServiceServer
 	requests chan *collectorlogpb.ExportLogsServiceRequest
 	headers  chan metadata.MD
+}
+
+type negativePartialGRPCLogServer struct {
+	collectorlogpb.UnimplementedLogsServiceServer
+	calls atomic.Uint64
+}
+
+func (server *negativePartialGRPCLogServer) Export(context.Context, *collectorlogpb.ExportLogsServiceRequest) (*collectorlogpb.ExportLogsServiceResponse, error) {
+	server.calls.Add(1)
+	return &collectorlogpb.ExportLogsServiceResponse{
+		PartialSuccess: &collectorlogpb.ExportLogsPartialSuccess{RejectedLogRecords: -1},
+	}, nil
 }
 
 type capturingSpanExporter struct {

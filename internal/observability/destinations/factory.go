@@ -31,6 +31,7 @@ import (
 	"github.com/defenseclaw/defenseclaw/internal/observability"
 	"github.com/defenseclaw/defenseclaw/internal/observability/delivery"
 	"github.com/defenseclaw/defenseclaw/internal/observability/destinations/local"
+	"github.com/defenseclaw/defenseclaw/internal/observability/destinations/otlp"
 	"github.com/defenseclaw/defenseclaw/internal/observability/destinations/push"
 	observabilityruntime "github.com/defenseclaw/defenseclaw/internal/observability/runtime"
 )
@@ -170,6 +171,9 @@ func (factory *Factory) PrepareDestination(
 	if !factoryOwns(destination.Kind) {
 		return nil, cleanup, newError(ErrorUnsupportedKind)
 	}
+	if destination.Kind == config.ObservabilityV8DestinationOTLP && !effectiveDestinationSelectsLogs(destination) {
+		return nil, cleanup, newError(ErrorUnsupportedKind)
+	}
 	if !validCompiledDestination(destination) {
 		return nil, cleanup, newError(ErrorInvalidDestination)
 	}
@@ -204,9 +208,88 @@ func (factory *Factory) PrepareDestination(
 		return factory.prepareSplunk(ctx, destination, cleanup)
 	case config.ObservabilityV8DestinationHTTPJSONL:
 		return factory.prepareHTTPJSONL(ctx, destination, cleanup)
+	case config.ObservabilityV8DestinationOTLP:
+		return factory.prepareOTLPLogs(ctx, destination, cleanup)
 	default:
 		return nil, cleanup, newError(ErrorUnsupportedKind)
 	}
+}
+
+func (factory *Factory) prepareOTLPLogs(
+	ctx context.Context,
+	destination config.ObservabilityV8EffectiveDestination,
+	noResource observabilityruntime.DestinationAdapterCleanup,
+) (delivery.Adapter, observabilityruntime.DestinationAdapterCleanup, error) {
+	headers, err := factory.resolveHeaders(destination.Transport.Headers)
+	if err != nil {
+		return nil, noResource, err
+	}
+	tlsConfig, err := factory.loadOTLPTLS(ctx, destination.Transport.TLS)
+	if err != nil {
+		return nil, noResource, err
+	}
+	overrides := make(map[observability.Signal]otlp.SignalOverride, 1)
+	if source, ok := destination.Transport.SignalOverrides[observability.SignalLogs]; ok {
+		overrides[observability.SignalLogs] = otlp.SignalOverride{Endpoint: source.Endpoint, Path: source.Path}
+	}
+	batch := destination.Transport.Batch
+	network := destination.Transport.NetworkSafety
+	prepared, prepareErr := prepareOTLPSafely(ctx, otlp.Config{
+		Destination:    destination.Name,
+		Protocol:       destination.Transport.Protocol,
+		Endpoint:       destination.Transport.Endpoint,
+		Selected:       []observability.Signal{observability.SignalLogs},
+		SignalOverride: overrides,
+		Headers:        headers,
+		LoggerName:     destination.Transport.LoggerName,
+		Timeout:        time.Duration(destination.Transport.TimeoutMS) * time.Millisecond,
+		TLS:            tlsConfig,
+		NetworkSafety: otlp.NetworkSafety{
+			AllowPrivateNetworks: network.AllowPrivateNetworks,
+			AllowCGNAT:           network.AllowCGNAT,
+		},
+		Batch: otlp.BatchConfig{
+			MaxQueueSize:        batch.MaxQueueSize,
+			MaxQueueBytes:       batch.MaxQueueBytes,
+			MaxExportBatchSize:  batch.MaxExportBatchSize,
+			MaxExportBatchBytes: batch.MaxExportBatchBytes,
+			ScheduledDelay:      time.Duration(batch.ScheduledDelayMS) * time.Millisecond,
+		},
+	}, otlp.Dependencies{Resolver: factory.resolver, Dialer: factory.dialer})
+	if prepareErr != nil {
+		return nil, noResource, newError(ErrorAdapterPrepare)
+	}
+	adapter, adapterErr := newOTLPLogAdapterSafely(ctx, prepared)
+	if adapterErr != nil {
+		return nil, noResource, newError(ErrorAdapterPrepare)
+	}
+	cleanup := retryableCleanup(adapter.Close)
+	if err := ctx.Err(); err != nil {
+		return nil, cleanup, err
+	}
+	factory.emitOTLPWarnings(destination, hasSecretHeaderReferences(destination.Transport.Headers) || hasAuthenticationLikeHeader(headers))
+	return adapter, cleanup, nil
+}
+
+func prepareOTLPSafely(ctx context.Context, config otlp.Config, dependencies otlp.Dependencies) (factory *otlp.Factory, err error) {
+	defer func() {
+		if recover() != nil {
+			factory, err = nil, newError(ErrorAdapterPrepare)
+		}
+	}()
+	return otlp.Prepare(ctx, config, dependencies)
+}
+
+func newOTLPLogAdapterSafely(ctx context.Context, factory *otlp.Factory) (adapter *otlp.LogAdapter, err error) {
+	defer func() {
+		if recover() != nil {
+			adapter, err = nil, newError(ErrorAdapterPrepare)
+		}
+	}()
+	if factory == nil {
+		return nil, newError(ErrorAdapterPrepare)
+	}
+	return factory.NewLogAdapter(ctx)
 }
 
 func (factory *Factory) prepareSplunk(
@@ -398,6 +481,31 @@ func (factory *Factory) loadTLS(
 	return result, nil
 }
 
+func (factory *Factory) loadOTLPTLS(
+	ctx context.Context,
+	source *config.ObservabilityV8TLSSource,
+) (otlp.TLSConfig, error) {
+	if source == nil || source.InsecureSkipVerify || (source.Insecure && source.CACert != "") {
+		return otlp.TLSConfig{}, newError(ErrorInvalidDestination)
+	}
+	if err := ctx.Err(); err != nil {
+		return otlp.TLSConfig{}, err
+	}
+	result := otlp.TLSConfig{Insecure: source.Insecure}
+	if source.CACert == "" {
+		return result, nil
+	}
+	bundle, ok := factory.loadCABundle(ctx, source.CACert)
+	if !ok || len(bundle) == 0 || len(bundle) > maxCABundleBytes {
+		return otlp.TLSConfig{}, newError(ErrorCALoadFailed)
+	}
+	if err := ctx.Err(); err != nil {
+		return otlp.TLSConfig{}, err
+	}
+	result.CABundle = append([]byte(nil), bundle...)
+	return result, nil
+}
+
 func (factory *Factory) loadCABundle(ctx context.Context, path string) (bundle []byte, ok bool) {
 	defer func() {
 		if recover() != nil {
@@ -413,7 +521,8 @@ func factoryOwns(kind config.ObservabilityV8DestinationKind) bool {
 	case config.ObservabilityV8DestinationJSONL,
 		config.ObservabilityV8DestinationConsole,
 		config.ObservabilityV8DestinationSplunkHEC,
-		config.ObservabilityV8DestinationHTTPJSONL:
+		config.ObservabilityV8DestinationHTTPJSONL,
+		config.ObservabilityV8DestinationOTLP:
 		return true
 	default:
 		return false
@@ -422,23 +531,38 @@ func factoryOwns(kind config.ObservabilityV8DestinationKind) bool {
 
 func validCompiledDestination(destination config.ObservabilityV8EffectiveDestination) bool {
 	if !destination.Enabled || !observability.IsStableToken(destination.Name) ||
-		len(destination.SelectedSignals) != 1 || destination.SelectedSignals[0] != observability.SignalLogs ||
-		len(destination.Capabilities.Signals) != 1 || destination.Capabilities.Signals[0] != observability.SignalLogs ||
 		!validQueue(destination.Transport.Batch) {
 		return false
 	}
 	switch destination.Kind {
 	case config.ObservabilityV8DestinationJSONL:
-		return validJSONLTransport(destination.Transport)
+		return exactLogOnlyDestination(destination) && validJSONLTransport(destination.Transport)
 	case config.ObservabilityV8DestinationConsole:
-		return validConsoleTransport(destination.Transport)
+		return exactLogOnlyDestination(destination) && validConsoleTransport(destination.Transport)
 	case config.ObservabilityV8DestinationSplunkHEC:
-		return validSplunkTransport(destination.Transport)
+		return exactLogOnlyDestination(destination) && validSplunkTransport(destination.Transport)
 	case config.ObservabilityV8DestinationHTTPJSONL:
-		return validHTTPJSONLTransport(destination.Transport)
+		return exactLogOnlyDestination(destination) && validHTTPJSONLTransport(destination.Transport)
+	case config.ObservabilityV8DestinationOTLP:
+		return effectiveDestinationSelectsLogs(destination) && destination.Capabilities.Supports(observability.SignalLogs) &&
+			validOTLPTransport(destination.Transport)
 	default:
 		return false
 	}
+}
+
+func effectiveDestinationSelectsLogs(destination config.ObservabilityV8EffectiveDestination) bool {
+	for _, signal := range destination.SelectedSignals {
+		if signal == observability.SignalLogs {
+			return true
+		}
+	}
+	return false
+}
+
+func exactLogOnlyDestination(destination config.ObservabilityV8EffectiveDestination) bool {
+	return len(destination.SelectedSignals) == 1 && destination.SelectedSignals[0] == observability.SignalLogs &&
+		len(destination.Capabilities.Signals) == 1 && destination.Capabilities.Signals[0] == observability.SignalLogs
 }
 
 func validQueue(batch *config.ObservabilityV8BatchSource) bool {
@@ -521,6 +645,72 @@ func validHTTPJSONLTransport(transport config.ObservabilityV8TransportPlan) bool
 		return false
 	}
 	return len(transport.Headers) <= 1_024
+}
+
+func validOTLPTransport(transport config.ObservabilityV8TransportPlan) bool {
+	if transport.Path != "" || transport.Rotation != nil || transport.Listen != "" ||
+		transport.Method != "" || transport.TokenEnv != "" || transport.BearerEnv != "" ||
+		transport.Index != "" || transport.Source != "" || transport.SourceType != "" ||
+		transport.SourceTypeOverrides != nil || transport.TimeoutMS <= 0 || transport.TLS == nil ||
+		transport.TLS.InsecureSkipVerify || len(transport.TLS.CACert) > 4_096 ||
+		(transport.TLS.CACert != "" && !filepath.IsAbs(transport.TLS.CACert)) ||
+		(transport.TLS.Insecure && transport.TLS.CACert != "") || transport.NetworkSafety == nil ||
+		!validPushBatch(transport.Batch) || len(transport.Headers) > 128 {
+		return false
+	}
+	if transport.Protocol != otlp.ProtocolGRPC && transport.Protocol != otlp.ProtocolGRPCProtobuf &&
+		transport.Protocol != otlp.ProtocolHTTP && transport.Protocol != otlp.ProtocolHTTPProtobuf {
+		return false
+	}
+	maxDurationMilliseconds := int64(^uint64(0)>>1) / int64(time.Millisecond)
+	if int64(transport.TimeoutMS) > maxDurationMilliseconds {
+		return false
+	}
+	logsOverride, hasLogsOverride := transport.SignalOverrides[observability.SignalLogs]
+	if transport.Endpoint == "" && (!hasLogsOverride || logsOverride.Endpoint == "") {
+		return false
+	}
+	if (transport.Protocol == otlp.ProtocolGRPC || transport.Protocol == otlp.ProtocolGRPCProtobuf) &&
+		hasLogsOverride && logsOverride.Path != "" {
+		return false
+	}
+	return true
+}
+
+func hasAuthenticationLikeHeader(headers map[string]string) bool {
+	for name := range headers {
+		normalized := strings.ToLower(name)
+		if normalized == "authorization" || normalized == "proxy-authorization" ||
+			strings.Contains(normalized, "api-key") || strings.Contains(normalized, "apikey") ||
+			strings.Contains(normalized, "token") || strings.Contains(normalized, "secret") {
+			return true
+		}
+	}
+	return false
+}
+
+func (factory *Factory) emitOTLPWarnings(destination config.ObservabilityV8EffectiveDestination, credentials bool) {
+	transport := destination.Transport
+	if transport.TLS != nil && transport.TLS.Insecure {
+		emitFactoryWarning(factory.warnings, push.Warning{Destination: destination.Name, Code: push.WarningTLSVerificationDisabled})
+	}
+	if transport.NetworkSafety != nil && transport.NetworkSafety.AllowPrivateNetworks {
+		emitFactoryWarning(factory.warnings, push.Warning{Destination: destination.Name, Code: push.WarningPrivateNetworksAllowed})
+	}
+	if transport.NetworkSafety != nil && transport.NetworkSafety.AllowCGNAT {
+		emitFactoryWarning(factory.warnings, push.Warning{Destination: destination.Name, Code: push.WarningCGNATAllowed})
+	}
+	if transport.TLS != nil && transport.TLS.Insecure && credentials {
+		emitFactoryWarning(factory.warnings, push.Warning{Destination: destination.Name, Code: push.WarningPlaintextCredentials})
+	}
+}
+
+func emitFactoryWarning(observer push.WarningObserver, warning push.Warning) {
+	if observer == nil {
+		return
+	}
+	defer func() { _ = recover() }()
+	observer.ObservePushWarning(warning)
 }
 
 func validSecretReference(reference string) bool {

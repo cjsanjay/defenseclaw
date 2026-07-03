@@ -214,8 +214,17 @@ func (adapter *LogAdapter) deliverHTTP(ctx context.Context, request *collectorlo
 	if err := proto.Unmarshal(body, &result); err != nil {
 		return deliveryResult(delivery.OutcomeAmbiguous)
 	}
+	if result.PartialSuccess != nil && result.PartialSuccess.RejectedLogRecords < 0 {
+		adapter.recordLogFailure(recordCount)
+		return deliveryResult(delivery.OutcomePermanentPayload)
+	}
 	if result.PartialSuccess != nil && result.PartialSuccess.RejectedLogRecords > 0 {
-		adapter.recordLogSuccess(recordCount, result.PartialSuccess.RejectedLogRecords)
+		accepted, rejected := adapter.recordLogSuccess(recordCount, result.PartialSuccess.RejectedLogRecords)
+		if accepted > 0 && rejected > 0 {
+			return delivery.DeliveryResult{
+				Outcome: delivery.OutcomePartial, DeliveredItems: accepted, RejectedItems: rejected,
+			}
+		}
 		return deliveryResult(delivery.OutcomePermanentPayload)
 	}
 	adapter.recordLogSuccess(recordCount, 0)
@@ -247,15 +256,34 @@ func (adapter *LogAdapter) deliverGRPC(ctx context.Context, request *collectorlo
 			return deliveryResult(delivery.OutcomeAmbiguous)
 		}
 	}
+	if response != nil && response.PartialSuccess != nil && response.PartialSuccess.RejectedLogRecords < 0 {
+		adapter.recordLogFailure(recordCount)
+		return deliveryResult(delivery.OutcomePermanentPayload)
+	}
 	if response != nil && response.PartialSuccess != nil && response.PartialSuccess.RejectedLogRecords > 0 {
-		adapter.recordLogSuccess(recordCount, response.PartialSuccess.RejectedLogRecords)
+		accepted, rejected := adapter.recordLogSuccess(recordCount, response.PartialSuccess.RejectedLogRecords)
+		if accepted > 0 && rejected > 0 {
+			return delivery.DeliveryResult{
+				Outcome: delivery.OutcomePartial, DeliveredItems: accepted, RejectedItems: rejected,
+			}
+		}
 		return deliveryResult(delivery.OutcomePermanentPayload)
 	}
 	adapter.recordLogSuccess(recordCount, 0)
 	return deliveryResult(delivery.OutcomeDelivered)
 }
 
-func (adapter *LogAdapter) recordLogSuccess(total int, rejected int64) {
+func (adapter *LogAdapter) recordLogFailure(total int) {
+	if total <= 0 {
+		return
+	}
+	adapter.counters.failed.Add(uint64(total))
+	observe(adapter.config.observer, SignalEvent{
+		Signal: observability.SignalLogs, Outcome: SignalOutcomeExportFailed, Count: uint64(total),
+	})
+}
+
+func (adapter *LogAdapter) recordLogSuccess(total int, rejected int64) (int, int) {
 	if total < 0 {
 		total = 0
 	}
@@ -265,15 +293,16 @@ func (adapter *LogAdapter) recordLogSuccess(total int, rejected int64) {
 	if rejected > int64(total) {
 		rejected = int64(total)
 	}
-	accepted := uint64(total) - uint64(rejected)
+	accepted := total - int(rejected)
 	if accepted > 0 {
-		adapter.counters.exported.Add(accepted)
-		observe(adapter.config.observer, SignalEvent{Signal: observability.SignalLogs, Outcome: SignalOutcomeExported, Count: accepted})
+		adapter.counters.exported.Add(uint64(accepted))
+		observe(adapter.config.observer, SignalEvent{Signal: observability.SignalLogs, Outcome: SignalOutcomeExported, Count: uint64(accepted)})
 	}
 	if rejected > 0 {
 		adapter.counters.rejectedPartial.Add(uint64(rejected))
 		observe(adapter.config.observer, SignalEvent{Signal: observability.SignalLogs, Outcome: SignalOutcomePartialRejected, Count: uint64(rejected)})
 	}
+	return accepted, int(rejected)
 }
 
 func (adapter *LogAdapter) Close(ctx context.Context) error {
@@ -290,13 +319,13 @@ func (adapter *LogAdapter) Close(ctx context.Context) error {
 	if adapter.closed {
 		return nil
 	}
-	adapter.closed = true
 	closeHTTPTransport(adapter.httpTransport)
 	if adapter.connection != nil {
 		if err := adapter.connection.Close(); err != nil {
 			return newError(ErrorShutdown, err)
 		}
 	}
+	adapter.closed = true
 	return nil
 }
 
