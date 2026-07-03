@@ -748,6 +748,9 @@ The following are live reloadable:
 
 - SQLite database path.
 - Judge-body database path.
+- `guardrail.retain_judge_bodies`, because it changes the authoritative raw-body
+  database and async-writer lifecycle. Reload reports this exact field path and
+  does not publish the new value while the old capture state remains active.
 - Any listener binding that cannot be atomically replaced on the current platform.
 
 A reload that changes a restart-required field is rejected with an actionable

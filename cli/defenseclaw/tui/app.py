@@ -121,6 +121,7 @@ from defenseclaw.tui.services.catalog_state import (
     friendly_connector_name,
 )
 from defenseclaw.tui.services.cli_choices import CONNECTORS as _KNOWN_CONNECTORS
+from defenseclaw.tui.services.judge_history import read_judge_response_history
 from defenseclaw.tui.services.overview_state import (
     ConnectorHealth,
     ConnectorOverviewRow,
@@ -9709,46 +9710,12 @@ class DefenseClawTUI(App[None]):
         self._sync_setup_readiness()
 
     def _judge_response_history(self) -> tuple[tuple[object, ...], str]:
-        store = _audit_store(self.config)
-        if store is None:
-            return (), "Audit DB is unavailable; configure audit_db to view retained judge responses."
-        try:
-            if hasattr(store, "list_judge_responses"):
-                return tuple(store.list_judge_responses(20)), ""  # type: ignore[attr-defined]
-            db = getattr(store, "db", None)
-            if db is None:
-                return (), "Audit store does not expose a judge response reader."
-            columns = {row[1] for row in db.execute("PRAGMA table_info(judge_responses)").fetchall()}
-            if not columns:
-                return (), "judge_responses table is not initialized yet."
-            wanted = (
-                "timestamp",
-                "kind",
-                "direction",
-                "action",
-                "severity",
-                "latency_ms",
-                "inspected_model",
-                "model",
-                "request_id",
-                "trace_id",
-                "run_id",
-                "input_hash",
-                "confidence",
-                "fail_closed_applied",
-                "prompt_template_id",
-                "parse_error",
-                "raw",
-            )
-            selected = tuple(column for column in wanted if column in columns)
-            cursor = db.execute(
-                f"SELECT {', '.join(selected)} FROM judge_responses ORDER BY timestamp DESC LIMIT ?",
-                (20,),
-            )
-            rows = tuple(dict(zip(selected, row, strict=True)) for row in cursor.fetchall())
-            return rows, ""
-        except Exception as exc:  # noqa: BLE001 - error belongs in the modal.
-            return (), str(exc)
+        rows, error = read_judge_response_history(
+            self.config,
+            data_dir=self.data_dir,
+            limit=20,
+        )
+        return tuple(rows), error
 
     def _load_audit_alerts(self) -> None:
         """Mirror loaded alert counts into Overview without heavy DB scans."""

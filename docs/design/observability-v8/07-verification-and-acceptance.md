@@ -505,6 +505,12 @@ and prove their projected outputs contain no prohibited canary while a parallel
 - No raw judge body in ordinary event/projection tables.
 - New and migrated DB files preserve required owner/managed permissions, reject
   untrusted/symlinked paths, and never widen existing permissions.
+- Unix tests reject a sticky world-writable immediate parent while allowing that
+  directory only as an ancestor of an owner-only parent, and verify SQLite
+  `-wal`/`-shm` files have no group/other access.
+- Windows tests reject untrusted owners, permissive or inheritable read/write
+  DACLs, mutable ancestors, and leaf/parent reparse points; compile-only coverage
+  is not a substitute for the platform ACL test lane.
 - Disk-full/quota failure changes health safely and never causes a raw remote
   fallback.
 - Per-projection HMAC verifies after redaction, differs for differently redacted
@@ -702,6 +708,9 @@ Required cases:
 - Changed route affects new records only; queued projected payloads retain old
   projection/profile.
 - SQLite path and judge-body path reload are rejected as restart-required.
+- Both `guardrail.retain_judge_bodies` transitions are rejected as
+  restart-required with the exact field path, and active capture state remains
+  unchanged until restart.
 - Retention age reload is accepted.
 - Race detector reports no mutation of canonical records or policy snapshots.
 

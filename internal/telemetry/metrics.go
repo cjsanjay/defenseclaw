@@ -182,8 +182,8 @@ type metricsSet struct {
 	judgeSemDepth         metric.Int64UpDownCounter
 	judgeSemDrops         metric.Int64Counter
 	// Judge-body persistence (Phase 3 of the SQLite write-lock fix):
-	// the async queue replaces the synchronous SetJudgePersistor
-	// closure that used to fire two sequential SQLite writes on the
+	// the authoritative async queue replaces the removed synchronous
+	// callback that used to fire two sequential SQLite writes on the
 	// proxy hot path. Drops are the canary signal — a healthy
 	// sidecar should hold this at zero; a non-zero rate means the
 	// queue depth or batch size are mis-tuned for the offered load.

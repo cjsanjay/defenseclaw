@@ -262,6 +262,7 @@ func NewSidecar(cfg *config.Config, store *audit.Store, logger *audit.Logger, sh
 		router.SetJudge(hookJudge)
 	}
 
+	previousClientOnEvent := client.OnEvent
 	client.OnEvent = router.Route
 
 	alertCtx, alertCancel := context.WithCancel(context.Background())
@@ -363,6 +364,23 @@ func NewSidecar(cfg *config.Config, store *audit.Store, logger *audit.Logger, sh
 		logger.SetStructuredEmitter(newAuditBridge(events))
 		logger.SetGatewayLogWriter(events)
 	}
+	cleanupFailedConstruction := func() {
+		alertCancel()
+		client.OnEvent = previousClientOnEvent
+		if shell != nil {
+			shell.BindObservability(nil, nil)
+		}
+		if logger != nil {
+			logger.SetStructuredEmitter(nil)
+			logger.SetGatewayLogWriter(nil)
+		}
+		if webhooks != nil {
+			webhooks.Close()
+		}
+		SetEventWriter(nil)
+		SetEgressTelemetry(nil)
+		_ = events.Close()
+	}
 
 	// Phase 3: persist judge bodies to the local SQLite audit store
 	// AND emit a structured audit event so every configured sink
@@ -379,7 +397,16 @@ func NewSidecar(cfg *config.Config, store *audit.Store, logger *audit.Logger, sh
 		judgeStore     *JudgeStore
 		judgeBodyStore *audit.JudgeBodyStore
 	)
-	if retainJudge && store != nil {
+	legacyJudgeBodies := false
+	if store != nil {
+		var legacyErr error
+		legacyJudgeBodies, legacyErr = audit.HasLegacyJudgeBodies(context.Background(), store)
+		if legacyErr != nil {
+			cleanupFailedConstruction()
+			return nil, fmt.Errorf("inspect legacy judge-body cutover work: %w", legacyErr)
+		}
+	}
+	if (retainJudge || legacyJudgeBodies) && store != nil {
 		// Resolve the queue depth. Precedence: env override > config
 		// value > built-in default. The env override mirrors the
 		// DEFENSECLAW_PERSIST_JUDGE pattern so operators have a
@@ -390,57 +417,39 @@ func NewSidecar(cfg *config.Config, store *audit.Store, logger *audit.Logger, sh
 				queueDepth = parsed
 			}
 		}
-		// Phase 4 split: judge bodies live in a dedicated SQLite
-		// file (~/.defenseclaw/judge_bodies.db by default). Falling
-		// back to audit.db on open failure keeps the sidecar
-		// running — better to share the write lock than to drop
-		// judge rows entirely. The fallback is announced via the
-		// structured audit logger (`gateway.judge_bodies.fallback`)
-		// so operators see it in the same Splunk/OTLP stream that
-		// surfaces the `defenseclaw.sqlite.busy_retries` regression
-		// the fallback re-enables.
+		// V8 cutover: judge bodies live exclusively in the dedicated
+		// SQLite file. The cutover constructor blocks reads/writes until
+		// every legacy row has committed and verified by stable ID. Any
+		// open/copy/verification failure aborts startup; audit.db is never
+		// used as a raw-body fallback.
 		bodyDBPath := strings.TrimSpace(cfg.JudgeBodiesDB)
 		if bodyDBPath == "" {
 			bodyDBPath = filepath.Join(cfg.DataDir, config.DefaultJudgeBodiesDBName)
 		}
-		var inserter JudgeBodyInserter
-		if bs, openErr := audit.NewJudgeBodyStore(bodyDBPath); openErr == nil {
-			judgeBodyStore = bs
-			inserter = &judgeBodyStoreInserter{s: bs}
-			if logger != nil {
-				_ = logger.LogEvent(audit.Event{
-					Action:   string(audit.ActionGatewayJudgeBodiesReady),
-					Actor:    "defenseclaw-gateway",
-					Severity: "INFO",
-					Details:  "path=" + bodyDBPath,
-				})
-			}
-		} else {
-			if logger != nil {
-				_ = logger.LogEvent(audit.Event{
-					Action:   string(audit.ActionGatewayJudgeBodiesFallback),
-					Actor:    "defenseclaw-gateway",
-					Severity: "ERROR",
-					Details: fmt.Sprintf(
-						"path=%s error=%v fallback=audit.db",
-						bodyDBPath, openErr,
-					),
-				})
-			} else {
-				// Boot-time fallback: logger isn't wired yet. Stderr
-				// is the best we have until the sidecar is fully up.
-				fmt.Fprintf(os.Stderr, "[sidecar] judge bodies db open failed, falling back to audit.db: %v\n", openErr)
-			}
-			inserter = &auditStoreInserter{s: store}
+		bs, openErr := openAuthoritativeJudgeBodyStore(context.Background(), bodyDBPath, store)
+		if openErr != nil {
+			cleanupFailedConstruction()
+			return nil, openErr
+		}
+		judgeBodyStore = bs
+		if logger != nil {
+			_ = logger.LogEvent(audit.Event{
+				Action:   string(audit.ActionGatewayJudgeBodiesReady),
+				Actor:    "defenseclaw-gateway",
+				Severity: "INFO",
+				Details:  "path=" + bodyDBPath,
+			})
 		}
 		// Async judge persistence: rows queue on a buffered channel
 		// and flush in batched transactions on a dedicated worker.
 		// See internal/gateway/judge_store.go for the design notes;
-		// the legacy SetJudgePersistor synchronous closure that
-		// used to live here is gone — its dropped writes under
+		// the legacy synchronous callback that used to live here is
+		// gone — its dropped writes under
 		// burst load were the motivating bug for this fix.
-		judgeStore = NewJudgeStore(inserter, logger, queueDepth)
-		SetJudgeResponseStore(judgeStore)
+		if retainJudge {
+			judgeStore = NewJudgeStore(&judgeBodyStoreInserter{s: bs}, logger, queueDepth)
+			SetJudgeResponseStore(judgeStore)
+		}
 	}
 
 	// Boot path — no request context exists yet. Writer.Emit stamps
@@ -758,7 +767,7 @@ func (s *Sidecar) Run(ctx context.Context) error {
 		// Detach from the global so any post-drain emit path sees a
 		// nil store instead of racing the worker.
 		SetJudgeResponseStore(nil)
-		if err := s.judgeStore.Shutdown(runCtx); err != nil {
+		if err := shutdownJudgeStore(s.judgeStore); err != nil {
 			if s.logger != nil {
 				_ = s.logger.LogEvent(audit.Event{
 					Action:   string(audit.ActionGatewayJudgeStoreDrainTimeout),
@@ -824,7 +833,6 @@ func (s *Sidecar) Run(ctx context.Context) error {
 		_ = s.events.Close()
 		SetEventWriter(nil)
 		SetEgressTelemetry(nil)
-		SetJudgePersistor(nil)
 	}
 	if tel := s.otelSnapshot(); tel != nil {
 		_ = tel.Shutdown(context.Background())
@@ -838,6 +846,19 @@ func (s *Sidecar) Run(ctx context.Context) error {
 	default:
 		return nil
 	}
+}
+
+// shutdownJudgeStore gives the persistence worker its own bounded drain
+// budget. Sidecar.Run reaches this point only after runCtx has been cancelled;
+// passing that lifecycle context to Shutdown would therefore abort the drain
+// immediately and could lose queued raw judge bodies during normal shutdown.
+func shutdownJudgeStore(store *JudgeStore) error {
+	if store == nil {
+		return nil
+	}
+	drainCtx, cancel := context.WithTimeout(context.Background(), judgePersistShutdownTimeout)
+	defer cancel()
+	return store.Shutdown(drainCtx)
 }
 
 func (s *Sidecar) attachApplicationProtectionObserver(ctx context.Context, apiToken string) {
@@ -1365,6 +1386,7 @@ func guardrailNeedsRestart(oldCfg, newCfg *config.Config) bool {
 	oldG, newG := oldCfg.Guardrail, newCfg.Guardrail
 	if oldG.Host != newG.Host || oldG.Port != newG.Port || oldG.Enabled != newG.Enabled ||
 		oldG.Connector != newG.Connector ||
+		oldG.RetainJudgeBodies != newG.RetainJudgeBodies ||
 		!reflect.DeepEqual(oldCfg.LLM, newCfg.LLM) ||
 		!reflect.DeepEqual(oldG.Connectors, newG.Connectors) ||
 		oldG.RulePackDir != newG.RulePackDir || oldG.HookSelfHeal != newG.HookSelfHeal ||

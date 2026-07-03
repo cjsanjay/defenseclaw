@@ -9,6 +9,7 @@ import (
 	"errors"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -42,6 +43,7 @@ type fakeInserter struct {
 	failEveryNthInsert int // 0 = never fail
 	failCommit         bool
 	beginErr           error
+	beginWaitForCancel bool
 }
 
 type fakeBatch struct {
@@ -63,13 +65,18 @@ func (f *fakeInserter) InsertJudgeResponse(_ audit.JudgeResponse) error {
 	return nil
 }
 
-func (f *fakeInserter) BeginJudgeBatch(_ context.Context) (JudgeBatch, error) {
+func (f *fakeInserter) BeginJudgeBatch(ctx context.Context) (JudgeBatch, error) {
 	f.mu.Lock()
 	f.begins++
 	beginErr := f.beginErr
+	waitForCancel := f.beginWaitForCancel
 	f.mu.Unlock()
 	if beginErr != nil {
 		return nil, beginErr
+	}
+	if waitForCancel {
+		<-ctx.Done()
+		return nil, ctx.Err()
 	}
 	return &fakeBatch{parent: f}, nil
 }
@@ -326,6 +333,28 @@ func TestJudgeStore_ShutdownTimeoutHonored(t *testing.T) {
 	}
 }
 
+func TestJudgeStore_LongCallerDeadlineCannotExtendShutdownCap(t *testing.T) {
+	hold := make(chan struct{})
+	defer close(hold)
+	fi := &fakeInserter{hold: hold}
+	js := NewJudgeStore(fi, nil, 8)
+	js.shutdownTimeout = 50 * time.Millisecond
+	js.drainCancelAfter = 40 * time.Millisecond
+	payload, direction := makeJob(t)
+	_ = js.PersistJudgeEvent(t.Context(), direction, payload, "", "", "", "")
+
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+	started := time.Now()
+	err := js.Shutdown(ctx)
+	if err == nil || !strings.Contains(err.Error(), "shutdown timed out") {
+		t.Fatalf("Shutdown error = %v, want internal timeout", err)
+	}
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("long caller deadline extended shutdown to %s", elapsed)
+	}
+}
+
 // TestJudgeStore_NilSafePaths covers the API guards: nil store, nil
 // JudgeStore, and empty RawResponse must never panic.
 func TestJudgeStore_NilSafePaths(t *testing.T) {
@@ -340,20 +369,17 @@ func TestJudgeStore_NilSafePaths(t *testing.T) {
 }
 
 // TestJudgeStore_RoundTrip is the integration smoke: hand an actual
-// audit.Store to the queue, enqueue a row, drain, and read it back
+// authoritative JudgeBodyStore to the queue, enqueue a row, drain, and read it back
 // via ListJudgeResponses. Belt-and-suspenders test for the wiring
-// between the gateway worker and audit.Store.BeginJudgeBatch.
+// between the gateway worker and JudgeBodyStore.BeginJudgeBatch.
 func TestJudgeStore_RoundTrip(t *testing.T) {
-	store, err := audit.NewStore(filepath.Join(t.TempDir(), "audit.db"))
+	store, err := audit.NewJudgeBodyStore(filepath.Join(t.TempDir(), "judge_bodies.db"))
 	if err != nil {
-		t.Fatalf("NewStore: %v", err)
+		t.Fatalf("NewJudgeBodyStore: %v", err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
-	if err := store.Init(); err != nil {
-		t.Fatalf("Init: %v", err)
-	}
 
-	js := NewJudgeStoreFromAudit(store)
+	js := NewJudgeStoreFromBodyStore(store, nil, 0)
 	payload, dir := makeJob(t)
 	ctx := ContextWithRequestID(context.Background(), "req-roundtrip")
 	if err := js.PersistJudgeEvent(ctx, dir, payload, "tool", "tid", "pol", "dest"); err != nil {
@@ -739,6 +765,77 @@ func TestJudgeStore_ShutdownHonorsCtxCancel(t *testing.T) {
 	// And IsClosed must still be false — the worker is wedged.
 	if js.IsClosed() {
 		t.Fatal("IsClosed reported true after cancellation, but worker should still be running")
+	}
+}
+
+func TestShutdownJudgeStoreDrainsAfterLifecycleContextCancellation(t *testing.T) {
+	fi := &fakeInserter{}
+	js := NewJudgeStore(fi, nil, 8)
+	payload, direction := makeJob(t)
+	if err := js.PersistJudgeEvent(t.Context(), direction, payload, "", "", "", ""); err != nil {
+		t.Fatalf("PersistJudgeEvent: %v", err)
+	}
+
+	lifecycleCtx, cancelLifecycle := context.WithCancel(t.Context())
+	cancelLifecycle()
+	if lifecycleCtx.Err() == nil {
+		t.Fatal("lifecycle context did not cancel")
+	}
+
+	if err := shutdownJudgeStore(js); err != nil {
+		t.Fatalf("shutdownJudgeStore: %v", err)
+	}
+	if !js.IsClosed() {
+		t.Fatal("judge store worker did not finish its drain")
+	}
+	_, inserts, commits := fi.snapshot()
+	if inserts != 1 || commits != 1 {
+		t.Fatalf("drained writes = inserts:%d commits:%d, want 1/1", inserts, commits)
+	}
+}
+
+func TestJudgeStore_ShutdownCancelsBusyBatchAndAccountsQueuedTail(t *testing.T) {
+	reader := installTestProvider(t)
+	fi := &fakeInserter{beginWaitForCancel: true}
+	js := NewJudgeStore(fi, nil, 64)
+	js.drainCancelAfter = 50 * time.Millisecond
+	payload, direction := makeJob(t)
+
+	const jobs = judgePersistBatchMax + 8
+	for i := 0; i < jobs; i++ {
+		if err := js.PersistJudgeEvent(t.Context(), direction, payload, "", "", "", ""); err != nil {
+			t.Fatalf("PersistJudgeEvent %d: %v", i, err)
+		}
+	}
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		begins, _, _ := fi.snapshot()
+		if begins > 0 {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if begins, _, _ := fi.snapshot(); begins == 0 {
+		t.Fatal("worker did not enter the synthetic busy batch")
+	}
+
+	started := time.Now()
+	if err := js.Shutdown(t.Context()); err != nil {
+		t.Fatalf("Shutdown: %v", err)
+	}
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("bounded shutdown took %s", elapsed)
+	}
+	if !js.IsClosed() {
+		t.Fatal("worker remained alive after its database context was cancelled")
+	}
+
+	rm := metricdata.ResourceMetrics{}
+	if err := reader.Collect(t.Context(), &rm); err != nil {
+		t.Fatalf("reader.Collect: %v", err)
+	}
+	if got := dropReasonCount(t, rm, "shutdown"); got != jobs {
+		t.Fatalf("drops(reason=shutdown) = %d, want %d", got, jobs)
 	}
 }
 

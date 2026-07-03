@@ -49,6 +49,17 @@ logs and normalized projections may describe trace/metric health.
   configured and validated. Existing permissions must never be widened by startup,
   migration, or retention.
 - Database paths must pass symlink, ownership, and managed-enterprise trust checks.
+- A root-owned sticky world-writable directory may be a path ancestor, but MUST
+  NOT be the immediate database parent. The immediate parent must prevent an
+  untrusted local principal from pre-creating, replacing, reading, or writing the
+  SQLite database and its `-wal`, `-shm`, and journal siblings.
+- On Windows, every path element rejects symlinks, junctions, and other reparse
+  points, and every directory ancestor rejects untrusted child-mutation rights
+  that could substitute a validated descendant. Owners and DACLs are validated;
+  newly created immediate parents and
+  database files receive a protected DACL limited to the current user,
+  Administrators, and LocalSystem. Untrusted inheritable read access on the
+  immediate parent is unsafe because SQLite auxiliary files inherit it.
 
 ### 2.2 Write contract
 
@@ -227,6 +238,13 @@ both databases, delete matching legacy copies from `audit.db` first and the
 authoritative rows from `judge_bodies.db` second. A failure between those commits
 therefore leaves, at worst, the authoritative copy pending a later purge and cannot
 make a deleted authoritative body reappear through the legacy compatibility read.
+
+`legacy_judge_cutover_state` is protected cutover current state, not event history.
+`legacy_judge_cutover_rows` is per-source migration evidence. It is retained while
+the corresponding legacy compatibility rows exist and is eligible for cleanup only
+after those source rows have been purged and the authoritative copy is no longer
+dependent on replay evidence. The global reaper owns that cleanup; ordinary
+event-history retention never deletes either table blindly.
 
 ## 5. Retention Contract
 

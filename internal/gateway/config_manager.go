@@ -264,6 +264,7 @@ func diffConfigs(oldCfg, newCfg *config.Config) ConfigDiff {
 	add("scanners", oldCfg.Scanners, newCfg.Scanners)
 	add("watch", oldCfg.Watch, newCfg.Watch)
 	add("guardrail", oldCfg.Guardrail, newCfg.Guardrail)
+	add("guardrail.retain_judge_bodies", oldCfg.Guardrail.RetainJudgeBodies, newCfg.Guardrail.RetainJudgeBodies)
 	add("gateway", oldCfg.Gateway, newCfg.Gateway)
 	add("openshell", oldCfg.OpenShell, newCfg.OpenShell)
 	add("skill_actions", oldCfg.SkillActions, newCfg.SkillActions)
@@ -303,6 +304,15 @@ func diffConfigs(oldCfg, newCfg *config.Config) ConfigDiff {
 		"discovery_source": {},
 	}
 	for _, path := range changed {
+		if path == "guardrail" && onlyRetainJudgeBodiesChanged(oldCfg, newCfg) {
+			// Report the exact restart boundary below instead of the broad
+			// guardrail section when this is the only guardrail change.
+			continue
+		}
+		if path == "guardrail.retain_judge_bodies" {
+			restart = append(restart, path)
+			continue
+		}
 		if path == "guardrail" && guardrailNeedsRestart(oldCfg, newCfg) {
 			restart = append(restart, path)
 			continue
@@ -344,6 +354,16 @@ func diffConfigs(oldCfg, newCfg *config.Config) ConfigDiff {
 		restart = append(restart, "deployment_mode")
 	}
 	return ConfigDiff{Changed: changed, RestartRequired: sortedUniqueStrings(restart)}
+}
+
+func onlyRetainJudgeBodiesChanged(oldCfg, newCfg *config.Config) bool {
+	if oldCfg == nil || newCfg == nil || oldCfg.Guardrail.RetainJudgeBodies == newCfg.Guardrail.RetainJudgeBodies {
+		return false
+	}
+	oldGuardrail := oldCfg.Guardrail
+	newGuardrail := newCfg.Guardrail
+	oldGuardrail.RetainJudgeBodies = newGuardrail.RetainJudgeBodies
+	return reflect.DeepEqual(oldGuardrail, newGuardrail)
 }
 
 func sortedUniqueStrings(values []string) []string {

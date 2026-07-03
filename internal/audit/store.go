@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -373,9 +374,16 @@ func (s *Store) scanRow(ctx context.Context, op string, row *sql.Row, dest ...an
 // the caller (otherwise we'd corrupt invariants halfway through). We
 // still record the metric so contention shows up in dashboards.
 func txExec(tx *sql.Tx, op string, query string, args ...any) (sql.Result, error) {
-	res, err := tx.Exec(query, args...)
+	return txExecContext(context.Background(), tx, op, query, args...)
+}
+
+func txExecContext(ctx context.Context, tx *sql.Tx, op string, query string, args ...any) (sql.Result, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	res, err := tx.ExecContext(ctx, query, args...)
 	if isSQLiteBusy(err) {
-		telemetry.RecordSQLiteBusy(context.Background(), op)
+		telemetry.RecordSQLiteBusy(ctx, op)
 	}
 	return res, err
 }
@@ -1424,6 +1432,12 @@ var migrations = []migration{
 			return nil
 		},
 	},
+	{
+		description: "judge bodies: normalize timestamps for indexed retention",
+		apply: func(ex dbExecer) error {
+			return migrateJudgeBodyTimestampUnixNano(ex, legacyJudgeTimestampUnixNanoIndex)
+		},
+	},
 }
 
 // tableExists reports whether the given SQLite table is present.
@@ -1462,6 +1476,9 @@ func (s *Store) Init() error {
 		if err := s.applyMigration(ver, m); err != nil {
 			return err
 		}
+	}
+	if err := ensureJudgeBodyTimestampUnixNano(s.db, legacyJudgeTimestampUnixNanoIndex); err != nil {
+		return fmt.Errorf("audit: verify judge timestamp retention index: %w", err)
 	}
 	// The v8 local event-history anchor is mandatory. Some migration unit
 	// fixtures intentionally exercise table-scoped migrations against partial
@@ -1886,8 +1903,17 @@ const MaxJudgeRawBytes = 64 * 1024
 // callers cannot accidentally mix in random queries that defeat
 // the per-batch fsync-amortization guarantee.
 type JudgeBatch struct {
-	tx        *sql.Tx
-	committed bool
+	tx  *sql.Tx
+	ctx context.Context
+	// lifecycleMu serializes Commit and Rollback. Callers may retry either
+	// finalizer concurrently, and the dedicated JudgeBodyStore attaches an
+	// RWMutex release callback that must run exactly once.
+	lifecycleMu sync.Mutex
+	committed   bool
+	// release is non-nil only for the dedicated JudgeBodyStore. It holds a
+	// runtime read lock for the complete transaction so a cutover cannot race
+	// a batch that passed the readiness gate.
+	release func()
 }
 
 // InsertJudgeResponse writes one row inside the transaction. The
@@ -1911,22 +1937,27 @@ func (b *JudgeBatch) InsertJudgeResponse(e JudgeResponse) error {
 	if e.RunID == "" {
 		e.RunID = currentRunID()
 	}
+	timestampUnixNano, err := judgeBodyUnixNano(e.Timestamp)
+	if err != nil {
+		return fmt.Errorf("audit: normalize judge batch timestamp: %w", err)
+	}
 	raw := truncateJudgeRaw(e.Raw, MaxJudgeRawBytes)
 	failClosed := 0
 	if e.FailClosedApplied {
 		failClosed = 1
 	}
-	if _, err := txExec(b.tx, "audit_batch_insert",
+	if _, err := txExecContext(b.ctx, b.tx, "audit_batch_insert",
 		`INSERT INTO judge_responses
-			(id, timestamp, kind, direction, model, action, severity, latency_ms,
+			(id, timestamp, timestamp_unix_nano, kind, direction, model, action, severity, latency_ms,
 			 parse_error, raw_response, request_id, trace_id, run_id, session_id, input_hash,
 			 confidence, fail_closed_applied, inspected_model, prompt_template_id,
 			 schema_version, content_hash, generation, binary_version,
 			 agent_id, agent_instance_id, sidecar_instance_id,
 			 policy_id, destination_app, tool_name, tool_id)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		e.ID,
 		e.Timestamp.Format(time.RFC3339Nano),
+		timestampUnixNano,
 		e.Kind,
 		nullStr(e.Direction),
 		nullStr(e.Model),
@@ -1972,7 +2003,12 @@ func (b *JudgeBatch) InsertJudgeResponse(e JudgeResponse) error {
 // on this handle is a no-op so a buggy caller cannot accidentally
 // double-commit.
 func (b *JudgeBatch) Commit() error {
-	if b == nil || b.tx == nil {
+	if b == nil {
+		return fmt.Errorf("audit: judge batch handle is nil")
+	}
+	b.lifecycleMu.Lock()
+	defer b.lifecycleMu.Unlock()
+	if b.tx == nil {
 		return fmt.Errorf("audit: judge batch handle is nil")
 	}
 	if b.committed {
@@ -1982,6 +2018,7 @@ func (b *JudgeBatch) Commit() error {
 		return err
 	}
 	b.committed = true
+	b.releaseRuntime()
 	return nil
 }
 
@@ -1992,7 +2029,12 @@ func (b *JudgeBatch) Commit() error {
 // genuinely drive tx.Rollback() — which is the bug-fix that keeps
 // the SQLite connection from being pinned mid-tx.
 func (b *JudgeBatch) Rollback() error {
-	if b == nil || b.tx == nil {
+	if b == nil {
+		return nil
+	}
+	b.lifecycleMu.Lock()
+	defer b.lifecycleMu.Unlock()
+	if b.tx == nil {
 		return nil
 	}
 	if b.committed {
@@ -2003,7 +2045,17 @@ func (b *JudgeBatch) Rollback() error {
 	// on the same handle, which would surface as
 	// "sql: transaction has already been committed or rolled back".
 	b.committed = true
-	return b.tx.Rollback()
+	err := b.tx.Rollback()
+	b.releaseRuntime()
+	return err
+}
+
+func (b *JudgeBatch) releaseRuntime() {
+	if b == nil || b.release == nil {
+		return
+	}
+	b.release()
+	b.release = nil
 }
 
 // BeginJudgeBatch opens a transaction dedicated to a single batch of
@@ -2018,7 +2070,7 @@ func (s *Store) BeginJudgeBatch(ctx context.Context) (*JudgeBatch, error) {
 	if err != nil {
 		return nil, fmt.Errorf("audit: begin judge batch: %w", err)
 	}
-	return &JudgeBatch{tx: tx}, nil
+	return &JudgeBatch{tx: tx, ctx: ctx}, nil
 }
 
 // InsertJudgeResponse persists a single judge body. The caller is
@@ -2043,22 +2095,27 @@ func (s *Store) InsertJudgeResponse(e JudgeResponse) error {
 	if e.RunID == "" {
 		e.RunID = currentRunID()
 	}
+	timestampUnixNano, err := judgeBodyUnixNano(e.Timestamp)
+	if err != nil {
+		return fmt.Errorf("audit: normalize judge timestamp: %w", err)
+	}
 	raw := truncateJudgeRaw(e.Raw, MaxJudgeRawBytes)
 	failClosed := 0
 	if e.FailClosedApplied {
 		failClosed = 1
 	}
-	_, err := s.execDB(context.Background(), "audit",
+	_, err = s.execDB(context.Background(), "audit",
 		`INSERT INTO judge_responses
-			(id, timestamp, kind, direction, model, action, severity, latency_ms,
+			(id, timestamp, timestamp_unix_nano, kind, direction, model, action, severity, latency_ms,
 			 parse_error, raw_response, request_id, trace_id, run_id, session_id, input_hash,
 			 confidence, fail_closed_applied, inspected_model, prompt_template_id,
 			 schema_version, content_hash, generation, binary_version,
 			 agent_id, agent_instance_id, sidecar_instance_id,
 			 policy_id, destination_app, tool_name, tool_id)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		e.ID,
 		e.Timestamp.Format(time.RFC3339Nano),
+		timestampUnixNano,
 		e.Kind,
 		nullStr(e.Direction),
 		nullStr(e.Model),
@@ -2116,11 +2173,14 @@ func truncateJudgeRaw(raw string, maxBytes int) string {
 // newest first. Intended for operator review via the CLI / TUI once
 // retention is turned on during an incident.
 func (s *Store) ListJudgeResponses(limit int) ([]JudgeResponse, error) {
+	if err := verifyJudgeBodyTimestampUnixNanoReady(s.db); err != nil {
+		return nil, fmt.Errorf("audit: judge timestamp readiness: %w", err)
+	}
 	if limit <= 0 {
 		limit = 50
 	}
 	rows, err := s.queryDB(context.Background(), "audit", `
-		SELECT id, timestamp, kind, COALESCE(direction,''), COALESCE(model,''),
+		SELECT id, timestamp, timestamp_unix_nano, kind, COALESCE(direction,''), COALESCE(model,''),
 			COALESCE(action,''), COALESCE(severity,''), COALESCE(latency_ms,0),
 			COALESCE(parse_error,''), raw_response,
 			COALESCE(request_id,''), COALESCE(trace_id,''), COALESCE(run_id,''),
@@ -2130,7 +2190,9 @@ func (s *Store) ListJudgeResponses(limit int) ([]JudgeResponse, error) {
 			COALESCE(schema_version,0), COALESCE(content_hash,''), COALESCE(generation,0), COALESCE(binary_version,''),
 			COALESCE(agent_id,''), COALESCE(agent_instance_id,''), COALESCE(sidecar_instance_id,''),
 			COALESCE(policy_id,''), COALESCE(destination_app,''), COALESCE(tool_name,''), COALESCE(tool_id,'')
-		FROM judge_responses ORDER BY timestamp DESC LIMIT ?`, limit)
+		FROM judge_responses
+		ORDER BY timestamp_unix_nano DESC, id DESC
+		LIMIT ?`, limit)
 	if err != nil {
 		return nil, fmt.Errorf("audit: list judge responses: %w", err)
 	}
@@ -2140,9 +2202,10 @@ func (s *Store) ListJudgeResponses(limit int) ([]JudgeResponse, error) {
 	for rows.Next() {
 		var r JudgeResponse
 		var ts string
+		var timestampUnixNano int64
 		var failClosed int
 		var gen int64
-		if err := rows.Scan(&r.ID, &ts, &r.Kind, &r.Direction, &r.Model,
+		if err := rows.Scan(&r.ID, &ts, &timestampUnixNano, &r.Kind, &r.Direction, &r.Model,
 			&r.Action, &r.Severity, &r.LatencyMs, &r.ParseError, &r.Raw,
 			&r.RequestID, &r.TraceID, &r.RunID, &r.SessionID, &r.InputHash, &r.Confidence,
 			&failClosed, &r.InspectedModel, &r.PromptTemplateID,
@@ -2153,8 +2216,8 @@ func (s *Store) ListJudgeResponses(limit int) ([]JudgeResponse, error) {
 		}
 		r.Generation = uint64(gen)
 		r.FailClosedApplied = failClosed != 0
-		if t, err := time.Parse(time.RFC3339Nano, ts); err == nil {
-			r.Timestamp = t
+		if err := assignJudgeResponseTimestamp(&r, ts, timestampUnixNano, "audit: list judge responses"); err != nil {
+			return nil, err
 		}
 		out = append(out, r)
 	}
@@ -2172,8 +2235,11 @@ func (s *Store) GetJudgeResponsesByRequestID(requestID string) ([]JudgeResponse,
 	if requestID == "" {
 		return nil, nil
 	}
+	if err := verifyJudgeBodyTimestampUnixNanoReady(s.db); err != nil {
+		return nil, fmt.Errorf("audit: judge timestamp readiness: %w", err)
+	}
 	rows, err := s.queryDB(context.Background(), "audit", `
-		SELECT id, timestamp, kind, COALESCE(direction,''), COALESCE(model,''),
+		SELECT id, timestamp, timestamp_unix_nano, kind, COALESCE(direction,''), COALESCE(model,''),
 			COALESCE(action,''), COALESCE(severity,''), COALESCE(latency_ms,0),
 			COALESCE(parse_error,''), raw_response,
 			COALESCE(request_id,''), COALESCE(trace_id,''), COALESCE(run_id,''),
@@ -2183,7 +2249,8 @@ func (s *Store) GetJudgeResponsesByRequestID(requestID string) ([]JudgeResponse,
 			COALESCE(schema_version,0), COALESCE(content_hash,''), COALESCE(generation,0), COALESCE(binary_version,''),
 			COALESCE(agent_id,''), COALESCE(agent_instance_id,''), COALESCE(sidecar_instance_id,''),
 			COALESCE(policy_id,''), COALESCE(destination_app,''), COALESCE(tool_name,''), COALESCE(tool_id,'')
-		FROM judge_responses WHERE request_id = ? ORDER BY timestamp DESC`, requestID)
+		FROM judge_responses WHERE request_id = ?
+		ORDER BY timestamp_unix_nano DESC, id DESC`, requestID)
 	if err != nil {
 		return nil, fmt.Errorf("audit: judge by request_id: %w", err)
 	}
@@ -2193,9 +2260,10 @@ func (s *Store) GetJudgeResponsesByRequestID(requestID string) ([]JudgeResponse,
 	for rows.Next() {
 		var r JudgeResponse
 		var ts string
+		var timestampUnixNano int64
 		var failClosed int
 		var gen int64
-		if err := rows.Scan(&r.ID, &ts, &r.Kind, &r.Direction, &r.Model,
+		if err := rows.Scan(&r.ID, &ts, &timestampUnixNano, &r.Kind, &r.Direction, &r.Model,
 			&r.Action, &r.Severity, &r.LatencyMs, &r.ParseError, &r.Raw,
 			&r.RequestID, &r.TraceID, &r.RunID, &r.SessionID, &r.InputHash, &r.Confidence,
 			&failClosed, &r.InspectedModel, &r.PromptTemplateID,
@@ -2206,8 +2274,8 @@ func (s *Store) GetJudgeResponsesByRequestID(requestID string) ([]JudgeResponse,
 		}
 		r.Generation = uint64(gen)
 		r.FailClosedApplied = failClosed != 0
-		if t, err := time.Parse(time.RFC3339Nano, ts); err == nil {
-			r.Timestamp = t
+		if err := assignJudgeResponseTimestamp(&r, ts, timestampUnixNano, "audit: judge by request_id"); err != nil {
+			return nil, err
 		}
 		out = append(out, r)
 	}

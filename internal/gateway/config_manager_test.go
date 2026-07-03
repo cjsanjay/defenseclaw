@@ -21,6 +21,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -230,6 +231,25 @@ func TestDiffConfigsAllowsHotGuardrailPolicyFields(t *testing.T) {
 	}
 	if slices.Contains(diff.RestartRequired, "guardrail") {
 		t.Fatalf("restart_required = %v, pure policy fields should hot-apply", diff.RestartRequired)
+	}
+}
+
+func TestDiffConfigsRequiresRestartForJudgeBodyRetentionTransitions(t *testing.T) {
+	for _, enabled := range []bool{false, true} {
+		t.Run(fmt.Sprintf("to_%t", enabled), func(t *testing.T) {
+			oldCfg := config.DefaultConfig()
+			newCfg := cloneConfig(oldCfg)
+			oldCfg.Guardrail.RetainJudgeBodies = !enabled
+			newCfg.Guardrail.RetainJudgeBodies = enabled
+
+			diff := diffConfigs(oldCfg, newCfg)
+			if !slices.Contains(diff.RestartRequired, "guardrail.retain_judge_bodies") {
+				t.Fatalf("restart_required = %v, missing exact judge-body retention boundary", diff.RestartRequired)
+			}
+			if slices.Contains(diff.RestartRequired, "guardrail") {
+				t.Fatalf("restart_required = %v, broad guardrail reason obscures exact boundary", diff.RestartRequired)
+			}
+		})
 	}
 }
 

@@ -44,48 +44,16 @@ var (
 	gatewayEventsMu sync.RWMutex
 	gatewayEvents   *gatewaylog.Writer
 
-	// judgeResponseStore persists v7-correlated judge rows when set
-	// (tests, or sidecar wiring). When nil, legacy judgePersistor may
-	// still run for backward compatibility.
+	// judgeResponseStore is the sole authoritative raw judge-body writer.
+	// When nil, emitJudge still emits its centrally redacted metadata event
+	// but raw-body persistence is disabled; there is no callback fallback.
 	judgeResponseStoreMu sync.RWMutex
 	judgeResponseStore   *JudgeStore
-
-	// judgePersistor is an optional hook invoked for every Judge
-	// event when guardrail.retain_judge_bodies is on and the
-	// sidecar wired up a persistence callback. Left nil in unit
-	// tests and in the "retention off" path.
-	//
-	// Signature carries Direction alongside the payload because the
-	// JudgePayload envelope intentionally does NOT — direction
-	// belongs to the surrounding Event. A prior revision dropped
-	// this data when persisting, so every SQLite row wrote an empty
-	// direction regardless of inbound/outbound.
-	//
-	// v7: also carries the request ctx + per-emission opts
-	// (tool_name/tool_id/policy_id/destination_app) so the
-	// persistor can merge the request-scoped envelope with the
-	// emit-scoped overrides before writing the audit row. Before
-	// this, every llm-judge-response audit row had
-	// agent/session/run/trace/request NULL because the closure
-	// had no request context to pull from.
-	judgePersistor func(ctx context.Context, p gatewaylog.JudgePayload, dir gatewaylog.Direction, opts JudgeEmitOpts)
 )
 
-// SetJudgePersistor installs the optional SQLite persistence hook
-// invoked from emitJudge when retention is enabled. Passing nil
-// disables persistence (safe default). The callback receives the
-// raw payload plus the request direction so downstream storage
-// can tag whether the judge fired on an inbound prompt or an
-// outbound completion.
-func SetJudgePersistor(fn func(ctx context.Context, p gatewaylog.JudgePayload, dir gatewaylog.Direction, opts JudgeEmitOpts)) {
-	gatewayEventsMu.Lock()
-	defer gatewayEventsMu.Unlock()
-	judgePersistor = fn
-}
-
-// SetJudgeResponseStore installs the v7 SQLite writer for retained judge
-// bodies. When non-nil it takes precedence over SetJudgePersistor for
-// persistence (only one path runs per emit).
+// SetJudgeResponseStore installs the sole v8 SQLite writer for retained judge
+// bodies. Passing nil disables raw-body persistence without affecting the
+// redacted guardrail/judge metadata event.
 func SetJudgeResponseStore(js *JudgeStore) {
 	judgeResponseStoreMu.Lock()
 	defer judgeResponseStoreMu.Unlock()
@@ -96,13 +64,6 @@ func activeJudgeStore() *JudgeStore {
 	judgeResponseStoreMu.RLock()
 	defer judgeResponseStoreMu.RUnlock()
 	return judgeResponseStore
-}
-
-// judgePersist returns the currently installed persistor (may be nil).
-func judgePersist() func(ctx context.Context, p gatewaylog.JudgePayload, dir gatewaylog.Direction, opts JudgeEmitOpts) {
-	gatewayEventsMu.RLock()
-	defer gatewayEventsMu.RUnlock()
-	return judgePersistor
 }
 
 // SetEventWriter installs the process-wide gatewaylog.Writer. The
@@ -427,8 +388,6 @@ func emitJudge(
 	// of ~/.defenseclaw.
 	if js := activeJudgeStore(); js != nil && raw != "" {
 		_ = js.PersistJudgeEvent(ctx, direction, payload, opts.ToolName, opts.ToolID, opts.PolicyID, opts.DestinationApp)
-	} else if persist := judgePersist(); persist != nil && raw != "" {
-		persist(ctx, payload, direction, opts)
 	}
 
 	emitEvent(ctx, gatewaylog.Event{

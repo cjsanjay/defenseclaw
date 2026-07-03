@@ -11,90 +11,101 @@
 package gateway
 
 import (
-	"context"
-	"sync"
+	"path/filepath"
 	"testing"
 
+	"github.com/defenseclaw/defenseclaw/internal/audit"
 	"github.com/defenseclaw/defenseclaw/internal/gatewaylog"
 )
 
-func TestEmitJudge_PersistsUnredactedRawBeforeFanoutScrub(t *testing.T) {
+func TestEmitJudge_AuthoritativeStorePersistsRawBeforeFanoutScrub(t *testing.T) {
 	capture := withCapturedEvents(t)
-
-	// Install a persistor that records the payload it was called
-	// with. emitJudge runs the persistor on the original payload
-	// (before emitEvent shallow-copies + redacts), so the SQLite
-	// sink receives the un-redacted body while the fanout / JSONL
-	// sees the scrubbed form.
-	var (
-		persistedMu        sync.Mutex
-		persistedRaw       string
-		persistedDirection gatewaylog.Direction
-		persistedInvoked   int
-	)
-	SetJudgePersistor(func(_ context.Context, p gatewaylog.JudgePayload, dir gatewaylog.Direction, _ JudgeEmitOpts) {
-		persistedMu.Lock()
-		defer persistedMu.Unlock()
-		persistedRaw = p.RawResponse
-		persistedDirection = dir
-		persistedInvoked++
+	bodyStore, err := audit.NewJudgeBodyStore(filepath.Join(t.TempDir(), "judge_bodies.db"))
+	if err != nil {
+		t.Fatalf("NewJudgeBodyStore: %v", err)
+	}
+	t.Cleanup(func() { _ = bodyStore.Close() })
+	store := NewJudgeStoreFromBodyStore(bodyStore, nil, 8)
+	SetJudgeResponseStore(store)
+	t.Cleanup(func() {
+		SetJudgeResponseStore(nil)
+		_ = store.Shutdown(t.Context())
 	})
-	t.Cleanup(func() { SetJudgePersistor(nil) })
 
-	raw := `{"verdict":"block","reason":"email found: victim@example.com"}`
+	raw := `{"verdict":"block","reason":"email found in inspected content"}`
 	emitJudge(t.Context(), "pii", "gpt-4", gatewaylog.DirectionPrompt, 128, 42, "block",
 		gatewaylog.SeverityHigh, "", raw, JudgeEmitOpts{})
-
-	persistedMu.Lock()
-	gotRaw := persistedRaw
-	gotCalls := persistedInvoked
-	gotDir := persistedDirection
-	persistedMu.Unlock()
-	if gotCalls != 1 {
-		t.Fatalf("persistor called %d times want 1", gotCalls)
-	}
-	if gotRaw != raw {
-		t.Fatalf("persistor got redacted raw=%q want unredacted=%q", gotRaw, raw)
-	}
-	// Regression: direction must flow through the persistor; a
-	// prior revision wrote empty strings to SQLite because the
-	// hook signature dropped this field.
-	if gotDir != gatewaylog.DirectionPrompt {
-		t.Fatalf("persistor got direction=%q want %q", gotDir, gatewaylog.DirectionPrompt)
+	if err := store.Shutdown(t.Context()); err != nil {
+		t.Fatalf("Shutdown: %v", err)
 	}
 
-	// Sink-side payload must have been scrubbed by emitEvent.
+	rows, err := bodyStore.ListJudgeResponses(10)
+	if err != nil {
+		t.Fatalf("ListJudgeResponses: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("authoritative rows=%d want 1", len(rows))
+	}
+	if rows[0].Raw != raw {
+		t.Fatalf("authoritative raw=%q want exact body", rows[0].Raw)
+	}
+	if rows[0].Direction != string(gatewaylog.DirectionPrompt) {
+		t.Fatalf("authoritative direction=%q want %q", rows[0].Direction, gatewaylog.DirectionPrompt)
+	}
+
 	if len(*capture) != 1 {
 		t.Fatalf("captured %d events want 1", len(*capture))
 	}
-	jp := (*capture)[0].Judge
-	if jp == nil {
+	judge := (*capture)[0].Judge
+	if judge == nil {
 		t.Fatal("judge payload missing from captured event")
-		return
 	}
-	if jp.RawResponse == raw {
-		t.Fatalf("fanout saw un-redacted raw — redaction layer bypassed")
+	if judge.RawResponse == raw {
+		t.Fatal("fanout saw unredacted raw body")
 	}
 }
 
-func TestEmitJudge_EmptyRawDoesNotCallPersistor(t *testing.T) {
-	_ = withCapturedEvents(t)
+func TestEmitJudge_NilAuthoritativeStoreNeverWritesAuditDB(t *testing.T) {
+	capture := withCapturedEvents(t)
+	SetJudgeResponseStore(nil)
+	t.Cleanup(func() { SetJudgeResponseStore(nil) })
 
-	var called int
-	SetJudgePersistor(func(_ context.Context, _ gatewaylog.JudgePayload, _ gatewaylog.Direction, _ JudgeEmitOpts) { called++ })
-	t.Cleanup(func() { SetJudgePersistor(nil) })
+	auditStore, err := audit.NewStore(filepath.Join(t.TempDir(), "audit.db"))
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+	t.Cleanup(func() { _ = auditStore.Close() })
+	if err := auditStore.Init(); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+
+	raw := `{"verdict":"allow","reason":"retention disabled"}`
+	emitJudge(t.Context(), "injection", "gpt-4", gatewaylog.DirectionPrompt, 16, 1, "allow",
+		gatewaylog.SeverityInfo, "", raw, JudgeEmitOpts{})
+
+	rows, err := auditStore.ListJudgeResponses(10)
+	if err != nil {
+		t.Fatalf("ListJudgeResponses(audit.db): %v", err)
+	}
+	if len(rows) != 0 {
+		t.Fatalf("nil authoritative store wrote %d raw bodies to audit.db", len(rows))
+	}
+	if len(*capture) != 1 || (*capture)[0].Judge == nil {
+		t.Fatalf("redacted judge metadata event was lost: %+v", *capture)
+	}
+	if (*capture)[0].Judge.RawResponse == raw {
+		t.Fatal("nil-store metadata fanout exposed raw body")
+	}
+}
+
+func TestEmitJudge_EmptyRawWithNilAuthoritativeStoreStillLogsMetadata(t *testing.T) {
+	capture := withCapturedEvents(t)
+	SetJudgeResponseStore(nil)
+	t.Cleanup(func() { SetJudgeResponseStore(nil) })
 
 	emitJudge(t.Context(), "injection", "gpt-4", gatewaylog.DirectionPrompt, 0, 1, "allow",
 		gatewaylog.SeverityInfo, "", "", JudgeEmitOpts{})
-	if called != 0 {
-		t.Fatalf("persistor called %d times on empty raw (retention no-op path)", called)
+	if len(*capture) != 1 || (*capture)[0].Judge == nil {
+		t.Fatalf("empty-raw judge metadata event missing: %+v", *capture)
 	}
-}
-
-func TestEmitJudge_NilPersistorSafe(t *testing.T) {
-	_ = withCapturedEvents(t)
-	SetJudgePersistor(nil)
-	// Must not panic.
-	emitJudge(t.Context(), "pii", "gpt-4", gatewaylog.DirectionPrompt, 10, 1, "allow",
-		gatewaylog.SeverityInfo, "", "raw body", JudgeEmitOpts{})
 }

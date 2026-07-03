@@ -126,7 +126,7 @@ func skipBridgeAction(action string) bool {
 	case string(audit.ActionGuardrailVerdict),
 		// emitJudge already writes an EventJudge row; the matching
 		// "llm-judge-response" audit event exists for SQLite/Splunk
-		// fan-out (see sidecar.go judgePersistor) and must not be
+		// fan-out (see JudgeStore.fanoutAudit) and must not be
 		// re-translated into a Lifecycle JSONL row.
 		string(audit.ActionLLMJudgeResponse),
 		// LogScan already emits a native EventScan (and EventScanFinding

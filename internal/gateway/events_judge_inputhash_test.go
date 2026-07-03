@@ -5,7 +5,6 @@
 package gateway
 
 import (
-	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"testing"
@@ -25,32 +24,14 @@ import (
 // when InputContent="A" and RawResponse="B", InputHash must be
 // sha256:<hex(sha256("A"))>.
 func TestEmitJudge_InputHashIsSHA256OfInputContent(t *testing.T) {
-	prevPersist := judgePersist()
-	t.Cleanup(func() {
-		// Restore whatever persistor the test process started with.
-		// SetJudgePersistor takes nil to clear, so use a no-op when
-		// prevPersist itself was nil.
-		if prevPersist == nil {
-			SetJudgePersistor(nil)
-		} else {
-			SetJudgePersistor(prevPersist)
-		}
-	})
-
-	// Disable any judge store that other tests may have wired up so
-	// our persist closure is the single sink.
+	capture := withCapturedEvents(t)
 	SetJudgeResponseStore(nil)
 	t.Cleanup(func() { SetJudgeResponseStore(nil) })
-
-	var captured gatewaylog.JudgePayload
-	SetJudgePersistor(func(_ context.Context, p gatewaylog.JudgePayload, _ gatewaylog.Direction, _ JudgeEmitOpts) {
-		captured = p
-	})
 
 	const input = "the inspected judge input text"
 	const response = "the response body that must NOT drive the hash"
 	emitJudge(
-		context.Background(),
+		t.Context(),
 		"injection",
 		"test-model",
 		gatewaylog.DirectionPrompt,
@@ -59,19 +40,20 @@ func TestEmitJudge_InputHashIsSHA256OfInputContent(t *testing.T) {
 		"allow",
 		gatewaylog.SeverityInfo,
 		"",
-		response, // raw response body — non-empty so the persistor closure runs
+		response, // response body must not influence the input digest
 		JudgeEmitOpts{InputContent: input},
 	)
 
 	want := sha256.Sum256([]byte(input))
 	wantStr := "sha256:" + hex.EncodeToString(want[:])
 
+	if len(*capture) != 1 || (*capture)[0].Judge == nil {
+		t.Fatalf("captured judge event missing: %+v", *capture)
+	}
+	captured := (*capture)[0].Judge
 	if captured.InputHash != wantStr {
 		t.Fatalf("InputHash mismatch:\n  got  = %q\n  want = %q (sha256 of input, not response)",
 			captured.InputHash, wantStr)
-	}
-	if captured.RawResponse != response {
-		t.Fatalf("RawResponse should round-trip verbatim; got %q", captured.RawResponse)
 	}
 }
 
@@ -80,24 +62,12 @@ func TestEmitJudge_InputHashIsSHA256OfInputContent(t *testing.T) {
 // hashing the response). This guards against future regressions
 // where someone re-introduces a fallback to the response body.
 func TestEmitJudge_InputHashEmptyWhenNoInputContent(t *testing.T) {
-	prevPersist := judgePersist()
-	t.Cleanup(func() {
-		if prevPersist == nil {
-			SetJudgePersistor(nil)
-		} else {
-			SetJudgePersistor(prevPersist)
-		}
-	})
+	capture := withCapturedEvents(t)
 	SetJudgeResponseStore(nil)
 	t.Cleanup(func() { SetJudgeResponseStore(nil) })
 
-	var captured gatewaylog.JudgePayload
-	SetJudgePersistor(func(_ context.Context, p gatewaylog.JudgePayload, _ gatewaylog.Direction, _ JudgeEmitOpts) {
-		captured = p
-	})
-
 	emitJudge(
-		context.Background(),
+		t.Context(),
 		"injection",
 		"m",
 		gatewaylog.DirectionPrompt,
@@ -106,6 +76,10 @@ func TestEmitJudge_InputHashEmptyWhenNoInputContent(t *testing.T) {
 		JudgeEmitOpts{}, // no InputContent
 	)
 
+	if len(*capture) != 1 || (*capture)[0].Judge == nil {
+		t.Fatalf("captured judge event missing: %+v", *capture)
+	}
+	captured := (*capture)[0].Judge
 	if captured.InputHash != "" {
 		t.Fatalf("expected empty InputHash when InputContent is unset, got %q", captured.InputHash)
 	}
