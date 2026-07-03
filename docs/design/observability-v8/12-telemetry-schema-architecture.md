@@ -273,6 +273,12 @@ The compiler's concrete YAML grammar MUST encode these semantic rules and MUST N
 weaken them. Grammar-only refinements do not reopen the reviewed family ownership,
 group composition, version, privacy, or compatibility decisions.
 
+Every placeholder in a span `name_pattern` is a complete inherited attribute
+reference. The compiler rejects unknown placeholders, aliases, format expressions,
+and attributes classified as content, path, credential, reason, evidence, error,
+or high-cardinality. Fixed names need no placeholder. Span names therefore remain
+bounded even when the corresponding span carries richer values as attributes.
+
 The registry manifest also owns immutable semantic-profile bindings. The
 `defenseclaw-genai-rich-v1` entry is exactly:
 
@@ -324,6 +330,47 @@ fails if the current-state inventory of fourteen gateway types or 188 audit acti
 differs from the mappings, if a mapping can resolve to an unregistered identity, or
 if a non-legacy resolved identity's bucket conflicts with its canonical family.
 Generated route/classification registries consume these mappings directly.
+
+### 5.4 Metric labels and compatibility projections
+
+For a metric family, its inherited `attributes` are its complete canonical label
+schema. The metric block adds `empty_labels_reason` if and only if the resolved set
+is empty; an unexplained empty set is invalid. During the v7-to-v8 cutover, the
+machine-derived current-state inventory records the exact labels observed at every
+real `Add`/`Record` callsite and the reason for each genuinely label-free
+instrument. The compiler requires equality for all 131 families. After callsites
+use generated per-family APIs, those APIs and real-producer conformance replace the
+temporary bootstrap extractor; Go does not remain a second authoring source.
+
+Canonical labels use pinned standard names or the `defenseclaw.*` namespace.
+Current unqualified, deprecated, or otherwise compatibility-only names are emitted
+through a family-local projection:
+
+```yaml
+metric:
+  # instrument_name/type/value_type/unit/description/temporality/boundaries omitted
+  label_projections:
+    - profile: local-observability-v1
+      mappings:
+        - ref: http.request.method
+          label: http.method
+```
+
+There is at most one entry per profile. Every mapping source is a resolved
+canonical label and appears once; projected names are unique. An omitted canonical
+label projects unchanged. The projected set, not the canonical set, must equal the
+frozen v7/local-observability inventory. This preserves current Prometheus queries
+without making deprecated `http.method`, nonstandard `gen_ai.agent.type`, or an
+ambiguous unqualified `state` canonical. Alias collisions, unknown profiles, and
+unqualified custom canonical attributes fail.
+
+Ordinary metric families reject high-cardinality labels and content, credential,
+path, reason, evidence, and error classes. The only v8 exception is the exact six
+Agent360 native families and their exact label sets in `local-observability-v1`.
+That exception is profile-scoped and carries the existing Collector limits:
+10,000 dimension-cache entries, 1,000 resource-metrics-cache entries, and 24-hour
+series expiration. It has no wildcard, set composition, or effect on ordinary OTLP
+metric schemas.
 
 ## 6. Generated Public Artifacts
 
@@ -484,13 +531,49 @@ Every attribute definition includes:
 | `field_class` | Metadata, identifier, content, reason, evidence, error, path, credential |
 | `sensitivity` | Safe, internal, sensitive, critical |
 | `cardinality` | Low, bounded, high; metrics reject high-cardinality dimensions |
-| `normalization` | Canonical enum/casing/length behavior |
+| `normalization` | Versioned normalizer plus typed effective constraints; prose notes are non-semantic |
 | `introduced_in` | First schema version |
 | `deprecated_in` / `removed_in` | Lifecycle when applicable |
 | `alias_of` | Canonical source for compatibility aliases |
 
 Missing field-class or sensitivity metadata is a compiler error for dynamic strings
 and structured content.
+
+Pinned upstream definitions receive a DefenseClaw `attribute_extensions` entry
+whenever a canonical family references them. An extension supplies exactly
+`field_class`, `sensitivity`, `cardinality`, and `normalization`; it cannot override
+the upstream name, type, owner, or stability. Every referenced upstream attribute
+has exactly one extension, and unknown, duplicate, missing, or unreferenced
+extensions fail. This is how standard fields such as `gen_ai.input.messages` enter
+the same centralized redaction and metric-cardinality policy as DefenseClaw fields.
+
+The registry root owns the closed versioned normalizer catalog. Each entry has
+`id`, `kind`, `default_constraints`, and `allowed_overrides`; v1 contains exactly
+`identity-v1`, `bounded-v1`, `enum-v1`, `identifier-v1`,
+`numeric-range-v1`, `structured-content-v1`, `redacted-content-v1`, `path-v1`,
+`url-v1`, and `digest-v1`. Attribute and extension use is exact:
+
+```yaml
+normalization:
+  id: identifier-v1
+  overrides:
+    max_utf8_bytes: 128
+  notes: Human explanation only; generated validators ignore this text.
+```
+
+Effective constraints are catalog defaults replaced only by named allowlisted
+overrides; a null value cannot remove a bound. Supported constraint keys are
+`enum`, portable-RE2 `pattern`, `min`, `max`, `min_items`, `max_items`,
+`max_utf8_bytes`, `max_item_utf8_bytes`, `max_depth`, and `max_properties`.
+Enums are nonempty unique JSON scalars. Numeric bounds are finite, type-correct,
+and ordered; `numeric-range-v1` has no implicit range, so every numeric field states
+both bounds. Counts are integers, minima are nonnegative, maxima are positive, and
+item bounds are ordered. `max_utf8_bytes` is the total canonical value budget;
+`max_item_utf8_bytes` bounds each string element or structured string leaf.
+Structured values always have byte, item, depth, and property bounds. Regexes reject
+lookaround, backreferences, named groups, and other constructs outside the shared
+Go/Python RE2 subset. The compiler rejects a normalizer incompatible with the
+attribute type, so human prose can never be the only executable validation rule.
 
 ## 9. Schema and Configuration Are Separate
 

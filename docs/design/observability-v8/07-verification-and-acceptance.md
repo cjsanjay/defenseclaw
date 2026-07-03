@@ -706,6 +706,32 @@ Required cases:
   OpenInference `session.id` and `user.id` overlaps, and incompatible overlaps fail.
 - Reordering upstream archive members produces identical snapshots, locks, and
   generated outputs.
+- The frozen current-producer metric inventory covers all 131 instruments and
+  every real `Add`/`Record` callsite: 114 labeled instruments and seventeen
+  explicitly justified label-free instruments. Each canonical family's inherited
+  labels, family-local `local-observability-v1` projection, and projected current
+  label set compare exactly; an undeclared, missing, extra, dynamic, or silently
+  dropped key fails. After generated per-family recorders replace current
+  callsites, the bootstrap extractor is retired rather than becoming a second
+  source of truth.
+- The high-cardinality Agent360 exception accepts only the six named native
+  families, their exact canonical/projected labels, and the pinned cache/series
+  limits. Moving one allowed label to another family, adding a seventh family, or
+  omitting a limit fails. Ordinary metric families still reject high cardinality
+  and content, credential, path, reason, evidence, and error classes.
+- Every one of the 25 span name patterns compiles. Each placeholder resolves to a
+  declared inherited low/bounded-cardinality metadata or identifier field; unknown,
+  alias, content, path, credential, reason, evidence, error, and high-cardinality
+  placeholders fail. Hostile path, address, PII, and unbounded strings never enter
+  a span name.
+- The closed normalizer catalog, defaults, overrides, and type applicability are
+  tested in Go and Python from shared fixtures. Missing numeric bounds, removed
+  effective bounds, invalid item/depth/property/UTF-8 limits, nonportable regexes,
+  duplicate enums, wrong scalar types, and prose-only normalization fail.
+- Every valid curated record has a complete exact registry-derived field-class map
+  for all payload leaves. Missing, stale, extra, or wrong pointers fail; stable
+  error codes remain metadata while dynamic error text follows the configured
+  error-class transform.
 - Generated JSON Schema bundle, compact catalog, Markdown reference, Go/Python
   constants/builders, field-class maps, fixtures, and Galileo/OpenInference
   projections are deterministic and checked for drift.

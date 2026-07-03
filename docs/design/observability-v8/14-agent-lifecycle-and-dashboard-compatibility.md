@@ -350,6 +350,42 @@ The current Agent360 name mapping includes:
 Unit/counter suffix casing is part of the compatibility profile even when it is a
 Collector/exporter projection rather than the canonical OTel instrument name.
 
+The six native Agent360 canonical label sets are exact:
+
+- `defenseclaw.agent.last_seen`: `connector`,
+  `defenseclaw.agent.execution.id`, `defenseclaw.agent.lifecycle.id`,
+  `defenseclaw.agent.parent.id`, `defenseclaw.agent.root.id`,
+  `defenseclaw.session.root.id`, `gen_ai.agent.id`, `gen_ai.agent.name`, and
+  `defenseclaw.agent.type`.
+- `defenseclaw.agent.lifecycle.transitions`: `connector`,
+  `defenseclaw.agent.depth`, `defenseclaw.agent.execution.id`,
+  `defenseclaw.agent.lifecycle.event`, `defenseclaw.agent.lifecycle.id`,
+  `defenseclaw.agent.lifecycle.state`, `defenseclaw.agent.parent.id`,
+  `defenseclaw.agent.root.id`, `defenseclaw.session.root.id`, `gen_ai.agent.id`,
+  `gen_ai.agent.name`, `defenseclaw.agent.type`, `gen_ai.provider.name`, and
+  `gen_ai.request.model`.
+- `defenseclaw.agent.phase.current`: `connector`,
+  `defenseclaw.agent.execution.id`, `defenseclaw.agent.lifecycle.id`,
+  `defenseclaw.agent.root.id`, `gen_ai.agent.id`, and `gen_ai.agent.name`.
+- `defenseclaw.agent.phase.transitions`: `connector`,
+  `defenseclaw.agent.execution.id`, `defenseclaw.agent.phase.from`,
+  `defenseclaw.agent.phase.to`, `defenseclaw.agent.root.id`, `gen_ai.agent.id`,
+  and `gen_ai.agent.name`.
+- `defenseclaw.agent.reported_cost`: `connector`,
+  `defenseclaw.agent.execution.id`, `defenseclaw.agent.lifecycle.id`,
+  `defenseclaw.agent.root.id`, `gen_ai.agent.id`, `gen_ai.agent.name`,
+  `gen_ai.provider.name`, and `gen_ai.request.model`.
+- `defenseclaw.agent.token.usage`: `connector`,
+  `defenseclaw.agent.execution.id`, `defenseclaw.agent.lifecycle.id`,
+  `defenseclaw.agent.root.id`, `gen_ai.agent.id`, `gen_ai.agent.name`,
+  `gen_ai.provider.name`, `gen_ai.request.model`, and `kind`.
+
+The local projection renames canonical `defenseclaw.agent.type` to the frozen
+`gen_ai.agent.type` compatibility label. These six families alone may use their
+reviewed high-cardinality identity labels under the profile's 10,000-entry
+dimension cache, 1,000-entry resource-metrics cache, and 24-hour series expiration.
+No other metric family inherits that exception.
+
 The current `defenseclaw.inspect.*` and connector-hook dual emission remains until
 every bundled and documented query is migrated in one release. It may then be
 removed only through a declared alias-removal version and historical query test.
