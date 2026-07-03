@@ -1584,6 +1584,15 @@ var migrations = []migration{
 			return nil
 		},
 	},
+	{
+		description: "observability v8: add exact indexed retention instants and scan integrity guards",
+		apply: func(ex dbExecer) error {
+			if err := migrateRetentionTimestampUnixNano(ex); err != nil {
+				return err
+			}
+			return installRetentionScanIntegrityTriggers(ex)
+		},
+	},
 }
 
 // tableExists reports whether the given SQLite table is present.
@@ -1671,6 +1680,9 @@ func (s *Store) Init() error {
 		if !exists {
 			return fmt.Errorf("audit: mandatory event-history column %s is missing", column)
 		}
+	}
+	if err := ensureRetentionTimestampInfrastructure(s.db); err != nil {
+		return fmt.Errorf("audit: verify event timestamp retention infrastructure: %w", err)
 	}
 	for _, table := range []string{
 		"alert_acknowledgement_projection",
