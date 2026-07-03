@@ -417,7 +417,11 @@ before a queue allocates memory.
 
 ### 6.3 Retry
 
-- Retry only failures classified as transient by the transport adapter.
+- Retry only failures classified as transient or as an ambiguous acknowledgement
+  after request bytes may have reached the destination. An ambiguous retry reuses
+  the exact immutable projected bytes and record ID; it never re-runs routing or
+  redaction. Operators and downstream consumers must therefore use the record ID
+  for deduplication when the first acknowledgement was lost.
 - Do not retry authentication or permanently malformed payload failures until
   configuration changes or the circuit probe interval elapses.
 - Use bounded exponential backoff with jitter.

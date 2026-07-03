@@ -962,6 +962,12 @@ Assertions:
 - Temporary DNS/network failure sends no request and degrades only that destination;
   an unsafe literal/resolution rejects the candidate graph and leaves the old graph
   active.
+- A resolution/connect/deadline failure before any request write is transient. A
+  timeout or connection failure after the complete or partial request may have
+  reached the peer is an ambiguous acknowledgement: bounded retry uses the exact
+  same projected bytes and record ID, never re-runs redaction, and the test permits
+  downstream duplicates only for that ambiguity. Authentication, permanent
+  payload, and unsafe-endpoint outcomes do not enter the retry loop.
 - `allow_private_networks` permits only loopback/RFC1918/IPv6 ULA and
   `allow_cgnat` permits only RFC 6598. Both produce warnings/audit. Link-local,
   metadata/task-credential, unspecified, multicast/reserved, and inline credentials

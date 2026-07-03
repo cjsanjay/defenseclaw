@@ -124,6 +124,7 @@ Section references are to this specification package.
 | P-061 | 02 §3.5; 04 §§1,7.1-7.3; 12 §§4-6 | 07 §§3,6.2,E2E-5; P5 generated builder conformance |
 | P-062 | 01 §10; 03 §§1.1,2.1,4.4; 05 §§6-7 | 07 §§2,4.1-4.2,5,12 E2E-5/E2E-6,13-14 |
 | P-063 | 03 §4.4; 05 §7.1 | 07 §§2,5,9.6,13 |
+| P-064 | 05 §§6.3,6.5 | 07 §§5,13 |
 
 ## 5. Review use
 
