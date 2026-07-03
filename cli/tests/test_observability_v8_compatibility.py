@@ -264,11 +264,29 @@ def test_oversize_tokens_and_sequences_are_rejected() -> None:
 
     source = _artifact()
     source["exporters"]["generic_otlp"]["logs"] = [
-        _selector(event_names=[f"event.{index}"]) for index in range(513)
+        _selector(event_names=[f"event.{index}"]) for index in range(257)
     ]
     with pytest.raises(V7CompatibilityError) as captured:
         load_v7_compatibility_selection(source)
     assert captured.value.code == "invalid_selector_count"
+
+
+def test_combined_exporter_and_feature_routes_respect_destination_limit() -> None:
+    source = _artifact()
+    source["exporters"]["generic_otlp"]["logs"] = [
+        _selector(event_names=[f"event.{index}"]) for index in range(255)
+    ]
+    with pytest.raises(V7CompatibilityError) as captured:
+        load_v7_compatibility_selection(source)
+    assert captured.value.code == "invalid_exporter_route_count"
+
+    source = _artifact()
+    source["exporters"]["generic_otlp"]["logs"] = [
+        _selector(event_names=[f"event.{index}"]) for index in range(254)
+    ]
+    with pytest.raises(V7CompatibilityError) as captured:
+        load_v7_compatibility_selection(source)
+    assert captured.value.code == "invalid_feature_route_count"
 
 
 def test_errors_and_representations_never_echo_untrusted_values() -> None:

@@ -50,7 +50,8 @@ FEATURE_NAMES: Final = ("otel_individual_findings",)
 SELECTOR_FIELDS: Final = ("buckets", "sources", "actions", "event_names")
 
 MAX_REGISTRY_SCHEMA_VERSION: Final = 2_147_483_647
-MAX_SELECTORS_PER_SIGNAL: Final = 512
+MAX_ROUTES_PER_DESTINATION: Final = 256
+MAX_SELECTORS_PER_SIGNAL: Final = MAX_ROUTES_PER_DESTINATION
 MAX_SELECTOR_VALUES: Final = 512
 MAX_SPAN_FILTER_OPERATIONS: Final = 256
 MAX_REQUIRED_ATTRIBUTES: Final = 128
@@ -185,6 +186,14 @@ class V7CompatibilitySelection:
         collection = _parse_collection(root["collection"])
         exporters = _parse_exporters(root["exporters"])
         features = _parse_features(root["features"])
+        generic_route_count = sum(len(selectors) for _, selectors in _lookup(exporters, "generic_otlp"))
+        feature_route_count = sum(len(selectors) for _, selectors in features)
+        if generic_route_count + feature_route_count > MAX_ROUTES_PER_DESTINATION:
+            raise _error(
+                "invalid_feature_route_count",
+                "$.features",
+                "regenerate generic OTel and feature selectors within the destination route limit",
+            )
         operations = _parse_span_filter_operations(root["span_filter_operations"])
         local = _parse_local_observability(root["local_observability"])
         return cls(
@@ -352,6 +361,12 @@ def _parse_exporters(value: Any) -> ExporterProfiles:
             )
             for signal in expected_signals
         )
+        if sum(len(selectors) for _, selectors in parsed) > MAX_ROUTES_PER_DESTINATION:
+            raise _error(
+                "invalid_exporter_route_count",
+                "$.exporters.profile",
+                "regenerate the exporter profile within the destination route limit",
+            )
         result.append((exporter, parsed))
     return tuple(result)
 
