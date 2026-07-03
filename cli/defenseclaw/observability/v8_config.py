@@ -49,7 +49,14 @@ from urllib.parse import urlsplit, urlunsplit
 import yaml
 from yaml.composer import ComposerError
 from yaml.constructor import ConstructorError
-from yaml.events import AliasEvent
+from yaml.events import (
+    AliasEvent,
+    MappingEndEvent,
+    MappingStartEvent,
+    ScalarEvent,
+    SequenceEndEvent,
+    SequenceStartEvent,
+)
 from yaml.nodes import MappingNode
 
 MAX_SOURCE_BYTES = 4 * 1024 * 1024
@@ -323,7 +330,16 @@ def observability_v8_parity_contract() -> dict[str, Any]:
 
 def _parse_source(data: str | bytes | Mapping[str, Any], source_name: str) -> dict[str, Any]:
     if isinstance(data, Mapping):
-        document = copy.deepcopy(dict(data))
+        _preflight_python_structure(data, source_name)
+        try:
+            document = copy.deepcopy(dict(data))
+        except (RecursionError, OverflowError):
+            raise V8ConfigError(
+                source_name,
+                "$",
+                "max-depth",
+                "reduce nesting depth below 33 levels",
+            ) from None
     else:
         raw = data.encode("utf-8") if isinstance(data, str) else bytes(data)
         if len(raw) > MAX_SOURCE_BYTES:
@@ -332,8 +348,16 @@ def _parse_source(data: str | bytes | Mapping[str, Any], source_name: str) -> di
             text = raw.decode("utf-8")
         except UnicodeDecodeError as exc:
             raise V8ConfigError(source_name, "$", "utf-8", "save the configuration as UTF-8") from exc
+        _preflight_yaml_structure(text, source_name)
         try:
             document = yaml.load(text, Loader=_StrictLoader)
+        except (RecursionError, OverflowError):
+            raise V8ConfigError(
+                source_name,
+                "$",
+                "max-depth",
+                "reduce nesting depth below 33 levels",
+            ) from None
         except yaml.YAMLError as exc:
             mark = getattr(exc, "problem_mark", None)
             path = f"$ (line {mark.line + 1}, column {mark.column + 1})" if mark is not None else "$"
@@ -345,13 +369,123 @@ def _parse_source(data: str | bytes | Mapping[str, Any], source_name: str) -> di
             ) from exc
     if not isinstance(document, dict):
         raise V8ConfigError(source_name, "$", "type", "use one YAML mapping as the document root")
-    _validate_preflight_values(document, source_name)
-    nodes, depth = _shape(document)
+    try:
+        _validate_preflight_values(document, source_name)
+        nodes, depth = _shape(document)
+    except (RecursionError, OverflowError):
+        raise V8ConfigError(
+            source_name,
+            "$",
+            "max-depth",
+            "reduce nesting depth below 33 levels",
+        ) from None
     if nodes > MAX_YAML_NODES:
         raise V8ConfigError(source_name, "$", "max-nodes", "reduce the configuration below 65536 nodes")
     if depth > MAX_YAML_DEPTH:
         raise V8ConfigError(source_name, "$", "max-depth", "reduce nesting depth below 33 levels")
     return document
+
+
+def _preflight_python_structure(value: Any, source_name: str) -> None:
+    """Bound already-materialized mapping input before recursive copy/validation."""
+
+    nodes = 0
+    seen_containers: set[int] = set()
+    pending: list[tuple[Any, int]] = [(value, 1)]
+    while pending:
+        current, depth = pending.pop()
+        nodes += 1
+        if nodes > MAX_YAML_NODES:
+            raise V8ConfigError(source_name, "$", "max-nodes", "reduce the configuration below 65536 nodes")
+        if not isinstance(current, (Mapping, list)):
+            continue
+        if depth > MAX_YAML_DEPTH:
+            raise V8ConfigError(source_name, "$", "max-depth", "reduce nesting depth below 33 levels")
+        identity = id(current)
+        if identity in seen_containers:
+            raise V8ConfigError(source_name, "$", "cycle", "remove cyclic container references")
+        seen_containers.add(identity)
+        if isinstance(current, Mapping):
+            if len(current) > MAX_MAPPING_ENTRIES:
+                raise V8ConfigError(
+                    source_name,
+                    "$",
+                    "max-mapping-entries",
+                    "reduce every mapping to 1024 entries or fewer",
+                )
+            nodes += len(current)  # mapping keys are separate YAML scalar nodes
+            children = current.values()
+        else:
+            children = current
+        for child in children:
+            child_depth = depth + 1 if isinstance(child, (Mapping, list)) else depth
+            pending.append((child, child_depth))
+
+
+def _preflight_yaml_structure(text: str, source_name: str, *, reject_aliases: bool = True) -> None:
+    """Enforce YAML node, collection-depth, and mapping limits before construction."""
+
+    nodes = 0
+    frames: list[list[int | bool]] = []
+
+    def record_parent_child() -> None:
+        if not frames or frames[-1][0] is not True:
+            return
+        frame = frames[-1]
+        if frame[1] is True:
+            frame[2] = int(frame[2]) + 1
+            if int(frame[2]) > MAX_MAPPING_ENTRIES:
+                raise V8ConfigError(
+                    source_name,
+                    "$",
+                    "max-mapping-entries",
+                    "reduce every mapping to 1024 entries or fewer",
+                )
+        frame[1] = frame[1] is not True
+
+    try:
+        for event in yaml.parse(text, Loader=_StrictLoader):
+            if reject_aliases and isinstance(event, AliasEvent):
+                raise V8ConfigError(
+                    source_name,
+                    "$",
+                    "yaml",
+                    "remove duplicate keys, aliases, merge keys, or malformed YAML",
+                )
+            if isinstance(event, (MappingStartEvent, SequenceStartEvent)):
+                record_parent_child()
+                nodes += 1
+                frames.append([isinstance(event, MappingStartEvent), True, 0])
+                if len(frames) > MAX_YAML_DEPTH:
+                    raise V8ConfigError(
+                        source_name,
+                        "$",
+                        "max-depth",
+                        "reduce nesting depth below 33 levels",
+                    )
+            elif isinstance(event, (MappingEndEvent, SequenceEndEvent)):
+                frames.pop()
+            elif isinstance(event, ScalarEvent):
+                record_parent_child()
+                nodes += 1
+            if nodes > MAX_YAML_NODES:
+                raise V8ConfigError(
+                    source_name,
+                    "$",
+                    "max-nodes",
+                    "reduce the configuration below 65536 nodes",
+                )
+    except V8ConfigError:
+        raise
+    except (yaml.YAMLError, RecursionError, OverflowError) as exc:
+        mark = getattr(exc, "problem_mark", None)
+        path = f"$ (line {mark.line + 1}, column {mark.column + 1})" if mark is not None else "$"
+        raise V8ConfigError(
+            source_name,
+            path,
+            "yaml",
+            "remove duplicate keys, aliases, merge keys, malformed YAML, or excessive nesting",
+        ) from None
 
 
 def _shape(value: Any, depth: int = 1) -> tuple[int, int]:

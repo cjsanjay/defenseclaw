@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 from defenseclaw.observability.v8_config import (
@@ -58,6 +59,28 @@ def test_minimal_source_and_parity_contract_are_deterministic() -> None:
     }
     assert contract["galileo_capabilities"] == ["traces"]
     assert contract["profiles"] == ["none", "sensitive", "content", "strict", "legacy-v7"]
+
+
+def test_extreme_yaml_depth_is_rejected_before_recursion_escapes() -> None:
+    source = "config_version: 8\nobservability:\n  future: " + "[" * 5_000 + "]" * 5_000 + "\n"
+    with pytest.raises(V8ConfigError) as captured:
+        load_validate_v8(source)
+    assert captured.value.keyword in {"max-depth", "yaml"}
+    assert captured.value.__cause__ is None
+
+
+def test_extreme_mapping_depth_is_rejected_without_recursion_escape() -> None:
+    nested: dict[str, Any] = {}
+    current = nested
+    for _ in range(2_000):
+        child: dict[str, Any] = {}
+        current["x"] = child
+        current = child
+    source: dict[str, Any] = {"config_version": 8, "observability": nested}
+    with pytest.raises(V8ConfigError) as captured:
+        load_validate_v8(source)
+    assert captured.value.keyword == "max-depth"
+    assert captured.value.__cause__ is None
 
 
 def test_reference_source_validates_against_canonical_schema() -> None:

@@ -39,6 +39,8 @@ import yaml
 from yaml.events import AliasEvent
 from yaml.nodes import MappingNode, Node, ScalarNode, SequenceNode
 
+from defenseclaw.observability.v8_config import V8ConfigError, _preflight_yaml_structure
+
 PathPart: TypeAlias = str | int
 YAMLPath: TypeAlias = tuple[PathPart, ...]
 
@@ -304,6 +306,23 @@ def _decode_source(raw: bytes, source_name: str) -> str:
 
 
 def _parse_v8(text: str, source_name: str) -> _ParsedYAML:
+    try:
+        # PyYAML composes nested flow collections recursively. Enforce the
+        # shared limits from its streaming event surface before allocating the
+        # syntax tree used for surgical source spans.
+        _preflight_yaml_structure(text, source_name, reject_aliases=False)
+    except V8ConfigError as error:
+        code = "source_too_complex" if error.keyword.startswith("max-") else "invalid_yaml"
+        message = (
+            "configuration exceeds safe YAML limits"
+            if code == "source_too_complex"
+            else "configuration is not valid safe YAML"
+        )
+        raise V8YAMLMutationError(
+            code,
+            message,
+            source=source_name,
+        ) from None
     loader = _StrictSafeLoader(text)
     loader._v8_source_name = source_name  # type: ignore[attr-defined]
     try:
@@ -318,6 +337,12 @@ def _parse_v8(text: str, source_name: str) -> _ParsedYAML:
         value = loader.construct_document(root)
     except V8YAMLMutationError:
         raise
+    except (RecursionError, OverflowError):
+        raise V8YAMLMutationError(
+            "source_too_complex",
+            "configuration exceeds safe YAML limits",
+            source=source_name,
+        ) from None
     except yaml.YAMLError as error:
         mark = getattr(error, "problem_mark", None) or getattr(error, "context_mark", None)
         raise V8YAMLMutationError(

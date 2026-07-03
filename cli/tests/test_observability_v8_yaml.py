@@ -27,6 +27,14 @@ from defenseclaw.observability.v8_yaml import (
 )
 
 
+def test_extreme_yaml_depth_is_rejected_before_recursion_escapes() -> None:
+    source = "config_version: 8\nobservability:\n  future: " + "[" * 5_000 + "]" * 5_000 + "\n"
+    with pytest.raises(V8YAMLMutationError) as captured:
+        prepare_v8_yaml_write(source, [])
+    assert captured.value.code == "source_too_complex"
+    assert captured.value.__cause__ is None
+
+
 def test_noop_is_byte_identical_with_comments_ascii_unicode_and_quotes() -> None:
     source = (
         "# ┌── OBSERVABILITY: collect → route ──┐\n"
