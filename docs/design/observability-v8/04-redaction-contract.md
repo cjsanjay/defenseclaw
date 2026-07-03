@@ -493,9 +493,11 @@ detector-catalog-v1 limits are fixed:
 | Safe-report entries | 32 | Omit further entries and set `failures_truncated`; never omit aggregate counts. |
 
 Invalid UTF-8, depth/member/output overflow, regex/validator error, key failure, or
-other work-limit exhaustion is fail-closed for the affected field/sample. It is
-never permission to emit a scanned prefix plus an unscanned raw middle or suffix.
-Go uses RE2 only. These limits are not configurable in v8.
+candidate/match-limit exhaustion is fail-closed for the affected field/sample. The
+separate scan-byte limit intentionally uses the safe keyed `oversize.CLASS`
+transformation and `transformed`/`truncated` state rather than reporting a processing
+failure. Neither case permits a scanned prefix plus an unscanned raw middle or
+suffix. Go uses RE2 only. These limits are not configurable in v8.
 
 ### 7.5 Replacement tokens and correlation domains
 
@@ -517,8 +519,8 @@ oversize, input bytes are the original string or canonical JSON scalar text and
 A processing failure that cannot safely compute a keyed correlation token is
 exactly `<redacted type=failed_closed v=1 code=CODE>`. `CODE` is a bounded registered
 token such as `key_unavailable`, `invalid_utf8`, `candidate_limit`,
-`field_match_limit`, `record_match_limit`, `classification_failed`,
-`unicode_repertoire`, `projection_context_mismatch`, or `output_limit`; it contains
+`field_match_limit`, `record_match_limit`, `unicode_repertoire`,
+`projection_context_mismatch`, or `output_limit`; it contains
 no length, digest, value, or exception text.
 
 The correlation scope is installation-wide. For the same key, detector/class,
@@ -655,8 +657,8 @@ answers whether data existed, while `state` answers what the projection did to i
 
 ### 9.1 Field processing failure
 
-If parsing, classification, detection, encoding, or size handling fails for a
-dynamic field:
+After the complete field map passes §7.2 preflight, if detection, scalar
+transformation, encoding, or field-size handling fails for a dynamic field:
 
 1. Replace the complete field with the exact §7.5 `failed_closed` token, or the
    keyed whole/oversize token when that result was computed safely.
@@ -667,6 +669,10 @@ dynamic field:
    `platform.health / redaction.failed_closed` signal containing profile,
    destination name, field class, and stable error code, but no field value,
    destination secret/endpoint/path, exception text, or recursive redaction report.
+
+Field-map/classification failure is never handled by this field-level path. It is
+the record-level `classification_failed` outcome in §7.2/§9.2; unresolved metric
+classification rejects the complete sample under §7.3.
 
 ### 9.2 Record processing failure
 
