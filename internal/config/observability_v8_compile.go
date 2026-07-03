@@ -217,6 +217,13 @@ func compileObservabilityV8Local(source ObservabilityV8LocalSource) (Observabili
 	if retentionDays < 0 {
 		return ObservabilityV8EffectiveLocal{}, fmt.Errorf("observability.local.retention_days: must be zero or greater")
 	}
+	if retentionDays > ObservabilityV8MaxRetentionDays {
+		return ObservabilityV8EffectiveLocal{}, fmt.Errorf(
+			"observability.local.retention_days: got %d, maximum is %d",
+			retentionDays,
+			ObservabilityV8MaxRetentionDays,
+		)
+	}
 	return ObservabilityV8EffectiveLocal{Path: source.Path, JudgeBodiesPath: source.JudgeBodiesPath, RetentionDays: retentionDays}, nil
 }
 

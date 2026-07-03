@@ -16,6 +16,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"time"
 
 	"github.com/defenseclaw/defenseclaw/internal/observability"
 	"gopkg.in/yaml.v3"
@@ -32,6 +33,9 @@ const (
 	ObservabilityV8MaxRoutesTotal          = 4_096
 	ObservabilityV8MaxRedactionProfiles    = 128
 	ObservabilityV8MaxMappingEntries       = 1_024
+	// ObservabilityV8MaxRetentionDays is the largest whole-day retention
+	// period that can be represented as a time.Duration without overflow.
+	ObservabilityV8MaxRetentionDays = int((1<<63 - 1) / int64(24*time.Hour))
 )
 
 const ObservabilityV8BucketCatalogVersion = 1

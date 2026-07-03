@@ -55,6 +55,25 @@ func TestCompileObservabilityV8AbsentAndEmptyDefaults(t *testing.T) {
 	}
 }
 
+func TestCompileObservabilityV8RetentionDaysBoundaries(t *testing.T) {
+	maximum := ObservabilityV8MaxRetentionDays
+	plan := mustCompileObservabilityV8(t, &ObservabilityV8Source{
+		Local: ObservabilityV8LocalSource{RetentionDays: &maximum},
+	})
+	if got := plan.Snapshot().Local.RetentionDays; got != maximum {
+		t.Fatalf("retention days = %d, want maximum %d", got, maximum)
+	}
+
+	overMaximum := maximum + 1
+	_, err := CompileObservabilityV8(&ObservabilityV8Source{
+		Local: ObservabilityV8LocalSource{RetentionDays: &overMaximum},
+	})
+	want := "observability.local.retention_days: got 106752, maximum is 106751"
+	if err == nil || err.Error() != want {
+		t.Fatalf("error = %v, want %q", err, want)
+	}
+}
+
 func TestObservabilityV8MinimalEffectivePlanGolden(t *testing.T) {
 	compiled, err := ParseCompileObservabilityV8(
 		"golden.yaml",

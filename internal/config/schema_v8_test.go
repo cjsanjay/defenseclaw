@@ -90,3 +90,18 @@ func TestConfigV8SchemaMatchesTypedObservabilitySourceFields(t *testing.T) {
 		}
 	}
 }
+
+func TestConfigV8SchemaRetentionMaximumMatchesCompiler(t *testing.T) {
+	var schema map[string]any
+	if err := json.Unmarshal(publicschemas.DefenseClawConfigV8Schema(), &schema); err != nil {
+		t.Fatal(err)
+	}
+	definitions := schema["$defs"].(map[string]any)
+	localStore := definitions["localStore"].(map[string]any)
+	properties := localStore["properties"].(map[string]any)
+	retentionDays := properties["retention_days"].(map[string]any)
+	got, ok := retentionDays["maximum"].(float64)
+	if !ok || got != float64(ObservabilityV8MaxRetentionDays) {
+		t.Fatalf("observability.local.retention_days maximum = %v, want %d", retentionDays["maximum"], ObservabilityV8MaxRetentionDays)
+	}
+}
