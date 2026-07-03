@@ -152,6 +152,9 @@ Allowed field-class modes are:
 Profile-strength validation prevents a custom profile from becoming an unlabelled
 raw bypass:
 
+- `metadata` and schema-approved `identifier` MUST remain `preserve`; a custom
+  profile cannot remove or rewrite truthfulness, correlation, or generated safe
+  envelope fields.
 - `preserve` is allowed only for schema-approved `metadata` and `identifier`
   classes.
 - `credential` may use only `remove` or `whole`.
@@ -402,6 +405,34 @@ Projected JSON is the canonical envelope plus exactly one added top-level member
 }
 ```
 
+The phrase "canonical envelope" describes the envelope field vocabulary, not a
+requirement to copy stale classification entries. The canonical `Record` retains
+its complete immutable `field_classes` map. A delivery `Projection` emits the
+surviving subset of that original classification provenance: an entry is retained
+only when its original pointer still resolves to the corresponding projected leaf.
+An object property removed by `remove`, including an empty-container property, and
+all of its classification entries are absent from the delivery map. An exact
+classified array leaf removed to JSON `null` retains its index and classification
+entry because that original pointer still exists. A structural `null` created by
+pruning a descendant-empty container has no original class at the container pointer
+and receives no synthesized entry. No removed property name or presence signal may
+survive only in `field_classes`. This filtering intentionally means a delivery map
+need not classify a newly created structural `null`; it does not mutate or weaken
+the pre-projection complete-map validation in §7.2.
+
+To prevent the same disclosure through a surviving parent key, a nonempty
+container that becomes empty solely because every descendant was removed is
+pruned as part of the same removal. When that prunable container is an object
+property, the property is omitted; when it occupies an array slot, the slot becomes
+JSON `null`. A container that was empty in the canonical input is not auto-pruned
+merely for being empty, but its own exact leaf classification and configured mode
+still apply. A container that retains any preserved or transformed descendant
+remains present. Thus pruning neither invents key classification nor collapses
+array indices. An exact classified leaf removed in an array retains that pointer's
+classification on the delivered `null`; a container made prunable only through
+descendant removal has no class at the container pointer, so its array `null` keeps
+the index but receives no synthesized classification entry.
+
 This `projection` object is delivery metadata and is not part of the canonical
 envelope. It is included in the final projected serialization and its destination
 integrity HMAC/signature. Its member set is exact: profile name, integer catalog
@@ -410,6 +441,10 @@ a Boolean truncation flag. `transformed_fields` counts changed serialized leaves
 removed leaves; `removed_fields` counts removed properties/array slots;
 `oversize_fields` is the subset of transformed leaves protected for scan size; and
 `failure_count` counts field/sample/record processing failures independently.
+Each configured leaf removal increments `removed_fields`. If recursive pruning
+additionally omits a parent object property or nulls a parent array slot, each such
+extra structural removal increments `removed_fields` once as well; pruning is not
+hidden from the aggregate counters.
 `raw` means `none` intentionally made no content transformation; `inspected` means
 a redacting profile completed without a match, whole/hash/remove/oversize action,
 or processing failure; `transformed` means at least one
@@ -451,7 +486,15 @@ schema-derived trust.
 
 - Objects are traversed in canonical key order; arrays retain semantic order.
 - `remove` omits an object property. In an array it replaces the slot with JSON
-  `null`, preserving indices and shape. Empty objects/arrays are retained.
+  `null`, preserving indices and shape. Empty objects/arrays are retained unless
+  that exact leaf is removed or a previously nonempty container becomes empty
+  solely because all descendants were removed, in which case §7.1 recursively
+  prunes that container using the same object-versus-array rule. The projected
+  `field_classes` map is filtered under §7.1: omitted object leaves disappear from
+  the map, while an exact classified leaf delivered as array `null` remains
+  classified at its stable index. A descendant-pruned container `null` has no
+  invented class entry. Every additional property omission or array-slot null caused
+  by recursive pruning is a separate `removed_fields` action.
 - `preserve` retains strings, canonical JSON booleans/numbers, and null exactly.
 - `detect` scans strings only. Non-string scalars and null are preserved.
 - `whole` and `hash` transform strings and the canonical JSON scalar text for

@@ -1564,6 +1564,10 @@ func validateObservabilityV8DetectorGroups(groups []ObservabilityV8DetectorGroup
 
 func validateObservabilityV8ProfileStrength(profile ObservabilityV8EffectiveProfile) error {
 	for fieldClass, mode := range profile.FieldClasses {
+		if (fieldClass == ObservabilityV8FieldMetadata || fieldClass == ObservabilityV8FieldIdentifier) &&
+			mode != ObservabilityV8ModePreserve {
+			return fmt.Errorf("field class %s must use preserve", fieldClass)
+		}
 		if mode == ObservabilityV8ModePreserve && fieldClass != ObservabilityV8FieldMetadata && fieldClass != ObservabilityV8FieldIdentifier {
 			return fmt.Errorf("field class %s cannot use preserve", fieldClass)
 		}

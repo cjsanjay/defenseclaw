@@ -545,6 +545,8 @@ func TestCompileObservabilityV8Profiles(t *testing.T) {
 		{RedactionProfiles: map[string]ObservabilityV8RedactionProfileSource{"a": {Extends: "b"}, "b": {Extends: "a"}}},
 		{RedactionProfiles: map[string]ObservabilityV8RedactionProfileSource{"bad": {Extends: "strict", Detectors: []ObservabilityV8DetectorGroup{"unknown"}}}},
 		{RedactionProfiles: map[string]ObservabilityV8RedactionProfileSource{"bad": {Extends: "sensitive", FieldClasses: map[ObservabilityV8FieldClass]ObservabilityV8FieldMode{ObservabilityV8FieldContent: ObservabilityV8ModePreserve}}}},
+		{RedactionProfiles: map[string]ObservabilityV8RedactionProfileSource{"bad": {Extends: "sensitive", FieldClasses: map[ObservabilityV8FieldClass]ObservabilityV8FieldMode{ObservabilityV8FieldMetadata: ObservabilityV8ModeRemove}}}},
+		{RedactionProfiles: map[string]ObservabilityV8RedactionProfileSource{"bad": {Extends: "content", FieldClasses: map[ObservabilityV8FieldClass]ObservabilityV8FieldMode{ObservabilityV8FieldIdentifier: ObservabilityV8ModeWhole}}}},
 	}
 	for index := range invalid {
 		if _, err := CompileObservabilityV8(&invalid[index]); err == nil {

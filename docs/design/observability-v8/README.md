@@ -11,8 +11,8 @@ phase-specific implementation and verification progress.
 - Repository baseline: DefenseClaw configuration v7
 - Repository location: `docs/design/observability-v8/`
 - Execution ledger: [`../../../spec.md`](../../../spec.md)
-- Decision registry: 22 locked product decisions, 12 semantic decisions, and 57
-  ambiguity-removal decisions (91 total)
+- Decision registry: 22 locked product decisions, 12 semantic decisions, and 61
+  ambiguity-removal decisions (95 total)
 
 ## Purpose
 

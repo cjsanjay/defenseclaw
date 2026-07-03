@@ -46,7 +46,7 @@ Tests must validate outputs, not merely that functions returned no error.
 | Push network safety | HTTP JSONL, OTLP, and Splunk tests cover every prohibited address class, guarded dialing/DNS rebinding, disabled redirects, failure isolation, and narrowly bounded private/CGNAT opt-ins |
 
 Decision-level coverage for `D-001` through `D-022`, `S-001` through `S-012`, and
-`P-001` through `P-059` is normative in `13-decision-traceability.md`; this matrix is
+`P-001` through `P-061` is normative in `13-decision-traceability.md`; this matrix is
 the requirement-level summary rather than a competing decision index.
 
 ## 3. Taxonomy Tests
@@ -155,6 +155,10 @@ a parallel hand-authored P2 registry:
   rejection when any dynamic field remains unclassified. Tests prove ordinary
   callers cannot assert schema derivation. P5 generated-builder tests prove complete
   schema derivation with an empty explicit map and reject explicit/schema conflicts.
+- Producer-builder tests prove structural JSON property names come only from the
+  owned schema vocabulary. Dynamic map keys, labels, tool-argument names, and
+  provider-controlled names are encoded as classified string values; P5 generated
+  builders reject any schema that would place them in property names.
 - Mandatory-floor tests prove producer kind/key/typed facts are resolved through
   the reviewed catalog; public inputs cannot forge `mandatory`. Disabled ordinary
   events never invoke a builder. A floor build accepts no ordinary body, carries the
@@ -220,7 +224,8 @@ Startup/reload validation MUST reject:
 - Custom profile extending or aliasing `none`.
 - Custom profile extending or aliasing immutable `legacy-v7`.
 - Empty effective detector groups for a `detect` mode, `credential: preserve`, or
-  `preserve` on a dynamic content/reason/evidence/error/path class.
+  `preserve` on a dynamic content/reason/evidence/error/path class, or any custom
+  mode other than `preserve` for metadata/schema-approved identifiers.
 - Any custom redaction-profile member other than `extends`, `detectors`, and
   `field_classes`, including size, scan, candidate, match, excerpt, report, key
   material, or key-path knobs; equivalent v8 environment inputs are also rejected.
@@ -403,7 +408,15 @@ and every literal grammar/key/label set in 04 §6.2.
   All three redacting profiles inherit all groups, while modes that do not use
   `detect` invoke no detector. Remediation text is always `reason`.
 - Object `remove` omits the property; array `remove` writes `null`; both retain
-  empty containers and array indices.
+  empty containers and array indices unless the exact empty-container leaf is
+  removed. A nonempty container emptied solely by descendant removal is pruned
+  recursively as an object property or becomes `null` in an array, so dynamic
+  parent keys cannot remain as empty shells. The delivery `field_classes` map omits
+  every removed object pointer and retains the pointer only when an exact classified
+  leaf becomes array `null`; a descendant-pruned container `null` receives no
+  synthesized class. Removed-field counters include both configured leaf removals
+  and each additional property/slot removed by recursive pruning. The untouched
+  canonical map remains complete.
 - `preserve` retains all canonical scalar types; `detect` scans only strings;
   whole/hash transform strings and canonical Boolean/number text; null survives;
   binary-encoded input remains an explicitly classified string.

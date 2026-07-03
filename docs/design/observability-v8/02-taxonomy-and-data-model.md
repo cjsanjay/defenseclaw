@@ -566,6 +566,23 @@ or `credential`. An entry classifies the value at that exact pointer. Invalid
 pointers, pointers that do not resolve, unknown classes, and conflicting duplicate
 pointers are rejected.
 
+This complete map is canonical-record state. Route projections derive a separate
+delivery map after transformation as specified by
+`04-redaction-contract.md` §7.1: it is the surviving subset of original
+classification provenance and cannot retain the name or presence of an object
+property removed by redaction. It does not synthesize a class for a structural
+`null` created only by recursive pruning. The canonical map itself is never
+mutated.
+
+Object member names are structural schema vocabulary, not a covert content
+channel. Producer- or provider-controlled names, arbitrary tool-argument map keys,
+labels, and other dynamic names MUST be represented as explicitly classified
+string values (for example, ordered `{name, value}` entries), never copied into
+JSON property names. P2 current typed adapters enforce this as a producer contract;
+P5 generated family builders and registry conformance make it mechanical for every
+schema. A destination adapter cannot infer that a property name is safe, and
+recursive projection pruning is not a substitute for this builder rule.
+
 Classification is exact, not inherited: a class at the root or a parent container
 does not classify any descendant. Without generated schema proof, every scalar,
 null, empty-object, and empty-array leaf has its own explicit pointer entry. This
