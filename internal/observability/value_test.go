@@ -132,6 +132,14 @@ func TestValueNormalizesNearLimitTrailingZerosInBulk(t *testing.T) {
 	}
 }
 
+func TestValueRejectsOneOverRawNumberBeforeNormalization(t *testing.T) {
+	oversize := json.Number("1." + strings.Repeat("0", MaxCanonicalValueBytes))
+	_, err := NewValue(map[string]any{"n": oversize})
+	if !IsValueError(err, ValueErrorSizeLimit) {
+		t.Fatalf("oversize raw number error = %v", err)
+	}
+}
+
 func TestValueSnapshotsInputsAndOutputs(t *testing.T) {
 	child := []any{"original"}
 	input := map[string]any{"child": child}

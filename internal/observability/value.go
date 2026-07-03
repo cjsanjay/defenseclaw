@@ -342,6 +342,9 @@ func (state *normalizationState) leave(visit normalizationVisit) {
 
 func normalizeJSONNumber(number json.Number) (json.Number, error) {
 	text := number.String()
+	if len(text) > MaxCanonicalValueBytes {
+		return "", valueError(ValueErrorSizeLimit)
+	}
 	if strings.TrimSpace(text) != text {
 		return "", valueError(ValueErrorInvalidNumber)
 	}
@@ -349,9 +352,6 @@ func normalizeJSONNumber(number json.Number) (json.Number, error) {
 		return "", valueError(ValueErrorInvalidNumber)
 	}
 	if isIntegerJSONNumber(text) {
-		if len(text) > MaxCanonicalValueBytes {
-			return "", valueError(ValueErrorSizeLimit)
-		}
 		integer := new(big.Int)
 		if _, ok := integer.SetString(text, 10); !ok {
 			return "", valueError(ValueErrorInvalidNumber)
