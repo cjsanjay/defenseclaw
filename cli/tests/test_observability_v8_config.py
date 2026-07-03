@@ -196,6 +196,8 @@ def test_masked_source_hides_inline_secrets_and_static_headers() -> None:
 llm:
   api_key: inline-llm-secret
   api_key_env: DEFENSECLAW_LLM_KEY
+  extra_headers:
+    Authorization: bearer-extra-header-secret
 gateway:
   token: inline-gateway-token
   token_env: DEFENSECLAW_GATEWAY_TOKEN
@@ -214,6 +216,7 @@ observability:
 
     assert masked["llm"]["api_key"] == "[REDACTED]"
     assert masked["llm"]["api_key_env"] == "DEFENSECLAW_LLM_KEY"
+    assert masked["llm"]["extra_headers"]["Authorization"] == "[REDACTED]"
     assert masked["gateway"]["token"] == "[REDACTED]"
     assert masked["gateway"]["token_env"] == "DEFENSECLAW_GATEWAY_TOKEN"
     assert destination["headers"]["Authorization"] == "[REDACTED]"
@@ -223,6 +226,7 @@ observability:
     assert "inline-llm-secret" not in rendered
     assert "inline-gateway-token" not in rendered
     assert "inline-header-secret" not in rendered
+    assert "bearer-extra-header-secret" not in rendered
     assert "query-secret" not in rendered
     assert "fragment-secret" not in rendered
 

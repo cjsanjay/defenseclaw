@@ -252,6 +252,13 @@ def prepare_v8_yaml_write(
         if mutation.value is not DELETE:
             _validate_replacement_value(mutation.value, source_name, path)
         candidate = _apply_mutation(candidate, parsed, mutation, source_name, newline)
+        if len(candidate.encode("utf-8")) > _MAX_SOURCE_BYTES:
+            raise V8YAMLMutationError(
+                "source_too_large",
+                "v8 configuration exceeds the 4 MiB source limit after mutation",
+                source=source_name,
+                path=path,
+            )
         parsed = _parse_v8(candidate, source_name)
 
     encoded = candidate.encode("utf-8")
@@ -740,6 +747,17 @@ def _delete_flow_element(
     if len(items) == 1:
         return text[:start] + text[end:]
     if index > 0:
+        previous = items[index - 1]
+        if isinstance(parent, MappingNode):
+            previous_end = previous[1].end_mark.index
+        else:
+            previous_end = previous.end_mark.index
+        separator = text[previous_end:start]
+        # A comment terminates at the newline inside the separator. Preserve
+        # that newline (and a legal trailing comma) so the closing flow
+        # delimiter cannot be swallowed by the comment after deletion.
+        if "#" in separator:
+            return text[:start] + text[end:]
         cursor = start
         while cursor > parent.start_mark.index and text[cursor - 1].isspace():
             cursor -= 1

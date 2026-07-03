@@ -164,6 +164,7 @@ _SECRET_FIELD_NAMES = frozenset(
         "ca_cert_pem",
     )
 )
+_HEADER_MAP_FIELD_NAMES = frozenset(("headers", "extra_headers"))
 
 
 class V8ConfigError(ValueError):
@@ -824,8 +825,8 @@ def _masked_copy(value: Any, parent_key: str = "", in_headers: bool = False) -> 
         result: dict[Any, Any] = {}
         for key, child in value.items():
             key_text = str(key).lower()
-            headers = in_headers or key_text == "headers"
-            if headers and key_text != "headers" and isinstance(child, str):
+            headers = in_headers or key_text in _HEADER_MAP_FIELD_NAMES
+            if headers and key_text not in _HEADER_MAP_FIELD_NAMES and isinstance(child, str):
                 result[key] = "[REDACTED]"
             elif parent_key == "webhooks" and key_text == "url" and isinstance(child, str):
                 result[key] = "[REDACTED]"

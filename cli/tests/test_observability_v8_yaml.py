@@ -365,3 +365,47 @@ def test_sequence_insertion_must_be_contiguous() -> None:
             [V8YAMLMutation.set(("observability", "destinations", 2), {"name": "later", "kind": "console"})],
         )
     assert caught.value.code == "unreachable_mutation_path"
+
+
+def test_candidate_exceeding_source_limit_is_rejected() -> None:
+    source = "config_version: 8\nobservability: {}\n"
+    oversized = "x" * 4_194_304
+    with pytest.raises(V8YAMLMutationError) as caught:
+        prepare_v8_yaml_write(
+            source,
+            [V8YAMLMutation.set(("observability", "local", "path"), oversized)],
+        )
+
+    assert caught.value.code == "source_too_large"
+    assert oversized[:100] not in str(caught.value)
+
+
+@pytest.mark.parametrize(
+    ("source", "mutation", "expected"),
+    [
+        (
+            "config_version: 8\nobservability: {local: {path: /audit.db, # keep note\n retention_days: 90}}\n",
+            V8YAMLMutation.delete(("observability", "local", "retention_days")),
+            {"path": "/audit.db"},
+        ),
+        (
+            "config_version: 8\n"
+            "observability: {destinations: [{name: one, kind: console}, # keep note\n"
+            " {name: two, kind: console}]}\n",
+            V8YAMLMutation.delete(("observability", "destinations", 1)),
+            [{"name": "one", "kind": "console"}],
+        ),
+    ],
+)
+def test_flow_delete_after_commented_separator_preserves_valid_yaml(
+    source: str,
+    mutation: V8YAMLMutation,
+    expected: object,
+) -> None:
+    prepared = prepare_v8_yaml_write(source, [mutation])
+    candidate = prepared.candidate.decode()
+
+    assert "# keep note" in candidate
+    parsed = yaml.safe_load(candidate)["observability"]
+    actual = parsed["local"] if "local" in parsed else parsed["destinations"]
+    assert actual == expected
