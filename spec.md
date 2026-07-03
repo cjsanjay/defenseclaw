@@ -6,7 +6,7 @@ goal_status: active
 current_phase: P1
 target_config_version: 8
 baseline_commit: fd13acedfcffc0cc431d5a72f329b56b50b22baa
-last_verified_commit: d152924345426208223a07c75be6d8853b86a41c
+last_verified_commit: 780adcf72bf3db0cd1041abf2855197fe95b39f9
 last_updated: 2026-07-02
 ```
 
@@ -31,8 +31,8 @@ or a plausible-looking dashboard is not completion.
 
 | Field | Value |
 |---|---|
-| Active work package | `P1-WP02` — strict Go v8 schema, parser, immutable plan, and compiler |
-| Ready queue | `P1-WP03` after the shared schema/effective-plan corpus; `P1-WP04` after Python parity |
+| Active work package | `P1-WP03` — Python parity, comment-preserving writer, and generated config views |
+| Ready queue | `P1-WP04` after Python parity and the shared source/effective/reference corpus |
 | Blocked | None |
 | Next phase gate | `P1-GATE` — validated immutable v8 runtime plan and deterministic converter |
 | Root coordinator | Primary Codex thread |
@@ -193,8 +193,8 @@ gate must pass.
 | ID | Status | Owner | Depends on | Deliverable | Verification/evidence |
 |---|---|---|---|---|---|
 | `P1-WP01` | `DONE` | subagent + root | `P0-GATE` | Bucket/signal/event/severity/source/selector types and classification contract | 14 gateway events and 188 audit actions exhaustively classified; focused Go tests/vet at `d15292434` |
-| `P1-WP02` | `IN_PROGRESS` | root + subagents | `P1-WP01` | Go v8 schema, defaults, compiler, capabilities, routes, profiles, strict legacy rejection | Go config unit/golden tests |
-| `P1-WP03` | `TODO` | unassigned | `P1-WP02` | Python parity, comment-preserving writer, source/effective/reference generation | Python parity/comment tests |
+| `P1-WP02` | `DONE` | root + subagents | `P1-WP01` | Go v8 schema, defaults, compiler, capabilities, routes, profiles, strict legacy rejection | Closed schema and embedded registry; strict parser; immutable/masked plan; capability/preset/route/profile/secret/path/endpoint/provenance diagnostics; normal/race/vet/schema suites and `make check` passed at `780adcf72` |
+| `P1-WP03` | `IN_PROGRESS` | root + subagents | `P1-WP02` | Python parity, comment-preserving writer, source/effective/reference generation | Python parity/comment tests |
 | `P1-WP04` | `TODO` | unassigned | `P1-WP02..03` | Deterministic v7-to-v8 converter and golden fixtures | Candidate equivalence/secrets/idempotence tests |
 | `P1-GATE` | `TODO` | root | `P1-WP01..04` | Immutable validated runtime plan from YAML; runtime producers not switched | Phase test set recorded |
 
@@ -306,6 +306,8 @@ only “passed.” A relevant change invalidates old evidence.
 | `V-0004` | 2026-07-02 | `963b1bc9fb5a564c53809a70b452e61e888f768c` | P0 | `.venv/bin/python -m pytest cli/tests/test_observability_v8_spec.py cli/tests/test_observability_v8_inventory.py cli/tests/test_agent360_dashboard.py cli/tests/test_grafana_dashboards.py -q` | 42 passed in 3.38s | root |
 | `V-0005` | 2026-07-02 | `44b0b059c1f7441279f8f2318ed61c80a4cd25be` | P0 | `make check-observability-v8-spec` and focused spec tests/Ruff | 81 decisions valid; 5 fence-aware spec tests passed; all 5 post-approval CodeRabbit findings resolved | root |
 | `V-0006` | 2026-07-02 | `d152924345426208223a07c75be6d8853b86a41c` | P1 | `go test ./internal/audit ./internal/gatewaylog ./internal/observability -count=1 && go vet ./internal/observability` | 14 gateway events and 188 audit actions classified; tests and vet passed | root |
+| `V-0007` | 2026-07-02 | `705b185c982e9e6a83c292443689bf6abac06bf1` | P1-WP02 | `go test ./internal/observability -count=1` | Canonical event registry matched 14 gateway/188 audit classifications, 25 trace families, 131 metric instruments, and lifecycle aliases; passed | root + subagent |
+| `V-0008` | 2026-07-02 | `780adcf72bf3db0cd1041abf2855197fe95b39f9` | P1-WP02 | `go test ./internal/observability ./internal/config ./schemas -count=1`; focused config race; vet; schema/spec checks; `make check` | Normal/race/vet passed; 23 JSON schemas plus v8 semantic lock passed; 83 decisions valid; v7 parity, 14 dashboards/313 panels, Go/TS provider coverage, LLM catalog, and upgrade manifest passed | root + subagents |
 
 Final integration requires, at minimum:
 
