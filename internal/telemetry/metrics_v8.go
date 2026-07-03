@@ -221,6 +221,19 @@ var v8MetricAllowedAttributeKeys = map[attribute.Key]struct{}{
 	"webhook.target_hash": {}, "would_block": {},
 }
 
+// V8MetricAllowedAttributeKeys returns the deterministic compatibility label
+// vocabulary used by the metric construction boundary. Destination adapters
+// use this detached snapshot to fail closed without maintaining a second label
+// catalog.
+func V8MetricAllowedAttributeKeys() []string {
+	result := make([]string, 0, len(v8MetricAllowedAttributeKeys))
+	for key := range v8MetricAllowedAttributeKeys {
+		result = append(result, string(key))
+	}
+	sort.Strings(result)
+	return result
+}
+
 // v8MetricMeter lets the existing metricsSet constructor remain the single
 // source of names, units, descriptions, and histogram boundaries. Enabled
 // bucket instruments reach the graph-owned SDK Meter; disabled bucket fields

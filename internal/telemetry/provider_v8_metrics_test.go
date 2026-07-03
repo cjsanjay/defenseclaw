@@ -101,6 +101,23 @@ func TestV8MetricAttributePolicyExactlyCoversLegacyEmitterKeys(t *testing.T) {
 	}
 }
 
+func TestV8MetricAllowedAttributeKeysIsSortedAndDetached(t *testing.T) {
+	first := V8MetricAllowedAttributeKeys()
+	second := V8MetricAllowedAttributeKeys()
+	if len(first) != len(v8MetricAllowedAttributeKeys) || !sort.StringsAreSorted(first) ||
+		!reflect.DeepEqual(first, second) {
+		t.Fatalf("public metric labels are not an exact sorted snapshot: first=%v second=%v", first, second)
+	}
+	if len(first) == 0 {
+		t.Fatal("public metric label snapshot is empty")
+	}
+	first[0] = "mutated"
+	third := V8MetricAllowedAttributeKeys()
+	if reflect.DeepEqual(first, third) || !reflect.DeepEqual(second, third) {
+		t.Fatal("public metric label snapshot aliases internal or prior state")
+	}
+}
+
 func metricPlanForTest(t *testing.T, enabled ...observability.Bucket) *config.ObservabilityV8Plan {
 	t.Helper()
 	return v8PlanForTest(t, "always_on", "", func(source *config.ObservabilityV8Source) {
