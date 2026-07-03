@@ -234,6 +234,44 @@ func TestClassifiedLogBuilderSnapshotsInputs(t *testing.T) {
 	}
 }
 
+func TestClassifiedLogBuilderEnforcesSchemaOwnedObjectNames(t *testing.T) {
+	clock := &countingClock{now: time.Now()}
+	ids := &countingIDGenerator{}
+	builder, err := NewRecordBuilder(clock, ids)
+	if err != nil {
+		t.Fatal(err)
+	}
+	valid := validClassifiedLogInput()
+	valid.Body = map[string]any{
+		"outer_name": map[string]any{"safe_value": "x"},
+		"entries":    []any{map[string]any{"name": "dynamic-name@example.invalid"}},
+	}
+	valid.FieldClasses = map[string]FieldClass{
+		"/outer_name/safe_value": FieldClassMetadata,
+		"/entries/0/name":        FieldClassContent,
+	}
+	if _, err := builder.BuildClassifiedLog(valid); err != nil {
+		t.Fatalf("schema-owned names and classified dynamic value rejected: %v", err)
+	}
+
+	for _, dynamicKey := range []string{"person@example.invalid", "dynamic key", "π"} {
+		beforeClock, beforeIDs := clock.calls.Load(), ids.calls.Load()
+		input := validClassifiedLogInput()
+		input.Body = map[string]any{dynamicKey: "value"}
+		input.FieldClasses = map[string]FieldClass{"/placeholder": FieldClassContent}
+		_, buildErr := builder.BuildClassifiedLog(input)
+		if buildErr == nil || !strings.Contains(buildErr.Error(), "encode dynamic names as classified values") {
+			t.Fatalf("dynamic object name was not rejected safely: %v", buildErr)
+		}
+		if strings.Contains(buildErr.Error(), dynamicKey) {
+			t.Fatalf("builder error echoed dynamic object name: %v", buildErr)
+		}
+		if clock.calls.Load() != beforeClock || ids.calls.Load() != beforeIDs {
+			t.Fatal("invalid object name consumed clock or occurrence ID")
+		}
+	}
+}
+
 func TestClassifiedLogBuilderRejectsUnknownOrInvalidClassificationBeforeDependencies(t *testing.T) {
 	clock := &countingClock{now: time.Now()}
 	ids := &countingIDGenerator{}

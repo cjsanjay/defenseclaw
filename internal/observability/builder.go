@@ -72,8 +72,12 @@ type ClassifiedLogInput struct {
 	Outcome               Outcome
 	Correlation           Correlation
 	Provenance            Provenance
-	Body                  any
-	FieldClasses          map[string]FieldClass
+	// Body object member names are schema-owned stable tokens. Dynamic
+	// producer/provider/tool names must be represented as classified string
+	// values, never map keys. P5 generated builders replace this conservative
+	// P2 syntax gate with exact registry-owned key validation.
+	Body         any
+	FieldClasses map[string]FieldClass
 }
 
 // MandatoryFloorLogInput deliberately has no body or field-class fields. The
@@ -167,6 +171,9 @@ func (builder *RecordBuilder) buildClassifiedLog(
 	if classification.Severity.LogLevel != "" && !isLogLevel(classification.Severity.LogLevel) {
 		return Record{}, fmt.Errorf("classified-log log level is not canonical")
 	}
+	if err := validateCurrentBuilderObjectKeys(input.Body); err != nil {
+		return Record{}, err
+	}
 
 	timestamp := builder.clock.Now()
 	recordID, err := builder.idGenerator.NewOccurrenceID()
@@ -190,6 +197,39 @@ func (builder *RecordBuilder) buildClassifiedLog(
 		Body:         input.Body,
 		FieldClasses: cloneFieldClasses(input.FieldClasses),
 	}, classification.Mandatory, floorOnly)
+}
+
+func validateCurrentBuilderObjectKeys(body any) error {
+	value, err := NewValue(body)
+	if err != nil {
+		return fmt.Errorf("classified-log body is invalid")
+	}
+	object, err := value.Object()
+	if err != nil {
+		return fmt.Errorf("classified-log body must be an object")
+	}
+	var visit func(any) bool
+	visit = func(input any) bool {
+		switch typed := input.(type) {
+		case map[string]any:
+			for key, child := range typed {
+				if !IsStableToken(key) || !visit(child) {
+					return false
+				}
+			}
+		case []any:
+			for _, child := range typed {
+				if !visit(child) {
+					return false
+				}
+			}
+		}
+		return true
+	}
+	if !visit(object) {
+		return fmt.Errorf("classified-log body contains a non-schema object member name; encode dynamic names as classified values")
+	}
+	return nil
 }
 
 func resolveRegisteredClassification(
