@@ -115,11 +115,17 @@ schemas/telemetry/generated/
   compatibility/v7-exporter-selection.json # generated migration eligibility/profile map
 ```
 
-Only the manifest, three domain model files, lock, and curated examples are edited
-by humans. Common attributes are defined once and referenced across those files.
-Everything under `generated/` is reproducible and carries a generated-file header.
-CI fails on drift. Contributors normally touch one domain file for a new family;
-consumers normally open only the generated catalog or bundle.
+The manifest, three domain model files, lock, and curated examples are the only
+human-authored sources of canonical telemetry semantics. Common attributes are
+defined once and referenced across those files. Machine-derived normalized
+upstream snapshots are immutable build inputs named and digested by the lock, not
+additional authoring surfaces. Bundled dashboards, rules, Collector configuration,
+datasource configuration, and their packaged copies remain independently owned
+consumer assets that the compiler parses; they are not copied into a second
+hand-maintained telemetry manifest. Everything under `generated/` is reproducible
+and carries a generated-file header. CI fails on drift. Contributors normally
+touch one domain file for a new family; consumers normally open only the generated
+catalog or bundle.
 
 There is no separately authored trace or span-family file. Each span family from
 `11-trace-and-span-contract.md` section 7 is owned by its primary semantic domain:
@@ -168,6 +174,15 @@ repository. That repository had no release tag for this snapshot, so v8 uses its
 full commit as the profile identifier rather than a mutable branch name. Builds do
 not fetch mutable `main` definitions, and a tag moving to a different commit fails
 lock validation.
+
+Every lock member names the upstream repository, immutable revision, normalized
+snapshot path, normalization format, and SHA-256 digest. The compiler validates the
+digest before loading the snapshot and fails if a referenced standard field's name,
+type, stability, enum/deprecation metadata, or original source pointer is absent or
+inconsistent. Normal registry generation is entirely offline. A snapshot may be
+refreshed only by an explicit dependency-update operation that derives it from the
+pinned revision and produces a reviewed semantic diff; a self-authored subset plus
+its own digest is not sufficient provenance.
 
 ## 5. Registry Composition Model
 
@@ -250,6 +265,27 @@ tuple's upstream-pinned OTel core, GenAI, and OpenInference members disagree wit
 profile IDs are validated against their registry entries instead of being invented
 as upstream lock members.
 
+### 5.3 Canonical families and producer mappings
+
+Canonical log families and current producer identities are different registry
+concepts. The fourteen gateway event types and 188 audit actions are producer
+mappings; they are not 202 additional log-family definitions. Each mapping records
+its typed producer key, source, event-name policy, default identity or closed set of
+allowed contextual identities, severity policy, mandatory-floor rules, companion
+rules, and compatibility lifecycle. It references registered log identities and
+MUST NOT define a body schema, override a referenced family's bucket, or create an
+implicit family.
+
+The current declarative log-identity baseline contains 74 dotted event identities
+and twelve lifecycle/compatibility identities. Producer-derived default and
+contextual identities, including compatibility-window `legacy.audit.*` identities,
+are registered through the producer mappings rather than copied into another
+family list. The compiler fails if the current-state inventory of fourteen gateway
+types or 188 audit actions differs from the mappings, if a mapping can resolve to
+an unregistered identity, or if the resolved identity's bucket conflicts with its
+canonical family. Generated route/classification registries consume these mappings
+directly.
+
 ## 6. Generated Public Artifacts
 
 ### 6.1 One bundle for most consumers
@@ -327,6 +363,23 @@ v8 signal, bucket, source, event/family/instrument identity, eligibility, and
 and MUST NOT contain a hand-maintained duplicate family list. It is versioned with
 the registry, deterministic, secret-free, and fails generation when a current
 producer/exporter has no unambiguous disposition.
+
+### 6.5 Generated compatibility views and embed APIs
+
+The existing public telemetry schema paths remain available during the
+compatibility window as generated standalone views of `telemetry.schema.json`.
+Each view preserves its existing `$id` and independently resolvable local `$ref`
+behavior; an old path MUST NOT become a network-dependent pointer to the bundle.
+The thirteen current `schemas/otel/*.json` files and the current top-level activity,
+audit, gateway, hook-audit, network-egress, scan-event, scan-finding, and scan-result
+schemas are generated views after cutover, not separately authored contracts.
+
+`schemas/embed.go` retains its copy-safe manifest and dependency-lock accessors and
+adds copy-safe bundle/catalog accessors. Gateway or CLI schema mirrors are generated
+from the same bytes. Runtime and public-schema consumers switch to these artifacts
+only after byte/semantic, `$id`/`$ref`, fixture, and embed parity passes in one
+cutover change; merely adding candidate generated files does not make them a second
+active source of truth.
 
 ## 7. Standard Base Plus DefenseClaw Overlay
 
@@ -537,8 +590,10 @@ Migration proceeds in stages:
    referencing one canonical domain definition.
 6. Add the rich v8 fields/families from `11-trace-and-span-contract.md`.
 7. Switch conformance tests to the generated bundle/catalog.
-8. Retire hand-authored per-family JSON only after byte/semantic parity and one
-   compatibility release where needed.
+8. After byte/semantic, `$id`/`$ref`, fixture, and embed parity, replace existing
+   public per-family paths with generated standalone views in the same logical
+   cutover that removes their hand-authored definitions. Retain those generated
+   compatibility views for at least the required compatibility release.
 9. Generate `local-observability-v1`, prove all fourteen dashboards and rules are
    covered, and keep aliases/dual emission until every current and historical query
    fixture has migrated.

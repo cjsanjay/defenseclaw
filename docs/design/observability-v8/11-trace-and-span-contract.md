@@ -47,6 +47,13 @@ OpenTelemetry GenAI repository has not published a release tag for that snapshot
 `semconv.lock.yaml` additionally pins its OTel core dependency to
 `v1.42.0`/`ae3a98640194ed405c4c797281502e4d3bd258b3` and pins the OpenInference
 release tag to commit `789d41974c08a9a13147977f28ef4142a07e2106`.
+Each dependency entry also names its upstream repository, immutable revision,
+normalized vendored-snapshot path, normalization format, and SHA-256 digest.
+Normal builds are offline: they validate the snapshot digest before resolving
+any standard field. A normalized snapshot records every referenced upstream
+field's name, type, stability, enum/deprecation metadata, and original source
+pointer. Refreshing one is an explicit reviewed convention-update operation;
+ordinary builds never fetch mutable upstream definitions.
 
 The values are emitted in instrumentation-scope/schema metadata and visible in the
 effective configuration, doctor output, and upgrade migration summary. A convention upgrade

@@ -300,10 +300,14 @@ named `local-observability-v1`. It owns:
 - Datasource UIDs, dashboard UIDs, links, and required cadence.
 - Legacy aliases/dual-emitted series still consumed by a bundled panel.
 
-The profile is generated from canonical registry entries plus a checked-in dashboard
-consumer manifest. Dashboard JSON MUST NOT become an unparsed, implicit schema.
-The compiler/checker extracts every query dependency and fails when it is absent
-from the compatibility profile.
+The profile is generated from canonical registry entries plus parsed checked-in
+consumer assets: all fourteen source dashboards, rules, Collector configuration,
+datasource configuration, compose/package inputs, and their packaged copies.
+`compatibility/local-observability.json` is the checked-in generated consumer
+manifest; there is no separately hand-maintained telemetry field or query list.
+Dashboard JSON MUST NOT become an unparsed, implicit schema. The compiler/checker
+extracts every query dependency and fails when it is absent from the compatibility
+profile, while independently checking source/package parity.
 
 ### 8.2 Critical Prometheus contracts
 
