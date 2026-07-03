@@ -39,6 +39,7 @@ from defenseclaw.commands.cmd_init import init_cmd
 from defenseclaw.commands.cmd_keys import keys_cmd
 from defenseclaw.commands.cmd_mcp import mcp
 from defenseclaw.commands.cmd_migrations import migrations_cmd
+from defenseclaw.commands.cmd_observability import observability_cmd
 from defenseclaw.commands.cmd_plugin import plugin
 from defenseclaw.commands.cmd_policy import policy
 from defenseclaw.commands.cmd_quickstart import quickstart_cmd
@@ -56,8 +57,17 @@ from defenseclaw.commands.cmd_version import version_cmd
 from defenseclaw.context import AppContext
 
 SKIP_LOAD_COMMANDS = {
-    "agent", "init", "migrations", "quickstart", "sandbox", "tui",
-    "uninstall", "reset", "version",
+    "agent",
+    "config",
+    "init",
+    "migrations",
+    "observability",
+    "quickstart",
+    "sandbox",
+    "tui",
+    "uninstall",
+    "reset",
+    "version",
 }
 
 # Commands that may legitimately run before config.yaml exists or while
@@ -130,8 +140,10 @@ def cli(ctx: click.Context) -> None:
                 click.echo(f"  ✗ {result.parse_error}", err=True)
             for issue in result.errors:
                 click.echo(f"  ✗ {issue}", err=True)
-            click.echo("  Run 'defenseclaw config validate' for details, or "
-                      "'defenseclaw doctor --fix' to auto-repair.", err=True)
+            click.echo(
+                "  Run 'defenseclaw config validate' for details, or 'defenseclaw doctor --fix' to auto-repair.",
+                err=True,
+            )
             raise SystemExit(1)
 
     try:
@@ -179,6 +191,7 @@ cli.add_command(upgrade)
 cli.add_command(migrations_cmd, "migrations")
 cli.add_command(keys_cmd, "keys")
 cli.add_command(config_cmd, "config")
+cli.add_command(observability_cmd, "observability")
 cli.add_command(settings_cmd, "settings")
 cli.add_command(uninstall_cmd, "uninstall")
 cli.add_command(reset_cmd, "reset")
