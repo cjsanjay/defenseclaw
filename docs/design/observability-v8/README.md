@@ -173,6 +173,14 @@ The terms **MUST**, **MUST NOT**, **REQUIRED**, **SHOULD**, **SHOULD NOT**, and
 44. Phase 1 owns pure candidate conversion, Phase 4 owns Python writer/runtime
     version dispatch, and Phase 7 owns activation, ancillary backup/rollback,
     required-failure restart gating, cursor state, and service lifecycle.
+45. Every DefenseClaw-owned, queue-backed optional log or trace destination uses
+    implicit count-and-byte queue limits with drop-newest overload behavior.
+    Advanced overrides use the same concise `batch` grammar; push destinations
+    additionally enforce count-and-byte ceilings on each encoded request.
+46. Splunk compatibility wrappers and aliases derive only from the immutable,
+    already-redacted and schema-validated projection for that Splunk destination;
+    they can never recover producer, canonical, pre-redaction, or another
+    destination's data.
 
 ## Review Method
 

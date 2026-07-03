@@ -375,28 +375,45 @@ Table names in metrics must come from the fixed reaper registry.
 
 ### 6.1 Isolation
 
-Every optional push destination owns:
+Every queue-backed optional destination (`jsonl`, `console`, `splunk_hec`,
+`http_jsonl`, and push-capable `otlp`) owns:
 
-- Transport client.
-- Bounded queue.
+- Its own bounded count-and-byte queue.
+- Transport or local writer.
 - Batch processor where applicable.
 - Retry/circuit state.
 - Health state.
 - Counters for accepted, delivered, retried, dropped, and rejected records.
 
 No optional destination shares a queue with SQLite or another destination.
+Prometheus is pull-based and has no destination queue. An SDK-managed metric
+reader/exporter follows its SDK backpressure contract rather than being silently
+wrapped in a second DefenseClaw queue.
 
 ### 6.2 Enqueue and backpressure
 
-- Producer paths MUST NOT wait indefinitely for a remote destination.
-- Queues are bounded by validated configuration.
-- When a remote log/trace queue is full, the newest attempted enqueue is dropped for
-  that destination, the locally persisted record remains available, and bounded
-  health telemetry records the drop.
+- Producer paths MUST NOT wait for optional destination I/O. Enqueue is a bounded,
+  nonblocking operation after required local persistence.
+- Every DefenseClaw-owned log/trace queue is bounded independently by both
+  `batch.max_queue_size` and `batch.max_queue_bytes`. JSONL and console use the
+  same queue grammar as remote push destinations so disk or terminal backpressure
+  cannot stall other destinations.
+- Queue byte accounting is the exact length of each immutable projected payload
+  retained for that destination. Adapter wrappers are created after dequeue and do
+  not permit the queue to retain an unaccounted raw/canonical object.
+- If accepting an item would exceed either configured limit, the queue is full:
+  the newest attempted enqueue is dropped without temporarily inserting it or
+  evicting an older item. Existing FIFO order is unchanged, the locally persisted
+  record remains available, and bounded health telemetry records the drop.
 - Drop health emission must be rate-limited and recursion-safe.
 - Prometheus is a pull destination and does not use a push queue.
 - Metric SDK reader/exporter backpressure follows SDK semantics but must expose
   export failures and collection duration.
+
+The defaults and practical maxima are normative in 03 §4.4. In particular, a
+queue accepts at most 65,536 records and 268,435,456 projected bytes even if a
+language integer or SDK accepts a larger value. Invalid limits fail validation
+before a queue allocates memory.
 
 ### 6.3 Retry
 
@@ -406,6 +423,11 @@ No optional destination shares a queue with SQLite or another destination.
 - Use bounded exponential backoff with jitter.
 - Respect shutdown deadlines and request context.
 - Do not re-run redaction on every retry; retry the immutable projected payload.
+- Push batching stops before either `batch.max_export_batch_size` or
+  `batch.max_export_batch_bytes` would be exceeded. The encoded request, including
+  separators and destination wrapper bytes, MUST remain within the byte ceiling;
+  adapters may not build an unbounded intermediate buffer. A valid individual
+  projection plus its bounded wrapper always fits the minimum allowed ceiling.
 
 ### 6.4 Per-destination health states
 
@@ -434,6 +456,10 @@ Detailed attempt counters remain metrics/projections.
 ## 7. JSONL and Console
 
 - JSONL receives the same projected record shape as other log destinations.
+- Both adapters use the queue-only `batch.max_queue_size` and
+  `batch.max_queue_bytes` grammar. Omitting `batch` uses the reviewed defaults;
+  operators add it only to tune advanced capacity. Push-only batch fields are
+  invalid for JSONL and console.
 - Existing file ownership, permissions, and reopen behavior must be preserved and
   documented by the adapter. The v7 gateway defaults become explicit rotation
   knobs: 50 MiB, 5 backups, 30 days, and compression enabled.
@@ -442,6 +468,16 @@ Detailed attempt counters remain metrics/projections.
 - Console rendering derives from the projected record and must never reach back to
   the canonical raw body for “pretty” output.
 - Failure to write optional JSONL or console output does not fail SQLite writes.
+
+## 7.1 Splunk compatibility projection boundary
+
+The Splunk adapter may add documented HEC wrapper fields and compatibility aliases,
+but their sole input is the immutable projection selected and redacted for that
+Splunk destination. Alias extraction is a projection-to-projection transform: an
+alias equals the destination-redacted source value or is absent. It never receives
+the canonical record, a gateway/audit producer object, raw body material, or a
+projection created for another destination. Producer-supplied opaque extra HEC
+events are not a compatibility mechanism and are rejected.
 
 ## 8. Inbound OTLP
 

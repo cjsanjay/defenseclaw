@@ -32,6 +32,14 @@ and are checked against it. Generated references are never edited as an independ
 truth. The schema carries `x-defenseclaw-owner: internal/config` so ownership is
 machine visible.
 
+Queue and batch fields are part of that same canonical schema rather than an
+adapter-private configuration language. The P3 implementation change that adds
+`batch.max_queue_bytes` and `batch.max_export_batch_bytes`, and permits the common
+queue subset on JSONL and console destinations, MUST update the canonical schema,
+Go/Python types and validators, generated references, and effective-plan rendering
+atomically. A runtime adapter MUST NOT accept a hidden environment variable or an
+unmodeled field as an alternative queue limit.
+
 The legacy top-level `otel`, `audit_sinks`, and
 `privacy.disable_redaction` blocks MUST be rejected. The existing
 `observability.connectors[*].audit_sinks` child is legacy too and MUST be migrated
@@ -153,6 +161,11 @@ observability:
         max_backups: 5
         max_age_days: 30
         compress: true
+      # Optional advanced override. Omitting batch keeps the same bounded queue
+      # with the reviewed defaults shown by config show --effective.
+      batch:
+        max_queue_size: 2048
+        max_queue_bytes: 67108864
       send:
         signals: [logs]
         buckets: ["*"]
@@ -181,7 +194,9 @@ observability:
       token_env: SPLUNK_HEC_TOKEN
       batch:
         max_queue_size: 2048
+        max_queue_bytes: 67108864
         max_export_batch_size: 256
+        max_export_batch_bytes: 8388608
         scheduled_delay_ms: 1000
       routes:
         - name: security-and-enforcement
@@ -218,7 +233,9 @@ observability:
         metrics: {path: /v1/metrics}
       batch:
         max_queue_size: 4096
+        max_queue_bytes: 134217728
         max_export_batch_size: 512
+        max_export_batch_bytes: 16777216
         scheduled_delay_ms: 5000
       routes:
         - name: operational-logs-and-metrics
@@ -268,8 +285,8 @@ are initialized, the configuration compiler deterministically:
    optional destination omits both `send` and `routes`, generates a capability-wide
    unredacted send for every catalog bucket.
 5. Derives OTLP enabled signals from the union of generated/advanced route signals.
-6. Resolves destination presets, redaction inheritance, transport defaults, and
-   route indexes.
+6. Resolves destination presets, redaction inheritance, transport defaults,
+   queue/batch count and byte limits, and route indexes.
 
 The masked effective view displays those generated objects with provenance. Keys
 such as `generated` and the generated local destination are diagnostic output, not
@@ -443,7 +460,13 @@ Effective config shows the exact profile version and eligible span shapes.
 
 ### 4.4 Common transport fields
 
-Push destinations use the following common vocabulary where supported:
+Every queue-backed optional destination uses one concise `batch` object. JSONL and
+console use its queue subset; Splunk HEC, HTTP JSONL, and OTLP additionally use its
+push-batch subset. The object is optional in source YAML, so a normal destination
+does not require queue boilerplate. Prometheus is pull-based, owns no delivery
+queue, and rejects `batch`.
+
+The common vocabulary is:
 
 | Field | Meaning |
 |---|---|
@@ -453,9 +476,11 @@ Push destinations use the following common vocabulary where supported:
 | `tls.insecure_skip_verify` | Explicit unsafe HTTPS certificate bypass for HTTP adapters; default false and warning required when true |
 | `tls.insecure` | OTLP plaintext/insecure transport selector; default false and warning required when true |
 | `tls.ca_cert` | Optional trusted CA file subject to config-path trust checks |
-| `batch.max_queue_size` | Bounded in-memory destination queue |
-| `batch.max_export_batch_size` | Maximum records per push; cannot exceed queue size |
-| `batch.scheduled_delay_ms` | Maximum normal batching delay |
+| `batch.max_queue_size` | Maximum queued projected records; default 2,048, valid range 1 through 65,536 |
+| `batch.max_queue_bytes` | Maximum sum of immutable projected payload bytes retained by the queue; default 67,108,864 (64 MiB), valid range 4,198,400 through 268,435,456 (256 MiB) |
+| `batch.max_export_batch_size` | Push-only maximum records per request; default 512, valid range 1 through 8,192, and cannot exceed `max_queue_size` |
+| `batch.max_export_batch_bytes` | Push-only hard ceiling for one encoded request; default 8,388,608 (8 MiB), valid range 4,263,936 through 67,108,864 (64 MiB) |
+| `batch.scheduled_delay_ms` | Push-only maximum normal batching delay; default 5,000, valid range 1 through 600,000 |
 | `network_safety.allow_private_networks` | Reviewed opt-in for loopback, RFC1918, and IPv6 ULA collector endpoints; default false |
 | `network_safety.allow_cgnat` | Reviewed opt-in for RFC 6598 CGNAT/overlay endpoints; default false |
 
@@ -464,9 +489,18 @@ The compiler makes all omitted adapter defaults visible in the effective plan:
 - JSONL rotation defaults to 50 MiB, five backups, 30 days, and compression on;
   explicit zero backups/age and `compress: false` remain distinguishable.
 - HTTP JSONL method defaults to `POST`.
-- Push timeout defaults to 10,000 ms. Push batching defaults to a 2,048-record
-  queue, 512-record maximum export batch, and 5,000 ms scheduled delay; export
-  batch size may not exceed queue size.
+- Every queue-backed destination defaults to a 2,048-record, 67,108,864-byte
+  queue. JSONL and console perform ordered single-record writes from that queue;
+  their source `batch` object therefore accepts only `max_queue_size` and
+  `max_queue_bytes`.
+- Push timeout defaults to 10,000 ms. Push batching additionally defaults to a
+  512-record, 8,388,608-byte maximum request and 5,000 ms scheduled delay.
+  Export batch count may not exceed queue count. Queue bytes count immutable
+  projected payloads, while batch bytes count the fully encoded request, so those
+  two independently bounded byte fields have no invalid cross-field ordering. A
+  destination wrapper added after redaction is bounded to 65,536 bytes per record,
+  which is why the minimum push-batch byte ceiling is the maximum 4,198,400-byte
+  projection plus that wrapper allowance.
 - General OTLP protocol defaults to `grpc`. `preset: galileo` instead expands to
   `galileo-rich-v2`, requires `http/protobuf`, and overrides only the omitted
   scheduled delay to 1,000 ms as locked by P-043.
@@ -520,12 +554,12 @@ Kind-specific fields are:
 
 | Kind | Fields |
 |---|---|
-| `jsonl` | `path`, `rotation.max_size_mb`, `rotation.max_backups`, `rotation.max_age_days`, `rotation.compress`, plus existing file permission/reopen behavior |
-| `console` | No required transport fields; output stream/format behavior remains adapter-defined and schema-documented |
+| `jsonl` | `path`, `rotation.max_size_mb`, `rotation.max_backups`, `rotation.max_age_days`, `rotation.compress`, queue-only `batch.{max_queue_size,max_queue_bytes}`, plus existing file permission/reopen behavior |
+| `console` | No required transport fields; optional queue-only `batch.{max_queue_size,max_queue_bytes}`; output stream/format behavior remains adapter-defined and schema-documented |
 | `prometheus` | `listen`, `path` |
-| `splunk_hec` | `endpoint`, `token_env`, optional `index`, `source`, `sourcetype`, `sourcetype_overrides`, TLS/timeout/batch |
-| `http_jsonl` | `endpoint`, optional `method`, `headers`, `bearer_env`, TLS/timeout/batch |
-| `otlp` | `protocol`, `endpoint`, `headers`, optional `logger_name`, TLS/timeout/batch, optional `signal_overrides.<signal>.{endpoint,path}` |
+| `splunk_hec` | `endpoint`, `token_env`, optional `index`, `source`, `sourcetype`, `sourcetype_overrides`, TLS/timeout/full batch |
+| `http_jsonl` | `endpoint`, optional `method`, `headers`, `bearer_env`, TLS/timeout/full batch |
+| `otlp` | `protocol`, `endpoint`, `headers`, optional `logger_name`, TLS/timeout/full batch, optional `signal_overrides.<signal>.{endpoint,path}` |
 
 `sourcetype_overrides` is a bounded map from registered audit action to Splunk
 sourcetype. It changes only the adapter envelope; it does not reclassify the
@@ -533,6 +567,16 @@ canonical record or replace route selectors. `logger_name` is the bounded OTel l
 instrumentation-scope name used by a log-capable OTLP destination. It likewise has
 no routing or schema-selection effect. Both fields are retained because they are
 operator-visible v7 adapter behavior, not implementation-only constants.
+
+Any flattened or legacy-compatible fields in the Splunk HEC event wrapper MUST be
+derived only from the already-redacted, schema-validated projected bytes selected
+for that Splunk destination. The adapter may parse those immutable bytes to copy a
+projected action, identifier, correlation value, or body field into a documented
+alias, but it MUST NOT receive or recover the canonical `Record`, a producer event,
+a pre-redaction body, or another destination's projection. If the selected profile
+removed a value, the alias is omitted; there is no raw fallback. The embedded
+projected record remains byte-identical, wrapper aliases equal their projected
+source values, and opaque producer-supplied extra HEC events are invalid.
 
 Every configurable adapter field must be present in the canonical schema and the
 generated all-knobs reference. Internal constants that are intentionally not

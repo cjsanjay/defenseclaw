@@ -44,9 +44,11 @@ Tests must validate outputs, not merely that functions returned no error.
 | Simplified telemetry schemas | One logical registry with a small focused authoring set generates deterministic bundle/catalog/docs/constants/fixtures/projections; every current field has a migration disposition |
 | Agent lifecycle and dashboard compatibility | PR #403 root/subagent lifecycle, execution, phase, operation, decision, real-time completion, and missing-data goldens plus PR #412 metric/label/bucket/cadence, UID, query, live inventory, and source/packaged dashboard checks |
 | Push network safety | HTTP JSONL, OTLP, and Splunk tests cover every prohibited address class, guarded dialing/DNS rebinding, disabled redirects, failure isolation, and narrowly bounded private/CGNAT opt-ins |
+| Bounded destination delivery | Every queue-backed destination resolves count and byte defaults, drops the newest attempted enqueue when either limit is full, bounds encoded push batches by count and bytes, and remains isolated under saturation |
+| Splunk projection-only compatibility | Every HEC alias is equal to a value in that destination's already-redacted projection or absent; raw/canonical/producer/other-destination fallback is impossible |
 
 Decision-level coverage for `D-001` through `D-022`, `S-001` through `S-012`, and
-`P-001` through `P-061` is normative in `13-decision-traceability.md`; this matrix is
+`P-001` through `P-063` is normative in `13-decision-traceability.md`; this matrix is
 the requirement-level summary rather than a competing decision index.
 
 ## 3. Taxonomy Tests
@@ -202,6 +204,10 @@ Verify:
 - Omitted trace/metric policy resolves to parent-based always-on sampling for
   collected traces and 60-second delta metrics; the bundled collector converts
   delta sums to cumulative Prometheus series and Grafana advertises at least 60s.
+- Omitted `batch` on JSONL, console, Splunk HEC, HTTP JSONL, and OTLP resolves to
+  a 2,048-record/67,108,864-byte isolated queue. Push kinds additionally resolve
+  to 512 records/8,388,608 bytes/5,000 ms per batch, except the documented
+  Galileo 1,000 ms delay. Normal source YAML need not spell out these defaults.
 
 ### 4.2 Invalid configuration matrix
 
@@ -232,6 +238,13 @@ Startup/reload validation MUST reject:
 - Enabled OTLP destination with no selected signal or resolved endpoint.
 - Legacy `signal_transports` or a transport-level `enabled` flag.
 - Invalid protocol, TLS, listener, queue, batch, interval, sampler, or retention.
+- A queue count outside 1..65,536, queue bytes outside
+  4,198,400..268,435,456, push batch count outside 1..8,192, push batch bytes
+  outside 4,263,936..67,108,864, or scheduled delay outside 1..600,000.
+- Push batch count greater than queue count, push-only batch fields on
+  JSONL/console, or any `batch` field on Prometheus. Queue bytes count projected
+  payloads and batch bytes count encoded requests, so no ordering between those
+  independently bounded byte fields is inferred.
 - Invalid/unsafe push endpoint, inline URL credentials, prohibited resolved address,
   or unsupported `network_safety` field/value.
 - Unknown trace semantic profile, incompatible compatibility-alias setting, or
@@ -352,6 +365,23 @@ Use a table-driven fake destination suite with these minimum cases:
 Fan-out test: one `security.finding` log is persisted locally and matches JSONL,
 Splunk, and OTLP; it must appear once in each with the same record/correlation IDs
 and each destination policy’s expected redaction.
+
+Queue test matrix for each queue-backed kind:
+
+- Omitted `batch` resolves to the exact count/byte defaults without adding source
+  boilerplate; effective output shows their compiled provenance.
+- With capacity for two records, enqueue A and B, then attempt C. C is dropped,
+  A/B remain FIFO, SQLite still contains all three, and other destinations receive
+  their matching records.
+- Repeat with record count below the limit but projected bytes at the byte limit;
+  the next item is dropped without transient overshoot or oldest-item eviction.
+- Maximum accepted values allocate only after complete validation; maximum+1 and
+  invalid cross-field relationships fail before worker/queue construction.
+- Push packing stops before both the count and encoded-byte ceilings. Separator,
+  HEC wrapper, and protocol-envelope bytes are included; no intermediate request
+  exceeds the configured byte ceiling.
+- A reload leaves already queued immutable bytes under the old generation/profile
+  while new records use the new limits and projection.
 
 Collection test: disable the same log at bucket collection; it appears nowhere.
 Repeat with a mandatory compliance record; it appears once in the built-in local
@@ -661,6 +691,10 @@ Required cases:
 - GenAI fields retain upstream name/type/meaning; security extensions remain in the
   `defenseclaw.*` namespace.
 - Every compatibility alias equals the canonical destination-redacted value.
+- Splunk HEC compatibility fixtures prove aliases are extracted solely from the
+  selected projected byte envelope. A field removed by the Splunk profile produces
+  no alias even when it exists in the canonical record, producer event, or another
+  destination's `none` projection; opaque extra-event input is rejected.
 - A pinned upstream semantic-convention update produces a reviewed machine-readable
   diff and cannot enter through an ordinary dependency update.
 - The public bundle resolves all `$ref` values and generated standalone views are
@@ -872,13 +906,16 @@ Assertions:
 - Add an explicit strict destination and verify it remains redacted while the
   capability-default destinations remain unredacted.
 - Verify effective/plan/doctor/TUI display generated routes, all-bucket membership,
-  capability signals, and `none` plainly, without requiring a warning.
+  capability signals, `none`, and the implicit queue/batch count-and-byte defaults
+  plainly, without requiring a warning.
 
 ### E2E-6: Exporter isolation
 
-- Make one remote exporter fail and fill its queue.
-- Verify the built-in local store and other exporters continue, drops/health are
-  bounded and visible, and recovery transitions to healthy.
+- Make one remote exporter fail and fill its queue first by count and then by
+  projected bytes. Repeat with blocked JSONL/console writers.
+- Verify the newest attempted enqueue is dropped in every case, older FIFO work is
+  retained, the built-in local store and other exporters continue, drops/health
+  are bounded and visible, and recovery transitions to healthy.
 
 ### E2E-7: Retention
 
@@ -933,9 +970,16 @@ Assertions:
 - Header/token masking across error, health, doctor, TUI, migration, and compliance
   output.
 - Log-injection/newline handling for console, JSONL, and HEC.
+- For Splunk, seed a secret canary in the canonical body and route `none` to one
+  destination and `strict` to Splunk. Search the complete HEC request, including
+  aliases and wrappers; the canary and removed-field alias must be absent while
+  allowed aliases equal the strict projected values.
 - Compression and decompression size limits.
 - Inbound record and batch size limits.
-- Queue and cardinality exhaustion tests.
+- Queue count/byte and outbound batch count/byte exhaustion tests at every exact
+  boundary and boundary+1. A configured maximum is validated before allocation,
+  and a single destination can never retain more projected bytes than its queue
+  ceiling or encode a request larger than its push-batch ceiling.
 - Recursive health/export failure guards.
 
 ## 14. Performance Acceptance
@@ -955,7 +999,9 @@ Acceptance requirements:
 
 - Disabled collection does not construct content payloads or invoke redaction.
 - Remote network I/O is absent from producer goroutines.
-- Memory remains bounded by configured queue and payload limits.
+- Memory remains bounded by configured queue count/byte and payload limits; push
+  request construction remains bounded by the configured encoded-batch byte
+  ceiling.
 - Reaper transactions never exceed the specified batch size.
 - No benchmark shows uninvestigated time or allocation regression greater than 10%
   against the approved baseline; intentional regressions require documented review.

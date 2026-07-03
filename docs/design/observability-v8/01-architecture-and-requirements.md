@@ -424,8 +424,12 @@ the failing destination without rate and recursion guards.
 
 - Producers MUST read one immutable active policy snapshot without holding a global
   configuration lock across I/O.
-- Slow remote destinations MUST use bounded destination-owned queues.
-- Queue-full policy MUST be explicit per kind and MUST expose dropped counts.
+- Every optional log/trace destination, including JSONL and console, MUST use a
+  bounded destination-owned count-and-byte queue. Prometheus remains pull-based,
+  and metric SDK readers/exporters retain their documented SDK backpressure model.
+- Queue admission is nonblocking and drops the newest attempted enqueue when
+  either limit is full; it MUST expose bounded dropped counts without evicting
+  older queued work.
 - SQLite writes MUST use bounded transactions and respect context cancellation.
 - Shutdown MUST stop intake, flush bounded queues within a configured deadline,
   record final health when possible, and close providers in dependency order.

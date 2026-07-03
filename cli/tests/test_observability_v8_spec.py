@@ -37,7 +37,7 @@ def test_observability_v8_spec_is_complete_and_traceable() -> None:
     result = _run()
 
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "D=22 S=12 P=61 total=95" in result.stdout
+    assert "D=22 S=12 P=63 total=97" in result.stdout
 
 
 def test_observability_v8_redaction_contract_locks_machine_boundaries() -> None:
@@ -52,8 +52,28 @@ def test_observability_v8_redaction_contract_locks_machine_boundaries() -> None:
     assert "unicode-age-13.0.json" in redaction
     assert "projection_context_mismatch" in redaction
     assert "one shared success/error fixture" in redaction
-    assert "`P-001` through `P-061`" in verification
+    assert "`P-001` through `P-063`" in verification
     assert "| P-038 | 04 §7.6 | 07 §6.3 |" in traceability
+
+
+def test_observability_v8_delivery_contract_locks_machine_boundaries() -> None:
+    configuration = (PACKAGE / "03-configuration-contract.md").read_text(
+        encoding="utf-8",
+    )
+    storage = (PACKAGE / "05-storage-retention-and-delivery.md").read_text(
+        encoding="utf-8",
+    )
+    traceability = (PACKAGE / "13-decision-traceability.md").read_text(
+        encoding="utf-8",
+    )
+
+    assert "`batch.max_queue_bytes`" in configuration
+    assert "`batch.max_export_batch_bytes`" in configuration
+    assert "newest attempted enqueue is dropped" in storage
+    assert "immutable projection selected and redacted for that" in storage
+    assert "Splunk destination" in storage
+    assert "| P-062 | 01 §10; 03 §§1.1,2.1,4.4; 05 §§6-7 |" in traceability
+    assert "| P-063 | 03 §4.4; 05 §7.1 |" in traceability
 
 
 def test_observability_v8_spec_detects_missing_traceability(tmp_path: Path) -> None:

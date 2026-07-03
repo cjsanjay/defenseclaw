@@ -543,7 +543,8 @@ It preserves:
 - The `galileo-rich-v2` preset deliberately defaults `scheduled_delay_ms` to 1,000.
   This is a v8 preset choice, not the v7 global default of 5,000 ms. An explicit v7
   operator override is preserved by migration.
-- Independent queue, delivery health, partial-success parsing, and exact canary.
+- Independent count-and-byte queue, delivery health, partial-success parsing, and
+  exact canary under the common destination-delivery contract.
 - Route-specific redaction.
 
 ### 13.2 Supported Galileo span shapes
