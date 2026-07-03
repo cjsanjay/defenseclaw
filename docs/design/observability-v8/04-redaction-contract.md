@@ -49,10 +49,11 @@ The following are prohibited:
 ### 3.2 `sensitive`
 
 - Detect and replace sensitive substrings inside ordinary content strings.
-- Entirely remove or replace credential-class fields.
+- Remove credential-class fields.
 - Preserve non-sensitive surrounding text and structured shape.
 - Hash or normalize paths according to the field contract.
-- Intended default for local operational logs and controlled security destinations.
+- Intended as an explicit opt-in for local operational logs and controlled security
+  destinations that need partial content.
 
 ### 3.3 `content`
 
@@ -61,17 +62,39 @@ The following are prohibited:
   bodies, full reasons derived from user content, and equivalent dynamic fields.
 - Preserve metadata such as length, content type, hash, rule IDs, status, duration,
   token counts, and correlation IDs where those values are independently safe.
-- Intended for destinations that need operational metadata but not content.
+- Intended as an explicit opt-in for destinations that need operational metadata
+  but not content.
 
 ### 3.4 `strict`
 
 - Allow only fields explicitly classified as safe metadata or safe identifiers.
-- Remove or replace all content, reason, evidence, error, path, credential, and
+- Remove all content, reason, evidence, error, path, credential, and
   unknown dynamic-string fields.
 - Intended for compliance summaries, health logs, and broadly accessible consoles.
 
+The following matrix is the authoritative resolved definition. It is compiled as
+immutable profile data; prose above is descriptive and cannot override a cell:
+
+| Field class | `none` | `sensitive` | `content` | `strict` |
+|---|---|---|---|---|
+| `metadata` | `preserve` | `preserve` | `preserve` | `preserve` |
+| `identifier` | `preserve` | `preserve` | `preserve` | `preserve` |
+| `content` | `preserve` | `detect` | `whole` | `remove` |
+| `reason` | `preserve` | `detect` | `whole` | `remove` |
+| `evidence` | `preserve` | `detect` | `whole` | `remove` |
+| `error` | `preserve` | `detect` | `whole` | `remove` |
+| `path` | `preserve` | `hash` | `hash` | `remove` |
+| `credential` | `preserve` | `remove` | `remove` | `remove` |
+| Detector groups | none | `credentials`, `secrets`, `pii` | `credentials`, `secrets`, `pii` | `credentials`, `secrets`, `pii` |
+
+The built-in `strict` profile still declares all three groups so a custom profile
+that extends it has one deterministic inherited group set; its built-in modes do
+not execute detectors. Similarly, `content` executes no detector for a class whose
+mode is `whole`, `hash`, or `remove`. The group declaration never causes scanning
+when the resolved field mode does not use `detect`.
+
 For the `path` field class, the built-in `sensitive` and `content` profiles use
-`hash-v1` as defined in §7.4; `strict` removes the path field. A schema may expose a
+`hash-v1` as defined in §7.6; `strict` removes the path field. A schema may expose a
 separately classified safe basename or destination class, but it cannot relabel the
 original path as metadata. This behavior is fixed profile data, not an
 implementation-language default.
@@ -111,7 +134,12 @@ contract rather than an authoring base. A custom profile MAY change only:
 
 - Enabled built-in detector groups.
 - Per-field-class transformation mode.
-- Documented safe size and excerpt limits.
+
+Detector work limits, output limits, replacement-token lengths, and report limits
+are fixed catalog-v1 security bounds. They are not v8 configuration fields. A
+future change to one of those limits requires a detector-catalog/specification
+version change; it cannot be introduced as an unreviewed per-profile size or
+excerpt knob.
 
 Allowed field-class modes are:
 
@@ -159,127 +187,466 @@ Unknown keys in dynamic objects are classified as `content`. Schema-owned fields
 must declare classes in the event contract. A field name alone is insufficient to
 upgrade an unknown field to safe metadata.
 
-## 6. Built-in Detector Groups
+## 6. Built-in Detector Catalog v1
 
-Detector catalog version 1 defines exactly three operator-facing group tokens.
-These are the only values valid in `redaction_profiles.*.detectors`:
+Detector catalog version 1 exposes exactly three operator-facing groups and the
+following ordered membership. This table is authoritative for configuration,
+overlap resolution, replacement IDs, Go detector conformance, and shared
+Go/Python catalog/configuration parsing:
 
-| Group token | Detector IDs enabled | Intended coverage |
-|---|---|---|
-| `pii` | `pii.email`, `pii.telephone`, `pii.national_identifier`, `pii.payment_card`, `pii.ip_address` | Email addresses, telephone numbers, U.S. Social Security numbers and supported equivalent national identifiers, payment-card candidates validated with Luhn where applicable, and IP addresses when the field/profile policy treats them as personal data |
-| `credentials` | `credentials.api_token`, `credentials.private_key`, `credentials.authorization`, `credentials.cookie`, `credentials.connection_string` | Known API/access-token forms, private keys or certificates containing private material, authorization/header values, authentication cookies, and connection strings containing credentials |
-| `secrets` | `secrets.assignment`, `secrets.high_entropy`, `secrets.url_query`, `secrets.cloud_account_identifier` | Password/secret assignments, bounded generic or high-entropy secret candidates, sensitive URL query values, and common cloud/account identifiers classified as sensitive |
+The canonical machine source is
+`schemas/telemetry/v8/redaction/detector-catalog-v1.yaml`. It MUST contain catalog
+version, ordered group membership, ordered detector entries, lexical grammar or
+parser ID, semantic validator ID, input class/context, candidate bound,
+replacement-interval rule, and fixture-set ID. The generated Go catalog and the
+Python configuration/catalog constants consume that file; neither language keeps a
+hand-maintained membership or ordering list. The file validates against
+`schemas/telemetry/v8/redaction/detector-catalog.schema.json`, and generated-artifact
+drift is part of `make check-schemas`.
 
-Group membership is versioned data, not inferred from the group name at runtime.
-An implementation MAY use several lexical and semantic recognizers behind one
-detector ID, but validation, replacement type, metrics, and provenance use the
-stable detector ID above. A custom profile selects groups, not individual detector
-IDs. Unknown group tokens are startup/reload errors.
+| Order | Group token | Detector ID | Exact v1 recognition contract |
+|---:|---|---|---|
+| 1 | `credentials` | `credentials.api_token` | The literal-prefix, alphabet, and bounded-length provider formats in the audited subcatalog below, considered longest-prefix first and with token boundaries. |
+| 2 | `credentials` | `credentials.private_key` | A complete ASCII PEM private-key block whose BEGIN/END label is one of `PRIVATE KEY`, `RSA PRIVATE KEY`, `EC PRIVATE KEY`, `DSA PRIVATE KEY`, or `OPENSSH PRIVATE KEY`; a public key or certificate alone is excluded. The lexical candidate is bounded at 64 KiB and follows the exact PEM rules below. |
+| 3 | `credentials` | `credentials.authorization` | A case-insensitive ASCII header assignment whose name is exactly `Authorization` or `Proxy-Authorization`, followed by optional ASCII space/tab, `:` or `=`, optional space/tab, one of `Bearer`, `Basic`, `Digest`, `Token`, or `ApiKey`, at least one space/tab, and a nonempty credential ending at the line boundary. The complete line is bounded at 8 KiB; only the credential interval is selected. Bare schemes, prose, and other header names are excluded. |
+| 4 | `credentials` | `credentials.cookie` | A complete bounded ASCII `Cookie` or `Set-Cookie` header line parsed by the exact grammar below. Values whose case-insensitive member names are `session`, `sessionid`, `sid`, `auth`, `authorization`, `token`, `access_token`, `refresh_token`, `jwt`, or `csrf` are selected. Attributes and unrelated members are excluded. |
+| 5 | `credentials` | `credentials.connection_string` | An absolute hierarchical URI or bounded key/value DSN parsed by the exact grammar below and containing a nonempty password or cataloged credential query/member value. Credential material is selected, not a username, host, or host-only DSN. Supported schemes are the explicit catalog set `postgres`, `postgresql`, `mysql`, `mariadb`, `mongodb`, `mongodb+srv`, `redis`, `rediss`, `amqp`, `amqps`, `kafka`, `sqlserver`, and `snowflake`. |
+| 6 | `secrets` | `secrets.assignment` | A bounded assignment parsed by the exact grammar below with one of the case-insensitive keys `password`, `passwd`, `pwd`, `secret`, `client_secret`, `api_key`, `apikey`, `access_token`, `refresh_token`, `private_key`, and `signing_key`. Empty values, booleans, null, and the exact placeholder set below are excluded. |
+| 7 | `secrets` | `secrets.high_entropy` | A standalone 20-256 byte ASCII candidate from base64/base64url/hex alphabets with Shannon entropy `-sum(p(c)*log2(p(c)))` of at least 3.5 bits per character, no whitespace, and—for non-hex candidates—characters from at least three of uppercase, lowercase, digit, and `+/_-=` symbol classes. UUIDs, trace/span IDs, record IDs, all-one-character values, a 1-8 byte unit repeated to make the complete candidate, case-insensitive `example|sample|dummy|changeme|redacted` repetitions, hashes in schema-approved identifier fields, and candidates already claimed by a credential detector are excluded. |
+| 8 | `secrets` | `secrets.url_query` | A query value for one of the exact case-insensitive keys below. Percent-decoding is used only for semantic validation; replacement offsets, length, and HMAC input use the exact original encoded value bytes. Empty decoded values are excluded. Parsing follows §7.6 URI rules and never reorders the source string during detection. |
+| 9 | `secrets` | `secrets.cloud_account_identifier` | An AWS, Azure, or GCP identifier present in one of the exact inline labels or resource-name positions below. Unlabelled 12-digit numbers, UUIDs, and DNS-like strings are excluded. |
+| 10 | `pii` | `pii.email` | An ASCII dot-atom local part and DNS host candidate using the exact grammar below, maximum 254 bytes and maximum 64-byte local part, with at least one host dot, valid 1-63 byte labels, and alphabetic 2-63 byte final label. Quoted local parts, comments, Unicode email, and IDNA inference are excluded in v1. Reserved domains are the required positive synthetic fixtures, avoiding live personal data. |
+| 11 | `pii` | `pii.telephone` | North American 10-digit numbers using consistent spaces, dots, or hyphens, optional parentheses around the area code, plus international `+1` forms with the same separators. Area and exchange must start with 2-9. Unseparated 10-digit strings, extensions, non-`+1` international formats, dates, versions, and longer digit runs are excluded in v1. |
+| 12 | `pii` | `pii.national_identifier` | U.S. Social Security numbers in `DDD-DD-DDDD` form. Reject area `000`, `666`, or `900`-`999`, group `00`, serial `0000`, the exact synthetic/example denylist below, all-identical digits, and a candidate embedded in a longer digit run. Other national identifiers require a future catalog version. |
+| 13 | `pii` | `pii.payment_card` | A 13-19 digit candidate with optional consistent spaces or hyphens, digit boundaries, and a valid Luhn checksum. Reject all-identical digits, mixed separators, and every Luhn-negative candidate. |
+| 14 | `pii` | `pii.ip_address` | A token-boundary candidate accepted by Go `net/netip.ParseAddr`, using IPv4 or IPv6 syntax. Ports, CIDRs, zones, and malformed/leading-zero IPv4 are excluded; the implementation may not silently repair a rejected candidate. |
 
-The built-in `sensitive`, `content`, and `strict` profiles enable all three groups;
-their different field-class modes determine whether detection is reached or a
-field is removed/whole-redacted first. `none` enables no detector group. For a
-custom profile, omitted `detectors` inherits the base profile's set, while a
-present nonempty list is the complete replacement set. An explicit empty list is
-invalid; an operator who intends raw output uses the built-in `none` profile.
-Changing detector groups does not weaken independent `credential: remove`,
-`content: whole`, or strict allowlist behavior inherited from the base profile.
+The `credentials.api_token` provider subcatalog is exact:
 
-Detector versions MUST be recorded in provenance or health metadata. Detection
-must use bounded input sizes and avoid catastrophic backtracking. Validators such
-as Luhn checks must run after a lexical candidate match to reduce false positives.
+| Provider/form | Prefix and suffix contract |
+|---|---|
+| AWS access/session/principal IDs | One of `AKIA`, `ASIA`, `AROA`, `AGPA`, `AIDA`, `AIPA`, `ANPA`, `ANVA`, followed by exactly 16 `[A-Z0-9]`. |
+| GitHub classic/OAuth/server/refresh | One of `ghp_`, `gho_`, `ghu_`, `ghs_`, `ghr_`, followed by exactly 36 `[A-Za-z0-9]`. |
+| GitHub fine-grained PAT | `github_pat_`, then exactly 22 `[A-Za-z0-9]`, `_`, and exactly 59 `[A-Za-z0-9]`. |
+| GitLab PAT | `glpat-` followed by 20-255 `[A-Za-z0-9_-]`. |
+| Slack bot | `xoxb-`, 10-13 digits, `-`, 10-13 digits, `-`, and 24-128 `[A-Za-z0-9]`. |
+| Other Slack token | One of `xoxp-`, `xoxa-`, `xoxr-`, `xoxs-`, followed by 24-200 `[A-Za-z0-9-]`. |
+| Stripe | One of `sk_live_`, `sk_test_`, `rk_live_`, `rk_test_`, `pk_live_`, `pk_test_`, followed by 20-128 `[A-Za-z0-9]`. Publishable forms are still credential-class telemetry and are protected. |
+| Google API key | `AIza` followed by exactly 35 `[A-Za-z0-9_-]`. |
+| OpenAI/Anthropic/OpenRouter | Longest-prefix-first `sk-proj-`, `sk-ant-`, `sk-or-`, or `sk-`; total token length 24-256 bytes and suffix alphabet `[A-Za-z0-9_+=.-]`. |
+| JWT | Three dot-separated base64url segments, first segment beginning `eyJ`, each segment 2-1,024 characters, and total candidate at most 3,074 bytes; header and payload must decode to bounded JSON objects and an empty signature is rejected. No claim validation is performed. |
 
-## 7. Transformation Semantics
+All provider formats require ASCII token boundaries. Prefix, alphabet, length, or
+provider-form additions require a detector-catalog/specification version change.
+Fixtures use reserved synthetic variants only; no live token is permitted.
 
-### 7.1 Structured data
+### 6.1 Detector input and replacement intervals
 
-- Traverse maps/objects and arrays recursively.
-- Preserve object/array shape unless the field-class mode is `remove`.
-- Apply schema field classes before heuristic key classification.
-- Enforce depth, field-count, string-length, and total-output limits.
-- Sort map keys only when required for deterministic serialization/signing; do not
-  change semantic array order.
+A detector invocation receives only a valid UTF-8 string, its resolved field class,
+and the immutable catalog entry. It does not receive a JSON key, pointer,
+destination, bucket, or producer-supplied trust hint. A structured schema field
+known to be a credential is classified `credential` and is handled by its profile
+mode; it is not made safe by contextual detector heuristics. Consequently, labels,
+header names, URI structure, and resource-name positions required below MUST occur
+inside the scanned string itself.
 
-### 7.2 Plain text
+Recognizers report half-open UTF-8 byte intervals into the original string. Semantic
+decoding never changes an interval. Unless a detector below says otherwise, its
+replacement interval is its complete lexical candidate and `MATCH_BYTES`/`N` in
+§7.5 are the original bytes/length in that interval. For quoted or percent-encoded
+values, delimiters remain outside the interval and escapes remain in their original
+encoded form. `credentials.authorization`, cookie, DSN/assignment, and URL-query
+detectors select only the credential/value interval. Cloud detectors select only
+the account/project/tenant/subscription component. PII detectors select the complete
+candidate including accepted separators.
 
-- `detect` replaces only matched sensitive ranges.
-- Overlapping matches are coalesced before replacement.
-- Replacement order is deterministic.
-- Unicode boundaries must remain valid.
-- `whole` replaces the entire string.
+For provider tokens, an ASCII token boundary is the start/end of input or a byte
+outside `[A-Za-z0-9_+=.-]`. For the remaining detectors the manifest carries the
+literal left/right boundary grammar; no Unicode `\w`, locale, or implementation
+word-boundary behavior is permitted.
 
-### 7.3 Replacement token
+### 6.2 Exact structured grammars
 
-Detected substrings use a deterministic non-secret token of the form:
+The machine catalog encodes these closed parser contracts:
 
-`<redacted type=TYPE len=N sha=XXXXXXXX>`
+- **PEM private keys:** the candidate starts at a line boundary with exactly
+  `-----BEGIN LABEL-----`, uses one consistent LF or CRLF line ending, contains one
+  or more base64 payload lines of 4-64 characters, permits `=` padding only at the
+  end of the final payload line, decodes successfully with standard padded base64,
+  and ends with exactly `-----END LABEL-----` using the same allowed label. The
+  decoded body must be nonempty. Headers, blank payload lines, unmatched labels,
+  trailing characters on delimiter lines, and candidates over 65,536 bytes are
+  rejected.
+- **Authorization:** the exact 8 KiB line grammar and selected credential interval
+  are in the detector table. Embedded CR/LF, control bytes other than horizontal
+  tab in allowed whitespace, and credentials longer than the remaining line bound
+  are rejected.
+- **Cookies:** a complete line is at most 8 KiB, begins case-insensitively with
+  `Cookie:` or `Set-Cookie:`, and contains no embedded CR/LF/control byte. Members
+  are semicolon-separated `name=value` pairs with optional ASCII space/tab around
+  delimiters. A name uses ASCII token characters. A value is either nonempty visible
+  ASCII excluding semicolon, comma, double quote, and backslash, or a double-quoted
+  sequence in which backslash escapes exactly the next visible ASCII byte. For
+  `Cookie`, every member is eligible; for `Set-Cookie`, only the first pair is the
+  cookie and later pairs are attributes. Only a value whose member name is in the
+  detector-table set is selected, excluding its quote delimiters.
+- **Connection strings:** a URI is ASCII, hierarchical, and uses one listed scheme.
+  Userinfo is eligible only in `user:password` form and selects the nonempty raw
+  password component; username-only userinfo is excluded. Query values use the
+  URL-query key set below. A non-URI DSN is at most 8 KiB and is a sequence of
+  `key=value` pairs separated by semicolon or one-or-more ASCII whitespace bytes.
+  A key matches `[A-Za-z_][A-Za-z0-9_.-]*`; a value is a nonempty unquoted run up to
+  a separator or a JSON double-quoted string with valid JSON escapes. Eligible keys
+  are `password`, `passwd`, `pwd`, `pass`, `secret`, `client_secret`, `api_key`,
+  `apikey`, `access_token`, `refresh_token`, `token`, `signature`, and `credential`.
+  Only the original value bytes, excluding quote delimiters, are selected.
+- **Assignments:** the complete lexical candidate is at most 8 KiB. It is either
+  `KEY OWS ("="|":") OWS VALUE` with an ASCII identifier key, or JSON member
+  `"KEY" OWS ":" OWS JSON_STRING`; `OWS` is zero or more ASCII space/tab bytes.
+  An unquoted value ends at ASCII whitespace, comma, semicolon, `}`, or `]`; a
+  quoted value must have valid JSON escapes. The original value bytes excluding
+  quote delimiters are selected. After JSON unescaping for validation only, an
+  empty value, case-insensitive `true`, `false`, `null`, `example`, `sample`,
+  `dummy`, `changeme`, or `redacted`, a value made only of `*`, or a complete
+  `${...}` placeholder is excluded.
+- **URL query:** parsing uses the §7.6 URI parser. Eligible case-insensitive keys are
+  exactly `token`, `access_token`, `refresh_token`, `api_key`, `apikey`, `key`,
+  `secret`, `client_secret`, `password`, `passwd`, `pwd`, `signature`, `sig`,
+  `x-amz-signature`, `x-goog-signature`, `code`, and `credential`. The value is
+  percent-decoded only to decide whether it is empty and valid UTF-8. The selected
+  interval and correlation input are the nonempty original encoded bytes between
+  that `=` and the next `&`, `;`, `#`, or end of input. Key order and duplicates are
+  retained.
+- **Cloud identifiers:** accepted inline labels are exactly `aws_account_id`,
+  `azure_tenant_id`, `azure_subscription_id`, `gcp_project_number`, and
+  `gcp_project_id`, followed by optional ASCII space/tab, `:` or `=`, and optional
+  space/tab. AWS values are exactly 12 digits or the 12-digit account component in
+  a syntactically valid six-component ARN. Azure values are lowercase-insensitively
+  labeled UUIDs or UUIDs immediately following `/subscriptions/` or `/tenants/` in
+  an Azure resource ID. GCP project numbers are 6-19 digits; project IDs match
+  `[a-z][a-z0-9-]{4,28}[a-z0-9]` and are accepted when labeled, immediately after
+  `projects/`, or as the project portion of
+  `NAME@PROJECT.iam.gserviceaccount.com`. No other surrounding key name or path
+  grants context.
+- **Email:** the local part is one or more ASCII `atext` atoms separated by single
+  dots, where `atext` is alphanumeric or one of ``!#$%&'*+-/=?^_`{|}~``; leading,
+  trailing, or repeated dots are invalid. DNS labels contain only ASCII letters,
+  digits, and interior hyphens, cannot begin/end with a hyphen, and obey the table's
+  length/final-label bounds.
+- **Telephone:** accepted forms are `AAA SEP EEE SEP NNNN`,
+  `(AAA) SEP EEE SEP NNNN`, `+1 SEP AAA SEP EEE SEP NNNN`, and
+  `+1 SEP (AAA) SEP EEE SEP NNNN`, where `SEP` is one consistently reused byte from
+  space, dot, or hyphen. Area and exchange start with 2-9. No other whitespace,
+  punctuation, extension, or digit count is accepted.
+- **National identifier:** the exact denied synthetic values are `078-05-1120`,
+  `111-11-1111`, `123-45-6789`, `219-09-9999`, and `987-65-4321`, in addition to
+  the structural exclusions in the table.
+- **JWT:** base64url segments contain only `[A-Za-z0-9_-]` with optional valid
+  terminal padding removed before matching. Header and payload decode to UTF-8 JSON
+  objects with at most 8 KiB decoded bytes, depth 16, 256 members, and no duplicate
+  keys. Trailing JSON data, non-object roots, invalid encoding, and empty signatures
+  are rejected.
 
-Where:
+Any grammar, key/label set, parser bound, or replacement-interval change is a new
+detector-catalog version. Implementations may optimize these rules but may not
+accept a superset.
 
-- `TYPE` is a bounded detector type, not the matched value.
-- `N` is the original byte length.
-- `sha` is the first eight lowercase hex characters of a keyed or documented
-  one-way digest suitable for correlation within the configured scope.
+The group tokens remain exactly `pii`, `credentials`, and `secrets`. A custom
+profile selects groups, never individual detector IDs. Omitted `detectors` inherits
+the built-in base set; a present nonempty list replaces it; an empty or unknown
+list is invalid. `sensitive`, `content`, and `strict` enable all groups, although a
+whole/remove mode can prevent detector execution. `none` runs no detector.
 
-Whole-field replacement uses an equivalent field-level token. The digest MUST NOT
-make low-entropy secrets easily reversible; keyed hashing is preferred for values
-such as short identifiers.
+All lexical recognizers MUST compile under Go's RE2-compatible regular-expression
+semantics: no backreferences, lookaround, recursion, or catastrophic-backtracking
+engine is permitted. Lexical matching produces bounded candidates only; the
+semantic validator in the table decides acceptance. Every detector has a synthetic
+positive, near-miss, boundary, Unicode-adjacent, overlap, and oversized corpus in
+the Go detector package. Python validates the same versioned group/member manifest
+and configuration tokens but MUST NOT carry a second detector implementation.
+Fixtures use reserved/example data and MUST contain no live credential or personal
+identifier. Cross-language execution parity applies to `hash-v1` (§7.6), not to
+detector matching.
 
-### 7.4 `hash` mode
+Overlap resolution is deterministic and cannot expose the non-overlapping tail of
+a lower-priority match. Accepted intervals are sorted into transitive overlap
+clusters; every cluster is replaced across the union from its minimum start through
+maximum end. The cluster's token identity is selected by `credential > secret >
+pii`, then catalog order, earlier start, and longer interval. Adjacent intervals do
+not overlap and remain separate. Replacement proceeds from the end of the string
+toward the beginning so original byte offsets remain valid.
 
-`hash` is a deterministic, non-reversible field-class transformation for local
-correlation. Go and Python MUST implement the same `hash-v1` algorithm:
+## 7. Central Projection and Transformation Semantics
 
-1. Reject invalid UTF-8 and otherwise normalize text to Unicode NFC. Do not trim,
-   case-fold, expand environment variables/`~`, or consult the filesystem.
-2. For `path`, apply lexical normalization only: convert `\\` to `/`; preserve an
-   initial `/` or UNC `//`; lowercase only a Windows drive letter; collapse repeated
-   separators after the root; remove `.` segments; resolve `..` against a preceding
-   ordinary segment without crossing an absolute root; preserve unresolved leading
-   `..` on relative paths; and remove a trailing slash except for a root. Do not
-   resolve symlinks or apply platform-dependent filesystem case rules.
-3. When the value is an absolute URI, use RFC 3986 URI normalization instead of the
-   file-path step: lowercase the scheme and host, remove the default port, normalize
-   path dot segments, uppercase percent-escape hex digits, decode percent-escaped
-   unreserved characters, preserve query item order and values, and discard the
-   fragment. User information is accepted only as hash input and is never emitted.
-4. Compute HMAC-SHA-256 using the installation redaction-correlation key over the
-   exact UTF-8 bytes
-   `defenseclaw-redaction-hash-v1 || 0x00 || FIELD_CLASS || 0x00 || NORMALIZED_VALUE`,
-   where `||` means byte concatenation and the separators are single NUL bytes.
-5. Emit the full 32-byte digest as 64 lowercase hexadecimal characters in
+### 7.1 Immutable boundary and exact projection metadata
+
+The central engine accepts an immutable canonical `Record` and produces a distinct
+immutable `Projection` plus a `SafeReport`. It MUST NOT mutate, share mutable maps or
+slices with, or serialize directly from the canonical record. One projection is
+created independently per selected route/profile.
+
+Projected JSON is the canonical envelope plus exactly one added top-level member:
+
+```json
+{
+  "projection": {
+    "redaction_profile": "sensitive",
+    "detector_catalog_version": 1,
+    "state": "transformed",
+    "transformed_fields": 3,
+    "removed_fields": 1,
+    "oversize_fields": 0,
+    "failure_count": 0,
+    "failures_truncated": false
+  }
+}
+```
+
+This `projection` object is delivery metadata and is not part of the canonical
+envelope. It is included in the final projected serialization and its destination
+integrity HMAC/signature. Its member set is exact: profile name, integer catalog
+version, `raw|inspected|transformed|failed_closed` state, nonnegative counters, and
+a Boolean truncation flag. `transformed_fields` counts changed serialized leaves other than
+removed leaves; `removed_fields` counts removed properties/array slots;
+`oversize_fields` is the subset of transformed leaves protected for scan size; and
+`failure_count` counts field/sample/record processing failures independently.
+`raw` means `none` intentionally made no content transformation; `inspected` means
+a redacting profile completed without a match, whole/hash/remove/oversize action,
+or processing failure; `transformed` means at least one
+detect/whole/hash/remove/oversize action and no processing failure; any processing
+failure makes the aggregate state
+`failed_closed`, even when safe output remains deliverable.
+
+`SafeReport` is in-memory diagnostic data, not serialized into the projection. It
+contains the same aggregate counters and at most 32 failure entries in deterministic
+traversal order. An entry contains only field class, configured mode, result enum,
+and stable error code. It contains no record value, substring, token, key material,
+destination credential, endpoint, filesystem/URI path, JSON pointer, or exception
+text. Additional entries set `failures_truncated` and increment the aggregate
+failure count. The engine returns this report to the caller; the caller may emit a
+rate-limited `platform.health / redaction.failed_closed` record. The engine MUST NOT
+recursively route health telemetry itself.
+
+### 7.2 Field-map resolution
+
+P2 records provide an explicit complete JSON-pointer-to-class map for every dynamic
+leaf in `body`; inherited parent classes and key-name upgrades are forbidden. The
+builder assigns a newly encountered unknown dynamic member the explicit `content`
+class. Before value traversal, the projector performs a shape-only comparison of
+the immutable body leaf inventory and the field map. A missing, stale, ambiguous,
+duplicate, extra, or unresolved pointer is a record-level projection failure with
+`classification_failed`: no scalar value is passed to a detector or serializer, no
+partial projection is delivered, and §9.2 applies. Because containers do not inherit
+a field class, the engine MUST NOT guess a containing class or synthesize a
+class-specific replacement token for an invalid map. A name such as `duration`,
+`id`, or `status` can never upgrade an unknown value to `metadata` or `identifier`.
+
+P5-generated family builders may inject a trusted generated `ClassResolver` from
+the telemetry schema registry. That resolver is version-bound, covers aliases from
+one canonical typed value, and produces the same explicit leaf decisions before
+projection. No producer, destination adapter, or free-form heuristic can claim
+schema-derived trust.
+
+### 7.3 Scalar and container modes
+
+- Objects are traversed in canonical key order; arrays retain semantic order.
+- `remove` omits an object property. In an array it replaces the slot with JSON
+  `null`, preserving indices and shape. Empty objects/arrays are retained.
+- `preserve` retains strings, canonical JSON booleans/numbers, and null exactly.
+- `detect` scans strings only. Non-string scalars and null are preserved.
+- `whole` and `hash` transform strings and the canonical JSON scalar text for
+  booleans/numbers; null is preserved.
+- Binary inputs are already represented by an explicitly classified canonical JSON
+  string; the projection engine accepts no new opaque binary type.
+- Metrics accept only `metadata` and schema-approved `identifier` leaves. Any other
+  class or unresolved metric attribute fails that sample; detector scanning is
+  never run on metric samples.
+
+For logs/traces, a per-field failure after successful field-map validation replaces
+the complete affected scalar safely and continues other fields. A container
+traversal failure or any classification failure is record-level, delivers no
+projection, and follows §9.2. No guessed container token or partially scanned raw
+middle is emitted.
+
+### 7.4 Fixed work and size limits
+
+The canonical payload (`body` or `instrument_data`) is at most 1,048,576 bytes and
+the complete canonical record is at most 4,194,304 bytes. A projected payload
+remains limited to 1,048,576 bytes. The complete serialized projected record may be
+at most 4,198,400 bytes: the canonical-record maximum plus exactly 4 KiB reserved
+for the bounded top-level `projection` object. The projection object itself MUST fit
+inside that 4 KiB headroom; destination wrappers are bounded separately by their
+adapter contracts. This permits an exact-maximum valid `none` record to receive its
+required projection metadata without weakening the canonical payload bound.
+
+Projection depth, member count, and individual string limits remain within the
+canonical bounds. Transformation expansion that would exceed the projected payload
+or complete projected-record bound fails closed under `output_limit`. Additional
+detector-catalog-v1 limits are fixed:
+
+| Limit | Value | Required exhaustion behavior |
+|---|---:|---|
+| Bytes scanned per string | 256 KiB | Do not scan a prefix/suffix. Replace the whole field with the `oversize.CLASS` token. |
+| Lexical candidates per field | 512 | Stop detection and replace the whole field with `failed_closed`/`candidate_limit`. |
+| Accepted matches per field | 256 | Replace the whole field with `failed_closed`/`field_match_limit`. |
+| Accepted matches per record | 4,096 | Replace the current and every subsequently detectable field with `failed_closed`/`record_match_limit`; preserve already transformed safe fields. |
+| Safe-report entries | 32 | Omit further entries and set `failures_truncated`; never omit aggregate counts. |
+
+Invalid UTF-8, depth/member/output overflow, regex/validator error, key failure, or
+other work-limit exhaustion is fail-closed for the affected field/sample. It is
+never permission to emit a scanned prefix plus an unscanned raw middle or suffix.
+Go uses RE2 only. These limits are not configurable in v8.
+
+### 7.5 Replacement tokens and correlation domains
+
+All correlation tokens use the installation key in §7.7 and HMAC-SHA-256 with
+separate ASCII domain strings and NUL separators. There is no unkeyed fallback.
+Detected substring replacement is exactly:
+
+`<redacted type=DETECTOR_ID v=1 key=KEY_ID len=N hmac=16HEX>`
+
+`16HEX` is the first 16 lowercase hexadecimal characters of
+`HMAC-SHA-256(key, "defenseclaw-redaction-detect-v1" || NUL || DETECTOR_ID || NUL || MATCH_BYTES)`.
+`N` is the original matched UTF-8 byte count. Whole-field replacement uses the same
+grammar with `type=field.CLASS` and domain
+`defenseclaw-redaction-whole-v1`; oversize replacement uses
+`type=oversize.CLASS` and domain `defenseclaw-redaction-oversize-v1`. For whole and
+oversize, input bytes are the original string or canonical JSON scalar text and
+`N` is that byte length.
+
+A processing failure that cannot safely compute a keyed correlation token is
+exactly `<redacted type=failed_closed v=1 code=CODE>`. `CODE` is a bounded registered
+token such as `key_unavailable`, `invalid_utf8`, `candidate_limit`,
+`field_match_limit`, `record_match_limit`, `classification_failed`,
+`unicode_repertoire`, `projection_context_mismatch`, or `output_limit`; it contains
+no length, digest, value, or exception text.
+
+The correlation scope is installation-wide. For the same key, detector/class,
+catalog version, and exact value, tokens correlate across profiles and
+destinations. Domain and detector/class input prevent correlation across different
+types. Key rotation intentionally ends future correlation with old tokens.
+
+### 7.6 `hash` mode and path/URI normalization
+
+`hash` is a deterministic non-reversible field-class transformation. Go and Python
+implement `hash-v1` byte-for-byte:
+
+1. Reject invalid UTF-8 and any Unicode scalar whose Derived Age is unassigned or
+   later than Unicode 13.0; otherwise normalize text to Unicode 13.0 NFC. The
+   generated compact range table at
+   `schemas/telemetry/v8/redaction/unicode-age-13.0.json` is the shared accepted
+   repertoire and is embedded in both implementations. Runtime Go/Python Unicode
+   library versions are not authority and startup/tests assert the embedded table's
+   version and digest. A rejected scalar fails with `unicode_repertoire`; it is not
+   silently passed through. Do not trim, case-fold ordinary text, expand environment
+   variables/`~`, consult the filesystem, or resolve symlinks.
+2. Recognize a Windows drive path before attempting URI parsing. A drive-absolute
+   root is `c:/` after lowercasing only the drive letter; `..` cannot cross it. A
+   UNC root is exactly `//server/share` only when both nonempty server and share
+   segments are present; preserve their case and prevent `..` from crossing that
+   root. A leading `//server` without share is not an absolute UNC root. Convert
+   backslashes to slash, collapse separators after the root, remove `.`, resolve
+   `..` against an ordinary segment, retain unresolved leading `..` only for a
+   relative path, and remove a trailing slash except for a root.
+3. Treat only an ASCII RFC-3986 absolute hierarchical URI with `scheme://authority`
+   as a URI. Opaque URIs (`urn:`, `mailto:`, `data:`) are ordinary lexical text.
+   Text with a syntactically valid scheme followed by `://` but an invalid,
+   non-ASCII, or empty host fails closed; v8 performs no IDNA conversion or repair.
+   Split the URI first, validate every percent escape, uppercase escape hex, and
+   decode percent-encoded unreserved bytes in each component. Then lowercase the
+   ASCII scheme and host, remove path dot segments (so decoded `%2e` participates in
+   dot-segment processing), and discard the fragment after validating it. A nonempty
+   explicit port contains decimal ASCII digits only. Numeric `080` is the HTTP
+   default and numeric `0443` is the HTTPS default, so any zero-padded spelling with
+   numeric value 80/443 is removed for that scheme; every other port spelling is
+   preserved. Preserve query item order, duplicates, delimiters, and values. Invalid
+   percent escapes fail closed. Userinfo participates in normalized hash input but
+   is never emitted in diagnostics or metadata.
+4. Compute HMAC-SHA-256 over
+   `"defenseclaw-redaction-hash-v1" || NUL || FIELD_CLASS || NUL || NORMALIZED_VALUE`.
+5. Emit all 64 lowercase digest hex characters in
    `<hashed class=CLASS v=1 key=KEY_ID len=N hmac=HEX>`, where `N` is the original
-   UTF-8 byte length and `KEY_ID` is a safe key identifier, never key material.
+   UTF-8 byte length.
 
-The correlation key is at least 32 random bytes, is stored with owner-only access,
-and is shared by the Go and Python processes for one installation. Rotation changes
-future digests and the key ID; it does not rewrite historical records. If the key is
-missing, unreadable, or invalid, `hash` fails closed to whole-field redaction and
-emits safe health telemetry. It MUST NOT fall back to unkeyed SHA-256. Registry
-golden vectors cover ordinary text, POSIX paths, Windows paths, UNC paths, relative
-`..`, Unicode, and URIs across both implementations.
+The hash domain is distinct from detect/whole/oversize domains. Cross-language
+golden vectors use one shared success/error fixture and cover ordinary text, POSIX,
+drive-relative/absolute Windows paths, valid/invalid UNC roots, relative parents,
+Unicode 13.0 NFC and rejected newer/unassigned scalars, hierarchical/opaque/invalid
+URIs, encoded dot segments, invalid percent escapes, query duplicates, userinfo,
+and zero-padded default/nondefault ports. Every success entry contains normalized
+text and the exact token; every failure entry contains only its expected safe error
+code. Both implementations MUST consume every entry rather than duplicating an
+independent malformed-input list.
 
-### 7.5 Idempotence and spoof resistance
+The HMAC is over `NORMALIZED_VALUE`, while token `len=N` is the original UTF-8 byte
+length. Equivalently normalized inputs therefore have the same `(class, key,
+hmac)` correlation identity but may have different complete presentation tokens
+when their original byte lengths differ. Downstream correlation uses the parsed
+`(class, key, hmac)` tuple, never string equality of the complete token.
 
-- Applying the same profile twice produces the same output.
-- Only placeholders created and internally marked by the current redaction engine
-  are trusted as placeholders.
-- User-supplied strings that look like placeholders are processed as ordinary
-  untrusted text.
+### 7.7 Correlation-key custody and rotation
 
-### 7.6 Oversize data
+The only v8 key location is `${data_dir}/redaction-correlation.key`. There is no
+YAML/environment key material or path override. On first writable initialization,
+the owner creates exactly 32 cryptographically random raw bytes using an atomic
+exclusive-create, file sync, directory sync, and rename/link-safe sequence with
+mode `0600`. Existing keys are opened without following symlinks and rejected if
+they are a symlink, non-regular file, not owned by the effective service user, have
+any group/other permission bit, or are not exactly 32 bytes. `KEY_ID` is the first
+12 lowercase hex characters of SHA-256 over the raw key.
 
-- Oversize strings are not passed through raw.
-- The engine processes a bounded prefix/suffix only when safe and otherwise applies
-  whole-field redaction.
-- Output records include safe original-length metadata and an oversize marker.
+Future CLI integration rotates by atomically installing a newly generated valid
+key at the fixed path and auditing the old/new safe key IDs. Historical projections
+are never rewritten. The built-in `none` profile can operate when the key is absent
+or invalid because it computes no correlation token. A redacting profile fails
+each affected field closed with `code=key_unavailable` and returns a safe report;
+it never falls back to raw or unkeyed hashing.
+
+### 7.8 Trusted idempotence and legacy exception
+
+A `Projection` carries unexported engine-origin, profile, key ID, detector version,
+and transformed-node provenance. Re-projecting a projection made by the same engine
+with the same profile/key/catalog is a no-op deep immutable clone. Any profile, key,
+catalog, or engine-origin mismatch is rejected without output as
+`projection_context_mismatch`; the caller must create the new projection from the
+immutable canonical `Record`. A projection never retains hidden raw values merely
+to support reprojection. The exact `Record` parser rejects a serialized projection's
+extra delivery member, while token-shaped user text inside a new canonical record is
+untrusted and processed normally. Token grammar alone never grants idempotence or
+bypass trust.
+
+The sole scoped exception is `legacy-v7`: for the v8 migration-compatibility
+window—the lifetime of the shipped `legacy-v7` profile—it recognizes the exact old
+v7 placeholder grammars needed by that immutable profile. Recognition is
+unavailable to every other profile and may be removed only with the profile in a
+future major-version migration/spec amendment. The extracted v7 string/entity/content/
+reason/evidence helpers are pure and state-free: no `DisableAll`, reveal flag,
+environment read, mutable package switch, or producer-side branch. A trusted schema
+resolver supplies evidence match coordinates when they exist; otherwise the legacy
+evidence helper emits its old safe placeholder without inventing coordinates.
+
+### 7.9 Producer reporting truthfulness
+
+Projection never rewrites producer availability. If the producer supplied an
+input/output/arguments/result value, its safe `reported` metadata remains `true`
+even when the value is partially transformed, wholly replaced, hashed, oversized,
+removed, or failed closed. If the producer did not supply it, `reported` remains
+`false`; the projector must not fabricate a value merely to redact it.
+
+The P5 telemetry adapter derives the content `state` defined in 11 §12.2 from the
+trusted projection result: `preserved` for `none`, `partially_redacted` for detect,
+`whole_redacted` for whole/hash/remove (the removed value remains omitted),
+`truncated` for a wholly protected oversize value, `failed_closed` for processing
+failure, and `not_reported` only for genuinely absent producer data. Thus `reported`
+answers whether data existed, while `state` answers what the projection did to it.
 
 ## 8. Evidence and Remediation
 
 - Finding evidence summaries are `content`.
 - Evidence excerpts are `evidence`.
-- Remediation text is `reason` unless a schema marks a bounded catalog remediation
-  as safe metadata; even then it is scanned for accidentally embedded values.
+- Remediation text is always `reason`, including bounded catalog remediation. A
+  stable remediation template ID may be a separately classified `identifier`, but
+  the human-readable text is never upgraded to `metadata`.
 - Evidence fingerprints and stable rule IDs are identifiers.
 - Complete prompts, responses, and tool data MUST NOT be stored as finding evidence
   merely because a stricter route can later redact them.
@@ -291,11 +658,15 @@ golden vectors cover ordinary text, POSIX paths, Windows paths, UNC paths, relat
 If parsing, classification, detection, encoding, or size handling fails for a
 dynamic field:
 
-1. Replace the complete field with a fail-closed redaction token.
+1. Replace the complete field with the exact §7.5 `failed_closed` token, or the
+   keyed whole/oversize token when that result was computed safely.
 2. Continue processing the rest of the projection.
-3. Mark the projection with a safe redaction-failure indicator.
-4. Emit a bounded `platform.health / redaction.failed_closed` signal containing
-   profile, destination, field class, and error code, but not the field value.
+3. Mark projection state `failed_closed`, update its counters, and add a bounded
+   value-free `SafeReport` entry when capacity remains.
+4. Return the report to the caller. The caller emits a bounded, rate-limited
+   `platform.health / redaction.failed_closed` signal containing profile,
+   destination name, field class, and stable error code, but no field value,
+   destination secret/endpoint/path, exception text, or recursive redaction report.
 
 ### 9.2 Record processing failure
 
@@ -307,6 +678,11 @@ If a complete projection cannot be safely serialized:
 - For SQLite, write a minimal mandatory failure record; inability to write that
   record changes SQLite health to failed and follows the local-integrity failure
   path.
+
+An incomplete/stale/ambiguous field map, container traversal failure, mismatched
+trusted projection tuple, or complete projected-record limit failure is a complete
+projection failure under this section. No class is guessed and no partial payload is
+eligible for delivery.
 
 ### 9.3 Profile-faithful failure behavior
 

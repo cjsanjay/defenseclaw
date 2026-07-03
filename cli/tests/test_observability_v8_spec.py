@@ -37,7 +37,23 @@ def test_observability_v8_spec_is_complete_and_traceable() -> None:
     result = _run()
 
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "D=22 S=12 P=58 total=92" in result.stdout
+    assert "D=22 S=12 P=59 total=93" in result.stdout
+
+
+def test_observability_v8_redaction_contract_locks_machine_boundaries() -> None:
+    redaction = (PACKAGE / "04-redaction-contract.md").read_text(encoding="utf-8")
+    verification = (PACKAGE / "07-verification-and-acceptance.md").read_text(encoding="utf-8")
+    traceability = (PACKAGE / "13-decision-traceability.md").read_text(encoding="utf-8")
+
+    assert "| `credential` | `preserve` | `remove` | `remove` | `remove` |" in redaction
+    assert "schemas/telemetry/v8/redaction/detector-catalog-v1.yaml" in redaction
+    assert "raw|inspected|transformed|failed_closed" in redaction
+    assert "at most 4,198,400 bytes" in redaction
+    assert "unicode-age-13.0.json" in redaction
+    assert "projection_context_mismatch" in redaction
+    assert "one shared success/error fixture" in redaction
+    assert "`P-001` through `P-059`" in verification
+    assert "| P-038 | 04 §7.6 | 07 §6.3 |" in traceability
 
 
 def test_observability_v8_spec_detects_missing_traceability(tmp_path: Path) -> None:

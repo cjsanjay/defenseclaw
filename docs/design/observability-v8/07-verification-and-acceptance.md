@@ -46,7 +46,7 @@ Tests must validate outputs, not merely that functions returned no error.
 | Push network safety | HTTP JSONL, OTLP, and Splunk tests cover every prohibited address class, guarded dialing/DNS rebinding, disabled redirects, failure isolation, and narrowly bounded private/CGNAT opt-ins |
 
 Decision-level coverage for `D-001` through `D-022`, `S-001` through `S-012`, and
-`P-001` through `P-058` is normative in `13-decision-traceability.md`; this matrix is
+`P-001` through `P-059` is normative in `13-decision-traceability.md`; this matrix is
 the requirement-level summary rather than a competing decision index.
 
 ## 3. Taxonomy Tests
@@ -221,6 +221,9 @@ Startup/reload validation MUST reject:
 - Custom profile extending or aliasing immutable `legacy-v7`.
 - Empty effective detector groups for a `detect` mode, `credential: preserve`, or
   `preserve` on a dynamic content/reason/evidence/error/path class.
+- Any custom redaction-profile member other than `extends`, `detectors`, and
+  `field_classes`, including size, scan, candidate, match, excerpt, report, key
+  material, or key-path knobs; equivalent v8 environment inputs are also rejected.
 - Enabled OTLP destination with no selected signal or resolved endpoint.
 - Legacy `signal_transports` or a transport-level `enabled` flag.
 - Invalid protocol, TLS, listener, queue, batch, interval, sampler, or retention.
@@ -353,41 +356,93 @@ store only.
 
 ### 6.1 Detector corpus
 
-Include positive and negative corpora for each built-in detector, including:
+The Go detector engine consumes one detector-catalog-v1 golden corpus and produces
+the expected candidate acceptance, byte intervals, detector IDs, and replacements.
+It contains positive, near-miss, boundary, Unicode-adjacent, multiline, oversized,
+and overlap cases for all 14 IDs:
 
-- Realistic but non-live test credentials.
-- Emails, phone numbers, national identifiers, and IP addresses.
-- Luhn-valid and invalid card-shaped numbers.
-- Connection strings and sensitive URL query values.
-- Unicode-adjacent and multiline values.
-- Multiple and overlapping matches.
+| Detector | Required positive and exclusion cases |
+|---|---|
+| `credentials.api_token` | Every literal provider prefix, minimum/maximum/exact suffix length and alphabet; reject short/long, wrong alphabet, missing boundary, similar prefix, and public/test identifiers. |
+| `credentials.private_key` | Every allowed matching PEM label and multiline body; reject public keys, certificates, mismatched labels, invalid base64 lines, incomplete blocks, and >64 KiB blocks. |
+| `credentials.authorization` | Every allowed scheme and case variation; select only credential material when split; reject empty/unknown schemes and header names in prose. |
+| `credentials.cookie` | Every cataloged sensitive member among safe members; reject attributes, empty values, and noncataloged members. |
+| `credentials.connection_string` | Every cataloged scheme with userinfo/query/member secret; reject host-only, unsupported/opaque, empty-password, and malformed DSNs. |
+| `secrets.assignment` | Every assignment key/separator/case; reject missing/empty values, null/Boolean, placeholders, and unassigned prose. |
+| `secrets.high_entropy` | Exact 20/256-byte boundaries and all alphabets above threshold; reject 19/257 bytes, low entropy/repetition, UUID/trace/span/record IDs, approved hashes, dictionary placeholders, and credential-detector winners. |
+| `secrets.url_query` | Every key with percent-encoded/raw values, repeated keys, and mixed safe keys; reject empty/unlisted keys and malformed URI/percent escapes. |
+| `secrets.cloud_account_identifier` | Labeled/catalog-position AWS, Azure, and GCP values; reject unlabelled numbers, UUIDs, and DNS-like strings. |
+| `pii.email` | Maximum local/total/label boundaries and reserved synthetic domains; reject Unicode/IDNA, missing host dot, numeric/invalid final label, and overlong parts. |
+| `pii.telephone` | Separated North American and `+1` variants, parentheses, and each separator; reject unseparated, mixed separator, invalid area/exchange, extension, date/version, non-`+1`, and longer run. |
+| `pii.national_identifier` | Valid synthetic SSNs; reject `000`, `666`, `900`-`999` areas, `00` group, `0000` serial, repeated/example, unseparated, and embedded values. |
+| `pii.payment_card` | 13-19 digit Luhn-positive synthetic candidates with each separator; reject Luhn-negative, identical digits, mixed separators, boundary violations, and dates/telephone shapes. |
+| `pii.ip_address` | IPv4/IPv6 values accepted by Go `net/netip.ParseAddr`; reject leading-zero IPv4, ports, CIDRs, zones, malformed, and boundary violations. |
 
-No test fixture may contain a live credential.
+Overlap goldens prove transitive overlap clusters replace their complete union
+without leaking lower-priority tails; token identity follows `credential > secret >
+pii`, then catalog order, start, and length; adjacent winners remain separate. All
+regex sources compile under Go RE2. Python and Go configuration/catalog parsers accept
+the same version, groups, and member manifest, but Python does not duplicate the
+detector executor. No fixture contains a live credential or real personal
+identifier.
+
+The machine catalog at
+`schemas/telemetry/v8/redaction/detector-catalog-v1.yaml` validates against its
+schema, generates the ordered Go catalog and Python constants, and has no generated
+drift. Corpus assertions cover the exact input-context prohibition, original-byte
+replacement/HMAC intervals for quoted and percent-encoded values, all parser bounds,
+and every literal grammar/key/label set in 04 §6.2.
 
 ### 6.2 Structural cases
 
-- Nested maps and arrays.
-- Unknown dynamic keys.
-- Explicit schema field classes.
-- Null, Boolean, number, and binary-encoded inputs.
-- Maximum depth, field count, string size, and total output.
-- Malformed JSON stored as a content string.
-- Duplicate/fake placeholder text.
+- Built-in profile goldens exhaust the 04 §3 matrix across all eight field classes:
+  `none` preserves all classes without detectors; `sensitive` detects four dynamic
+  text classes, hashes paths, removes credentials, and preserves metadata/IDs;
+  `content` wholes those four classes, hashes paths, removes credentials, and
+  preserves metadata/IDs; `strict` removes every non-metadata/non-identifier class.
+  All three redacting profiles inherit all groups, while modes that do not use
+  `detect` invoke no detector. Remediation text is always `reason`.
+- Object `remove` omits the property; array `remove` writes `null`; both retain
+  empty containers and array indices.
+- `preserve` retains all canonical scalar types; `detect` scans only strings;
+  whole/hash transform strings and canonical Boolean/number text; null survives;
+  binary-encoded input remains an explicitly classified string.
+- Explicit P2 field maps resolve every leaf. Missing/stale/ambiguous/extra pointers
+  fail the complete projection before value traversal with `classification_failed`;
+  no detector/serializer sees a scalar and no guessed container token or partial
+  output is delivered. Unknown dynamic members become `content`, and
+  metadata-looking key names never upgrade trust. P5 generated resolvers produce
+  equivalent decisions.
+- Metric metadata/approved identifiers pass without detector invocation; any
+  content, credential, unknown, or unresolved metric leaf rejects the sample.
+- Canonical/projected payload, canonical 4,194,304-byte record, projected
+  4,198,400-byte record, 4 KiB projection-headroom, depth/member/string limits are
+  exercised at boundary and boundary+1. An exact-maximum canonical `none` record
+  receives projection metadata successfully. A 256 KiB string is scanned; 256
+  KiB+1 is wholly replaced as
+  `oversize.CLASS` with no raw prefix/middle/suffix.
+- Exactly 512 lexical candidates and 256 accepted matches in a field pass; the next
+  candidate/match fails that whole field closed. Exactly 4,096 accepted record
+  matches pass; exhaustion protects current/subsequent fields without undoing
+  prior safe transformations. The 33rd safe-report entry is omitted while
+  aggregate counts and `failures_truncated` remain truthful.
+- Malformed JSON kept as an explicitly classified content string is treated as
+  text. Invalid UTF-8 and injected matcher/validator/output-limit errors use the
+  registered failure token and never partial raw output.
 
 ### 6.3 Properties
 
-- Deterministic output.
-- Idempotence.
-- UTF-8 validity.
-- Canonical record unchanged.
-- Different destination outputs do not alias memory.
-- HMAC/content hash validates final projected bytes.
-- Failure injection under every redacting profile results in whole-field redaction,
-  never an unintended switch to `none`; the intentional `none` profile bypasses
-  detection but still fails closed on schema/serialization failure.
-- Go and Python produce byte-identical `hash-v1` tokens for golden ordinary text,
-  POSIX, Windows, UNC, relative-parent, Unicode, and URI values; key rotation changes
-  key ID/digest, and unavailable keys fail closed without unkeyed hashing.
+| Property | Acceptance evidence |
+|---|---|
+| Determinism/immutability | Map-order permutations serialize identically; race tests prove canonical records and two destination projections share no mutable memory. |
+| Exact metadata | Projected JSON adds only the exact `projection` object; `raw`, `inspected`, `transformed`, and `failed_closed` transitions and all counters are golden-tested. Safe reports contain at most 32 value-free entries and caller-emitted health cannot recursively invoke the engine. |
+| Token and hash parity | Go goldens verify exact detect, whole, oversize, failed-closed, byte length, 12-hex key ID, 16-hex truncated HMAC, and distinct domains. One Go/Python fixture contains every `hash-v1` success and expected safe error; neither language duplicates a malformed-input list. Equivalent Unicode/path/URI normalizations have equal `(class,key,hmac)` even when original-length fields make full tokens differ. Same type/value correlates across profiles/destinations; different type/domain does not. |
+| Key custody | Fresh writable startup atomically creates exactly 32 random bytes at `${data_dir}/redaction-correlation.key` mode 0600. Symlink, non-regular, wrong owner, group/other bits, wrong length, interrupted create, concurrent create, and read-only cases are tested. `none` works without a key; every redacting mode fails affected data closed with `key_unavailable`; no YAML/env/path override or unkeyed fallback is accepted. Rotation changes key ID/future tokens, audits safe IDs, and leaves history unchanged. |
+| Trusted idempotence | Same-engine/profile/key/catalog reprojection is an equal deep clone. Changed engine/profile/key/catalog is rejected as `projection_context_mismatch`, and the caller reprojects the canonical `Record`; no projection retains hidden raw data. Token-shaped user input is untrusted and processed. Only exact `legacy-v7` placeholders receive the scoped compatibility exception. |
+| Legacy extraction | Pure v7 helper goldens cover string/entity/content/reason/evidence, long-value threshold, spoofing, repeat application, and absent/present evidence coordinates. Tests prove no helper reads environment or mutable `DisableAll`/reveal state and no coordinates are invented. |
+| Path/URI parity | Shared success/error goldens cover the pinned Unicode-13.0 repertoire and rejected newer/unassigned scalars; POSIX, Windows drive-relative/absolute, UNC with/without share and root-crossing parents; opaque/hierarchical/invalid URI, encoded dots after percent normalization, invalid escapes, userinfo, duplicate/query order, fragment, zero-padded HTTP/HTTPS defaults, and preserved nondefaults. Windows drive recognition wins over URI parsing. |
+| Reporting truth | Producer-present data keeps `reported=true` under partial/whole/hash/remove/oversize/failure; absent data stays `reported=false/not_reported`. P5 maps every operation to the 11 §12.2 state without fabricating content. |
+| Profile fidelity | Injected detector/parser/serializer/key failures under every redacting profile protect the field, never switch to `none`, and preserve independent successful destinations. Intentional `none` skips detectors but retains schema/type/size/serialization enforcement. |
 
 ### 6.4 Canary test
 

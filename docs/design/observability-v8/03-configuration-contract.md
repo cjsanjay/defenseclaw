@@ -338,6 +338,13 @@ valid explicit reference but cannot be extended or aliased; its exact projection
 contract is defined in `04-redaction-contract.md`. An explicitly named unknown
 profile is invalid.
 
+Custom-profile source grammar is closed: `extends`, `detectors`, and
+`field_classes` are the only permitted members. Detector scan bytes, candidate and
+match limits, correlation-token/report lengths, custom excerpts, key material, and
+correlation-key paths are fixed by 04 §§6-7 and MUST be rejected if supplied as
+configuration. The sole key path is derived from `data_dir`; there is no v8
+environment-variable equivalent.
+
 ## 4. Destination Registry
 
 ### 4.1 Built-in local store
