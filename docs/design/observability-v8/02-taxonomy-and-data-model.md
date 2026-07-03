@@ -519,15 +519,20 @@ accept canonical input. Later projection-specific truncation follows the registe
 family contract and never mutates the canonical record.
 
 DefenseClaw deterministic JSON is UTF-8 JSON with object keys ordered by their UTF-8
-byte sequence, array order preserved, no insignificant whitespace, the minimal JSON
-escapes required for a valid string, every finite number emitted in its shortest
-exact plain or scientific base-10 form, and negative zero emitted as `0`. Equivalent
-integer, decimal, exponent, and native numeric inputs therefore converge on the same
-bytes. The same immutable value always produces the same
-bytes. Record integrity and equality tests use this encoding; map iteration order,
-locale, process, and destination do not affect it.
+byte sequence, array order preserved, no insignificant whitespace, and the minimal
+JSON escapes required for a valid string. Numbers inside the `body` or `metric`
+canonical `Value` payload are emitted in their shortest exact plain or scientific
+base-10 form, with negative zero emitted as `0`. Equivalent integer, decimal,
+exponent, and native numeric payload inputs therefore converge on the same bytes.
+Schema-defined integral envelope fields such as `schema_version`,
+`bucket_catalog_version`, `config_generation`, and provenance
+`registry_schema_version` are emitted as ordinary unsigned or signed plain base-10
+integers; they are not dynamically typed payload numbers. The same immutable value
+always produces the same bytes. Record integrity and equality tests use this
+encoding; map iteration order, locale, process, and destination do not affect it.
 
-Number normalization is lossless over the accepted JSON decimal value. An
+Canonical `Value` number normalization is lossless over the accepted JSON decimal
+value. An
 implementation MUST NOT round a parsed decimal through binary floating point or
 silently change precision merely to obtain a shorter spelling. It removes
 insignificant decimal zeroes, normalizes the exponent, and chooses a shortest exact
