@@ -501,6 +501,30 @@ func TestCompileObservabilityV8Profiles(t *testing.T) {
 	if len(profiles) != 6 || profiles[4].Name != "legacy-v7" || profiles[5].Name != "soc" || profiles[5].FieldClasses[ObservabilityV8FieldEvidence] != ObservabilityV8ModeWhole {
 		t.Fatalf("compiled profiles = %+v", profiles)
 	}
+	for _, fieldClass := range []ObservabilityV8FieldClass{
+		ObservabilityV8FieldContent,
+		ObservabilityV8FieldReason,
+		ObservabilityV8FieldEvidence,
+		ObservabilityV8FieldError,
+	} {
+		if profiles[1].FieldClasses[fieldClass] != ObservabilityV8ModeDetect {
+			t.Errorf("sensitive %s mode = %q, want detect", fieldClass, profiles[1].FieldClasses[fieldClass])
+		}
+		if profiles[2].FieldClasses[fieldClass] != ObservabilityV8ModeWhole {
+			t.Errorf("content %s mode = %q, want whole", fieldClass, profiles[2].FieldClasses[fieldClass])
+		}
+		if profiles[3].FieldClasses[fieldClass] != ObservabilityV8ModeRemove {
+			t.Errorf("strict %s mode = %q, want remove", fieldClass, profiles[3].FieldClasses[fieldClass])
+		}
+	}
+	if profiles[1].FieldClasses[ObservabilityV8FieldPath] != ObservabilityV8ModeHash ||
+		profiles[2].FieldClasses[ObservabilityV8FieldPath] != ObservabilityV8ModeHash ||
+		profiles[3].FieldClasses[ObservabilityV8FieldPath] != ObservabilityV8ModeRemove {
+		t.Fatalf("built-in path modes = sensitive:%q content:%q strict:%q",
+			profiles[1].FieldClasses[ObservabilityV8FieldPath],
+			profiles[2].FieldClasses[ObservabilityV8FieldPath],
+			profiles[3].FieldClasses[ObservabilityV8FieldPath])
+	}
 	legacy := profiles[4]
 	if len(legacy.Detectors) != 0 || legacy.FieldClasses[ObservabilityV8FieldMetadata] != ObservabilityV8ModePreserve {
 		t.Fatalf("legacy-v7 metadata/detectors = %+v", legacy)

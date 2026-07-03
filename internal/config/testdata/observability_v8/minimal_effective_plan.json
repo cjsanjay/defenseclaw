@@ -205,12 +205,12 @@
       "field_classes": {
         "content": "whole",
         "credential": "remove",
-        "error": "detect",
+        "error": "whole",
         "evidence": "whole",
         "identifier": "preserve",
         "metadata": "preserve",
         "path": "hash",
-        "reason": "detect"
+        "reason": "whole"
       }
     },
     {

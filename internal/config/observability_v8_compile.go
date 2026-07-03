@@ -1510,7 +1510,14 @@ func observabilityV8BuiltInProfiles() map[string]ObservabilityV8EffectiveProfile
 		ObservabilityV8FieldPath: ObservabilityV8ModeHash, ObservabilityV8FieldCredential: ObservabilityV8ModeRemove,
 	}
 	content := cloneObservabilityV8FieldModes(sensitive)
-	content[ObservabilityV8FieldContent], content[ObservabilityV8FieldEvidence] = ObservabilityV8ModeWhole, ObservabilityV8ModeWhole
+	for _, fieldClass := range []ObservabilityV8FieldClass{
+		ObservabilityV8FieldContent,
+		ObservabilityV8FieldReason,
+		ObservabilityV8FieldEvidence,
+		ObservabilityV8FieldError,
+	} {
+		content[fieldClass] = ObservabilityV8ModeWhole
+	}
 	strict := map[ObservabilityV8FieldClass]ObservabilityV8FieldMode{
 		ObservabilityV8FieldMetadata: ObservabilityV8ModePreserve, ObservabilityV8FieldIdentifier: ObservabilityV8ModePreserve,
 		ObservabilityV8FieldContent: ObservabilityV8ModeRemove, ObservabilityV8FieldReason: ObservabilityV8ModeRemove,
