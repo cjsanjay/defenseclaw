@@ -3,10 +3,10 @@
 ```yaml
 spec_status: approved-for-implementation
 goal_status: active
-current_phase: P3
+current_phase: P3-P5
 target_config_version: 8
 baseline_commit: fd13acedfcffc0cc431d5a72f329b56b50b22baa
-last_verified_commit: 7ba051348
+last_verified_commit: 73a54b548
 last_updated: 2026-07-03
 ```
 
@@ -31,8 +31,8 @@ or a plausible-looking dashboard is not completion.
 
 | Field | Value |
 |---|---|
-| Active work package | `P3-WP02`, `P3-WP04..05` — generated-projection dependencies, Galileo delivery, and live `local-observability-v1` validation |
-| Ready queue | Finish the isolated Galileo projected-trace delivery adapter, begin the P5 registry/builders that unblock safe activation, then run the P3 E2E and representative-dashboard gates |
+| Active work package | `P3-WP02`, `P3-WP04..05`, `P5-WP01..02` — live local validation plus the registry/compiler/builders that unblock safe signal activation |
+| Ready queue | Finish bounded live dashboard inventory, implement and cut over the generated telemetry registry, then activate Galileo/inbound projections and run the P3 E2E gate |
 | Blocked | None |
 | Next phase gate | `P3-GATE` — destination isolation plus Galileo and local-observability compatibility |
 | Root coordinator | Primary Codex thread |
@@ -224,7 +224,7 @@ substitute a converter-local family list, `*`, or all-catalog-buckets fallback.
 | `P3-WP01` | `DONE` | root + config/delivery/network/adapter/runtime subagents | `P2-GATE` | JSONL, console, Splunk HEC, HTTP JSONL adapters and isolated queues | Commits `d493f487c..a3c76dc3b`: bounded delivery, compiler defaults, guarded local/push adapters, generation-owned post-SQLite dispatch, composite factory, and real five-destination fan-out with reload/failure isolation passed normal/race/vet/Windows and PR #412 dashboard gates |
 | `P3-WP02` | `IN_PROGRESS` | root + OTel/inbound subagents | `P2-GATE` | OTLP log/trace/metric routing, projection, sampling, inbound normalization | Commits `d068e0bee..7ba051348` add exact terminal partial accounting, plan-aware signal-pipeline ownership, real HTTP/gRPC OTLP log fan-out, provider/runtime generation binding, plan-filtered trace/metric assembly, exact canary acknowledgement, and a deliberately unbound strict inbound-v8 normalization seam. Generated P4/P5 per-record projection/classification and derived inbound metrics remain before safe production activation. |
 | `P3-WP03` | `DONE` | root + telemetry subagent | `P3-WP02` | Metric catalog/gates/bounded attributes and native Prometheus option | Commits `6d4a20f64`, `b6c4ea312`, and `7ba051348` preserve the exact 131-instrument/60-second-delta catalog with collection gates, bounded attributes/cardinality, independent registered readers, retry-truthful lifecycle, a private generation-owned native Prometheus pull destination, and real runtime fan-out/reload/rollback isolation. |
-| `P3-WP04` | `IN_PROGRESS` | root + Galileo subagent | `P3-WP02` | Galileo projection, delivery funnel, partial success, exact canary | Commits `9269b80c5` and `d068e0bee..69ccc62db` implement the already-redacted `galileo-rich-v2` projection and exact generic/OTLP partial-success accounting; Galileo OTLP delivery and live exact canary remain |
+| `P3-WP04` | `IN_PROGRESS` | root + Galileo subagent | `P3-WP02` | Galileo projection, delivery funnel, partial success, exact canary | Commits `9269b80c5`, `d068e0bee..69ccc62db`, and `ab48aae80` implement the already-redacted `galileo-rich-v2` projection, guarded projected-trace OTLP delivery, exact partial-success accounting, and exact two-span canary acknowledgement. P5 generated canonical builders and route projections remain before production activation/live conformance. |
 | `P3-WP05` | `IN_PROGRESS` | root + local-observability subagent | `P3-WP02..03` | `local-observability-v1`, Collector pipeline, PR #412 query inventory | Commit `d052c4113` freezes 441 consumer expressions, 14 dashboards/313 panels, 131 metrics, datasource/Collector/spanmetrics/volume/package parity, and bounded five-service live validation; representative PR #403 traffic plus a completed live 48-hour inventory remain P3-gate evidence |
 | `P3-GATE` | `TODO` | root | `P3-WP01..05` | All destinations isolated; Galileo and local stack preserve baseline | Phase E2E evidence |
 
@@ -242,8 +242,8 @@ substitute a converter-local family list, `*`, or all-catalog-buckets fallback.
 
 | ID | Status | Owner | Depends on | Deliverable | Verification/evidence |
 |---|---|---|---|---|---|
-| `P5-WP01` | `TODO` | unassigned | `P2-GATE` | Registry authoring model, dependency lock, sole compiler | `make check-schemas` drift checks |
-| `P5-WP02` | `TODO` | unassigned | `P5-WP01` | Generated bundle/catalog/docs/constants/builders/field classes/selector registries/fixtures | Determinism and conformance tests |
+| `P5-WP01` | `IN_PROGRESS` | root + registry/compiler subagent | `P2-GATE` | Registry authoring model, dependency lock, sole compiler | Commit `73a54b548` closes offline upstream provenance, family/mapping separation, generated consumer ownership, and compatibility-view cutover contracts; compiler/authoring implementation active |
+| `P5-WP02` | `IN_PROGRESS` | root + domain-authoring subagent | `P5-WP01` | Generated bundle/catalog/docs/constants/builders/field classes/selector registries/fixtures | Complete canonical domain authoring and generator outputs active in parallel under disjoint ownership |
 | `P5-WP03` | `TODO` | unassigned | `P5-WP01`, `P3-WP02` | Rich bounded spans/events/links/status/content/retry/timing | Golden topology/sampling tests |
 | `P5-WP04` | `TODO` | unassigned | `P5-WP02..03` | PR #403 lifecycle fixture migration and missing-data fidelity | Root/subagent real-producer goldens |
 | `P5-WP05` | `TODO` | unassigned | `P3-WP05`, `P5-WP02` | Galileo/OpenInference/local-observability generated projections | Vendor/dashboard inventory tests |
@@ -368,6 +368,8 @@ only “passed.” A relevant change invalidates old evidence.
 | `V-0057` | 2026-07-03 | `66475992a` | P3 inbound OTLP normalization seam | Full gateway normal; focused race; gateway vet; Windows amd64 compile; strict JSON/protobuf, floor, loop, mixed-batch, and v7 compatibility tests | A package-private v8 receiver seam strictly normalizes all three OTLP signals, rejects unknown nested fields, emits content-free accepted/rejected/authentication metadata through collection and mandatory-floor admission, and drops only all-item exact self-exports. It is deliberately not production-bound until P4/P5 provide per-record builders plus v8 token/duration derivation; unbound v7 raw/HEC and PR #412 metrics remain exact. | root + inbound subagent |
 | `V-0058` | 2026-07-03 | `ec98ed742` | P3 generation-owned OTLP traces and metrics | OTLP/destination/telemetry normal and race; vet; Windows amd64 compile; multi-destination, routing, reload, rollback, and canary tests | General OTLP trace processors and metric readers resolve the unmasked runtime transport once per candidate, apply ordered bucket routes before trace queueing and exact metric family/event filtering before export, isolate generations, and roll partial candidates back. Galileo, transformed traces, and unsupported advanced selectors fail closed pending generated projections. A canary is acknowledged only after one successful exact two-span `invoke_agent`/`chat` export for its target destination and cannot outlive its generation. | root + OTel subagent |
 | `V-0059` | 2026-07-03 | `7ba051348` | P3 composite signal-provider integration | Destination/telemetry focused x10 and package normal; focused race; vet; Windows amd64 compile; full runtimegraph fan-out/reload/rollback test | The single process-stable generation callback now composes general OTLP processors/readers with private native Prometheus readers from the exact plan and generation. A discovered SDK wiring defect was fixed so prepared metric readers are actually registered rather than merely retained for cleanup. One runtime test proves capability-default OTLP logs/traces/metrics, Prometheus metrics-only, independent delivery of the same metric to both transports, exact targeted canary acknowledgement, reload listener/reader/processor retirement, candidate rollback, and unchanged OTel globals. | root + signal-provider subagent |
+| `V-0060` | 2026-07-03 | `ab48aae80` | P3 Galileo projected-trace delivery | Galileo/OTLP/compatibility focused normal and x10; focused race/vet; Windows amd64 compile; full observability packages; 293 Galileo/v8/local Python tests; 14-dashboard/313-panel audit | A guarded HTTP/protobuf adapter now accepts only immutable route-redacted `galileo-rich-v2` projections with exact current envelope/catalog versions, canonical ended-span identity, complete resource/scope/timing, and the pinned trace/semantic/Galileo profile tuple. Mixed/raw or incomplete inputs fail before network; rich root/subagent/lifecycle/tool/events/links/status fields survive; partial responses are terminal and exact; only a fully accepted two-span targeted canary is acknowledged. Production activation remains closed until P5 generated builders supply those projections. | root + Galileo subagent |
+| `V-0061` | 2026-07-03 | `73a54b548` | P5 registry source boundaries | `make check-observability-v8-spec`; 7 focused spec tests; Ruff; diff check | The contract now defines offline SHA-256-verified upstream convention snapshots, separates 14 gateway/188 audit producer mappings from canonical families, generates local-observability ownership from parsed bundle assets, and preserves old public schema `$id`/`$ref` plus copy-safe embed compatibility through one generated cutover. Existing P-030/P-040/P-046/P-056/P-061 traceability covers the clarified behavior without a new decision. | root + registry subagent |
 
 Final integration requires, at minimum:
 
