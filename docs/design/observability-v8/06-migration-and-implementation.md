@@ -183,20 +183,30 @@ delivery.
 The complete legacy OTel environment inventory is mechanical, not illustrative:
 `DEFENSECLAW_OTEL_ENABLED`; the DefenseClaw, OpenClaw, and standard OTel global
 endpoint/protocol names; their `LOGS`, `TRACES`, and `METRICS` endpoint/protocol
-forms; the DefenseClaw/OpenClaw TLS-insecure names; `OTEL_RESOURCE_ATTRIBUTES`;
-`OTEL_SERVICE_NAME`; and `OTEL_EXPORTER_OTLP_HEADERS`. The converter applies the
-existing v7 precedence,
+forms; the DefenseClaw/OpenClaw TLS-insecure names; and `OTEL_SERVICE_NAME`. The
+converter applies the existing v7 precedence,
 materializes all effective non-secret values, and records only the input names in
 its masked summary. Header values are secret-bearing: exact environment references
 remain references, while complete inline or interpolated values use the ancillary
 `.env` promotion contract below. Inventory tests enumerate the concrete names and
 fail when runtime support adds one without a migration disposition.
 
+`OTEL_RESOURCE_ATTRIBUTES` and `OTEL_EXPORTER_OTLP_HEADERS` are not v7 inputs:
+DefenseClaw constructs its resource and supplies destination header options
+explicitly, so the pinned v7 runtime does not apply those SDK environment values.
+The converter MUST ignore them rather than invent new telemetry or credentials.
+Any future runtime support for either name requires an inventory, migration, and
+compatibility-baseline change together.
+
 V7 secret-bearing inputs are normalized before the v8 candidate is constructed.
-Exact `${NAME}` references remain references. Inline values and interpolated values
-such as `Basic ${TOKEN}` become stable, destination-and-field-derived environment
-references whose complete effective values are stored only in the ancillary
-`.env` edit. The active config and `.env` are locked and backed up as
+Exact `${NAME}` or `$NAME` references remain references when the explicit upgrade
+environment resolves them to a nonblank value. V7 uses Go `os.Expand`; therefore
+missing references materialize the same empty/static effective header instead of
+becoming an unresolved required v8 secret. Inline values and interpolated values
+such as `Basic ${TOKEN}` or `Bearer $TOKEN` become stable,
+destination-and-field-derived environment references whose complete effective
+values are stored only in the ancillary `.env` edit. The active config and `.env`
+are locked and backed up as
 one required migration unit; failure restores both, and retry reuses the same names
 without duplicate assignments. Preview reports only reference names and the fact
 that an ancillary edit would occur.

@@ -527,7 +527,7 @@ audit_sinks:
     load_validate_v8(result.candidate)
 
 
-def test_exact_header_environment_reference_never_reads_or_copies_value() -> None:
+def test_exact_missing_header_environment_reference_materializes_v7_empty_value() -> None:
     source = """config_version: 7
 otel:
   enabled: true
@@ -542,8 +542,10 @@ otel:
     result = _convert(source, {})
     remote = _destination(_document(result), "remote")
 
-    assert remote["headers"]["Authorization"] == {"env": "REMOTE_TOKEN"}
+    assert remote["headers"]["Authorization"] == ""
     assert result.environment_edits == ()
+    assert "unresolved_legacy_header_materialized_empty" in result.warnings
+    load_validate_v8(result.candidate)
 
 
 def test_every_non_reference_header_is_promoted_without_name_heuristics() -> None:
@@ -563,7 +565,7 @@ otel:
       traces: {enabled: true}
 """
 
-    result = _convert(source)
+    result = _convert(source, {"EXISTING_TOKEN": "existing-secret"})
     destination = _destination(_document(result), "remote")
 
     assert {edit.value for edit in result.environment_edits} == {
@@ -578,7 +580,7 @@ otel:
     assert all(set(destination["headers"][name]) == {"env"} for name in ("project", "logstream", "X-Custom"))
 
 
-def test_interpolated_header_requires_explicit_environment_snapshot() -> None:
+def test_interpolated_missing_header_reference_matches_v7_empty_expansion() -> None:
     source = """config_version: 7
 otel:
   enabled: true
@@ -591,10 +593,34 @@ otel:
       traces: {enabled: true}
 """
 
-    with pytest.raises(V8MigrationDependencyError) as captured:
-        _convert(source)
-    assert captured.value.code == "environment_value_required"
-    assert "MISSING_TOKEN" not in str(captured.value)
+    result = _convert(source)
+    remote = _destination(_document(result), "remote")
+    edit = result.environment_edits[0]
+
+    assert remote["headers"]["Authorization"] == {"env": edit.name}
+    assert edit.value == "Bearer "
+    assert "MISSING_TOKEN" not in result.candidate.decode()
+
+
+def test_dollar_name_header_expansion_matches_go_os_expand() -> None:
+    source = """config_version: 7
+otel:
+  enabled: true
+  destinations:
+    - name: remote
+      enabled: true
+      endpoint: https://collector.example.test
+      protocol: grpc
+      headers: {Authorization: 'Bearer $TOKEN'}
+      traces: {enabled: true}
+"""
+    result = _convert(source, {"TOKEN": "expanded-secret"})
+    remote = _destination(_document(result), "remote")
+    edit = result.environment_edits[0]
+
+    assert remote["headers"]["Authorization"] == {"env": edit.name}
+    assert edit.value == "Bearer expanded-secret"
+    assert "expanded-secret" not in result.candidate.decode()
 
 
 def test_explicit_otel_environment_transport_is_materialized_with_precedence() -> None:
@@ -604,7 +630,7 @@ def test_explicit_otel_environment_transport_is_materialized_with_precedence() -
             "DEFENSECLAW_OTEL_TRACES_ENDPOINT": "http://127.0.0.1:4318/v1/traces",
             "DEFENSECLAW_OTEL_TRACES_PROTOCOL": "http/protobuf",
             "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": "https://lower-precedence.example.test",
-            "OTEL_RESOURCE_ATTRIBUTES": "service.name=from-env,deployment.environment=staging",
+            "OTEL_RESOURCE_ATTRIBUTES": "service.name=ignored,deployment.environment=ignored",
         },
     )
     document = _document(result)
@@ -615,13 +641,11 @@ def test_explicit_otel_environment_transport_is_materialized_with_precedence() -
     assert remote["network_safety"] == {"allow_private_networks": True}
     observability = document["observability"]
     assert isinstance(observability, dict)
-    assert observability["resource"]["attributes"] == {
-        "service.name": "from-env",
-        "deployment.environment": "staging",
-    }
+    assert "resource" not in observability
+    assert "environment_decision:OTEL_RESOURCE_ATTRIBUTES" not in result.warnings
 
 
-def test_legacy_resource_preset_markers_are_removed_but_real_attributes_survive() -> None:
+def test_legacy_resource_preset_markers_and_real_attributes_survive() -> None:
     result = _convert(
         """config_version: 7
 otel:
@@ -636,6 +660,8 @@ otel:
     )
     attributes = _document(result)["observability"]["resource"]["attributes"]
     assert attributes == {
+        "defenseclaw.preset": "generic-otlp",
+        "defenseclaw.preset_name": "Generic OTLP",
         "service.name": "defenseclaw",
         "deployment.environment": "staging",
     }
@@ -687,7 +713,6 @@ otel:
     assert attributes == {
         "service.name": "service-env-name",
         "deployment.environment": "test",
-        "service.namespace": "security",
     }
     assert "environment_decision:OTEL_SERVICE_NAME" in result.warnings
 
@@ -824,7 +849,7 @@ def test_both_legacy_tls_insecure_aliases_are_materialized(alias: str) -> None:
     assert _destination(_document(result), "generic-otlp")["tls"]["insecure"] is True
 
 
-def test_all_otel_exporter_header_environment_values_are_protected() -> None:
+def test_otel_exporter_header_environment_is_not_invented_for_v7() -> None:
     canary = "custom-header-secret-canary"
     result = _convert(
         "config_version: 7\notel: {enabled: true}\n",
@@ -837,9 +862,9 @@ def test_all_otel_exporter_header_environment_values_are_protected() -> None:
 
     assert canary not in result.candidate.decode()
     assert "sensitive-project" not in result.candidate.decode()
-    assert set(destination["headers"]["X-Custom"]) == {"env"}
-    assert set(destination["headers"]["project"]) == {"env"}
-    assert {edit.value for edit in result.environment_edits} == {canary, "sensitive-project"}
+    assert "headers" not in destination
+    assert result.environment_edits == ()
+    assert "environment_decision:OTEL_EXPORTER_OTLP_HEADERS" not in result.warnings
 
 
 def test_preexisting_protected_environment_names_are_reused_or_collision_suffixed() -> None:
@@ -1086,6 +1111,105 @@ def test_flat_signal_protocol_from_environment_becomes_v7_destination_fallback()
     destination = _destination(_document(result), "generic-otlp")
     assert destination["protocol"] == "http/protobuf"
     assert "environment_decision:OTEL_TRACES_PROTOCOL" in result.warnings
+
+
+def test_flat_protocol_fallback_uses_v7_trace_log_metric_precedence() -> None:
+    result = _convert(
+        """config_version: 7
+otel:
+  enabled: true
+  endpoint: https://collector.example.test
+  logs: {enabled: true, protocol: http/protobuf}
+  traces: {enabled: true, protocol: grpc}
+  metrics: {enabled: true}
+"""
+    )
+    document = _document(result)
+    inherited = _destination(document, "generic-otlp")
+    logs = _destination(document, "generic-otlp-logs")
+
+    assert inherited["protocol"] == "grpc"
+    assert {tuple(route["signals"]) for route in inherited["routes"]} == {("traces",), ("metrics",)}
+    assert logs["protocol"] == "http/protobuf"
+    assert {tuple(route["signals"]) for route in logs["routes"]} == {("logs",)}
+
+
+@pytest.mark.parametrize("reserved", ["gateway-jsonl", "gateway-console", "local-sqlite"])
+def test_migrated_destinations_cannot_steal_reserved_v8_names(reserved: str) -> None:
+    result = _convert(
+        f"""config_version: 7
+otel:
+  enabled: true
+  destinations:
+    - name: {reserved}
+      enabled: true
+      endpoint: https://collector.example.test
+      protocol: grpc
+      traces: {{enabled: true}}
+"""
+    )
+    names = [destination["name"] for destination in _document(result)["observability"]["destinations"]]
+
+    assert len(names) == len(set(names))
+    assert f"{reserved}-2" in names
+    load_validate_v8(result.candidate)
+
+
+def test_flat_destination_avoids_explicit_generic_name_like_v7() -> None:
+    result = _convert(
+        """config_version: 7
+otel:
+  enabled: true
+  endpoint: https://flat.example.test
+  traces: {enabled: true}
+  destinations:
+    - name: generic-otlp
+      enabled: true
+      endpoint: https://named.example.test
+      protocol: grpc
+      traces: {enabled: true}
+"""
+    )
+    destinations = _document(result)["observability"]["destinations"]
+    endpoints = {destination.get("endpoint"): destination["name"] for destination in destinations}
+
+    assert endpoints["https://named.example.test"] == "generic-otlp"
+    assert endpoints["https://flat.example.test"] == "generic-otlp-2"
+
+
+def test_exact_trimmed_duplicate_v7_destination_names_are_rejected() -> None:
+    source = """config_version: 7
+otel:
+  enabled: true
+  destinations:
+    - name: dup
+      enabled: true
+      endpoint: https://one.example.test
+      protocol: grpc
+      traces: {enabled: true}
+    - name: ' dup '
+      enabled: true
+      endpoint: https://two.example.test
+      protocol: grpc
+      traces: {enabled: true}
+"""
+
+    with pytest.raises(V8MigrationError) as captured:
+        _convert(source)
+
+    assert captured.value.code == "duplicate_destination_name"
+
+
+def test_flat_environment_precedence_trims_and_skips_whitespace_values() -> None:
+    result = _convert(
+        "config_version: 7\notel: {enabled: true}\n",
+        {
+            "DEFENSECLAW_OTEL_ENDPOINT": "   ",
+            "OTEL_EXPORTER_OTLP_ENDPOINT": "  https://collector.example.test  ",
+        },
+    )
+
+    assert _destination(_document(result), "generic-otlp")["endpoint"] == "https://collector.example.test"
 
 
 def test_legacy_destination_names_are_deterministically_normalized_and_collision_safe() -> None:
@@ -1498,6 +1622,53 @@ __SPAN_FILTER__
     ]
 
 
+def test_span_filter_predicates_use_v7_whitespace_normalization() -> None:
+    result = _convert(
+        """config_version: 7
+otel:
+  enabled: true
+  destinations:
+    - name: remote
+      enabled: true
+      endpoint: https://collector.example.test
+      protocol: grpc
+      traces: {enabled: true}
+      span_filter:
+        require_operation: ' chat '
+        require_attributes: [' tenant.export_allowed ']
+"""
+    )
+
+    assert _destination(_document(result), "remote")["routes"][0]["selector"] == {"event_names": ["span.model.chat"]}
+
+
+@pytest.mark.parametrize(
+    "span_filter",
+    [
+        "{require_operation: chat, operations: [{name: chat}]}",
+        "{operations: [{name: chat}, {name: ' chat '}]}",
+        "{require_operation: chat, require_attributes: [tenant.export_allowed, ' tenant.export_allowed ']}",
+    ],
+)
+def test_invalid_v7_span_filter_ambiguity_is_not_silently_repaired(span_filter: str) -> None:
+    source = f"""config_version: 7
+otel:
+  enabled: true
+  destinations:
+    - name: remote
+      enabled: true
+      endpoint: https://collector.example.test
+      protocol: grpc
+      traces: {{enabled: true}}
+      span_filter: {span_filter}
+"""
+
+    with pytest.raises(V8MigrationError) as captured:
+        _convert(source)
+
+    assert captured.value.code == "unsupported_span_filter"
+
+
 @pytest.mark.parametrize(
     "span_filter",
     ["{}", "{operations: []}", "{require_operation: '   ', require_attributes: []}"],
@@ -1684,6 +1855,47 @@ observability:
     assert observability["connectors"]["codex"]["webhooks"][0]["name"] == "incident"
 
 
+def test_connector_audit_override_preserves_replacement_and_duplicate_multiplicity() -> None:
+    result = _convert(
+        """config_version: 7
+audit_sinks:
+  - name: dup
+    kind: http_jsonl
+    enabled: true
+    http_jsonl: {url: https://one.example.test}
+  - name: dup
+    kind: http_jsonl
+    enabled: true
+    http_jsonl: {url: https://two.example.test}
+observability:
+  connectors:
+    codex:
+      audit_sinks:
+        - name: dup
+          kind: http_jsonl
+          enabled: true
+          http_jsonl: {url: https://one.example.test}
+        - name: dup
+          kind: http_jsonl
+          enabled: true
+          http_jsonl: {url: https://one.example.test}
+"""
+    )
+    destinations = {
+        destination["name"]: destination for destination in _document(result)["observability"]["destinations"]
+    }
+
+    for name in ("dup", "dup-2"):
+        assert destinations[name]["routes"][0] == {
+            "name": "legacy-connector-suppress",
+            "signals": ["logs"],
+            "selector": {"connectors": ["codex"]},
+            "action": "drop",
+        }
+    assert destinations["codex-dup"]["routes"][0]["selector"]["connectors"] == ["codex"]
+    assert destinations["codex-dup-2"]["routes"][0]["selector"]["connectors"] == ["codex"]
+
+
 @pytest.mark.parametrize(
     ("legacy_name", "canonical"),
     [("CoDeX", "codex"), ("open-hands", "openhands"), ("open_hands", "openhands")],
@@ -1789,6 +2001,125 @@ audit_sinks:
     assert captured.value.code == "unrepresentable_audit_actions"
     assert captured.value.path == "$.audit_sinks[].actions"
     assert "exact generated audit route" in captured.value.action
+
+
+def test_whitespace_only_audit_actions_preserve_v7_match_nothing_behavior() -> None:
+    result = _convert(
+        """config_version: 7
+audit_sinks:
+  - name: archive
+    kind: http_jsonl
+    enabled: true
+    actions: ['   ']
+    http_jsonl: {url: https://collector.example.test}
+"""
+    )
+
+    assert _destination(_document(result), "archive")["routes"] == [
+        {
+            "name": "legacy-empty-action-filter",
+            "signals": ["logs"],
+            "selector": {},
+            "action": "drop",
+        }
+    ]
+    load_validate_v8(result.candidate)
+
+
+def test_whitespace_audit_action_is_ignored_when_valid_actions_remain() -> None:
+    result = _convert(
+        """config_version: 7
+audit_sinks:
+  - name: archive
+    kind: http_jsonl
+    enabled: true
+    actions: ['   ', ' Scan ']
+    http_jsonl: {url: https://collector.example.test}
+"""
+    )
+
+    assert _destination(_document(result), "archive")["routes"][0]["selector"]["actions"] == ["scan"]
+
+
+@pytest.mark.parametrize(
+    ("configured", "expected"),
+    [("MED", "MEDIUM"), ("NONE", "INFO"), ("nonsense", "INFO"), (" info ", "INFO")],
+)
+def test_audit_min_severity_uses_v7_rank_normalization(configured: str, expected: str) -> None:
+    result = _convert(
+        f"""config_version: 7
+audit_sinks:
+  - name: archive
+    kind: http_jsonl
+    enabled: true
+    min_severity: '{configured}'
+    actions: [' Scan ']
+    http_jsonl: {{url: https://collector.example.test}}
+"""
+    )
+    selector = _destination(_document(result), "archive")["routes"][0]["selector"]
+
+    assert selector["actions"] == ["scan"]
+    assert selector["min_severity"] == expected
+    load_validate_v8(result.candidate)
+
+
+def test_active_unresolved_optional_bearer_is_omitted_like_v7() -> None:
+    result = _convert(
+        """config_version: 7
+audit_sinks:
+  - name: optional
+    kind: http_jsonl
+    enabled: true
+    http_jsonl:
+      url: https://collector.example.test
+      bearer_env: OPTIONAL_TOKEN
+"""
+    )
+    destination = _destination(_document(result), "optional")
+
+    assert "bearer_env" not in destination
+    assert "unresolved_optional_bearer_omitted" in result.warnings
+    load_validate_v8(result.candidate)
+
+
+def test_active_whitespace_only_optional_bearer_fails_before_candidate() -> None:
+    source = """config_version: 7
+audit_sinks:
+  - name: optional
+    kind: http_jsonl
+    enabled: true
+    http_jsonl:
+      url: https://collector.example.test
+      bearer_env: OPTIONAL_TOKEN
+"""
+
+    with pytest.raises(V8MigrationError) as captured:
+        _convert(source, {"OPTIONAL_TOKEN": "   "})
+
+    assert captured.value.code == "unrepresentable_optional_bearer"
+
+
+@pytest.mark.parametrize(
+    "credential",
+    ["bearer_token: '   '", "bearer_env: OPTIONAL_TOKEN\n      bearer_token: '   '"],
+)
+def test_active_whitespace_only_inline_bearer_fails_before_candidate(credential: str) -> None:
+    source = f"""config_version: 7
+audit_sinks:
+  - name: optional
+    kind: http_jsonl
+    enabled: true
+    http_jsonl:
+      url: https://collector.example.test
+      {credential}
+"""
+
+    with pytest.raises(V8MigrationError) as captured:
+        _convert(source)
+
+    assert captured.value.code == "unrepresentable_optional_bearer"
+    assert captured.value.__cause__ is None
 
 
 def test_audit_sink_effective_defaults_and_partial_overrides_are_materialized() -> None:
@@ -2120,6 +2451,14 @@ def test_deep_yaml_nesting_is_rejected_without_runtime_recursion_leak() -> None:
     with pytest.raises(V8MigrationError) as captured:
         _convert(deeply_nested)
     assert captured.value.code in {"source_too_complex", "invalid_yaml"}
+
+
+def test_invalid_unicode_text_has_value_safe_utf8_error() -> None:
+    with pytest.raises(V8MigrationError) as captured:
+        _convert("config_version: 7\n# \ud800\n")
+
+    assert captured.value.code == "invalid_utf8"
+    assert captured.value.__cause__ is None
 
 
 def test_yaml_node_limit_is_enforced_before_container_construction(monkeypatch: pytest.MonkeyPatch) -> None:

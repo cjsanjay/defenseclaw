@@ -42,7 +42,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Final
-from urllib.parse import unquote, urlsplit
+from urllib.parse import urlsplit
 
 import yaml
 from yaml.events import (
@@ -89,8 +89,8 @@ _OFF_LIKE: Final = frozenset({"0", "false", "no", "off"})
 _SIGNALS: Final = ("logs", "traces", "metrics")
 _NAME_RE: Final = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 _ENV_RE: Final = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
-_EXACT_ENV_REF: Final = re.compile(r"^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$")
-_INTERPOLATED_ENV_REF: Final = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
+_EXACT_ENV_REF: Final = re.compile(r"^\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))$")
+_SHELL_SPECIAL: Final = frozenset("*#$@!?-0123456789")
 _MAX_ENVIRONMENT_ENTRIES: Final = 4_096
 _MAX_ENVIRONMENT_VALUE_BYTES: Final = 256 * 1024
 _MAX_ENVIRONMENT_TOTAL_BYTES: Final = MAX_SOURCE_BYTES
@@ -440,7 +440,10 @@ def _source_bytes(source: bytes | str, source_name: str) -> bytes:
     if isinstance(source, bytes):
         raw = source
     elif isinstance(source, str):
-        raw = source.encode("utf-8")
+        try:
+            raw = source.encode("utf-8")
+        except UnicodeEncodeError:
+            raise V8MigrationError("invalid_utf8", "$", "save the source as UTF-8", source_name=source_name) from None
     else:
         raise V8MigrationError("invalid_source_type", "$", "supply UTF-8 bytes or text", source_name=source_name)
     if len(raw) > MAX_SOURCE_BYTES:
@@ -749,6 +752,7 @@ def _validate_supported_v7(document: Mapping[str, Any], ctx: _Context) -> None:
             _optional_string(value, string_key, f"$.otel.{signal}.{string_key}", ctx)
         _optional_int(value, "export_interval_s", f"$.otel.{signal}.export_interval_s", ctx)
     destinations = _sequence(otel.get("destinations"), "$.otel.destinations", ctx) if "destinations" in otel else []
+    seen_destination_names: set[str] = set()
     for index, value in enumerate(destinations):
         destination = _mapping(value, f"$.otel.destinations[{index}]", ctx)
         _reject_unknown(destination, _V7_DESTINATION_KEYS, f"$.otel.destinations[{index}]", ctx)
@@ -756,6 +760,22 @@ def _validate_supported_v7(document: Mapping[str, Any], ctx: _Context) -> None:
         _optional_bool(destination, "enabled", f"$.otel.destinations[{index}].enabled", ctx)
         for string_key in ("name", "preset", "endpoint", "protocol"):
             _optional_string(destination, string_key, f"$.otel.destinations[{index}].{string_key}", ctx)
+        destination_name = _first_nonempty_text(destination.get("name"))
+        if not destination_name:
+            raise _error(
+                ctx,
+                "unsupported_destination_name",
+                f"$.otel.destinations[{index}].name",
+                "use the required nonempty v7 destination name",
+            )
+        if destination_name in seen_destination_names:
+            raise _error(
+                ctx,
+                "duplicate_destination_name",
+                f"$.otel.destinations[{index}].name",
+                "keep exactly one v7 destination with each trimmed name",
+            )
+        seen_destination_names.add(destination_name)
         for signal in _SIGNALS:
             signal_value = (
                 _mapping(destination.get(signal), f"$.otel.destinations[{index}].{signal}", ctx)
@@ -874,16 +894,39 @@ def _validate_otel_nested(source: Mapping[str, Any], path: str, ctx: _Context, *
         raise _error(ctx, "unsupported_v7_shape", f"{path}.span_filter", "move the filter to a named destination")
     span_filter = _mapping(source["span_filter"], f"{path}.span_filter", ctx)
     _reject_unknown(span_filter, _V7_SPAN_FILTER_KEYS, f"{path}.span_filter", ctx)
+    _optional_string(span_filter, "require_operation", f"{path}.span_filter.require_operation", ctx)
+    top_attributes: tuple[str, ...] = ()
     if "require_attributes" in span_filter:
         _string_sequence(span_filter["require_attributes"], f"{path}.span_filter.require_attributes", ctx)
+        top_attributes = _normalized_span_filter_attributes(
+            span_filter["require_attributes"], f"{path}.span_filter.require_attributes", ctx
+        )
     if "operations" in span_filter:
         operations = _sequence(span_filter["operations"], f"{path}.span_filter.operations", ctx)
+        if operations and (_first_nonempty_text(span_filter.get("require_operation")) or top_attributes):
+            raise _error(
+                ctx,
+                "unsupported_span_filter",
+                f"{path}.span_filter",
+                "do not mix operation entries with top-level span-filter predicates",
+            )
+        seen_operations: set[str] = set()
         for index, operation_value in enumerate(operations):
             operation_path = f"{path}.span_filter.operations[{index}]"
             operation = _mapping(operation_value, operation_path, ctx)
             _reject_unknown(operation, _V7_SPAN_FILTER_OPERATION_KEYS, operation_path, ctx)
+            _optional_string(operation, "name", f"{operation_path}.name", ctx)
+            operation_name = _first_nonempty_text(operation.get("name"))
+            if not operation_name:
+                raise _error(ctx, "unsupported_span_filter", operation_path, "name every span-filter operation")
+            if operation_name in seen_operations:
+                raise _error(ctx, "unsupported_span_filter", operation_path, "remove duplicate span-filter operations")
+            seen_operations.add(operation_name)
             if "require_attributes" in operation:
                 _string_sequence(operation["require_attributes"], f"{operation_path}.require_attributes", ctx)
+                _normalized_span_filter_attributes(
+                    operation["require_attributes"], f"{operation_path}.require_attributes", ctx
+                )
 
 
 def _validate_sink(sink: Mapping[str, Any], path: str, ctx: _Context) -> None:
@@ -952,6 +995,11 @@ def _build_observability(
     ai_otel = ai_discovery.get("emit_otel", True)
     if type(ai_otel) is not bool:
         raise _error(ctx, "unsupported_type", "$.ai_discovery.emit_otel", "use true or false")
+
+    # These identities are created implicitly by v8. Reserve them before any
+    # migrated destination claims a name so valid v7 collisions receive a
+    # deterministic suffix instead of failing canonical compilation.
+    ctx.used_names.update({"local-sqlite", "gateway-jsonl", "gateway-console"})
 
     if resource := _resource_attributes(otel, ctx):
         result["resource"] = {"attributes": resource}
@@ -1032,7 +1080,6 @@ def _build_observability(
             "routes": _exporter_routes(ctx, "gateway_console", ("logs",), profile, "legacy-console"),
         }
     )
-    ctx.used_names.update({"gateway-jsonl", "gateway-console"})
     destinations.extend(otlp_destinations)
     global_sinks = [
         _mapping(value, f"$.audit_sinks[{index}]", ctx)
@@ -1074,13 +1121,8 @@ def _resource_attributes(otel: Mapping[str, Any], ctx: _Context) -> dict[str, st
         if not _is_legacy_scalar(name) or name is None or not _is_legacy_scalar(value):
             raise _error(ctx, "unsupported_type", "$.otel.resource.attributes", "use scalar keys and values")
         normalized_name = _legacy_scalar_text(name)
-        if value is not None and normalized_name not in {"defenseclaw.preset", "defenseclaw.preset_name"}:
+        if value is not None:
             result[normalized_name] = _legacy_scalar_text(value)
-    env_value = ctx.environment.get("OTEL_RESOURCE_ATTRIBUTES", "")
-    if env_value:
-        for name, value in _parse_comma_assignments(env_value, "OTEL_RESOURCE_ATTRIBUTES", ctx):
-            result.setdefault(name, value)
-        ctx.warning("environment_decision:OTEL_RESOURCE_ATTRIBUTES")
     if service_name := ctx.environment.get("OTEL_SERVICE_NAME", ""):
         result["service.name"] = service_name
         ctx.warning("environment_decision:OTEL_SERVICE_NAME")
@@ -1260,21 +1302,29 @@ def _flat_otel_destination(otel: Mapping[str, Any], ctx: _Context) -> dict[str, 
         for signal in _SIGNALS
         if signal in otel
     )
-    global_endpoint = _first_env(
+    environment_endpoint = _first_env(
         ctx.environment,
         "DEFENSECLAW_OTEL_ENDPOINT",
         "OPENCLAW_OTEL_ENDPOINT",
         "OTEL_EXPORTER_OTLP_ENDPOINT",
     )
-    if global_endpoint and not otel.get("endpoint"):
+    global_endpoint = _first_nonempty_text(otel.get("endpoint"), environment_endpoint)
+    if environment_endpoint and not _first_nonempty_text(otel.get("endpoint")):
         ctx.warning("environment_decision:OTEL_ENDPOINT")
-    signal_endpoints = {
+    signal_sources = {
+        signal: _mapping(otel.get(signal), f"$.otel.{signal}", ctx) if signal in otel else {} for signal in _SIGNALS
+    }
+    environment_signal_endpoints = {
         signal: _first_env(
             ctx.environment,
             f"DEFENSECLAW_OTEL_{signal.upper()}_ENDPOINT",
             f"OPENCLAW_OTEL_{signal.upper()}_ENDPOINT",
             f"OTEL_EXPORTER_OTLP_{signal.upper()}_ENDPOINT",
         )
+        for signal in _SIGNALS
+    }
+    signal_endpoints = {
+        signal: _first_nonempty_text(signal_sources[signal].get("endpoint"), environment_signal_endpoints[signal])
         for signal in _SIGNALS
     }
     if not has_flat and not (global_endpoint or any(signal_endpoints.values())):
@@ -1289,17 +1339,17 @@ def _flat_otel_destination(otel: Mapping[str, Any], ctx: _Context) -> dict[str, 
     preset = _legacy_scalar_text(preset_raw)
     if not preset:
         raise _error(ctx, "unsupported_type", "$.otel.resource.attributes.defenseclaw.preset", "use text")
-    name = "local-observability" if preset == "local-otlp" else preset
-    configured_endpoints = [
-        endpoint
-        for endpoint in (
-            otel.get("endpoint"),
-            global_endpoint,
-            *(otel.get(signal, {}).get("endpoint") for signal in _SIGNALS),
-            *signal_endpoints.values(),
-        )
-        if isinstance(endpoint, str) and endpoint
-    ]
+    configured_names = {
+        _first_nonempty_text(_mapping(raw, "$.otel.destinations[]", ctx).get("name"))
+        for raw in otel.get("destinations", []) or []
+    }
+    flat_name = "generic-otlp"
+    suffix = 2
+    while flat_name in configured_names:
+        flat_name = f"generic-otlp-{suffix}"
+        suffix += 1
+    name = "local-observability" if preset == "local-otlp" else (flat_name if preset == "generic-otlp" else preset)
+    configured_endpoints = [endpoint for endpoint in (global_endpoint, *signal_endpoints.values()) if endpoint]
     if (
         preset == "generic-otlp"
         and configured_endpoints
@@ -1307,15 +1357,16 @@ def _flat_otel_destination(otel: Mapping[str, Any], ctx: _Context) -> dict[str, 
     ):
         preset = "local-otlp"
         name = "local-observability"
-    global_protocol = _first_env(
+    environment_protocol = _first_env(
         ctx.environment,
         "DEFENSECLAW_OTEL_PROTOCOL",
         "OPENCLAW_OTEL_PROTOCOL",
         "OTEL_EXPORTER_OTLP_PROTOCOL",
     )
-    if global_protocol and not otel.get("protocol"):
+    global_protocol = _first_nonempty_text(otel.get("protocol"), environment_protocol)
+    if environment_protocol and not _first_nonempty_text(otel.get("protocol")):
         ctx.warning("environment_decision:OTEL_PROTOCOL")
-    signal_protocols = {
+    environment_signal_protocols = {
         signal: _first_env(
             ctx.environment,
             f"DEFENSECLAW_OTEL_{signal.upper()}_PROTOCOL",
@@ -1324,21 +1375,15 @@ def _flat_otel_destination(otel: Mapping[str, Any], ctx: _Context) -> dict[str, 
         )
         for signal in _SIGNALS
     }
-    inherited_protocol = next(
-        (
-            value
-            for value in (
-                otel.get("protocol"),
-                global_protocol,
-                *(
-                    (_mapping(otel.get(signal), f"$.otel.{signal}", ctx).get("protocol") if signal in otel else None)
-                    or signal_protocols[signal]
-                    for signal in _SIGNALS
-                ),
-                "grpc",
-            )
-            if isinstance(value, str) and value.strip()
-        ),
+    signal_protocols = {
+        signal: _first_nonempty_text(signal_sources[signal].get("protocol"), environment_signal_protocols[signal])
+        for signal in _SIGNALS
+    }
+    inherited_protocol = _first_nonempty_text(
+        global_protocol,
+        signal_protocols["traces"],
+        signal_protocols["logs"],
+        signal_protocols["metrics"],
         "grpc",
     )
     source: dict[str, Any] = {
@@ -1346,7 +1391,7 @@ def _flat_otel_destination(otel: Mapping[str, Any], ctx: _Context) -> dict[str, 
         "name": name,
         "preset": preset,
         "enabled": _effective_otel_enabled(otel, ctx),
-        "endpoint": otel.get("endpoint") or global_endpoint,
+        "endpoint": global_endpoint,
         # V7's synthesized flat destination lets the first configured signal
         # protocol become the destination fallback for every other signal.
         "protocol": inherited_protocol,
@@ -1367,25 +1412,21 @@ def _flat_otel_destination(otel: Mapping[str, Any], ctx: _Context) -> dict[str, 
         if tls_insecure in _TLS_TRUE | _TLS_FALSE:
             source.setdefault("tls", {})["insecure"] = tls_insecure in _TLS_TRUE
             ctx.warning("environment_decision:DEFENSECLAW_OTEL_TLS_INSECURE")
-    headers_env = ctx.environment.get("OTEL_EXPORTER_OTLP_HEADERS", "")
-    if headers_env:
-        headers = dict(source.get("headers") or {})
-        for name, value in _parse_comma_assignments(headers_env, "OTEL_EXPORTER_OTLP_HEADERS", ctx):
-            if name not in headers:
-                headers[name] = value
-        source["headers"] = headers
-        ctx.warning("environment_decision:OTEL_EXPORTER_OTLP_HEADERS")
     explicit = any(isinstance(otel.get(signal), Mapping) and "enabled" in otel[signal] for signal in _SIGNALS)
     for signal in _SIGNALS:
-        signal_source = copy.deepcopy(dict(otel.get(signal) or {}))
-        env_endpoint = signal_endpoints[signal]
-        env_protocol = signal_protocols[signal]
-        if env_endpoint and not signal_source.get("endpoint"):
-            signal_source["endpoint"] = env_endpoint
+        signal_source = copy.deepcopy(dict(signal_sources[signal]))
+        if environment_signal_endpoints[signal] and not _first_nonempty_text(signal_sources[signal].get("endpoint")):
             ctx.warning(f"environment_decision:OTEL_{signal.upper()}_ENDPOINT")
-        if env_protocol and not signal_source.get("protocol"):
-            signal_source["protocol"] = env_protocol
+        if signal_endpoints[signal]:
+            signal_source["endpoint"] = signal_endpoints[signal]
+        else:
+            signal_source.pop("endpoint", None)
+        if environment_signal_protocols[signal] and not _first_nonempty_text(signal_sources[signal].get("protocol")):
             ctx.warning(f"environment_decision:OTEL_{signal.upper()}_PROTOCOL")
+        if signal_protocols[signal]:
+            signal_source["protocol"] = signal_protocols[signal]
+        else:
+            signal_source.pop("protocol", None)
         if "enabled" not in signal_source and (
             signal_source.get("endpoint") or signal_source.get("url_path") or (global_endpoint and not explicit)
         ):
@@ -1603,13 +1644,33 @@ def _span_filter_selectors(
         for index, raw in enumerate(_sequence(raw_operations, f"{path}.operations", ctx)):
             operation_config = _mapping(raw, f"{path}.operations[{index}]", ctx)
             operation = operation_config.get("name")
-            if not isinstance(operation, str) or not operation:
+            if not isinstance(operation, str) or not operation.strip():
                 raise _error(ctx, "unsupported_span_filter", path, "name every legacy filter operation")
-            predicates.append((operation, operation_config.get("require_attributes") or ()))
+            predicates.append(
+                (
+                    operation.strip(),
+                    _normalized_span_filter_attributes(
+                        operation_config.get("require_attributes") or [],
+                        f"{path}.operations[{index}].require_attributes",
+                        ctx,
+                    ),
+                )
+            )
     elif operation := value.get("require_operation"):
         if not isinstance(operation, str):
             raise _error(ctx, "unsupported_span_filter", path, "use a string operation")
-        predicates.append((operation, value.get("require_attributes") or ()))
+        if not operation.strip():
+            raise _error(ctx, "unsupported_span_filter", path, "use a nonempty operation")
+        predicates.append(
+            (
+                operation.strip(),
+                _normalized_span_filter_attributes(
+                    value.get("require_attributes") or [],
+                    f"{path}.require_attributes",
+                    ctx,
+                ),
+            )
+        )
     if not predicates:
         raise _error(
             ctx,
@@ -1639,6 +1700,20 @@ def _span_filter_selectors(
         )
     ctx.warning("span_filter_translated_from_generated_compatibility_selection")
     return tuple(sorted(selectors, key=lambda selector: selector.sort_key))
+
+
+def _normalized_span_filter_attributes(value: Any, path: str, ctx: _Context) -> tuple[str, ...]:
+    attributes: list[str] = []
+    seen: set[str] = set()
+    for raw in _sequence(value, path, ctx):
+        attribute = _text(raw, f"{path}[]", ctx).strip()
+        if not attribute:
+            raise _error(ctx, "unsupported_span_filter", path, "use nonempty required attribute names")
+        if attribute in seen:
+            raise _error(ctx, "unsupported_span_filter", path, "remove duplicate required attribute names")
+        seen.add(attribute)
+        attributes.append(attribute)
+    return tuple(attributes)
 
 
 def _legacy_span_filter_enabled(value: Mapping[str, Any]) -> bool:
@@ -1777,7 +1852,7 @@ def _audit_selector_routes(
         if requested:
             base_actions = tuple(merged.get("actions", ()))
             actions = (
-                tuple(action for action in base_actions if action in requested)
+                tuple(action for action in base_actions if action.strip().casefold() in requested)
                 if base_actions
                 else tuple(dict.fromkeys(requested_actions))
             )
@@ -1824,20 +1899,12 @@ def _convert_audit_sinks(
     ctx: _Context,
 ) -> list[dict[str, Any]]:
     result: list[dict[str, Any]] = []
-    global_by_name = {str(sink.get("name", "")): sink for sink in global_sinks}
+    overridden_connectors = sorted(connector_sinks)
     for sink in global_sinks:
-        sink_name = str(sink.get("name", ""))
-        excluded = [
-            connector
-            for connector, configured in connector_sinks.items()
-            if not any(str(item.get("name", "")) == sink_name and item == sink for item in configured)
-        ]
-        result.append(_convert_sink(sink, profile, ctx, excluded_connectors=excluded))
-    for connector, configured in connector_sinks.items():
+        result.append(_convert_sink(sink, profile, ctx, excluded_connectors=overridden_connectors))
+    for connector in overridden_connectors:
+        configured = connector_sinks[connector]
         for sink in configured:
-            name = str(sink.get("name", ""))
-            if name in global_by_name and sink == global_by_name[name]:
-                continue
             result.append(_convert_sink(sink, profile, ctx, only_connector=connector))
     return result
 
@@ -1911,13 +1978,20 @@ def _convert_sink(
         if bearer_env := block.get("bearer_env"):
             reference = _env_name(bearer_env, "$.audit_sinks[].http_jsonl.bearer_env", ctx)
             inline = block.get("bearer_token")
-            if not ctx.environment.get(reference) and inline:
-                target["bearer_env"] = _protect_value(name, "bearer", _text(inline, "bearer_token", ctx), ctx)
+            resolved = ctx.environment.get(reference)
+            if resolved is not None and resolved != "" and not resolved.strip() and sink.get("enabled") is True:
+                raise _unrepresentable_bearer(ctx, "$.audit_sinks[].http_jsonl.bearer_env")
+            if (resolved is None or resolved == "") and inline:
+                target["bearer_env"] = _protect_bearer(name, inline, ctx)
                 ctx.warning("legacy_credential_environment_fallback_promoted")
-            else:
+            elif resolved is not None and resolved.strip():
                 target["bearer_env"] = reference
+            elif sink.get("enabled") is not True:
+                target["bearer_env"] = reference
+            else:
+                ctx.warning("unresolved_optional_bearer_omitted")
         elif bearer := block.get("bearer_token"):
-            target["bearer_env"] = _protect_value(name, "bearer", _text(bearer, "bearer_token", ctx), ctx)
+            target["bearer_env"] = _protect_bearer(name, bearer, ctx)
         if block.get("insecure_skip_verify") is True:
             target["tls"] = {"insecure_skip_verify": True}
     default_batch = 512 if kind == "otlp_logs" else (50 if kind == "splunk_hec" else 1)
@@ -1943,32 +2017,82 @@ def _convert_sink(
                 "action": "drop",
             }
         )
-    requested_actions = (
-        tuple(dict.fromkeys(_sequence(sink["actions"], "$.audit_sinks[].actions", ctx))) if sink.get("actions") else ()
-    )
-    severity = (
-        _text(sink["min_severity"], "$.audit_sinks[].min_severity", ctx).upper() if sink.get("min_severity") else ""
-    )
-    generated = _audit_selector_routes(
-        ctx,
-        requested_actions=requested_actions,
-        connector=only_connector,
-        min_severity=severity,
-        profile=profile,
-    )
-    if not generated:
-        if requested_actions:
-            raise _error(
-                ctx,
-                "unrepresentable_audit_actions",
-                "$.audit_sinks[].actions",
-                "remove the filter or supply an exact generated audit route for every selected action",
+    requested_actions = ()
+    action_filter_blocks_all = False
+    if sink.get("actions"):
+        requested_actions = tuple(
+            dict.fromkeys(
+                normalized
+                for action in _sequence(sink["actions"], "$.audit_sinks[].actions", ctx)
+                if (normalized := _text(action, "$.audit_sinks[].actions[]", ctx).strip().casefold())
             )
-        raise _compatibility_query_error(ctx, "$.exporters.audit_sink")
-    routes.extend(generated)
+        )
+        action_filter_blocks_all = not requested_actions
+    severity = ""
+    if "min_severity" in sink and sink["min_severity"] is not None:
+        severity = _legacy_audit_min_severity(_text(sink["min_severity"], "$.audit_sinks[].min_severity", ctx))
+    if action_filter_blocks_all:
+        routes.append(
+            {
+                "name": "legacy-empty-action-filter",
+                "signals": ["logs"],
+                "selector": {},
+                "action": "drop",
+            }
+        )
+    else:
+        generated = _audit_selector_routes(
+            ctx,
+            requested_actions=requested_actions,
+            connector=only_connector,
+            min_severity=severity,
+            profile=profile,
+        )
+        if not generated:
+            if requested_actions:
+                raise _error(
+                    ctx,
+                    "unrepresentable_audit_actions",
+                    "$.audit_sinks[].actions",
+                    "remove the filter or supply an exact generated audit route for every selected action",
+                )
+            raise _compatibility_query_error(ctx, "$.exporters.audit_sink")
+        routes.extend(generated)
     _validate_generated_route_count(routes, "$.audit_sinks[]", ctx)
     target["routes"] = routes
     return target
+
+
+def _legacy_audit_min_severity(value: str) -> str:
+    if value == "":
+        return ""
+    normalized = value.strip().upper()
+    if normalized == "CRITICAL":
+        return "CRITICAL"
+    if normalized == "HIGH":
+        return "HIGH"
+    if normalized in {"MEDIUM", "MED"}:
+        return "MEDIUM"
+    if normalized == "LOW":
+        return "LOW"
+    # V7 ranks NONE, blank-after-trim, and unknown values as INFO.
+    return "INFO"
+
+
+def _protect_bearer(destination: str, value: Any, ctx: _Context) -> str:
+    text = _text(value, "$.audit_sinks[].http_jsonl.bearer_token", ctx)
+    if not text.strip():
+        raise _unrepresentable_bearer(ctx, "$.audit_sinks[].http_jsonl.bearer_token")
+    return _protect_value(destination, "bearer", text, ctx)
+
+
+def _unrepresentable_bearer(ctx: _Context, path: str) -> V8MigrationError:
+    return _error(
+        ctx,
+        "unrepresentable_optional_bearer",
+        path,
+        "replace the whitespace-only bearer value with a nonempty token or unset it",
+    )
 
 
 def _judge_retention(
@@ -2113,11 +2237,20 @@ def _convert_headers(value: Any, context: str, ctx: _Context) -> dict[str, Any]:
             raise _error(ctx, "unsupported_header", "headers", "use nonempty string header names")
         text = _text(raw_value, "headers", ctx)
         exact = _EXACT_ENV_REF.fullmatch(text)
-        if exact:
-            result[name] = {"env": exact.group(1)}
+        reference = (exact.group(1) or exact.group(2)) if exact else None
+        if reference and (resolved := ctx.environment.get(reference)) is not None and resolved.strip():
+            result[name] = {"env": reference}
         else:
-            expanded = _expand_environment(text, ctx) if _INTERPOLATED_ENV_REF.search(text) else text
-            result[name] = {"env": _protect_value(context, name, expanded, ctx)}
+            expanded = _expand_environment(text, ctx) if "$" in text else text
+            if expanded.strip():
+                result[name] = {"env": _protect_value(context, name, expanded, ctx)}
+            else:
+                # V7's os.Expand turns missing references into an empty value.
+                # Empty/whitespace values cannot be v8 secret references, but
+                # are safe and valid as static headers.
+                result[name] = expanded
+                if "$" in text:
+                    ctx.warning("unresolved_legacy_header_materialized_empty")
     return result
 
 
@@ -2144,21 +2277,53 @@ def _protect_value(context: str, field_name: str, value: str, ctx: _Context) -> 
 
 
 def _expand_environment(value: str, ctx: _Context) -> str:
-    def replace(match: re.Match[str]) -> str:
-        name = match.group(1)
-        if name not in ctx.environment:
-            raise V8MigrationDependencyError(
-                "environment_value_required",
-                "$environment",
-                "supply every environment value referenced by an interpolated legacy header",
-                source_name=ctx.source_name,
-            )
-        resolved = ctx.environment[name]
-        if resolved:
-            ctx.add_sensitive_value(resolved)
-        return resolved
+    # Mirror Go os.Expand, which accepts both $NAME and ${NAME}, consumes
+    # malformed brace forms, leaves a lone dollar untouched, and substitutes
+    # missing names with the empty string.
+    output: list[str] = []
+    start = 0
+    index = 0
+    while index < len(value):
+        if value[index] != "$" or index + 1 >= len(value):
+            index += 1
+            continue
+        output.append(value[start:index])
+        name, width = _go_shell_name(value[index + 1 :])
+        if not name and width > 0:
+            pass
+        elif not name:
+            output.append("$")
+        else:
+            resolved = ctx.environment.get(name, "")
+            if resolved:
+                ctx.add_sensitive_value(resolved)
+            output.append(resolved)
+        index += width + 1
+        start = index
+    if not output:
+        return value
+    output.append(value[start:])
+    return "".join(output)
 
-    return _INTERPOLATED_ENV_REF.sub(replace, value)
+
+def _go_shell_name(value: str) -> tuple[str, int]:
+    if not value:
+        return "", 0
+    if value[0] == "{":
+        if len(value) > 2 and value[1] in _SHELL_SPECIAL and value[2] == "}":
+            return value[1], 3
+        closing = value.find("}", 1)
+        if closing == 1:
+            return "", 2
+        if closing > 1:
+            return value[1:closing], closing + 1
+        return "", 1
+    if value[0] in _SHELL_SPECIAL:
+        return value[0], 1
+    width = 0
+    while width < len(value) and (value[width].isascii() and (value[width].isalnum() or value[width] == "_")):
+        width += 1
+    return value[:width], width
 
 
 def _network_safety(destination: dict[str, Any], ctx: _Context) -> None:
@@ -2250,26 +2415,15 @@ def _protocol(value: Any, path: str, ctx: _Context) -> str:
     return aliases[protocol]
 
 
-def _parse_comma_assignments(value: str, name: str, ctx: _Context) -> list[tuple[str, str]]:
-    result: list[tuple[str, str]] = []
-    for item in value.split(","):
-        if "=" not in item:
-            raise _error(
-                ctx,
-                "unsupported_environment_shape",
-                f"$environment.{name}",
-                "use comma-separated key=value entries",
-            )
-        key, raw = item.split("=", 1)
-        key = unquote(key.strip())
-        if not key:
-            raise _error(ctx, "unsupported_environment_shape", f"$environment.{name}", "use nonempty keys")
-        result.append((key, unquote(raw.strip())))
-    return result
-
-
 def _first_env(environment: Mapping[str, str], *names: str) -> str:
-    return next((environment[name] for name in names if environment.get(name)), "")
+    return _first_nonempty_text(*(environment.get(name) for name in names))
+
+
+def _first_nonempty_text(*values: Any) -> str:
+    for value in values:
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
 
 
 def _effective_otel_enabled(otel: Mapping[str, Any], ctx: _Context) -> bool:
