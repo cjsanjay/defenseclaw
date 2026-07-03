@@ -1,0 +1,6 @@
+schema_version: 1
+otel_core_version: v1.42.0
+otel_core_revision: ae3a98640194ed405c4c797281502e4d3bd258b3
+gen_ai_semconv_revision: b028dceecdad117461a785c3af35315e7184e813
+openinference_version: 0.1.30
+openinference_revision: 789d41974c08a9a13147977f28ef4142a07e2106

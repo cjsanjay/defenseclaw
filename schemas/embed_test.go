@@ -49,6 +49,30 @@ func TestDefenseClawConfigV8SchemaEmbeddedExactly(t *testing.T) {
 	}
 }
 
+func TestTelemetryV8LocksEmbeddedExactly(t *testing.T) {
+	t.Parallel()
+	for _, fixture := range []struct {
+		path string
+		get  func() []byte
+	}{
+		{path: "telemetry/v8/registry.yaml", get: TelemetryV8Registry},
+		{path: "telemetry/v8/semconv.lock.yaml", get: TelemetryV8SemconvLock},
+	} {
+		want, err := os.ReadFile(fixture.path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := fixture.get()
+		if !bytes.Equal(got, want) {
+			t.Fatalf("embedded %s differs from checked-in bytes", fixture.path)
+		}
+		got[0] = 'x'
+		if !bytes.Equal(fixture.get(), want) {
+			t.Fatalf("caller mutated embedded %s", fixture.path)
+		}
+	}
+}
+
 func TestDefenseClawConfigV8SchemaIdentityAndClosure(t *testing.T) {
 	t.Parallel()
 
@@ -350,6 +374,12 @@ func TestDefenseClawConfigV8SchemaCompilesAndValidates(t *testing.T) {
 			"name": "console", "kind": "console",
 			"send": map[string]any{"signals": []any{"logs"}, "buckets": []any{"*", "diagnostic"}},
 		}}}}},
+		{name: "unsupported OTLP JSON wire format", doc: map[string]any{"config_version": 8, "observability": map[string]any{"destinations": []any{map[string]any{
+			"name": "otel", "kind": "otlp", "protocol": "http/json", "endpoint": "https://otel.example.test",
+		}}}}},
+		{name: "trace limit below family minimum", doc: map[string]any{"config_version": 8, "observability": map[string]any{
+			"trace_policy": map[string]any{"limits": map[string]any{"max_attributes_per_span": 31}},
+		}}},
 	}
 	for _, tc := range invalid {
 		t.Run(tc.name, func(t *testing.T) {

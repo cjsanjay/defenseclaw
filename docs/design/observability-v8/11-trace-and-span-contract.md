@@ -597,18 +597,19 @@ destination name, selects the profile.
 Rich telemetry remains bounded. The v8 `trace_policy.limits` defaults and
 non-overridable hard ceilings are:
 
-| Config field / limit | Default | Hard maximum |
-|---|---:|---:|
-| `max_attributes_per_span` | 128 | 256 |
-| `max_events_per_span` | 64 | 128 |
-| `max_links_per_span` | 32 | 64 |
-| `max_attributes_per_event` (also applied to link attributes) | 32 | 64 |
-| `max_attribute_value_bytes` | 16,384 bytes | 65,536 bytes |
-| `max_projected_span_bytes` | 262,144 bytes (256 KiB) | 1,048,576 bytes (1 MiB) |
-| `max_stacktrace_bytes` | 32,768 bytes (32 KiB) | 131,072 bytes (128 KiB) |
-| `max_message_items` | 128 | 512 |
+| Config field / limit | Family minimum | Default | Hard maximum |
+|---|---:|---:|---:|
+| `max_attributes_per_span` | 32 | 128 | 256 |
+| `max_events_per_span` | 1 | 64 | 128 |
+| `max_links_per_span` | 1 | 32 | 64 |
+| `max_attributes_per_event` (also applied to link attributes) | 4 | 32 | 64 |
+| `max_attribute_value_bytes` | 256 bytes | 16,384 bytes | 65,536 bytes |
+| `max_projected_span_bytes` | 4,096 bytes | 262,144 bytes (256 KiB) | 1,048,576 bytes (1 MiB) |
+| `max_stacktrace_bytes` | 256 bytes | 32,768 bytes (32 KiB) | 131,072 bytes (128 KiB) |
+| `max_message_items` | 1 | 128 | 512 |
 
-An explicitly configured limit MUST be an integer from 1 through its hard maximum;
+An explicitly configured limit MUST be an integer from its family minimum through
+its hard maximum;
 omission selects the listed default. Startup/reload rejects values above a hard
 maximum instead of clamping them. Effective limits also respect any lower
 SDK/collector limit. Runtime overflow is deterministic, fails closed for content,

@@ -1146,7 +1146,7 @@
       "properties": {
         "max_attributes_per_span": {
           "type": "integer",
-          "minimum": 1,
+          "minimum": 32,
           "maximum": 256,
           "default": 128
         },
@@ -1164,25 +1164,25 @@
         },
         "max_attributes_per_event": {
           "type": "integer",
-          "minimum": 1,
+          "minimum": 4,
           "maximum": 64,
           "default": 32
         },
         "max_attribute_value_bytes": {
           "type": "integer",
-          "minimum": 1,
+          "minimum": 256,
           "maximum": 65536,
           "default": 16384
         },
         "max_projected_span_bytes": {
           "type": "integer",
-          "minimum": 1,
+          "minimum": 4096,
           "maximum": 1048576,
           "default": 262144
         },
         "max_stacktrace_bytes": {
           "type": "integer",
-          "minimum": 1,
+          "minimum": 256,
           "maximum": 131072,
           "default": 32768
         },
@@ -1734,8 +1734,7 @@
             "grpc",
             "grpc/protobuf",
             "http",
-            "http/protobuf",
-            "http/json"
+            "http/protobuf"
           ],
           "default": "grpc"
         },

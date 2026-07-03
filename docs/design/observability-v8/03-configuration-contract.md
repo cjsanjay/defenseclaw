@@ -448,6 +448,20 @@ Push destinations use the following common vocabulary where supported:
 | `network_safety.allow_private_networks` | Reviewed opt-in for loopback, RFC1918, and IPv6 ULA collector endpoints; default false |
 | `network_safety.allow_cgnat` | Reviewed opt-in for RFC 6598 CGNAT/overlay endpoints; default false |
 
+The compiler makes all omitted adapter defaults visible in the effective plan:
+
+- JSONL rotation defaults to 50 MiB, five backups, 30 days, and compression on;
+  explicit zero backups/age and `compress: false` remain distinguishable.
+- HTTP JSONL method defaults to `POST`.
+- Push timeout defaults to 10,000 ms. Push batching defaults to a 2,048-record
+  queue, 512-record maximum export batch, and 5,000 ms scheduled delay; export
+  batch size may not exceed queue size.
+- General OTLP protocol defaults to `grpc`. `preset: galileo` instead expands to
+  `galileo-rich-v2`, requires `http/protobuf`, and overrides only the omitted
+  scheduled delay to 1,000 ms as locked by P-043.
+- TLS unsafe modes and both network-safety opt-ins default false. Omitted values
+  never inherit exporter behavior from ambient OTel environment variables.
+
 Static inline authorization secrets are discouraged and must be masked if retained
 for compatibility. New generated configurations use environment or key-store
 references.
@@ -508,8 +522,9 @@ operator tunable must not be presented as YAML knobs.
 
 ### 4.5 OTLP-specific validation
 
-- Protocol values are `grpc`, `grpc/protobuf`, `http`, `http/protobuf`, or
-  `http/json` only where the selected SDK/exporter supports them.
+- Protocol values are `grpc`, `grpc/protobuf`, `http`, or `http/protobuf`.
+  `http/json` is rejected because the current Go OTLP exporters encode protobuf;
+  accepting it would mislabel the wire format.
 - Enabled signal transports are the union of signals in the destination's generated
   capability-default send, explicit `send` block, or advanced routes. There is no
   second transport enablement switch.

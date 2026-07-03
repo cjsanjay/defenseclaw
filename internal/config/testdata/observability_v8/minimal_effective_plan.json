@@ -1,0 +1,479 @@
+{
+  "bucket_catalog_version": 1,
+  "resource_attributes": null,
+  "trace_policy": {
+    "sampler": "parentbased_always_on",
+    "semantic_profile": "defenseclaw-genai-rich-v1",
+    "semantic_profile_lock": {
+      "trace_schema_version": "defenseclaw-trace-v1",
+      "gen_ai_semconv_profile": "otel-genai-b028dceecdad117461a785c3af35315e7184e813",
+      "openinference_profile": "openinference-semantic-conventions-v0.1.30",
+      "galileo_compatibility_profile": "galileo-rich-v2"
+    },
+    "compatibility_aliases": true,
+    "limits": {
+      "max_attributes_per_span": 128,
+      "max_events_per_span": 64,
+      "max_links_per_span": 32,
+      "max_attributes_per_event": 32,
+      "max_attribute_value_bytes": 16384,
+      "max_projected_span_bytes": 262144,
+      "max_stacktrace_bytes": 32768,
+      "max_message_items": 128
+    }
+  },
+  "metric_policy": {
+    "export_interval_seconds": 60,
+    "temporality": "delta"
+  },
+  "local": {
+    "path": "/var/lib/defenseclaw/audit.db",
+    "judge_bodies_path": "/var/lib/defenseclaw/judge_bodies.db",
+    "retention_days": 90
+  },
+  "buckets": [
+    {
+      "bucket": "compliance.activity",
+      "collect": {
+        "logs": true,
+        "traces": true,
+        "metrics": true
+      },
+      "redaction_profile": "none"
+    },
+    {
+      "bucket": "security.finding",
+      "collect": {
+        "logs": true,
+        "traces": true,
+        "metrics": true
+      },
+      "redaction_profile": "none"
+    },
+    {
+      "bucket": "guardrail.evaluation",
+      "collect": {
+        "logs": true,
+        "traces": true,
+        "metrics": true
+      },
+      "redaction_profile": "none"
+    },
+    {
+      "bucket": "enforcement.action",
+      "collect": {
+        "logs": true,
+        "traces": true,
+        "metrics": true
+      },
+      "redaction_profile": "none"
+    },
+    {
+      "bucket": "model.io",
+      "collect": {
+        "logs": true,
+        "traces": true,
+        "metrics": true
+      },
+      "redaction_profile": "none"
+    },
+    {
+      "bucket": "tool.activity",
+      "collect": {
+        "logs": true,
+        "traces": true,
+        "metrics": true
+      },
+      "redaction_profile": "none"
+    },
+    {
+      "bucket": "asset.scan",
+      "collect": {
+        "logs": true,
+        "traces": true,
+        "metrics": true
+      },
+      "redaction_profile": "none"
+    },
+    {
+      "bucket": "asset.lifecycle",
+      "collect": {
+        "logs": true,
+        "traces": true,
+        "metrics": true
+      },
+      "redaction_profile": "none"
+    },
+    {
+      "bucket": "network.egress",
+      "collect": {
+        "logs": true,
+        "traces": true,
+        "metrics": true
+      },
+      "redaction_profile": "none"
+    },
+    {
+      "bucket": "agent.lifecycle",
+      "collect": {
+        "logs": true,
+        "traces": true,
+        "metrics": true
+      },
+      "redaction_profile": "none"
+    },
+    {
+      "bucket": "ai.discovery",
+      "collect": {
+        "logs": true,
+        "traces": true,
+        "metrics": true
+      },
+      "redaction_profile": "none"
+    },
+    {
+      "bucket": "telemetry.ingest",
+      "collect": {
+        "logs": true,
+        "traces": true,
+        "metrics": true
+      },
+      "redaction_profile": "none"
+    },
+    {
+      "bucket": "platform.health",
+      "collect": {
+        "logs": true,
+        "traces": true,
+        "metrics": true
+      },
+      "redaction_profile": "none"
+    },
+    {
+      "bucket": "diagnostic",
+      "collect": {
+        "logs": true,
+        "traces": true,
+        "metrics": true
+      },
+      "redaction_profile": "none"
+    }
+  ],
+  "redaction_profiles": [
+    {
+      "name": "none",
+      "built_in": true,
+      "detectors": null,
+      "field_classes": {
+        "content": "preserve",
+        "credential": "preserve",
+        "error": "preserve",
+        "evidence": "preserve",
+        "identifier": "preserve",
+        "metadata": "preserve",
+        "path": "preserve",
+        "reason": "preserve"
+      }
+    },
+    {
+      "name": "sensitive",
+      "built_in": true,
+      "detectors": [
+        "pii",
+        "credentials",
+        "secrets"
+      ],
+      "field_classes": {
+        "content": "detect",
+        "credential": "remove",
+        "error": "detect",
+        "evidence": "detect",
+        "identifier": "preserve",
+        "metadata": "preserve",
+        "path": "hash",
+        "reason": "detect"
+      }
+    },
+    {
+      "name": "content",
+      "built_in": true,
+      "detectors": [
+        "pii",
+        "credentials",
+        "secrets"
+      ],
+      "field_classes": {
+        "content": "whole",
+        "credential": "remove",
+        "error": "detect",
+        "evidence": "whole",
+        "identifier": "preserve",
+        "metadata": "preserve",
+        "path": "hash",
+        "reason": "detect"
+      }
+    },
+    {
+      "name": "strict",
+      "built_in": true,
+      "detectors": [
+        "pii",
+        "credentials",
+        "secrets"
+      ],
+      "field_classes": {
+        "content": "remove",
+        "credential": "remove",
+        "error": "remove",
+        "evidence": "remove",
+        "identifier": "preserve",
+        "metadata": "preserve",
+        "path": "remove",
+        "reason": "remove"
+      }
+    }
+  ],
+  "destinations": [
+    {
+      "name": "local-sqlite",
+      "kind": "sqlite",
+      "enabled": true,
+      "generated": true,
+      "capabilities": {
+        "signals": [
+          "logs"
+        ]
+      },
+      "selected_signals": [
+        "logs"
+      ],
+      "policy_form": "implicit_local",
+      "first_match_per_signal": true,
+      "routes": [
+        {
+          "index": 0,
+          "name": "all-collected-logs-and-mandatory-floor",
+          "generated": true,
+          "signals": [
+            "logs"
+          ],
+          "selector": {
+            "buckets": [
+              "compliance.activity",
+              "security.finding",
+              "guardrail.evaluation",
+              "enforcement.action",
+              "model.io",
+              "tool.activity",
+              "asset.scan",
+              "asset.lifecycle",
+              "network.egress",
+              "agent.lifecycle",
+              "ai.discovery",
+              "telemetry.ingest",
+              "platform.health",
+              "diagnostic"
+            ],
+            "bucket_wildcard": true
+          },
+          "action": "send",
+          "redaction_profile_by_bucket": {
+            "agent.lifecycle": "none",
+            "ai.discovery": "none",
+            "asset.lifecycle": "none",
+            "asset.scan": "none",
+            "compliance.activity": "none",
+            "diagnostic": "none",
+            "enforcement.action": "none",
+            "guardrail.evaluation": "none",
+            "model.io": "none",
+            "network.egress": "none",
+            "platform.health": "none",
+            "security.finding": "none",
+            "telemetry.ingest": "none",
+            "tool.activity": "none"
+          },
+          "includes_mandatory_floor": true
+        }
+      ],
+      "transport": {
+        "path": "/var/lib/defenseclaw/audit.db"
+      }
+    }
+  ],
+  "warnings": null,
+  "provenance": [
+    {
+      "path": "observability.bucket_catalog_version",
+      "origin": "compiled-default",
+      "detail": "catalog-v1"
+    },
+    {
+      "path": "observability.buckets.agent.lifecycle.collect",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.agent.lifecycle.redaction_profile",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.ai.discovery.collect",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.ai.discovery.redaction_profile",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.asset.lifecycle.collect",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.asset.lifecycle.redaction_profile",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.asset.scan.collect",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.asset.scan.redaction_profile",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.compliance.activity.collect",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.compliance.activity.redaction_profile",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.diagnostic.collect",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.diagnostic.redaction_profile",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.enforcement.action.collect",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.enforcement.action.redaction_profile",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.guardrail.evaluation.collect",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.guardrail.evaluation.redaction_profile",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.model.io.collect",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.model.io.redaction_profile",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.network.egress.collect",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.network.egress.redaction_profile",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.platform.health.collect",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.platform.health.redaction_profile",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.security.finding.collect",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.security.finding.redaction_profile",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.telemetry.ingest.collect",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.telemetry.ingest.redaction_profile",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.tool.activity.collect",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.tool.activity.redaction_profile",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.destinations.local-sqlite.enabled",
+      "origin": "generated"
+    },
+    {
+      "path": "observability.destinations.local-sqlite.policy",
+      "origin": "generated"
+    },
+    {
+      "path": "observability.destinations.local-sqlite.transport",
+      "origin": "generated"
+    },
+    {
+      "path": "observability.local.judge_bodies_path",
+      "origin": "compiled-default"
+    },
+    {
+      "path": "observability.local.path",
+      "origin": "compiled-default"
+    },
+    {
+      "path": "observability.local.retention_days",
+      "origin": "compiled-default"
+    },
+    {
+      "path": "observability.metric_policy.export_interval_seconds",
+      "origin": "compiled-default"
+    },
+    {
+      "path": "observability.metric_policy.temporality",
+      "origin": "compiled-default"
+    },
+    {
+      "path": "observability.trace_policy.compatibility_aliases",
+      "origin": "compiled-default"
+    },
+    {
+      "path": "observability.trace_policy.limits",
+      "origin": "compiled-default"
+    },
+    {
+      "path": "observability.trace_policy.sampler",
+      "origin": "compiled-default"
+    },
+    {
+      "path": "observability.trace_policy.semantic_profile",
+      "origin": "compiled-default"
+    },
+    {
+      "path": "observability.trace_policy.semantic_profile_lock",
+      "origin": "registry-lock",
+      "source": "schemas/telemetry/v8/registry.yaml",
+      "line": 3,
+      "column": 5
+    }
+  ]
+}

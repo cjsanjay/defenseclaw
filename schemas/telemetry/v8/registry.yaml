@@ -1,0 +1,7 @@
+schema_version: 1
+semantic_profiles:
+  - id: defenseclaw-genai-rich-v1
+    trace_schema_version: defenseclaw-trace-v1
+    gen_ai_semconv_profile: otel-genai-b028dceecdad117461a785c3af35315e7184e813
+    openinference_profile: openinference-semantic-conventions-v0.1.30
+    galileo_compatibility_profile: galileo-rich-v2

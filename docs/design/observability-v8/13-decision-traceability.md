@@ -108,6 +108,8 @@ Section references are to this specification package.
 | P-045 | 03 §6; 06 §§1,3.2,7.2; 14 §8.4 | 07 §§4.1,9.3,9.7,E2E-9; 14 §11 |
 | P-046 | 06 §§5-7; 12 §§6,13,17; 14 §§7-10 | 07 §§2,9.6-9.7,11,E2E-9,17; 14 §11 |
 | P-047 | 05 §4.1; 06 §§3.2,5 phase 2,7.1 | 07 §§7-8,11,16, including copy/cutover/dedup/export/purge order and fallback-removal cases |
+| P-048 | 03 §§2.1,4.4-4.5; 11 §13.1 | 07 §§4.1-4.3,9.6,11 |
+| P-049 | 03 §6; 11 §§2,14-15; 12 §5.2 | 07 §§4.2,9.6,15 |
 
 ## 5. Review use
 

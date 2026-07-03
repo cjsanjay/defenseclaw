@@ -31,10 +31,10 @@ import (
 )
 
 const (
-	V8YAMLMaxSourceBytes    = 4 * 1024 * 1024
-	V8YAMLMaxNodes          = 65_536
-	V8YAMLMaxDepth          = 32
-	V8YAMLMaxMappingEntries = 1_024
+	V8YAMLMaxSourceBytes    = ObservabilityV8MaxSourceBytes
+	V8YAMLMaxNodes          = ObservabilityV8MaxYAMLNodes
+	V8YAMLMaxDepth          = ObservabilityV8MaxYAMLDepth
+	V8YAMLMaxMappingEntries = ObservabilityV8MaxMappingEntries
 	v8YAMLConfigVersion     = 8
 )
 

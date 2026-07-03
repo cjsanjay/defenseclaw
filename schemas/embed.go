@@ -23,8 +23,26 @@ import _ "embed"
 //go:embed config/v8/defenseclaw-config.schema.json
 var defenseClawConfigV8Schema []byte
 
+//go:embed telemetry/v8/registry.yaml
+var telemetryV8Registry []byte
+
+//go:embed telemetry/v8/semconv.lock.yaml
+var telemetryV8SemconvLock []byte
+
 // DefenseClawConfigV8Schema returns a copy of the exact checked-in canonical v8
 // configuration schema bytes. Callers cannot mutate the process-wide embed.
 func DefenseClawConfigV8Schema() []byte {
 	return append([]byte(nil), defenseClawConfigV8Schema...)
+}
+
+// TelemetryV8Registry returns a copy of the immutable v8 telemetry registry
+// manifest, including semantic-profile bindings.
+func TelemetryV8Registry() []byte {
+	return append([]byte(nil), telemetryV8Registry...)
+}
+
+// TelemetryV8SemconvLock returns a copy of the pinned upstream semantic
+// convention revisions used to validate those profiles.
+func TelemetryV8SemconvLock() []byte {
+	return append([]byte(nil), telemetryV8SemconvLock...)
 }

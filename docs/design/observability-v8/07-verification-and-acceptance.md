@@ -45,7 +45,7 @@ Tests must validate outputs, not merely that functions returned no error.
 | Push network safety | HTTP JSONL, OTLP, and Splunk tests cover every prohibited address class, guarded dialing/DNS rebinding, disabled redirects, failure isolation, and narrowly bounded private/CGNAT opt-ins |
 
 Decision-level coverage for `D-001` through `D-022`, `S-001` through `S-012`, and
-`P-001` through `P-047` is normative in `13-decision-traceability.md`; this matrix is
+`P-001` through `P-049` is normative in `13-decision-traceability.md`; this matrix is
 the requirement-level summary rather than a competing decision index.
 
 ## 3. Taxonomy Tests

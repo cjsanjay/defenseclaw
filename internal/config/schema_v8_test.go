@@ -1,0 +1,92 @@
+// Copyright 2026 Cisco Systems, Inc. and its affiliates
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// SPDX-License-Identifier: Apache-2.0
+
+package config
+
+import (
+	"bytes"
+	"encoding/json"
+	"reflect"
+	"strings"
+	"testing"
+
+	publicschemas "github.com/defenseclaw/defenseclaw/schemas"
+)
+
+func TestConfigV8SchemaClassifiesEveryTopLevelGoConfigField(t *testing.T) {
+	var schema map[string]any
+	if err := json.Unmarshal(publicschemas.DefenseClawConfigV8Schema(), &schema); err != nil {
+		t.Fatal(err)
+	}
+	properties := schema["properties"].(map[string]any)
+	intentionallyMigrated := map[string]struct{}{
+		"audit_db": {}, "judge_bodies_db": {}, "otel": {}, "audit_sinks": {},
+	}
+	typeOfConfig := reflect.TypeOf(Config{})
+	for index := 0; index < typeOfConfig.NumField(); index++ {
+		field := typeOfConfig.Field(index)
+		name := strings.Split(field.Tag.Get("yaml"), ",")[0]
+		if name == "" || name == "-" {
+			continue
+		}
+		if _, migrated := intentionallyMigrated[name]; migrated {
+			if _, accepted := properties[name]; accepted {
+				t.Errorf("migrated v7 top-level field %q remains accepted by v8 schema", name)
+			}
+			continue
+		}
+		if _, accepted := properties[name]; !accepted {
+			t.Errorf("current top-level Go config field %q is neither accepted nor classified as migrated", name)
+		}
+	}
+}
+
+func TestObservabilityV8SemanticProfileLockRejectsDrift(t *testing.T) {
+	profiles := publicschemas.TelemetryV8Registry()
+	lock := publicschemas.TelemetryV8SemconvLock()
+	if err := validateObservabilityV8SemanticLockDocuments(profiles, lock); err != nil {
+		t.Fatalf("embedded semantic lock is inconsistent: %v", err)
+	}
+	driftedProfile := bytes.Replace(profiles, []byte("galileo-rich-v2"), []byte("galileo-rich-v3"), 1)
+	if err := validateObservabilityV8SemanticLockDocuments(driftedProfile, lock); err == nil {
+		t.Fatal("semantic profile drift was accepted")
+	}
+	driftedLock := bytes.Replace(lock, []byte("b028dceecdad117461a785c3af35315e7184e813"), []byte("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"), 1)
+	if err := validateObservabilityV8SemanticLockDocuments(profiles, driftedLock); err == nil {
+		t.Fatal("semantic convention lock drift was accepted")
+	}
+}
+
+func TestConfigV8SchemaMatchesTypedObservabilitySourceFields(t *testing.T) {
+	var schema map[string]any
+	if err := json.Unmarshal(publicschemas.DefenseClawConfigV8Schema(), &schema); err != nil {
+		t.Fatal(err)
+	}
+	definitions := schema["$defs"].(map[string]any)
+	observabilitySchema := definitions["observability"].(map[string]any)
+	properties := observabilitySchema["properties"].(map[string]any)
+	typeOfSource := reflect.TypeOf(ObservabilityV8Source{})
+	seen := make(map[string]struct{}, typeOfSource.NumField())
+	for index := 0; index < typeOfSource.NumField(); index++ {
+		name := strings.Split(typeOfSource.Field(index).Tag.Get("yaml"), ",")[0]
+		if name == "" || name == "-" {
+			continue
+		}
+		seen[name] = struct{}{}
+		if _, ok := properties[name]; !ok {
+			t.Errorf("typed observability source field %q is absent from canonical schema", name)
+		}
+	}
+	for name := range properties {
+		if _, ok := seen[name]; !ok {
+			t.Errorf("canonical observability schema field %q is dropped by typed decoding", name)
+		}
+	}
+}
