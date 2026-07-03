@@ -96,8 +96,9 @@ operator-facing columns remain readable. A v8 migration adds or standardizes:
 correlation fields remain populated where meaningful during compatibility. New v8
 readers use bucket, event name, and typed payload rather than parsing `details`.
 
-The `audit_events.schema_version` column (and the envelope field it projects) is the
-version of an individual event schema. The SQLite table named `schema_version` is
+The `audit_events.schema_version` column projects the canonical record envelope
+version, which is integer `1` for this contract; detailed family schemas have their
+own independent versions. The SQLite table named `schema_version` is
 database-migration state. They are unrelated despite the shared name; the table is
 protected current state and is never reaped.
 

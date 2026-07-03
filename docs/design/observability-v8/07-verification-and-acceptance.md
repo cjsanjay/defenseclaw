@@ -18,6 +18,7 @@ Tests must validate outputs, not merely that functions returned no error.
 | Requirement | Required evidence |
 |---|---|
 | One primary bucket | Exhaustive producer classification test and schema rejection of zero/multiple buckets |
+| Canonical record substrate | Version, exact payload union, immutability, bounds, deterministic JSON, exact correlation/provenance/field-class objects, registered identity, outcome, and P2/P5 builder-boundary tests in §3.4 |
 | Separate collection controls | Unit and integration tests proving disabled log/trace/metric construction stops independently |
 | Mandatory local floor | Tests for every floor event class with bucket logs disabled; built-in local row present and all optional destinations absent |
 | SQLite coverage | One-row-per-collected-log integration tests without a source SQLite destination or catch-all route |
@@ -45,7 +46,7 @@ Tests must validate outputs, not merely that functions returned no error.
 | Push network safety | HTTP JSONL, OTLP, and Splunk tests cover every prohibited address class, guarded dialing/DNS rebinding, disabled redirects, failure isolation, and narrowly bounded private/CGNAT opt-ins |
 
 Decision-level coverage for `D-001` through `D-022`, `S-001` through `S-012`, and
-`P-001` through `P-057` is normative in `13-decision-traceability.md`; this matrix is
+`P-001` through `P-058` is normative in `13-decision-traceability.md`; this matrix is
 the requirement-level summary rather than a competing decision index.
 
 ## 3. Taxonomy Tests
@@ -108,6 +109,48 @@ Required cases:
 For each representative action, assert exact event counts and IDs. In particular,
 the old audit-to-gateway bridge and direct writer fan-out must not produce a second
 copy after producer migration.
+
+### 3.4 Canonical record substrate
+
+P2 acceptance MUST include all of the following:
+
+- Envelope fixtures accept only integer `schema_version: 1` and integer
+  `bucket_catalog_version: 1`; strings, zero, negative, and unsupported future
+  versions fail before routing.
+- Table-driven union tests prove logs and traces require `body` and reject
+  `instrument_data`, metrics require `instrument_data` and reject `body`, and every
+  signal rejects both-arms-present and neither-arm-present records.
+- Constructor-input mutation, returned-value mutation attempts, concurrent
+  destination projection, redaction, and repeated serialization leave a deeply
+  equal canonical record unchanged and expose no mutable aliases.
+- Boundary fixtures cover exactly 32 levels, 8,192 members/elements, and 1 MiB of
+  deterministic payload bytes, plus one-over failures. Cycles, invalid UTF-8,
+  non-string keys, non-finite numbers, and implementation-specific values fail
+  without returning a partial record or echoing payload contents in errors.
+- Golden deterministic-JSON vectors cover differently ordered nested maps, arrays,
+  Unicode keys and values, escaping, integers, finite non-integer numbers, and
+  negative zero. Repeated, concurrent, and cross-language implementations produce
+  byte-identical output independent of map iteration, locale, process, or
+  destination.
+- Correlation accepts the empty object and every §3.1 optional nonempty-string key,
+  while rejecting unknown keys, null/numeric values, and invented IDs. Provenance
+  accepts exactly its four required and two optional fields and rejects missing,
+  extra, malformed-token, nonpositive-registry-version, negative-generation, and
+  non-lowercase-hex cases.
+- Registered identity tests accept every registered bucket/signal/event tuple and
+  stable source/producer token, and reject unknown or mismatched identities before
+  any route or exporter observes the record.
+- Every canonical outcome in §3.2 is accepted only for a family whose registered
+  subset contains it; unregistered synonyms and family-inapplicable outcomes fail.
+- Field-class tests cover all eight classes, JSON Pointer escaping/resolution,
+  unknown/conflicting/unresolved entries, complete schema derivation with an empty
+  map, and rejection when any dynamic field remains unclassified or disagrees with
+  its registered schema.
+- Builder-boundary tests prove the generic P2 constructor accepts already-typed
+  JSON payload objects and the current classified-log adapter terminates at that
+  constructor. P2 contains no hand-authored detailed trace/metric family builders;
+  P5-WP02 generated family builders terminate at the same constructor and own
+  family required/conditional fields and lower bounds.
 
 ## 4. Configuration Tests
 

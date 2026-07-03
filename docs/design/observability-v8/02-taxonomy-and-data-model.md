@@ -400,8 +400,8 @@ Every canonical record MUST carry:
 
 | Field | Requirement |
 |---|---|
-| `schema_version` | Required; canonical record schema version |
-| `bucket_catalog_version` | Required; catalog version under which the bucket assignment was emitted |
+| `schema_version` | Required; integer `1`, the canonical record envelope version |
+| `bucket_catalog_version` | Required; integer `1`, the catalog version under which the bucket assignment was emitted |
 | `timestamp` | Required UTC event time |
 | `observed_at` | Optional UTC receive/observe time when different |
 | `record_id` | Required unique occurrence ID |
@@ -417,37 +417,46 @@ Every canonical record MUST carry:
 | `phase` | Optional lifecycle/evaluation phase |
 | `outcome` | Optional stable outcome vocabulary |
 | `mandatory` | Required Boolean for log records; true only for floor-qualified semantics |
-| `correlation` | Required object, possibly empty, containing known join keys |
-| `provenance` | Required producer, binary, schema/catalog, and configuration generation metadata |
-| `body` | Required typed payload for logs and span events; metrics use instrument data |
-| `field_classes` | Required internally or derivable from schema for all dynamic body fields |
+| `correlation` | Required exact object, possibly empty, containing only the optional string join keys in §3.1 |
+| `provenance` | Required exact object with the fields and types in §3.4 |
+| `body` | Required immutable canonical JSON object for logs and traces; forbidden for metrics |
+| `instrument_data` | Required immutable canonical JSON object for metrics; forbidden for logs and traces |
+| `field_classes` | Required JSON-Pointer-to-field-class object under the derivation rule in §3.5 |
 
-The envelope `schema_version` is the version of the complete canonical record shape.
-It is distinct from the telemetry registry version and from a span family's
-`family_schema_version`.
+Exactly one payload arm is present: `body` for `signal: logs` or `signal: traces`,
+and `instrument_data` for `signal: metrics`. A record with neither arm or both arms
+is invalid. The envelope `schema_version` is the version of the complete canonical
+record shape. It is distinct from the telemetry registry version and from a span
+family's `family_schema_version`.
 
 ### 3.1 Correlation fields
 
-The envelope MUST preserve known identifiers without inventing values:
+`correlation` is an exact object with `additionalProperties: false`. Every property
+below is optional; when present, its value MUST be a nonempty string. The builder
+preserves known values and never invents one:
 
-- run ID
-- request ID
-- session ID
-- turn ID
-- trace ID
-- span ID
-- agent ID
-- agent instance ID
-- policy ID/version
-- evaluation ID
-- scan ID
-- finding occurrence ID
-- enforcement action ID
-- model request/response ID
-- tool invocation ID
-- destination ID when the record concerns a destination
-- connector ID
-- sidecar instance ID
+| Property | Join identity |
+|---|---|
+| `run_id` | Run |
+| `request_id` | Request |
+| `session_id` | Session |
+| `turn_id` | Turn |
+| `trace_id` | Trace |
+| `span_id` | Span |
+| `agent_id` | Agent |
+| `agent_instance_id` | Agent instance |
+| `policy_id` | Policy |
+| `policy_version` | Policy version |
+| `evaluation_id` | Evaluation |
+| `scan_id` | Scan |
+| `finding_occurrence_id` | Finding occurrence |
+| `enforcement_action_id` | Enforcement action |
+| `model_request_id` | Model request |
+| `model_response_id` | Model response |
+| `tool_invocation_id` | Tool invocation |
+| `destination_id` | Destination when the record concerns a destination |
+| `connector_id` | Connector |
+| `sidecar_instance_id` | Sidecar instance |
 
 ### 3.2 Action, phase, decision, and outcome
 
@@ -474,6 +483,81 @@ guardrail that decides to block uses `decision: block` and `outcome: blocked`; i
 OTel status can still be OK because the control itself succeeded. A configuration
 mutation record uses the existing control-plane subset `attempted`, `validated`,
 `applied`, `rejected`, or `failed`.
+
+### 3.3 Immutable bounded payloads and deterministic JSON
+
+At the P2 generic-record boundary, `body` and `instrument_data` are JSON objects,
+not pre-serialized strings or opaque byte buffers. Their recursive values are
+limited to JSON object, array, string, Boolean, null, and finite number values.
+Object keys and strings MUST be valid UTF-8. NaN, positive or negative infinity,
+invalid UTF-8, cyclic values, non-string map keys, and implementation-specific
+objects are rejected.
+
+Construction deep-copies and freezes the selected payload arm and all other nested
+record objects. No constructor input, accessor, route projection, redaction pass,
+destination adapter, or serialization call can mutate the canonical record or
+retain a mutable alias into it. A failed build returns no partially usable record.
+
+The generic P2 ceiling for either payload arm is:
+
+- at most 32 container levels below the payload root;
+- at most 8,192 total object members plus array elements; and
+- at most 1,048,576 bytes (1 MiB) in the deterministic encoding defined below.
+
+Per-family schemas and destination projections MAY impose lower limits. The generic
+builder rejects a payload above a P2 ceiling; it does not truncate or partially
+accept canonical input. Later projection-specific truncation follows the registered
+family contract and never mutates the canonical record.
+
+DefenseClaw deterministic JSON is UTF-8 JSON with object keys ordered by their UTF-8
+byte sequence, array order preserved, no insignificant whitespace, the minimal JSON
+escapes required for a valid string, integers emitted in canonical base-10 form,
+finite non-integer numbers emitted in the shortest round-trippable base-10 form,
+and negative zero emitted as `0`. The same immutable value always produces the same
+bytes. Record integrity and equality tests use this encoding; map iteration order,
+locale, process, and destination do not affect it.
+
+### 3.4 Provenance
+
+`provenance` is an exact object with `additionalProperties: false` and these fields:
+
+| Property | Requirement |
+|---|---|
+| `producer` | Required stable token matching `[a-z][a-z0-9_.-]{0,63}` |
+| `binary_version` | Required nonempty string |
+| `registry_schema_version` | Required positive integer |
+| `config_generation` | Required nonnegative integer |
+| `build_commit` | Optional nonempty lowercase hexadecimal string |
+| `config_digest` | Optional nonempty lowercase hexadecimal string |
+
+The optional hexadecimal fields match `[0-9a-f]+`; uppercase, prefixes such as
+`0x`, separators, and mutable display labels are invalid. `producer` identifies the
+record-building component and is distinct from the envelope `source`, which
+identifies the semantic source used for routing.
+
+### 3.5 Field-class map and builder ownership
+
+`field_classes` is an immutable object whose keys are RFC 6901 JSON Pointers rooted
+at the selected payload object and whose values are exactly one of the eight field
+classes: `metadata`, `identifier`, `content`, `reason`, `evidence`, `error`, `path`,
+or `credential`. An entry classifies the value at that exact pointer. Invalid
+pointers, pointers that do not resolve, unknown classes, and conflicting duplicate
+pointers are rejected.
+
+The map MAY be empty only when the registered family schema derives a field class
+for every dynamic field in the selected payload. Otherwise every dynamic field not
+classified by that schema MUST have an explicit pointer entry. Schema-derived and
+explicit classifications MUST agree. This makes an empty map evidence of complete
+registered classification, not an unclassified-payload escape hatch.
+
+P2 owns the immutable generic record constructor, deterministic serializer,
+registered bucket/signal/event identity validation, canonical outcome validation,
+and the current classified-log adapter needed to move representative producers onto
+the router. The generic constructor accepts an already-typed payload object; it does
+not infer a family-specific body or instrument shape. P5-WP02 remains the sole owner
+of generated log/trace/metric family builders, their detailed required/conditional
+fields, lower family bounds, generated field-class maps, and family-schema
+validation. Generated builders MUST terminate at this same generic P2 constructor.
 
 ## 4. Severity
 

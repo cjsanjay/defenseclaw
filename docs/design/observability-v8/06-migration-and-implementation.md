@@ -329,7 +329,10 @@ Primary areas:
 
 Deliver:
 
-- Canonical immutable record and builder APIs.
+- Canonical immutable generic-record, deterministic-serialization, and current
+  classified-log builder APIs. Phase 2 validates registered identity and generic
+  envelope/payload bounds but does not hand-author the generated family builders
+  owned by Phase 5.
 - Collection gate and mandatory-floor catalog.
 - Ordered per-destination route engine.
 - Central redaction engine and built-in/custom profiles.
@@ -451,6 +454,9 @@ Deliver:
   authoring set, pinned upstream semantic-convention lock, generated JSON Schema
   bundle, compact catalog, documentation, constants/builders, field-class maps,
   fixtures, and Galileo/OpenInference projections.
+- Generated log/trace/metric family builders and detailed family payload schemas;
+  every generated builder terminates at the Phase 2 generic canonical-record
+  constructor rather than creating a parallel record representation.
 - A single checked-in compiler entry point,
   `scripts/generate_telemetry_registry.py`, with `--write` and `--check` modes.
   `scripts/check_schemas.py` invokes its `--check` mode so the existing
