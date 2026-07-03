@@ -735,6 +735,53 @@ func TestV8GenerationPipelineFactoryInvalidPartialSetCleansReturnedChildren(t *t
 	}
 }
 
+func TestV8SignalFactoryPanicsRejectCandidateWithBoundedCode(t *testing.T) {
+	plan := v8PlanForTest(t, "always_on", "", nil)
+	tests := []struct {
+		name    string
+		options V8ProviderOptions
+		code    V8ProviderErrorCode
+	}{
+		{
+			name: "generation pipeline",
+			options: V8ProviderOptions{GenerationPipelines: func(
+				context.Context, *config.ObservabilityV8Plan, uint64, V8MetricReaderSpec,
+			) (V8GenerationPipelines, error) {
+				panic("sensitive pipeline panic")
+			}},
+			code: V8ProviderErrorPipelineInitialization,
+		},
+		{
+			name: "span processor",
+			options: V8ProviderOptions{SpanProcessorFactory: func(uint64) (sdktrace.SpanProcessor, error) {
+				panic("sensitive processor panic")
+			}},
+			code: V8ProviderErrorProcessorInitialization,
+		},
+		{
+			name: "metric reader",
+			options: V8ProviderOptions{MetricReaderFactories: []V8MetricReaderFactory{
+				func(uint64, V8MetricReaderSpec) (sdkmetric.Reader, error) {
+					panic("sensitive reader panic")
+				},
+			}},
+			code: V8ProviderErrorReaderInitialization,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			provider, err := NewProviderV8Inactive(context.Background(), plan, 1, test.options)
+			if provider != nil || err == nil || strings.Contains(err.Error(), "sensitive") {
+				t.Fatalf("provider/error = %v/%v", provider, err)
+			}
+			var providerError *V8ProviderError
+			if !errors.As(err, &providerError) || providerError.Code() != test.code {
+				t.Fatalf("panic error = %T/%v, want %s", err, providerError, test.code)
+			}
+		})
+	}
+}
+
 func TestV8GenerationPipelineFactoryIsSkippedBeforeConstructionWhenSignalsUncollected(t *testing.T) {
 	no := false
 	plan := v8PlanForTest(t, "always_on", "", func(source *config.ObservabilityV8Source) {

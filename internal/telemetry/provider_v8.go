@@ -362,7 +362,9 @@ func NewProviderV8Inactive(
 		})
 	}
 	if options.GenerationPipelines != nil && (len(traceCollect) > 0 || len(metricCollect) > 0) {
-		pipelines, pipelineErr := options.GenerationPipelines(ctx, plan, generation, metricSpec)
+		pipelines, pipelineErr := callV8GenerationPipelineFactory(
+			options.GenerationPipelines, ctx, plan, generation, metricSpec,
+		)
 		preparedProcessors = append(preparedProcessors, pipelines.SpanProcessors...)
 		preparedReaders = append(preparedReaders, pipelines.MetricReaders...)
 		if pipelineErr != nil || !validV8GenerationPipelines(pipelines, len(traceCollect) > 0, len(metricCollect) > 0) {
@@ -375,7 +377,7 @@ func NewProviderV8Inactive(
 		}
 	}
 	if options.SpanProcessorFactory != nil {
-		processor, processorErr := options.SpanProcessorFactory(generation)
+		processor, processorErr := callV8SpanProcessorFactory(options.SpanProcessorFactory, generation)
 		if processorErr != nil || processor == nil {
 			cleanupPrepared()
 			return nil, newV8ProviderError(V8ProviderErrorProcessorInitialization, processorErr)
@@ -434,7 +436,7 @@ func NewProviderV8Inactive(
 				})
 				return nil, newV8ProviderError(V8ProviderErrorReaderInitialization, nil)
 			}
-			reader, readerErr := readerFactory(generation, metricSpec)
+			reader, readerErr := callV8MetricReaderFactory(readerFactory, generation, metricSpec)
 			if readerErr != nil || reader == nil {
 				cleanupReaders()
 				v8BoundedPrepareCleanup(options.PrepareCleanupTimeout, func(cleanupContext context.Context) {
@@ -468,6 +470,49 @@ func NewProviderV8Inactive(
 			metrics: metricCollect, metricSpec: metricSpec, limits: limits, debug: debug,
 		},
 	}, nil
+}
+
+func callV8GenerationPipelineFactory(
+	factory V8GenerationPipelineFactory,
+	ctx context.Context,
+	plan *config.ObservabilityV8Plan,
+	generation uint64,
+	spec V8MetricReaderSpec,
+) (pipelines V8GenerationPipelines, err error) {
+	defer func() {
+		if recover() != nil {
+			pipelines = V8GenerationPipelines{}
+			err = newV8ProviderError(V8ProviderErrorPipelineInitialization, nil)
+		}
+	}()
+	return factory(ctx, plan, generation, spec)
+}
+
+func callV8SpanProcessorFactory(
+	factory V8SpanProcessorFactory,
+	generation uint64,
+) (processor sdktrace.SpanProcessor, err error) {
+	defer func() {
+		if recover() != nil {
+			processor = nil
+			err = newV8ProviderError(V8ProviderErrorProcessorInitialization, nil)
+		}
+	}()
+	return factory(generation)
+}
+
+func callV8MetricReaderFactory(
+	factory V8MetricReaderFactory,
+	generation uint64,
+	spec V8MetricReaderSpec,
+) (reader sdkmetric.Reader, err error) {
+	defer func() {
+		if recover() != nil {
+			reader = nil
+			err = newV8ProviderError(V8ProviderErrorReaderInitialization, nil)
+		}
+	}()
+	return factory(generation, spec)
 }
 
 func validV8GenerationPipelines(
