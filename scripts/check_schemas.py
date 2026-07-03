@@ -37,6 +37,9 @@ SCHEMA_DIR = ROOT / "schemas"
 OBSERVABILITY_V8_REFERENCE_GENERATOR = (
     ROOT / "scripts" / "generate_observability_v8_reference.py"
 )
+OBSERVABILITY_REDACTION_UNICODE_GENERATOR = (
+    ROOT / "scripts" / "generate_unicode13_repertoire.py"
+)
 
 EXPECTED_ENVELOPE_EVENT_TYPES = {
     "verdict", "judge", "lifecycle", "error", "diagnostic",
@@ -560,6 +563,16 @@ def check_observability_v8_reference() -> bool:
     return result.returncode == 0
 
 
+def check_observability_redaction_unicode() -> bool:
+    """Reject Unicode repertoire manifest or generated-language drift."""
+    result = subprocess.run(
+        [sys.executable, str(OBSERVABILITY_REDACTION_UNICODE_GENERATOR), "--check"],
+        cwd=ROOT,
+        check=False,
+    )
+    return result.returncode == 0
+
+
 def main() -> int:
     if not SCHEMA_DIR.is_dir():
         print(f"check_schemas: schema dir not found: {SCHEMA_DIR}", file=sys.stderr)
@@ -648,6 +661,9 @@ def main() -> int:
         ok = False
 
     if not check_observability_v8_reference():
+        ok = False
+
+    if not check_observability_redaction_unicode():
         ok = False
 
     return 0 if ok else 1
