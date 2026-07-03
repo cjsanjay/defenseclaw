@@ -1,0 +1,731 @@
+// Copyright 2026 Cisco Systems, Inc. and its affiliates
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// SPDX-License-Identifier: Apache-2.0
+
+package galileo
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"net"
+	"net/http"
+	"net/http/httptest"
+	"reflect"
+	"sort"
+	"strconv"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/defenseclaw/defenseclaw/internal/config"
+	"github.com/defenseclaw/defenseclaw/internal/observability"
+	compatibility "github.com/defenseclaw/defenseclaw/internal/observability/compatibility/galileo"
+	"github.com/defenseclaw/defenseclaw/internal/observability/delivery"
+	"github.com/defenseclaw/defenseclaw/internal/observability/destinations/otlp"
+	observabilityredaction "github.com/defenseclaw/defenseclaw/internal/observability/redaction"
+	collectortracepb "go.opentelemetry.io/proto/otlp/collector/trace/v1"
+	commonpb "go.opentelemetry.io/proto/otlp/common/v1"
+	tracepb "go.opentelemetry.io/proto/otlp/trace/v1"
+	"google.golang.org/protobuf/proto"
+)
+
+const (
+	testTraceID = "0102030405060708090a0b0c0d0e0f10"
+	testRawPII  = "fixture@example.test"
+)
+
+type traceCapture struct {
+	requests chan *collectortracepb.ExportTraceServiceRequest
+	response func() *collectortracepb.ExportTraceServiceResponse
+	calls    atomic.Int64
+}
+
+func (capture *traceCapture) handler(response http.ResponseWriter, request *http.Request) {
+	capture.calls.Add(1)
+	if request.Method != http.MethodPost || request.URL.Path != "/otel/traces" ||
+		request.Header.Get("Galileo-API-Key") != "unit-test-key" ||
+		request.Header.Get("project") != "defenseclaw" || request.Header.Get("logstream") != "tests" {
+		response.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	body := http.MaxBytesReader(response, request.Body, 8*1024*1024)
+	defer body.Close()
+	encoded := new(bytes.Buffer)
+	_, _ = encoded.ReadFrom(body)
+	var payload collectortracepb.ExportTraceServiceRequest
+	if proto.Unmarshal(encoded.Bytes(), &payload) != nil {
+		response.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	select {
+	case capture.requests <- &payload:
+	default:
+	}
+	result := &collectortracepb.ExportTraceServiceResponse{}
+	if capture.response != nil {
+		result = capture.response()
+	}
+	encodedResponse, _ := proto.Marshal(result)
+	response.Header().Set("Content-Type", "application/x-protobuf")
+	response.WriteHeader(http.StatusOK)
+	_, _ = response.Write(encodedResponse)
+}
+
+type canaryObserver struct {
+	mu     sync.Mutex
+	events []otlp.CanaryAcknowledgement
+}
+
+func (observer *canaryObserver) ObserveOTLPCanaryAcknowledgement(event otlp.CanaryAcknowledgement) {
+	observer.mu.Lock()
+	observer.events = append(observer.events, event)
+	observer.mu.Unlock()
+}
+
+func (observer *canaryObserver) snapshot() []otlp.CanaryAcknowledgement {
+	observer.mu.Lock()
+	defer observer.mu.Unlock()
+	return append([]otlp.CanaryAcknowledgement(nil), observer.events...)
+}
+
+func TestAdapterExportsRichRedactedCanaryAndAcknowledgesExactTrace(t *testing.T) {
+	t.Parallel()
+	capture := &traceCapture{requests: make(chan *collectortracepb.ExportTraceServiceRequest, 1)}
+	server := httptest.NewServer(http.HandlerFunc(capture.handler))
+	defer server.Close()
+
+	observer := &canaryObserver{}
+	adapter := newTestAdapter(t, server.URL+"/otel/traces", observer)
+	dispatcher := newTestDispatcher(t, adapter, 2)
+
+	agent := makeResult(t, testTraceID, "1112131415161718", "invoke_agent", true, true)
+	model := makeResult(t, testTraceID, "2122232425262728", "chat", true, true)
+	for _, result := range []compatibility.Result{agent, model} {
+		payload, err := NewPayload(result, "")
+		if err != nil {
+			t.Fatalf("NewPayload: %v", err)
+		}
+		if enqueue := dispatcher.Enqueue(payload); !enqueue.Accepted() {
+			t.Fatalf("enqueue = %+v", enqueue)
+		}
+	}
+	request := waitRequest(t, capture.requests)
+	closeDispatcher(t, dispatcher)
+
+	spans := requestSpans(request)
+	if len(spans) != 2 {
+		t.Fatalf("spans = %d, want 2", len(spans))
+	}
+	operations := make(map[string]bool)
+	for _, span := range spans {
+		if got := span.TraceId; !bytes.Equal(got, mustHex(t, testTraceID)) {
+			t.Fatalf("trace ID = %x", got)
+		}
+		attrs := protoAttributes(span.Attributes)
+		operations[attrs["gen_ai.operation.name"].GetStringValue()] = true
+		for _, key := range []string{
+			"defenseclaw.agent.root.id", "defenseclaw.agent.parent.id",
+			"defenseclaw.agent.lifecycle.id", "defenseclaw.agent.execution.id",
+			"defenseclaw.turn.id", "defenseclaw.tool.status",
+		} {
+			if attrs[key].GetStringValue() == "" {
+				t.Errorf("rich lifecycle attribute %q missing", key)
+			}
+		}
+		if len(span.Events) != 1 || len(span.Links) != 1 || span.Status == nil || span.Status.Code != tracepb.Status_STATUS_CODE_OK {
+			t.Errorf("rich span shape lost events/links/status: %+v", span)
+		}
+	}
+	if !operations["invoke_agent"] || !operations["chat"] {
+		t.Fatalf("operations = %v", operations)
+	}
+	encoded, _ := proto.Marshal(request)
+	if bytes.Contains(encoded, []byte(testRawPII)) {
+		t.Fatal("OTLP request recovered raw PII after central redaction")
+	}
+	for _, resource := range request.ResourceSpans {
+		attrs := protoAttributes(resource.Resource.Attributes)
+		if attrs["service.name"].GetStringValue() != "defenseclaw" ||
+			attrs["service.instance.id"].GetStringValue() == "" || len(resource.ScopeSpans) != 1 ||
+			resource.ScopeSpans[0].Scope.Name != "defenseclaw.telemetry" ||
+			resource.ScopeSpans[0].SchemaUrl == "" {
+			t.Fatalf("resource/scope lost: %+v", resource)
+		}
+	}
+	if got := observer.snapshot(); !reflect.DeepEqual(got, []otlp.CanaryAcknowledgement{{
+		Destination: "galileo", TraceID: testTraceID,
+	}}) {
+		t.Fatalf("canary acknowledgements = %+v", got)
+	}
+	if got := adapter.Counters(); got.Accepted != 2 || got.Exported != 2 || got.RejectedPartial != 0 || got.Failed != 0 {
+		t.Fatalf("adapter counters = %+v", got)
+	}
+}
+
+func TestAdapterPartialSuccessIsExactTerminalAndNeverAcknowledgesCanary(t *testing.T) {
+	t.Parallel()
+	capture := &traceCapture{
+		requests: make(chan *collectortracepb.ExportTraceServiceRequest, 1),
+		response: func() *collectortracepb.ExportTraceServiceResponse {
+			return &collectortracepb.ExportTraceServiceResponse{PartialSuccess: &collectortracepb.ExportTracePartialSuccess{
+				RejectedSpans: 1, ErrorMessage: "must never enter health or errors",
+			}}
+		},
+	}
+	server := httptest.NewServer(http.HandlerFunc(capture.handler))
+	defer server.Close()
+	observer := &canaryObserver{}
+	adapter := newTestAdapter(t, server.URL+"/otel/traces", observer)
+	dispatcher := newTestDispatcher(t, adapter, 2)
+	for _, result := range []compatibility.Result{
+		makeResult(t, testTraceID, "1112131415161718", "invoke_agent", true, true),
+		makeResult(t, testTraceID, "2122232425262728", "chat", true, true),
+	} {
+		payload, err := NewPayload(result, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !dispatcher.Enqueue(payload).Accepted() {
+			t.Fatal("enqueue rejected")
+		}
+	}
+	_ = waitRequest(t, capture.requests)
+	closeDispatcher(t, dispatcher)
+	if capture.calls.Load() != 1 {
+		t.Fatalf("requests = %d, partial success was retried", capture.calls.Load())
+	}
+	if got := dispatcher.Counters(); got.Delivered != 1 || got.Rejected != 1 || got.Retried != 0 {
+		t.Fatalf("dispatcher counters = %+v", got)
+	}
+	if got := adapter.Counters(); got.Exported != 1 || got.RejectedPartial != 1 {
+		t.Fatalf("adapter counters = %+v", got)
+	}
+	if got := observer.snapshot(); len(got) != 0 {
+		t.Fatalf("partial response acknowledged canary: %+v", got)
+	}
+}
+
+func TestAdapterMalformedNegativePartialIsTerminalAndContentFree(t *testing.T) {
+	t.Parallel()
+	capture := &traceCapture{
+		requests: make(chan *collectortracepb.ExportTraceServiceRequest, 1),
+		response: func() *collectortracepb.ExportTraceServiceResponse {
+			return &collectortracepb.ExportTraceServiceResponse{PartialSuccess: &collectortracepb.ExportTracePartialSuccess{
+				RejectedSpans: -1, ErrorMessage: testRawPII,
+			}}
+		},
+	}
+	server := httptest.NewServer(http.HandlerFunc(capture.handler))
+	defer server.Close()
+	adapter := newTestAdapter(t, server.URL+"/otel/traces", &canaryObserver{})
+	dispatcher := newTestDispatcher(t, adapter, 1)
+	payload, err := NewPayload(makeResult(t, testTraceID, "292a2b2c2d2e2f30", "chat", false, true), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !dispatcher.Enqueue(payload).Accepted() {
+		t.Fatal("enqueue rejected")
+	}
+	_ = waitRequest(t, capture.requests)
+	closeDispatcher(t, dispatcher)
+	if capture.calls.Load() != 1 {
+		t.Fatalf("requests = %d, malformed partial was retried", capture.calls.Load())
+	}
+	if got := dispatcher.Counters(); got.Delivered != 0 || got.Rejected != 1 || got.Retried != 0 {
+		t.Fatalf("dispatcher counters = %+v", got)
+	}
+	if got := adapter.Counters(); got.Failed != 1 || got.Exported != 0 || got.RejectedPartial != 0 {
+		t.Fatalf("adapter counters = %+v", got)
+	}
+}
+
+func TestAdapterRejectsMixedRawBatchBeforeNetworkAndNeverLeaksRawBytes(t *testing.T) {
+	t.Parallel()
+	capture := &traceCapture{requests: make(chan *collectortracepb.ExportTraceServiceRequest, 1)}
+	server := httptest.NewServer(http.HandlerFunc(capture.handler))
+	defer server.Close()
+	adapter := newTestAdapter(t, server.URL+"/otel/traces", &canaryObserver{})
+	dispatcher := newTestDispatcher(t, adapter, 2)
+	validResult := makeResult(t, testTraceID, "3132333435363738", "chat", false, true)
+	validPayload, err := NewPayload(validResult, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rawPayload, err := delivery.NewPayload([]byte(`{"compatibility_profile":"raw","secret":"RAW-LEAK-CANARY"}`), delivery.RoutingIdentity{
+		RecordID: "raw-record", Bucket: string(observability.BucketModelIO),
+		Signal: string(observability.SignalTraces), EventName: "span.model.chat",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !dispatcher.Enqueue(validPayload).Accepted() || !dispatcher.Enqueue(rawPayload).Accepted() {
+		t.Fatal("setup enqueue rejected")
+	}
+	closeDispatcher(t, dispatcher)
+	if capture.calls.Load() != 0 {
+		t.Fatalf("mixed/raw batch made %d network requests", capture.calls.Load())
+	}
+	if got := dispatcher.Counters(); got.Delivered != 0 || got.Rejected != 2 || got.Retried != 0 {
+		t.Fatalf("dispatcher counters = %+v", got)
+	}
+}
+
+func TestAdapterRejectsForgedFutureEnvelopeVersionsBeforeNetwork(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name  string
+		field string
+		value int
+	}{
+		{name: "record schema", field: "schema_version", value: observability.CurrentRecordSchemaVersion + 1},
+		{name: "bucket catalog", field: "bucket_catalog_version", value: observability.CurrentBucketCatalogVersion + 1},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			capture := &traceCapture{requests: make(chan *collectortracepb.ExportTraceServiceRequest, 1)}
+			server := httptest.NewServer(http.HandlerFunc(capture.handler))
+			defer server.Close()
+			adapter := newTestAdapter(t, server.URL+"/otel/traces", &canaryObserver{})
+			dispatcher := newTestDispatcher(t, adapter, 1)
+			const spanID = "5152535455565758"
+			result := makeResult(t, testTraceID, spanID, "chat", false, true)
+			encoded, err := result.Bytes()
+			if err != nil {
+				t.Fatal(err)
+			}
+			var forged map[string]any
+			decoder := json.NewDecoder(bytes.NewReader(encoded))
+			decoder.UseNumber()
+			if err := decoder.Decode(&forged); err != nil {
+				t.Fatal(err)
+			}
+			forged[test.field] = test.value
+			encoded, err = json.Marshal(forged)
+			if err != nil {
+				t.Fatal(err)
+			}
+			payload, err := delivery.NewPayload(encoded, delivery.RoutingIdentity{
+				RecordID: "galileo-" + spanID, Bucket: string(observability.BucketModelIO),
+				Signal: string(observability.SignalTraces), EventName: "span.model.chat",
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !dispatcher.Enqueue(payload).Accepted() {
+				t.Fatal("setup enqueue rejected")
+			}
+			closeDispatcher(t, dispatcher)
+			if capture.calls.Load() != 0 {
+				t.Fatalf("future-version projection made %d network requests", capture.calls.Load())
+			}
+			if got := dispatcher.Counters(); got.Rejected != 1 || got.Delivered != 0 || got.Retried != 0 {
+				t.Fatalf("dispatcher counters = %+v", got)
+			}
+		})
+	}
+}
+
+func TestAdapterRejectsMissingOrMismatchedCanonicalEndedIdentityBeforeNetwork(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		mutate func(*testing.T, map[string]any)
+	}{
+		{name: "missing bucket", mutate: func(t *testing.T, wire map[string]any) { delete(projectedAttributes(t, wire), "defenseclaw.bucket") }},
+		{name: "mismatched family", mutate: func(t *testing.T, wire map[string]any) {
+			projectedAttributes(t, wire)["defenseclaw.span.family"] = "span.tool.execute"
+		}},
+		{name: "zero family version", mutate: func(t *testing.T, wire map[string]any) {
+			projectedAttributes(t, wire)["defenseclaw.span.family_schema_version"] = 0
+		}},
+		{name: "mismatched source", mutate: func(t *testing.T, wire map[string]any) {
+			projectedAttributes(t, wire)["defenseclaw.source"] = "connector"
+		}},
+		{name: "mismatched generation", mutate: func(t *testing.T, wire map[string]any) {
+			projectedAttributes(t, wire)["defenseclaw.config.generation"] = 9
+		}},
+		{name: "non-ended outcome", mutate: func(t *testing.T, wire map[string]any) {
+			projectedAttributes(t, wire)["defenseclaw.outcome"] = string(observability.OutcomeAttempted)
+			wire["outcome"] = string(observability.OutcomeAttempted)
+		}},
+		{name: "missing trace schema", mutate: func(t *testing.T, wire map[string]any) {
+			delete(projectedScopeAttributes(t, wire), "defenseclaw.trace.schema_version")
+		}},
+		{name: "mismatched trace schema", mutate: func(t *testing.T, wire map[string]any) {
+			projectedScopeAttributes(t, wire)["defenseclaw.trace.schema_version"] = "defenseclaw-trace-v2"
+		}},
+		{name: "missing semantic profile", mutate: func(t *testing.T, wire map[string]any) {
+			delete(projectedScopeAttributes(t, wire), "defenseclaw.semantic_profile")
+		}},
+		{name: "mismatched semantic profile", mutate: func(t *testing.T, wire map[string]any) {
+			projectedScopeAttributes(t, wire)["defenseclaw.semantic_profile"] = "defenseclaw-genai-rich-v2"
+		}},
+		{name: "mismatched Galileo profile", mutate: func(t *testing.T, wire map[string]any) {
+			projectedScopeAttributes(t, wire)["defenseclaw.galileo.compatibility_profile"] = "galileo-rich-v3"
+		}},
+	}
+	for index, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			spanID := fmt.Sprintf("%016x", uint64(0x6162636465666700)+uint64(index))
+			result := makeResult(t, testTraceID, spanID, "chat", false, true)
+			encoded, err := result.Bytes()
+			if err != nil {
+				t.Fatal(err)
+			}
+			var forged map[string]any
+			decoder := json.NewDecoder(bytes.NewReader(encoded))
+			decoder.UseNumber()
+			if err := decoder.Decode(&forged); err != nil {
+				t.Fatal(err)
+			}
+			test.mutate(t, forged)
+			assertForgedProjectionRejectedBeforeNetwork(t, forged, "galileo-"+spanID)
+		})
+	}
+}
+
+func TestPayloadFailsClosedUntilGeneratedP5TraceStructureExists(t *testing.T) {
+	t.Parallel()
+	result := makeResult(t, testTraceID, "4142434445464748", "chat", false, false)
+	if !result.Eligible() {
+		t.Fatalf("compatibility eligibility unexpectedly changed: %s", result.Reason())
+	}
+	if _, err := NewPayload(result, ""); !IsError(err, ErrorInvalidProjection) {
+		t.Fatalf("missing generated P5 resource/scope/timing accepted: %v", err)
+	}
+}
+
+func TestGalileoPresetOwnsOneSecondV8DefaultWithoutChangingGeneralOTLP(t *testing.T) {
+	t.Parallel()
+	plan, err := config.CompileObservabilityV8(&config.ObservabilityV8Source{Destinations: []config.ObservabilityV8DestinationSource{
+		{Name: "galileo", Kind: config.ObservabilityV8DestinationOTLP, Preset: "galileo", Endpoint: "https://api.galileo.ai/otel/traces"},
+		{Name: "general", Kind: config.ObservabilityV8DestinationOTLP, Endpoint: "https://otel.example.test"},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	galileo, _ := plan.Destination("galileo")
+	general, _ := plan.Destination("general")
+	if galileo.Transport.Batch == nil || galileo.Transport.Batch.ScheduledDelayMS != 1_000 ||
+		galileo.Transport.Protocol != otlp.ProtocolHTTPProtobuf || galileo.PresetProfile != compatibility.ProfileID {
+		t.Fatalf("Galileo v8 preset = %+v", galileo)
+	}
+	if general.Transport.Batch == nil || general.Transport.Batch.ScheduledDelayMS != 5_000 ||
+		general.Transport.Protocol != otlp.ProtocolGRPC {
+		t.Fatalf("general OTLP defaults changed = %+v", general)
+	}
+}
+
+func newTestAdapter(t *testing.T, endpoint string, observer otlp.CanaryAcknowledgementObserver) *Adapter {
+	t.Helper()
+	factory, err := otlp.Prepare(context.Background(), otlp.Config{
+		Destination: "galileo", Protocol: otlp.ProtocolHTTPProtobuf, Endpoint: endpoint,
+		Selected: []observability.Signal{observability.SignalTraces},
+		Headers: map[string]string{
+			"Galileo-API-Key": "unit-test-key", "project": "defenseclaw", "logstream": "tests",
+		},
+		Timeout: 2 * time.Second, TLS: otlp.TLSConfig{Insecure: true},
+		NetworkSafety: otlp.NetworkSafety{AllowPrivateNetworks: true},
+		Batch: otlp.BatchConfig{
+			MaxQueueSize: 8, MaxQueueBytes: 8 * 1024 * 1024,
+			MaxExportBatchSize: 8, MaxExportBatchBytes: 8 * 1024 * 1024,
+			ScheduledDelay: time.Second,
+		},
+	}, otlp.Dependencies{
+		Resolver: net.DefaultResolver, Dialer: &net.Dialer{Timeout: time.Second}, CanaryObserver: observer,
+	})
+	if err != nil {
+		t.Fatalf("prepare OTLP: %v", err)
+	}
+	adapter, err := NewAdapter(context.Background(), factory)
+	if err != nil {
+		t.Fatalf("NewAdapter: %v", err)
+	}
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = adapter.Close(ctx)
+	})
+	return adapter
+}
+
+func newTestDispatcher(t *testing.T, adapter *Adapter, batchSize int) *delivery.Dispatcher {
+	t.Helper()
+	dispatcher, err := delivery.NewDispatcher(delivery.Config{
+		Destination: "galileo", Enabled: true,
+		MaxQueueItems: 8, MaxQueueBytes: 8 * 1024 * 1024,
+		MaxBatchItems: batchSize, MaxBatchBytes: 8 * 1024 * 1024,
+		ScheduledDelay: 100 * time.Millisecond, AttemptTimeout: 2 * time.Second,
+		Retry: delivery.RetryPolicy{MaxAttempts: 2, InitialBackoff: time.Millisecond, MaxBackoff: time.Millisecond},
+	}, adapter)
+	if err != nil {
+		t.Fatalf("NewDispatcher: %v", err)
+	}
+	dispatcher.Activate()
+	return dispatcher
+}
+
+func closeDispatcher(t *testing.T, dispatcher *delivery.Dispatcher) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if err := dispatcher.StopIntake(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := dispatcher.Drain(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := dispatcher.Close(ctx); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func waitRequest(t *testing.T, requests <-chan *collectortracepb.ExportTraceServiceRequest) *collectortracepb.ExportTraceServiceRequest {
+	t.Helper()
+	select {
+	case request := <-requests:
+		return request
+	case <-time.After(3 * time.Second):
+		t.Fatal("timed out waiting for Galileo OTLP request")
+		return nil
+	}
+}
+
+func assertForgedProjectionRejectedBeforeNetwork(t *testing.T, forged map[string]any, recordID string) {
+	t.Helper()
+	capture := &traceCapture{requests: make(chan *collectortracepb.ExportTraceServiceRequest, 1)}
+	server := httptest.NewServer(http.HandlerFunc(capture.handler))
+	defer server.Close()
+	adapter := newTestAdapter(t, server.URL+"/otel/traces", &canaryObserver{})
+	dispatcher := newTestDispatcher(t, adapter, 1)
+	encoded, err := json.Marshal(forged)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, err := delivery.NewPayload(encoded, delivery.RoutingIdentity{
+		RecordID: recordID, Bucket: string(observability.BucketModelIO),
+		Signal: string(observability.SignalTraces), EventName: "span.model.chat",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !dispatcher.Enqueue(payload).Accepted() {
+		t.Fatal("setup enqueue rejected")
+	}
+	closeDispatcher(t, dispatcher)
+	if capture.calls.Load() != 0 {
+		t.Fatalf("forged projection made %d network requests", capture.calls.Load())
+	}
+	if got := dispatcher.Counters(); got.Rejected != 1 || got.Delivered != 0 || got.Retried != 0 {
+		t.Fatalf("dispatcher counters = %+v", got)
+	}
+}
+
+func projectedAttributes(t *testing.T, wire map[string]any) map[string]any {
+	t.Helper()
+	body, ok := wire["body"].(map[string]any)
+	if !ok {
+		t.Fatal("test projection missing body")
+	}
+	attributes, ok := body["attributes"].(map[string]any)
+	if !ok {
+		t.Fatal("test projection missing attributes")
+	}
+	return attributes
+}
+
+func projectedScopeAttributes(t *testing.T, wire map[string]any) map[string]any {
+	t.Helper()
+	body, ok := wire["body"].(map[string]any)
+	if !ok {
+		t.Fatal("test projection missing body")
+	}
+	scope, ok := body["scope"].(map[string]any)
+	if !ok {
+		t.Fatal("test projection missing scope")
+	}
+	attributes, ok := scope["attributes"].(map[string]any)
+	if !ok {
+		t.Fatal("test projection missing scope attributes")
+	}
+	return attributes
+}
+
+func requestSpans(request *collectortracepb.ExportTraceServiceRequest) []*tracepb.Span {
+	var spans []*tracepb.Span
+	for _, resource := range request.ResourceSpans {
+		for _, scope := range resource.ScopeSpans {
+			spans = append(spans, scope.Spans...)
+		}
+	}
+	return spans
+}
+
+func protoAttributes(attributes []*commonpb.KeyValue) map[string]*commonpb.AnyValue {
+	output := make(map[string]*commonpb.AnyValue, len(attributes))
+	for _, item := range attributes {
+		if item != nil {
+			output[item.Key] = item.Value
+		}
+	}
+	return output
+}
+
+func makeResult(
+	t *testing.T,
+	traceID, spanID, operation string,
+	canary, transportReady bool,
+) compatibility.Result {
+	t.Helper()
+	kind := "CLIENT"
+	bucket := observability.BucketModelIO
+	family := observability.EventName("span.model.chat")
+	name := "chat fixture"
+	attributes := map[string]any{
+		"gen_ai.operation.name": operation, "gen_ai.provider.name": "openai",
+		"gen_ai.input.messages":     message("user", "contact "+testRawPII),
+		"gen_ai.output.messages":    message("assistant", "done"),
+		"defenseclaw.agent.root.id": "root-agent", "defenseclaw.agent.parent.id": "parent-agent",
+		"defenseclaw.agent.lifecycle.id": "lifecycle", "defenseclaw.agent.execution.id": "execution",
+		"defenseclaw.turn.id": "turn", "defenseclaw.tool.status": "completed",
+	}
+	if operation == "invoke_agent" {
+		kind, bucket, family, name = "INTERNAL", observability.BucketAgentLifecycle, "span.agent.invoke", "invoke_agent reviewer"
+		attributes["gen_ai.agent.name"] = "reviewer"
+	}
+	if canary {
+		bucket, family = observability.BucketDiagnostic, canaryFamily
+		attributes[canaryMarker] = true
+		attributes[canaryOperation] = canaryOperationTag
+		attributes[canaryDestination] = "galileo"
+	}
+	attributes["defenseclaw.bucket"] = string(bucket)
+	attributes["defenseclaw.span.family"] = string(family)
+	attributes["defenseclaw.span.family_schema_version"] = 1
+	attributes["defenseclaw.source"] = string(observability.SourceGateway)
+	attributes["defenseclaw.config.generation"] = 8
+	attributes["defenseclaw.outcome"] = string(observability.OutcomeCompleted)
+	body := map[string]any{
+		"kind":       kind,
+		"attributes": attributes,
+		"events": []any{map[string]any{
+			"name": "guardrail.decision", "time_unix_nano": uint64(1_000_000_005),
+			"attributes": map[string]any{"evaluation_id": "evaluation", "decision": "allow", "severity": "LOW"},
+		}},
+		"links": []any{map[string]any{
+			"trace_id": "11111111111111111111111111111111", "span_id": "2222222222222222",
+			"attributes": map[string]any{"defenseclaw.link.relation": "delegates_to"},
+		}},
+		"status": map[string]any{"code": 1},
+	}
+	if transportReady {
+		body["start_time_unix_nano"] = uint64(1_000_000_000)
+		body["end_time_unix_nano"] = uint64(1_100_000_000)
+		body["resource"] = map[string]any{"schema_url": "https://opentelemetry.io/schemas/1.42.0", "attributes": map[string]any{
+			"service.name": "defenseclaw", "service.version": "v8-test", "service.namespace": "defenseclaw",
+			"service.instance.id": "instance", "deployment.environment.name": "test",
+			"defenseclaw.instance.id": "defenseclaw-instance", "host.arch": "test-arch",
+			"authorization.secret": testRawPII,
+		}}
+		body["scope"] = map[string]any{
+			"name": "defenseclaw.telemetry", "version": "v8-test",
+			"schema_url": "https://defenseclaw.example/schemas/trace/v1",
+			"attributes": map[string]any{
+				"defenseclaw.trace.schema_version":          "defenseclaw-trace-v1",
+				"defenseclaw.semantic_profile":              "defenseclaw-genai-rich-v1",
+				"defenseclaw.galileo.compatibility_profile": compatibility.ProfileID,
+				"arbitrary.scope.secret":                    testRawPII,
+			},
+		}
+	}
+	record, err := observability.NewRecord(observability.RecordInput{
+		Timestamp: time.Date(2026, 7, 3, 12, 0, 0, 0, time.UTC),
+		RecordID:  "galileo-" + spanID,
+		Identity:  observability.EventIdentity{Bucket: bucket, Signal: observability.SignalTraces, Name: family},
+		SpanName:  name, Source: observability.SourceGateway,
+		Outcome:     observability.OutcomeCompleted,
+		Correlation: observability.Correlation{TraceID: traceID, SpanID: spanID, RunID: "run", SessionID: "session", TurnID: "turn"},
+		Provenance: observability.Provenance{
+			Producer: "gateway.trace", BinaryVersion: "v8-test", RegistrySchemaVersion: 1, ConfigGeneration: 8,
+		},
+		Body: body, FieldClasses: testFieldClasses(body),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	engine, err := observabilityredaction.NewEngine(bytes.Repeat([]byte{0x42}, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	profile, _ := observabilityredaction.BuiltInProfile(observabilityredaction.ProfileSensitive)
+	projection, _, err := engine.Project(record, profile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := compatibility.Project(projection, compatibility.Limits{})
+	if !result.Eligible() {
+		t.Fatalf("Galileo projection = %s missing=%v", result.Reason(), result.MissingFields())
+	}
+	return result
+}
+
+func message(role, content string) string {
+	encoded, _ := json.Marshal([]map[string]string{{"role": role, "content": content}})
+	return string(encoded)
+}
+
+func testFieldClasses(body map[string]any) map[string]observability.FieldClass {
+	classes := make(map[string]observability.FieldClass)
+	var visit func(any, string, string)
+	visit = func(value any, pointer, key string) {
+		switch typed := value.(type) {
+		case map[string]any:
+			keys := make([]string, 0, len(typed))
+			for child := range typed {
+				keys = append(keys, child)
+			}
+			sort.Strings(keys)
+			for _, child := range keys {
+				visit(typed[child], pointer+"/"+pointerToken(child), child)
+			}
+		case []any:
+			for index, child := range typed {
+				visit(child, pointer+"/"+strconv.Itoa(index), key)
+			}
+		default:
+			class := observability.FieldClassMetadata
+			lower := strings.ToLower(key)
+			if strings.Contains(lower, "message") || strings.Contains(lower, "content") ||
+				strings.Contains(lower, "argument") || strings.Contains(lower, "result") {
+				class = observability.FieldClassContent
+			}
+			classes[pointer] = class
+		}
+	}
+	visit(body, "", "")
+	return classes
+}
+
+func pointerToken(input string) string {
+	return strings.ReplaceAll(strings.ReplaceAll(input, "~", "~0"), "/", "~1")
+}
+
+func mustHex(t *testing.T, value string) []byte {
+	t.Helper()
+	decoded, ok := decodeID(value, len(value)/2)
+	if !ok {
+		t.Fatal("invalid test ID")
+	}
+	return decoded
+}

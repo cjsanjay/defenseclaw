@@ -329,6 +329,73 @@ func projectBody(input, attributes map[string]any, limits Limits) map[string]any
 	if status := projectStatus(input["status"], limits.MaxAttributeValueBytes); len(status) > 0 {
 		output["status"] = status
 	}
+	if resource := projectResource(input["resource"], limits.MaxAttributeValueBytes); len(resource) > 0 {
+		output["resource"] = resource
+	}
+	if scope := projectScope(input["scope"], limits.MaxAttributeValueBytes); len(scope) > 0 {
+		output["scope"] = scope
+	}
+	return output
+}
+
+func projectResource(value any, maximum int) map[string]any {
+	resource, ok := object(value)
+	if !ok {
+		return nil
+	}
+	attributes, ok := object(resource["attributes"])
+	if !ok {
+		return nil
+	}
+	allowed := map[string]struct{}{
+		"service.name": {}, "service.version": {}, "service.namespace": {}, "service.instance.id": {},
+		"deployment.environment.name": {}, "deployment.environment": {}, "host.name": {},
+		"host.arch": {}, "os.type": {}, "tenant.id": {}, "workspace.id": {},
+		"defenseclaw.instance.id": {}, "deployment.mode": {}, "defenseclaw.claw.mode": {},
+		"discovery.source": {}, "defenseclaw.device.id": {},
+	}
+	projected := make(map[string]any)
+	for _, key := range sortedKeys(attributes) {
+		if _, ok := allowed[key]; !ok || !valueWithinLimit(attributes[key], maximum) {
+			continue
+		}
+		projected[key] = cloneJSON(attributes[key])
+	}
+	if len(projected) == 0 {
+		return nil
+	}
+	output := map[string]any{"attributes": projected}
+	if schemaURL, ok := boundedString(resource["schema_url"], maximum); ok {
+		output["schema_url"] = schemaURL
+	}
+	return output
+}
+
+func projectScope(value any, maximum int) map[string]any {
+	scope, ok := object(value)
+	if !ok {
+		return nil
+	}
+	output := make(map[string]any, 4)
+	for _, key := range []string{"name", "version", "schema_url"} {
+		if text, ok := boundedString(scope[key], maximum); ok && text != "" {
+			output[key] = text
+		}
+	}
+	if attributes, ok := object(scope["attributes"]); ok {
+		projected := make(map[string]any)
+		for _, key := range []string{
+			"defenseclaw.trace.schema_version", "defenseclaw.semantic_profile",
+			"defenseclaw.galileo.compatibility_profile",
+		} {
+			if value, exists := attributes[key]; exists && valueWithinLimit(value, maximum) {
+				projected[key] = cloneJSON(value)
+			}
+		}
+		if len(projected) > 0 {
+			output["attributes"] = projected
+		}
+	}
 	return output
 }
 
