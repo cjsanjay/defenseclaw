@@ -370,7 +370,7 @@ def _looks_like_v8_config(path: str) -> bool:
         return False
     try:
         root = yaml.compose(raw)
-    except yaml.YAMLError:
+    except (yaml.YAMLError, RecursionError, OverflowError):
         root = None
     if isinstance(root, yaml.MappingNode):
         for key_node, value_node in root.value:

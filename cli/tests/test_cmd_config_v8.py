@@ -55,6 +55,16 @@ def test_v8_detection_accepts_explicit_int_tag_and_malformed_fallback(tmp_path: 
     assert cmd_config._looks_like_v8_config(str(nested)) is False
 
 
+def test_v8_detection_deep_yaml_falls_back_without_parser_recursion(tmp_path: Path) -> None:
+    deeply_nested = tmp_path / "deeply-nested.yaml"
+    deeply_nested.write_text(
+        "config_version: 8\npayload: " + "[" * 1_000 + "]" * 1_000 + "\n",
+        encoding="utf-8",
+    )
+
+    assert cmd_config._looks_like_v8_config(str(deeply_nested)) is True
+
+
 def test_v8_validate_surfaces_safe_helper_error(tmp_path: Path) -> None:
     config_path = tmp_path / "config.yaml"
     config_path.write_text("config_version: 8\nobservability: {}\n", encoding="utf-8")
