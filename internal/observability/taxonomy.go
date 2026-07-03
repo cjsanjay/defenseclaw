@@ -347,6 +347,7 @@ func (selector Selector) Validate() error {
 }
 
 func validateWildcardValues[T ~string](field string, values []T, validate func(T) error) error {
+	seen := make(map[T]struct{}, len(values))
 	for _, value := range values {
 		if string(value) == "*" {
 			if len(values) != 1 {
@@ -357,6 +358,10 @@ func validateWildcardValues[T ~string](field string, values []T, validate func(T
 		if value == "" {
 			return fmt.Errorf("%s contains an empty value", field)
 		}
+		if _, duplicate := seen[value]; duplicate {
+			return fmt.Errorf("%s contains duplicate value %q", field, value)
+		}
+		seen[value] = struct{}{}
 		if validate != nil {
 			if err := validate(value); err != nil {
 				return err
