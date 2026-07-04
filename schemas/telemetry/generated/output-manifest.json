@@ -5,7 +5,7 @@
   "registry_schema_version": 1,
   "registry_version": 1,
   "bucket_catalog_version": 1,
-  "materialized_view_sha256": "e2e7a76b911a92b1cc0fc0cbe390fa3751af6ed895465cb52de2c500f9c24dff",
+  "materialized_view_sha256": "a7b5cb4fdff321f920ad6af77755ff74d867afd56be63d01cba609003d362fff",
   "canonical_import_order": [
     "genai.yaml",
     "security.yaml",

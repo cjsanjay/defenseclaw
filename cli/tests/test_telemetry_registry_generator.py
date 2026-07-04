@@ -3115,6 +3115,143 @@ def test_span_name_placeholder_rejects_high_cardinality_attribute(tmp_path: Path
     assert "unsafe name placeholder gen_ai.operation.name" in result.stderr
 
 
+def test_real_span_name_programs_are_compiled_once_and_materialized_exactly() -> None:
+    module = _load_generator_module("telemetry_registry_real_span_name_parts")
+
+    ir = module.compile_registry(ROOT)
+    spans = {
+        group.id: group
+        for domain in ir.domains
+        for group in domain.groups
+        if group.type == "span"
+    }
+    expected = {
+        "span.agent.invoke": (("literal", "invoke_agent "), ("field", "defenseclaw.agent.type")),
+        "span.workflow.run": (("literal", "workflow "), ("field", "defenseclaw.workflow.name")),
+        "span.model.chat": (("literal", "chat "), ("field", "gen_ai.request.model")),
+        "span.model.embeddings": (("literal", "embeddings "), ("field", "gen_ai.request.model")),
+        "span.tool.execute": (("literal", "execute_tool "), ("field", "gen_ai.tool.name")),
+        "span.retrieval.search": (
+            ("literal", "retrieve "),
+            ("field", "defenseclaw.retrieval.source.id"),
+        ),
+        "span.guardrail.apply": (
+            ("literal", "apply_guardrail "),
+            ("field", "defenseclaw.guardrail.name"),
+            ("literal", " "),
+            ("field", "defenseclaw.guardrail.target_type"),
+        ),
+        "span.guardrail.phase": (
+            ("literal", "guardrail."),
+            ("field", "defenseclaw.guardrail.phase"),
+        ),
+        "span.guardrail.judge": (("literal", "chat "), ("field", "gen_ai.request.model")),
+        "span.enforcement.apply": (
+            ("literal", "enforcement "),
+            ("field", "defenseclaw.enforcement.effective_action"),
+        ),
+        "span.approval.resolve": (("literal", "exec.approval"),),
+        "span.finding.enrich": (
+            ("literal", "finding.enrich "),
+            ("field", "defenseclaw.source"),
+        ),
+        "span.agent.transition": (
+            ("literal", "agent.transition "),
+            ("field", "defenseclaw.agent.lifecycle.event"),
+        ),
+        "span.asset.scan": (("literal", "asset.scan"),),
+        "span.asset.scan.phase": (("literal", "asset.scan.phase"),),
+        "span.asset.transition": (
+            ("literal", "asset.transition "),
+            ("field", "defenseclaw.asset.transition"),
+        ),
+        "span.network.request": (("field", "http.request.method"), ("literal", " outbound")),
+        "span.ai.discovery": (("literal", "defenseclaw.ai.discovery"),),
+        "span.ai.discovery.detector": (("literal", "defenseclaw.ai.discovery.detector"),),
+        "span.telemetry.receive": (("field", "http.request.method"), ("literal", " telemetry")),
+        "span.telemetry.normalize": (
+            ("literal", "telemetry.normalize "),
+            ("field", "defenseclaw.telemetry.signal"),
+        ),
+        "span.destination.export": (
+            ("literal", "telemetry.export "),
+            ("field", "defenseclaw.destination.id"),
+        ),
+        "span.config.reload": (("literal", "config.reload"),),
+        "span.admin.operation": (("field", "defenseclaw.admin.operation"),),
+        "span.diagnostic.canary": (("literal", "defenseclaw.telemetry.canary"),),
+    }
+
+    assert len(spans) == len(expected) == 25
+    for group_id, expected_parts in expected.items():
+        group = spans[group_id]
+        assert group.span_name_pattern
+        assert group.span_name_parts is not None
+        assert tuple(
+            (part.kind, part.literal if part.kind == "literal" else part.field)
+            for part in group.span_name_parts
+        ) == expected_parts
+        assert all(part.literal or part.field for part in group.span_name_parts)
+        assert all(
+            left.kind != "literal" or right.kind != "literal"
+            for left, right in zip(group.span_name_parts, group.span_name_parts[1:])
+        )
+        materialized = module._materialize_registry_fact(group)
+        materialized_parts = materialized["fields"]["span_name_parts"]
+        assert tuple(item["$type"] for item in materialized_parts) == ("SpanNamePartIR",) * len(expected_parts)
+
+
+@pytest.mark.parametrize(
+    "pattern",
+    [
+        "chat {gen_ai.operation.name!r}",
+        "chat {gen_ai.operation.name:>10}",
+        "chat {}",
+        "chat {",
+        "chat {not canonical}",
+    ],
+)
+def test_span_name_program_rejects_invalid_or_transformed_parts(pattern: str) -> None:
+    module = _load_generator_module("telemetry_registry_invalid_span_name_parts")
+
+    assert module._compile_span_name_parts(pattern) is None
+
+
+@pytest.mark.parametrize(
+    ("kind", "literal", "field"),
+    [
+        ("literal", None, None),
+        ("literal", "", None),
+        ("literal", "collision", "defenseclaw.source"),
+        ("field", None, None),
+        ("field", "collision", "defenseclaw.source"),
+        ("field", None, ""),
+        ("unknown", "value", None),
+    ],
+)
+def test_span_name_part_exact_arms_reject_empty_noop_and_collisions(
+    kind: str,
+    literal: str | None,
+    field: str | None,
+) -> None:
+    module = _load_generator_module("telemetry_registry_invalid_span_name_arm")
+
+    with pytest.raises(ValueError, match="exactly one nonempty literal or canonical field arm"):
+        module.SpanNamePartIR(kind, literal, field)
+
+
+def test_span_name_program_coalesces_escaped_literals_without_empty_parts() -> None:
+    module = _load_generator_module("telemetry_registry_escaped_span_name_parts")
+
+    parts = module._compile_span_name_parts("chat {{literal}} {gen_ai.operation.name}")
+
+    assert parts == (
+        module.SpanNamePartIR("literal", "chat {literal} ", None),
+        module.SpanNamePartIR("field", None, "gen_ai.operation.name"),
+    )
+    assert module._materialized_span_name(parts, {"gen_ai.operation.name": "chat"}) == "chat {literal} chat"
+
+
 def test_span_name_validation_and_materialization_share_escaped_brace_parsing(tmp_path: Path) -> None:
     root = _fixture_root(tmp_path)
     domain_path = root / "schemas/telemetry/v8/genai.yaml"

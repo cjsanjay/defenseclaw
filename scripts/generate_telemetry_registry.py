@@ -1614,6 +1614,23 @@ class ProducerCompatibilityIR:
 
 
 @dataclass(frozen=True, slots=True)
+class SpanNamePartIR:
+    kind: str
+    literal: str | None
+    field: str | None
+
+    def __post_init__(self) -> None:
+        if self.kind == "literal":
+            valid = isinstance(self.literal, str) and bool(self.literal) and self.field is None
+        elif self.kind == "field":
+            valid = self.literal is None and isinstance(self.field, str) and _ID.fullmatch(self.field) is not None
+        else:
+            valid = False
+        if not valid:
+            raise ValueError("span-name part must contain exactly one nonempty literal or canonical field arm")
+
+
+@dataclass(frozen=True, slots=True)
 class GroupIR:
     id: str
     type: str
@@ -1627,6 +1644,7 @@ class GroupIR:
     event_name: str | None
     bucket: str | None
     span_name_pattern: str | None
+    span_name_parts: tuple[SpanNamePartIR, ...] | None
     span_kinds: tuple[str, ...] | None
     span_status_rule: str | None
     instrument_name: str | None
@@ -4632,6 +4650,7 @@ def _parse_group(value: Any, path: str, mandatory_rule_ids: frozenset[str]) -> G
     )
     attribute_refs = tuple(item.ref for item in attribute_uses)
     span_name_pattern: str | None = None
+    span_name_parts: tuple[SpanNamePartIR, ...] | None = None
     span_kinds: tuple[str, ...] | None = None
     span_status_rule: str | None = None
     if "span" in value:
@@ -4642,6 +4661,9 @@ def _parse_group(value: Any, path: str, mandatory_rule_ids: frozenset[str]) -> G
             value["span"]["name_pattern"],
             f"{path}.span.name_pattern",
         )
+        span_name_parts = _compile_span_name_parts(span_name_pattern)
+        if span_name_parts is None:
+            raise RegistryError(f"{path}.span.name_pattern: invalid or transformed pattern")
         span_kinds = _string_list(
             value["span"]["kinds"],
             f"{path}.span.kinds",
@@ -4835,6 +4857,7 @@ def _parse_group(value: Any, path: str, mandatory_rule_ids: frozenset[str]) -> G
         event_name,
         bucket,
         span_name_pattern,
+        span_name_parts,
         span_kinds,
         span_status_rule,
         instrument_name,
@@ -5537,27 +5560,39 @@ def _registered_dynamic_fields(
     return len(errors.codes) == initial_error_count
 
 
-def _span_name_pattern_parts(pattern: str) -> tuple[tuple[str, str | None, str | None, str | None], ...] | None:
+def _compile_span_name_parts(pattern: str) -> tuple[SpanNamePartIR, ...] | None:
     try:
-        return tuple(string.Formatter().parse(pattern))
+        parsed = tuple(string.Formatter().parse(pattern))
     except ValueError:
         return None
-
-
-def _materialized_span_name(pattern: str, attributes: Mapping[str, Any]) -> str | None:
-    parts = _span_name_pattern_parts(pattern)
-    if parts is None:
-        return None
-    result: list[str] = []
-    for literal, reference, format_spec, conversion in parts:
-        result.append(literal)
-        if reference is None:
+    parts: list[SpanNamePartIR] = []
+    for literal, field, format_spec, conversion in parsed:
+        if literal:
+            if parts and parts[-1].kind == "literal":
+                prior = parts[-1]
+                assert prior.literal is not None
+                parts[-1] = SpanNamePartIR("literal", prior.literal + literal, None)
+            else:
+                parts.append(SpanNamePartIR("literal", literal, None))
+        if field is None:
             continue
-        if format_spec or conversion is not None:
+        if not field or not _ID.fullmatch(field) or format_spec or conversion is not None:
             return None
-        if reference not in attributes:
+        parts.append(SpanNamePartIR("field", None, field))
+    return tuple(parts) or None
+
+
+def _materialized_span_name(parts: tuple[SpanNamePartIR, ...], attributes: Mapping[str, Any]) -> str | None:
+    result: list[str] = []
+    for part in parts:
+        if part.kind == "literal":
+            assert part.literal is not None
+            result.append(part.literal)
+            continue
+        assert part.field is not None
+        if part.field not in attributes:
             return None
-        result.append(str(attributes[reference]))
+        result.append(str(attributes[part.field]))
     return "".join(result)
 
 
@@ -5706,8 +5741,8 @@ def _validate_example_record(
             if body.get("kind") not in (group.span_kinds or ()):
                 errors.add("span_kind_mismatch")
             materialized_name = (
-                _materialized_span_name(group.span_name_pattern or "", attributes)
-                if isinstance(attributes, Mapping)
+                _materialized_span_name(group.span_name_parts, attributes)
+                if group.span_name_parts is not None and isinstance(attributes, Mapping)
                 else None
             )
             if materialized_name is None or record.get("span_name") != materialized_name:
@@ -8565,16 +8600,17 @@ def _validate_span_name_patterns(
 ) -> None:
     prohibited_classes = {"content", "credential", "path", "evidence", "reason", "error"}
     for group in groups.values():
-        if group.type != "span" or group.span_name_pattern is None:
+        if group.type != "span":
             continue
+        if group.span_name_pattern is None or group.span_name_parts is None:
+            raise RegistryError(f"span {group.id}: missing compiled name pattern")
         available = frozenset(use.ref for use in group.resolved_uses)
-        parts = _span_name_pattern_parts(group.span_name_pattern)
-        if parts is None:
-            raise RegistryError(f"span {group.id}: invalid name pattern")
-        for _, placeholder, format_spec, conversion in parts:
-            if placeholder is None:
+        for part in group.span_name_parts:
+            if part.kind == "literal":
                 continue
-            if not _ID.fullmatch(placeholder) or format_spec or conversion is not None or placeholder not in available:
+            assert part.field is not None
+            placeholder = part.field
+            if placeholder not in available:
                 raise RegistryError(f"span {group.id}: unresolved or transformed name placeholder {placeholder!r}")
             local = local_attributes.get(placeholder)
             extension = upstream_extensions.get(placeholder)
