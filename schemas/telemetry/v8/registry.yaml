@@ -1,7 +1,198 @@
 schema_version: 1
+registry_version: 1
+bucket_catalog_version: 1
+imports:
+  - genai.yaml
+  - security.yaml
+  - operations.yaml
+dependency_lock: schemas/telemetry/v8/semconv.lock.yaml
+examples: examples.yaml
 semantic_profiles:
   - id: defenseclaw-genai-rich-v1
     trace_schema_version: defenseclaw-trace-v1
     gen_ai_semconv_profile: otel-genai-b028dceecdad117461a785c3af35315e7184e813
     openinference_profile: openinference-semantic-conventions-v0.1.30
     galileo_compatibility_profile: galileo-rich-v2
+normalizers:
+  - id: identity-v1
+    kind: identity
+    default_constraints: {}
+    allowed_overrides:
+      - min_items
+      - max_items
+  - id: bounded-v1
+    kind: bounded
+    default_constraints:
+      max_utf8_bytes: 4096
+      max_item_utf8_bytes: 4096
+      max_items: 256
+    allowed_overrides:
+      - max_utf8_bytes
+      - max_item_utf8_bytes
+      - min_items
+      - max_items
+      - pattern
+  - id: enum-v1
+    kind: enum
+    default_constraints:
+      max_utf8_bytes: 256
+    allowed_overrides:
+      - enum
+      - max_utf8_bytes
+  - id: identifier-v1
+    kind: identifier
+    default_constraints:
+      max_utf8_bytes: 256
+      pattern: '^[A-Za-z0-9][A-Za-z0-9._:/-]*$'
+    allowed_overrides:
+      - max_utf8_bytes
+      - pattern
+  - id: numeric-range-v1
+    kind: numeric_range
+    default_constraints: {}
+    allowed_overrides:
+      - min
+      - max
+      - min_items
+      - max_items
+  - id: structured-content-v1
+    kind: structured_content
+    default_constraints:
+      max_utf8_bytes: 65536
+      max_item_utf8_bytes: 4096
+      max_items: 256
+      max_depth: 8
+      max_properties: 256
+    allowed_overrides:
+      - max_utf8_bytes
+      - max_item_utf8_bytes
+      - min_items
+      - max_items
+      - max_depth
+      - max_properties
+  - id: redacted-content-v1
+    kind: redacted_content
+    default_constraints:
+      max_utf8_bytes: 65536
+      max_item_utf8_bytes: 4096
+      max_items: 256
+      max_depth: 8
+      max_properties: 256
+    allowed_overrides:
+      - max_utf8_bytes
+      - max_item_utf8_bytes
+      - min_items
+      - max_items
+      - max_depth
+      - max_properties
+  - id: path-v1
+    kind: path
+    default_constraints:
+      max_utf8_bytes: 4096
+    allowed_overrides:
+      - max_utf8_bytes
+  - id: url-v1
+    kind: url
+    default_constraints:
+      max_utf8_bytes: 8192
+    allowed_overrides:
+      - max_utf8_bytes
+  - id: digest-v1
+    kind: digest
+    default_constraints:
+      max_utf8_bytes: 256
+      pattern: '^[A-Za-z0-9][A-Za-z0-9:+._/-]*$'
+    allowed_overrides:
+      - max_utf8_bytes
+      - pattern
+metric_defaults:
+  cardinality_limit: 2048
+metric_compatibility_profiles:
+  - id: local-observability-v1
+    high_cardinality_families:
+      - family: defenseclaw.agent.last_seen
+        labels:
+          - defenseclaw.connector.source
+          - defenseclaw.agent.execution.id
+          - defenseclaw.agent.lifecycle.id
+          - defenseclaw.agent.parent.id
+          - defenseclaw.agent.root.id
+          - defenseclaw.session.root.id
+          - gen_ai.agent.id
+          - gen_ai.agent.name
+          - defenseclaw.agent.type
+      - family: defenseclaw.agent.lifecycle.transitions
+        labels:
+          - defenseclaw.connector.source
+          - defenseclaw.agent.depth
+          - defenseclaw.agent.execution.id
+          - defenseclaw.agent.lifecycle.event
+          - defenseclaw.agent.lifecycle.id
+          - defenseclaw.agent.lifecycle.state
+          - defenseclaw.agent.parent.id
+          - defenseclaw.agent.root.id
+          - defenseclaw.session.root.id
+          - gen_ai.agent.id
+          - gen_ai.agent.name
+          - defenseclaw.agent.type
+          - gen_ai.provider.name
+          - gen_ai.request.model
+      - family: defenseclaw.agent.phase.current
+        labels:
+          - defenseclaw.connector.source
+          - defenseclaw.agent.execution.id
+          - defenseclaw.agent.lifecycle.id
+          - defenseclaw.agent.root.id
+          - gen_ai.agent.id
+          - gen_ai.agent.name
+      - family: defenseclaw.agent.phase.transitions
+        labels:
+          - defenseclaw.connector.source
+          - defenseclaw.agent.execution.id
+          - defenseclaw.agent.phase.from
+          - defenseclaw.agent.phase.to
+          - defenseclaw.agent.root.id
+          - gen_ai.agent.id
+          - gen_ai.agent.name
+      - family: defenseclaw.agent.reported_cost
+        labels:
+          - defenseclaw.connector.source
+          - defenseclaw.agent.execution.id
+          - defenseclaw.agent.lifecycle.id
+          - defenseclaw.agent.root.id
+          - gen_ai.agent.id
+          - gen_ai.agent.name
+          - gen_ai.provider.name
+          - gen_ai.request.model
+      - family: defenseclaw.agent.token.usage
+        labels:
+          - defenseclaw.connector.source
+          - defenseclaw.agent.execution.id
+          - defenseclaw.agent.lifecycle.id
+          - defenseclaw.agent.root.id
+          - gen_ai.agent.id
+          - gen_ai.agent.name
+          - gen_ai.provider.name
+          - gen_ai.request.model
+          - gen_ai.token.type
+      - family: gen_ai.client.operation.duration
+        labels:
+          - gen_ai.agent.id
+          - gen_ai.agent.name
+          - gen_ai.operation.name
+          - gen_ai.provider.name
+          - gen_ai.request.model
+      - family: gen_ai.client.token.usage
+        labels:
+          - gen_ai.agent.id
+          - gen_ai.agent.name
+          - gen_ai.conversation.id
+          - gen_ai.operation.name
+          - gen_ai.provider.name
+          - gen_ai.request.model
+          - gen_ai.token.type
+    derived_spanmetrics:
+      pipeline: spanmetrics/agent360
+      dimensions_cache_size: 10000
+      resource_metrics_cache_size: 1000
+      series_expiration: 24h

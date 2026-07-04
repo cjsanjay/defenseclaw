@@ -1,0 +1,1121 @@
+{
+  "format_version": 1,
+  "format": "defenseclaw-normalized-semconv-v1",
+  "dependency_id": "openinference",
+  "repository": "https://github.com/Arize-ai/openinference",
+  "revision": "789d41974c08a9a13147977f28ef4142a07e2106",
+  "source_archive": "https://github.com/Arize-ai/openinference/archive/789d41974c08a9a13147977f28ef4142a07e2106.tar.gz",
+  "source_files": [
+    {
+      "path": "python/openinference-semantic-conventions/src/openinference/semconv/resource/__init__.py",
+      "sha256": "c621ec26148c3a182d24e88aa33fb1f9c14c2257f6868f4bca8c50386cfc8c0c"
+    },
+    {
+      "path": "python/openinference-semantic-conventions/src/openinference/semconv/trace/__init__.py",
+      "sha256": "f2e19ef3d61a2aa064b49c756b14acd9d87b71dd37a6e95123b43576a15b97e4"
+    },
+    {
+      "path": "python/openinference-semantic-conventions/src/openinference/semconv/version.py",
+      "sha256": "d865092725fc83c1005ca52aca3ec3195cc6fa33573866aa5525a296f198b97f"
+    },
+    {
+      "path": "spec/semantic_conventions.md",
+      "sha256": "7dc950b0c3b37e2c3eed31fda02209e8339c2fee3d29e4f13e0a7b8ab6079a79"
+    }
+  ],
+  "attributes": [
+    {
+      "id": "agent.name",
+      "allowed_types": [
+        "string"
+      ],
+      "shape": "attribute",
+      "stability": "stable",
+      "stability_source": "released_package_policy",
+      "source_pointer": "spec/semantic_conventions.md#L121",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "audio.mime_type",
+      "allowed_types": [
+        "string"
+      ],
+      "shape": "attribute",
+      "stability": "stable",
+      "stability_source": "released_package_policy",
+      "source_pointer": "spec/semantic_conventions.md#L116",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "audio.transcript",
+      "allowed_types": [
+        "string"
+      ],
+      "shape": "attribute",
+      "stability": "stable",
+      "stability_source": "released_package_policy",
+      "source_pointer": "spec/semantic_conventions.md#L117",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "audio.url",
+      "allowed_types": [
+        "string"
+      ],
+      "shape": "attribute",
+      "stability": "stable",
+      "stability_source": "released_package_policy",
+      "source_pointer": "spec/semantic_conventions.md#L115",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "document.content",
+      "allowed_types": [
+        "string"
+      ],
+      "shape": "attribute",
+      "stability": "stable",
+      "stability_source": "released_package_policy",
+      "source_pointer": "spec/semantic_conventions.md#L29",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "document.id",
+      "allowed_types": [
+        "string",
+        "int64"
+      ],
+      "shape": "attribute",
+      "stability": "stable",
+      "stability_source": "released_package_policy",
+      "source_pointer": "spec/semantic_conventions.md#L30",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "document.metadata",
+      "allowed_types": [
+        "string"
+      ],
+      "shape": "attribute",
+      "stability": "stable",
+      "stability_source": "released_package_policy",
+      "source_pointer": "spec/semantic_conventions.md#L31",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "document.score",
+      "allowed_types": [
+        "double"
+      ],
+      "shape": "attribute",
+      "stability": "stable",
+      "stability_source": "released_package_policy",
+      "source_pointer": "spec/semantic_conventions.md#L32",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "embedding.embeddings",
+      "allowed_types": [],
+      "shape": "indexed_prefix",
+      "stability": "stable",
+      "stability_source": "released_package_policy",
+      "source_pointer": "spec/semantic_conventions.md#L33",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "embedding.invocation_parameters",
+      "allowed_types": [
+        "string"
+      ],
+      "shape": "attribute",
+      "stability": "stable",
+      "stability_source": "released_package_policy",
+      "source_pointer": "spec/semantic_conventions.md#L34",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "embedding.model_name",
+      "allowed_types": [
+        "string"
+      ],
+      "shape": "attribute",
+      "stability": "stable",
+      "stability_source": "released_package_policy",
+      "source_pointer": "spec/semantic_conventions.md#L35",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "embedding.text",
+      "allowed_types": [
+        "string"
+      ],
+      "shape": "attribute",
+      "stability": "stable",
+      "stability_source": "released_package_policy",
+      "source_pointer": "spec/semantic_conventions.md#L36",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "embedding.vector",
+      "allowed_types": [
+        "double[]"
+      ],
+      "shape": "attribute",
+      "stability": "stable",
+      "stability_source": "released_package_policy",
+      "source_pointer": "spec/semantic_conventions.md#L37",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "graph.node.id",
+      "allowed_types": [
+        "string"
+      ],
+      "shape": "attribute",
+      "stability": "stable",
+      "stability_source": "released_package_policy",
+      "source_pointer": "spec/semantic_conventions.md#L122",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "graph.node.name",
+      "allowed_types": [
+        "string"
+      ],
+      "shape": "attribute",
+      "stability": "stable",
+      "stability_source": "released_package_policy",
+      "source_pointer": "spec/semantic_conventions.md#L123",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "graph.node.parent_id",
+      "allowed_types": [
+        "string"
+      ],
+      "shape": "attribute",
+      "stability": "stable",
+      "stability_source": "released_package_policy",
+      "source_pointer": "spec/semantic_conventions.md#L124",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "image.url",
+      "allowed_types": [
+        "string"
+      ],
+      "shape": "attribute",
+      "stability": "stable",
+      "stability_source": "released_package_policy",
+      "source_pointer": "spec/semantic_conventions.md#L42",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "input.mime_type",
+      "allowed_types": [
+        "string"
+      ],
+      "shape": "attribute",
+      "stability": "stable",
+      "stability_source": "released_package_policy",
+      "source_pointer": "spec/semantic_conventions.md#L43",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "input.value",
+      "allowed_types": [
+        "string"
+      ],
+      "shape": "attribute",
+      "stability": "stable",
+      "stability_source": "released_package_policy",
+      "source_pointer": "spec/semantic_conventions.md#L44",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "llm.choices",
+      "allowed_types": [],
+      "shape": "indexed_prefix",
+      "stability": "stable",
+      "stability_source": "released_package_policy",
+      "source_pointer": "spec/semantic_conventions.md#L46",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "llm.cost.completion",
+      "allowed_types": [
+        "double"
+      ],
+      "shape": "attribute",
+      "stability": "stable",
+      "stability_source": "released_package_policy",
+      "source_pointer": "spec/semantic_conventions.md#L67",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "llm.cost.completion_details.audio",
+      "allowed_types": [
+        "double"
+      ],
+      "shape": "attribute",
+      "stability": "stable",
+      "stability_source": "released_package_policy",
+      "source_pointer": "spec/semantic_conventions.md#L72",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "llm.cost.completion_details.output",
+      "allowed_types": [
+        "double"
+      ],
+      "shape": "attribute",
+      "stability": "stable",
+      "stability_source": "released_package_policy",
+      "source_pointer": "spec/semantic_conventions.md#L70",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "llm.cost.completion_details.reasoning",
+      "allowed_types": [
+        "double"
+      ],
+      "shape": "attribute",
+      "stability": "stable",
+      "stability_source": "released_package_policy",
+      "source_pointer": "spec/semantic_conventions.md#L71",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "llm.cost.prompt",
+      "allowed_types": [
+        "double"
+      ],
+      "shape": "attribute",
+      "stability": "stable",
+      "stability_source": "released_package_policy",
+      "source_pointer": "spec/semantic_conventions.md#L66",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "llm.cost.prompt_details.audio",
+      "allowed_types": [
+        "double"
+      ],
+      "shape": "attribute",
+      "stability": "stable",
+      "stability_source": "released_package_policy",
+      "source_pointer": "spec/semantic_conventions.md#L76",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "llm.cost.prompt_details.cache_input",
+      "allowed_types": [
+        "double"
+      ],
+      "shape": "attribute",
+      "stability": "stable",
+      "stability_source": "released_package_policy",
+      "source_pointer": "spec/semantic_conventions.md#L75",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "llm.cost.prompt_details.cache_read",
+      "allowed_types": [
+        "double"
+      ],
+      "shape": "attribute",
+      "stability": "stable",
+      "stability_source": "released_package_policy",
+      "source_pointer": "spec/semantic_conventions.md#L74",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "llm.cost.prompt_details.cache_write",
+      "allowed_types": [
+        "double"
+      ],
+      "shape": "attribute",
+      "stability": "stable",
+      "stability_source": "released_package_policy",
+      "source_pointer": "spec/semantic_conventions.md#L73",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "llm.cost.prompt_details.input",
+      "allowed_types": [
+        "double"
+      ],
+      "shape": "attribute",
+      "stability": "stable",
+      "stability_source": "released_package_policy",
+      "source_pointer": "spec/semantic_conventions.md#L69",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "llm.cost.total",
+      "allowed_types": [
+        "double"
+      ],
+      "shape": "attribute",
+      "stability": "stable",
+      "stability_source": "released_package_policy",
+      "source_pointer": "spec/semantic_conventions.md#L68",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "llm.finish_reason",
+      "allowed_types": [
+        "string"
+      ],
+      "shape": "attribute",
+      "stability": "stable",
+      "stability_source": "released_package_policy",
+      "source_pointer": "spec/semantic_conventions.md#L50",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "llm.function_call",
+      "allowed_types": [
+        "string"
+      ],
+      "shape": "attribute",
+      "stability": "stable",
+      "stability_source": "released_package_policy",
+      "source_pointer": "spec/semantic_conventions.md#L47",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "llm.input_messages",
+      "allowed_types": [],
+      "shape": "indexed_prefix",
+      "stability": "stable",
+      "stability_source": "released_package_policy",
+      "source_pointer": "spec/semantic_conventions.md#L48",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "llm.invocation_parameters",
+      "allowed_types": [
+        "string"
+      ],
+      "shape": "attribute",
+      "stability": "stable",
+      "stability_source": "released_package_policy",
+      "source_pointer": "spec/semantic_conventions.md#L49",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "llm.model_name",
+      "allowed_types": [
+        "string"
+      ],
+      "shape": "attribute",
+      "stability": "stable",
+      "stability_source": "released_package_policy",
+      "source_pointer": "spec/semantic_conventions.md#L53",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "llm.output_messages",
+      "allowed_types": [],
+      "shape": "indexed_prefix",
+      "stability": "stable",
+      "stability_source": "released_package_policy",
+      "source_pointer": "spec/semantic_conventions.md#L54",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "llm.prompt_template.template",
+      "allowed_types": [
+        "string"
+      ],
+      "shape": "attribute",
+      "stability": "stable",
+      "stability_source": "released_package_policy",
+      "source_pointer": "spec/semantic_conventions.md#L55",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "llm.prompt_template.variables",
+      "allowed_types": [
+        "string"
+      ],
+      "shape": "attribute",
+      "stability": "stable",
+      "stability_source": "released_package_policy",
+      "source_pointer": "spec/semantic_conventions.md#L56",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "llm.prompt_template.version",
+      "allowed_types": [
+        "string"
+      ],
+      "shape": "attribute",
+      "stability": "stable",
+      "stability_source": "released_package_policy",
+      "source_pointer": "spec/semantic_conventions.md#L57",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "llm.prompts",
+      "allowed_types": [],
+      "shape": "indexed_prefix",
+      "stability": "stable",
+      "stability_source": "released_package_policy",
+      "source_pointer": "spec/semantic_conventions.md#L45",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "llm.provider",
+      "allowed_types": [
+        "string"
+      ],
+      "shape": "attribute",
+      "stability": "stable",
+      "stability_source": "released_package_policy",
+      "source_pointer": "spec/semantic_conventions.md#L51",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "llm.system",
+      "allowed_types": [
+        "string"
+      ],
+      "shape": "attribute",
+      "stability": "stable",
+      "stability_source": "released_package_policy",
+      "source_pointer": "spec/semantic_conventions.md#L52",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "llm.token_count.completion",
+      "allowed_types": [
+        "int64"
+      ],
+      "shape": "attribute",
+      "stability": "stable",
+      "stability_source": "released_package_policy",
+      "source_pointer": "spec/semantic_conventions.md#L58",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "llm.token_count.completion_details.audio",
+      "allowed_types": [
+        "int64"
+      ],
+      "shape": "attribute",
+      "stability": "stable",
+      "stability_source": "released_package_policy",
+      "source_pointer": "spec/semantic_conventions.md#L60",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "llm.token_count.completion_details.reasoning",
+      "allowed_types": [
+        "int64"
+      ],
+      "shape": "attribute",
+      "stability": "stable",
+      "stability_source": "released_package_policy",
+      "source_pointer": "spec/semantic_conventions.md#L59",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "llm.token_count.prompt",
+      "allowed_types": [
+        "int64"
+      ],
+      "shape": "attribute",
+      "stability": "stable",
+      "stability_source": "released_package_policy",
+      "source_pointer": "spec/semantic_conventions.md#L61",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "llm.token_count.prompt_details.audio",
+      "allowed_types": [
+        "int64"
+      ],
+      "shape": "attribute",
+      "stability": "stable",
+      "stability_source": "released_package_policy",
+      "source_pointer": "spec/semantic_conventions.md#L64",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "llm.token_count.prompt_details.cache_read",
+      "allowed_types": [
+        "int64"
+      ],
+      "shape": "attribute",
+      "stability": "stable",
+      "stability_source": "released_package_policy",
+      "source_pointer": "spec/semantic_conventions.md#L62",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "llm.token_count.prompt_details.cache_write",
+      "allowed_types": [
+        "int64"
+      ],
+      "shape": "attribute",
+      "stability": "stable",
+      "stability_source": "released_package_policy",
+      "source_pointer": "spec/semantic_conventions.md#L63",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "llm.token_count.total",
+      "allowed_types": [
+        "int64"
+      ],
+      "shape": "attribute",
+      "stability": "stable",
+      "stability_source": "released_package_policy",
+      "source_pointer": "spec/semantic_conventions.md#L65",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "llm.tools",
+      "allowed_types": [],
+      "shape": "indexed_prefix",
+      "stability": "stable",
+      "stability_source": "released_package_policy",
+      "source_pointer": "spec/semantic_conventions.md#L77",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "message.content",
+      "allowed_types": [
+        "string"
+      ],
+      "shape": "attribute",
+      "stability": "stable",
+      "stability_source": "released_package_policy",
+      "source_pointer": "spec/semantic_conventions.md#L78",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "message.contents",
+      "allowed_types": [],
+      "shape": "indexed_prefix",
+      "stability": "stable",
+      "stability_source": "released_package_policy",
+      "source_pointer": "spec/semantic_conventions.md#L79",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "message.function_call_arguments_json",
+      "allowed_types": [
+        "string"
+      ],
+      "shape": "attribute",
+      "stability": "stable",
+      "stability_source": "released_package_policy",
+      "source_pointer": "spec/semantic_conventions.md#L80",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "message.function_call_name",
+      "allowed_types": [
+        "string"
+      ],
+      "shape": "attribute",
+      "stability": "stable",
+      "stability_source": "released_package_policy",
+      "source_pointer": "spec/semantic_conventions.md#L81",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "message.name",
+      "allowed_types": [
+        "string"
+      ],
+      "shape": "attribute",
+      "stability": "stable",
+      "stability_source": "released_package_policy",
+      "source_pointer": "spec/semantic_conventions.md#L82",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "message.role",
+      "allowed_types": [
+        "string"
+      ],
+      "shape": "attribute",
+      "stability": "stable",
+      "stability_source": "released_package_policy",
+      "source_pointer": "spec/semantic_conventions.md#L84",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "message.tool_call_id",
+      "allowed_types": [
+        "string"
+      ],
+      "shape": "attribute",
+      "stability": "stable",
+      "stability_source": "released_package_policy",
+      "source_pointer": "spec/semantic_conventions.md#L83",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "message.tool_calls",
+      "allowed_types": [],
+      "shape": "indexed_prefix",
+      "stability": "stable",
+      "stability_source": "released_package_policy",
+      "source_pointer": "spec/semantic_conventions.md#L85",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "message_content.data",
+      "allowed_types": [
+        "string"
+      ],
+      "shape": "attribute",
+      "stability": "stable",
+      "stability_source": "released_package_policy",
+      "source_pointer": "spec/semantic_conventions.md#L91",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "message_content.encrypted_content",
+      "allowed_types": [
+        "string"
+      ],
+      "shape": "attribute",
+      "stability": "stable",
+      "stability_source": "released_package_policy",
+      "source_pointer": "spec/semantic_conventions.md#L92",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "message_content.id",
+      "allowed_types": [
+        "string"
+      ],
+      "shape": "attribute",
+      "stability": "stable",
+      "stability_source": "released_package_policy",
+      "source_pointer": "spec/semantic_conventions.md#L89",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "message_content.image",
+      "allowed_types": [],
+      "shape": "object_prefix",
+      "stability": "stable",
+      "stability_source": "released_package_policy",
+      "source_pointer": "spec/semantic_conventions.md#L88",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "message_content.signature",
+      "allowed_types": [
+        "string"
+      ],
+      "shape": "attribute",
+      "stability": "stable",
+      "stability_source": "released_package_policy",
+      "source_pointer": "spec/semantic_conventions.md#L90",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "message_content.text",
+      "allowed_types": [
+        "string"
+      ],
+      "shape": "attribute",
+      "stability": "stable",
+      "stability_source": "released_package_policy",
+      "source_pointer": "spec/semantic_conventions.md#L87",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "message_content.type",
+      "allowed_types": [
+        "string"
+      ],
+      "shape": "attribute",
+      "stability": "stable",
+      "stability_source": "released_package_policy",
+      "source_pointer": "spec/semantic_conventions.md#L86",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "metadata",
+      "allowed_types": [
+        "string"
+      ],
+      "shape": "attribute",
+      "stability": "stable",
+      "stability_source": "released_package_policy",
+      "source_pointer": "spec/semantic_conventions.md#L93",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "openinference.project.name",
+      "allowed_types": [
+        "string"
+      ],
+      "shape": "attribute",
+      "stability": "stable",
+      "stability_source": "released_package_policy",
+      "source_pointer": "python/openinference-semantic-conventions/src/openinference/semconv/resource/__init__.py#L2",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "openinference.span.kind",
+      "allowed_types": [
+        "string"
+      ],
+      "shape": "attribute",
+      "stability": "stable",
+      "stability_source": "released_package_policy",
+      "source_pointer": "spec/semantic_conventions.md#L94",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "output.mime_type",
+      "allowed_types": [
+        "string"
+      ],
+      "shape": "attribute",
+      "stability": "stable",
+      "stability_source": "released_package_policy",
+      "source_pointer": "spec/semantic_conventions.md#L95",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "output.value",
+      "allowed_types": [
+        "string"
+      ],
+      "shape": "attribute",
+      "stability": "stable",
+      "stability_source": "released_package_policy",
+      "source_pointer": "spec/semantic_conventions.md#L96",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "prompt.id",
+      "allowed_types": [
+        "string"
+      ],
+      "shape": "attribute",
+      "stability": "stable",
+      "stability_source": "released_package_policy",
+      "source_pointer": "spec/semantic_conventions.md#L119",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "prompt.url",
+      "allowed_types": [
+        "string"
+      ],
+      "shape": "attribute",
+      "stability": "stable",
+      "stability_source": "released_package_policy",
+      "source_pointer": "spec/semantic_conventions.md#L120",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "prompt.vendor",
+      "allowed_types": [
+        "string"
+      ],
+      "shape": "attribute",
+      "stability": "stable",
+      "stability_source": "released_package_policy",
+      "source_pointer": "spec/semantic_conventions.md#L118",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "reranker.input_documents",
+      "allowed_types": [],
+      "shape": "indexed_prefix",
+      "stability": "stable",
+      "stability_source": "released_package_policy",
+      "source_pointer": "spec/semantic_conventions.md#L97",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "reranker.model_name",
+      "allowed_types": [
+        "string"
+      ],
+      "shape": "attribute",
+      "stability": "stable",
+      "stability_source": "released_package_policy",
+      "source_pointer": "spec/semantic_conventions.md#L98",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "reranker.output_documents",
+      "allowed_types": [],
+      "shape": "indexed_prefix",
+      "stability": "stable",
+      "stability_source": "released_package_policy",
+      "source_pointer": "spec/semantic_conventions.md#L99",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "reranker.query",
+      "allowed_types": [
+        "string"
+      ],
+      "shape": "attribute",
+      "stability": "stable",
+      "stability_source": "released_package_policy",
+      "source_pointer": "spec/semantic_conventions.md#L100",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "reranker.top_k",
+      "allowed_types": [
+        "int64"
+      ],
+      "shape": "attribute",
+      "stability": "stable",
+      "stability_source": "released_package_policy",
+      "source_pointer": "spec/semantic_conventions.md#L101",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "retrieval.documents",
+      "allowed_types": [],
+      "shape": "indexed_prefix",
+      "stability": "stable",
+      "stability_source": "released_package_policy",
+      "source_pointer": "spec/semantic_conventions.md#L102",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "session.id",
+      "allowed_types": [
+        "string"
+      ],
+      "shape": "attribute",
+      "stability": "stable",
+      "stability_source": "released_package_policy",
+      "source_pointer": "spec/semantic_conventions.md#L103",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "tag.tags",
+      "allowed_types": [
+        "string[]"
+      ],
+      "shape": "attribute",
+      "stability": "stable",
+      "stability_source": "released_package_policy",
+      "source_pointer": "spec/semantic_conventions.md#L104",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "tool.description",
+      "allowed_types": [
+        "string"
+      ],
+      "shape": "attribute",
+      "stability": "stable",
+      "stability_source": "released_package_policy",
+      "source_pointer": "spec/semantic_conventions.md#L105",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "tool.id",
+      "allowed_types": [
+        "string"
+      ],
+      "shape": "attribute",
+      "stability": "stable",
+      "stability_source": "released_package_policy",
+      "source_pointer": "spec/semantic_conventions.md#L108",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "tool.json_schema",
+      "allowed_types": [
+        "string"
+      ],
+      "shape": "attribute",
+      "stability": "stable",
+      "stability_source": "released_package_policy",
+      "source_pointer": "spec/semantic_conventions.md#L106",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "tool.name",
+      "allowed_types": [
+        "string"
+      ],
+      "shape": "attribute",
+      "stability": "stable",
+      "stability_source": "released_package_policy",
+      "source_pointer": "spec/semantic_conventions.md#L107",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "tool.parameters",
+      "allowed_types": [
+        "string"
+      ],
+      "shape": "attribute",
+      "stability": "stable",
+      "stability_source": "released_package_policy",
+      "source_pointer": "spec/semantic_conventions.md#L109",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "tool_call.function.arguments",
+      "allowed_types": [
+        "string"
+      ],
+      "shape": "attribute",
+      "stability": "stable",
+      "stability_source": "released_package_policy",
+      "source_pointer": "spec/semantic_conventions.md#L110",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "tool_call.function.name",
+      "allowed_types": [
+        "string"
+      ],
+      "shape": "attribute",
+      "stability": "stable",
+      "stability_source": "released_package_policy",
+      "source_pointer": "spec/semantic_conventions.md#L111",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "tool_call.id",
+      "allowed_types": [
+        "string"
+      ],
+      "shape": "attribute",
+      "stability": "stable",
+      "stability_source": "released_package_policy",
+      "source_pointer": "spec/semantic_conventions.md#L112",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "tool_call.reasoning_signature",
+      "allowed_types": [
+        "string"
+      ],
+      "shape": "attribute",
+      "stability": "stable",
+      "stability_source": "released_package_policy",
+      "source_pointer": "spec/semantic_conventions.md#L113",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "user.id",
+      "allowed_types": [
+        "string"
+      ],
+      "shape": "attribute",
+      "stability": "stable",
+      "stability_source": "released_package_policy",
+      "source_pointer": "spec/semantic_conventions.md#L114",
+      "enum": [],
+      "deprecated": false
+    }
+  ]
+}

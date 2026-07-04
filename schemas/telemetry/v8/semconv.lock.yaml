@@ -1,6 +1,29 @@
 schema_version: 1
-otel_core_version: v1.42.0
-otel_core_revision: ae3a98640194ed405c4c797281502e4d3bd258b3
-gen_ai_semconv_revision: b028dceecdad117461a785c3af35315e7184e813
-openinference_version: 0.1.30
-openinference_revision: 789d41974c08a9a13147977f28ef4142a07e2106
+dependencies:
+- id: otel_core
+  repository: https://github.com/open-telemetry/semantic-conventions
+  version: v1.42.0
+  profile_id: otel-semconv-v1.42.0
+  revision: ae3a98640194ed405c4c797281502e4d3bd258b3
+  snapshot:
+    path: schemas/telemetry/v8/upstream/otel-core-v1.42.0.normalized.json
+    format: defenseclaw-normalized-semconv-v1
+    sha256: 609177ec1aba35688f941ecec289aac1776301c442ae06553822c881289e4f5a
+- id: otel_genai
+  repository: https://github.com/open-telemetry/semantic-conventions-genai
+  version: b028dceecdad117461a785c3af35315e7184e813
+  profile_id: otel-genai-b028dceecdad117461a785c3af35315e7184e813
+  revision: b028dceecdad117461a785c3af35315e7184e813
+  snapshot:
+    path: schemas/telemetry/v8/upstream/otel-genai-b028dceecdad117461a785c3af35315e7184e813.normalized.json
+    format: defenseclaw-normalized-semconv-v1
+    sha256: 48d450685930c9a8734aa4b49f79985c4c5c20ef37922aa0bb4e8e36cbfc6156
+- id: openinference
+  repository: https://github.com/Arize-ai/openinference
+  version: 0.1.30
+  profile_id: openinference-semantic-conventions-v0.1.30
+  revision: 789d41974c08a9a13147977f28ef4142a07e2106
+  snapshot:
+    path: schemas/telemetry/v8/upstream/openinference-v0.1.30.normalized.json
+    format: defenseclaw-normalized-semconv-v1
+    sha256: 997d963568174711f233834b40374d8a06d68c9b9ef2cd26cf46516cb72121ff

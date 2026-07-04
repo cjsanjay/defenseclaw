@@ -1,0 +1,927 @@
+{
+  "format_version": 1,
+  "format": "defenseclaw-normalized-semconv-v1",
+  "dependency_id": "otel_genai",
+  "repository": "https://github.com/open-telemetry/semantic-conventions-genai",
+  "revision": "b028dceecdad117461a785c3af35315e7184e813",
+  "source_archive": "https://github.com/open-telemetry/semantic-conventions-genai/archive/b028dceecdad117461a785c3af35315e7184e813.tar.gz",
+  "source_files": [
+    {
+      "path": "model/aws-bedrock/registry.yaml",
+      "sha256": "657586631f5c107f1f8f0d6916243a2522907c53b4b06a0f09168bba34638673"
+    },
+    {
+      "path": "model/gen-ai/registry.yaml",
+      "sha256": "9afca71be70c6394e7610a29dfd5cc05312778932cae5fc511fbd0b7d80348fd"
+    },
+    {
+      "path": "model/mcp/registry.yaml",
+      "sha256": "c0655ace2f3309bccec277a2ac53bf68008cb63764152cefc73921457495c39b"
+    },
+    {
+      "path": "model/openai/registry.yaml",
+      "sha256": "c22607e88e2829fe22ee15fd9a7b4de9326e6034fdf42c66d80a612c071ddd7a"
+    }
+  ],
+  "attributes": [
+    {
+      "id": "aws.bedrock.guardrail.id",
+      "allowed_types": [
+        "string"
+      ],
+      "shape": "attribute",
+      "stability": "development",
+      "stability_source": "upstream",
+      "source_pointer": "model/aws-bedrock/registry.yaml#/attributes/0",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "aws.bedrock.knowledge_base.id",
+      "allowed_types": [
+        "string"
+      ],
+      "shape": "attribute",
+      "stability": "development",
+      "stability_source": "upstream",
+      "source_pointer": "model/aws-bedrock/registry.yaml#/attributes/1",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "gen_ai.agent.description",
+      "allowed_types": [
+        "string"
+      ],
+      "shape": "attribute",
+      "stability": "development",
+      "stability_source": "upstream",
+      "source_pointer": "model/gen-ai/registry.yaml#/attributes/28",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "gen_ai.agent.id",
+      "allowed_types": [
+        "string"
+      ],
+      "shape": "attribute",
+      "stability": "development",
+      "stability_source": "upstream",
+      "source_pointer": "model/gen-ai/registry.yaml#/attributes/26",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "gen_ai.agent.name",
+      "allowed_types": [
+        "string"
+      ],
+      "shape": "attribute",
+      "stability": "development",
+      "stability_source": "upstream",
+      "source_pointer": "model/gen-ai/registry.yaml#/attributes/27",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "gen_ai.agent.version",
+      "allowed_types": [
+        "string"
+      ],
+      "shape": "attribute",
+      "stability": "development",
+      "stability_source": "upstream",
+      "source_pointer": "model/gen-ai/registry.yaml#/attributes/29",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "gen_ai.conversation.compacted",
+      "allowed_types": [
+        "boolean"
+      ],
+      "shape": "attribute",
+      "stability": "development",
+      "stability_source": "upstream",
+      "source_pointer": "model/gen-ai/registry.yaml#/attributes/25",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "gen_ai.conversation.id",
+      "allowed_types": [
+        "string"
+      ],
+      "shape": "attribute",
+      "stability": "development",
+      "stability_source": "upstream",
+      "source_pointer": "model/gen-ai/registry.yaml#/attributes/24",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "gen_ai.data_source.id",
+      "allowed_types": [
+        "string"
+      ],
+      "shape": "attribute",
+      "stability": "development",
+      "stability_source": "upstream",
+      "source_pointer": "model/gen-ai/registry.yaml#/attributes/37",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "gen_ai.embeddings.dimension.count",
+      "allowed_types": [
+        "int64"
+      ],
+      "shape": "attribute",
+      "stability": "development",
+      "stability_source": "upstream",
+      "source_pointer": "model/gen-ai/registry.yaml#/attributes/40",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "gen_ai.evaluation.explanation",
+      "allowed_types": [
+        "string"
+      ],
+      "shape": "attribute",
+      "stability": "development",
+      "stability_source": "upstream",
+      "source_pointer": "model/gen-ai/registry.yaml#/attributes/55",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "gen_ai.evaluation.name",
+      "allowed_types": [
+        "string"
+      ],
+      "shape": "attribute",
+      "stability": "development",
+      "stability_source": "upstream",
+      "source_pointer": "model/gen-ai/registry.yaml#/attributes/52",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "gen_ai.evaluation.score.label",
+      "allowed_types": [
+        "string"
+      ],
+      "shape": "attribute",
+      "stability": "development",
+      "stability_source": "upstream",
+      "source_pointer": "model/gen-ai/registry.yaml#/attributes/54",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "gen_ai.evaluation.score.value",
+      "allowed_types": [
+        "double"
+      ],
+      "shape": "attribute",
+      "stability": "development",
+      "stability_source": "upstream",
+      "source_pointer": "model/gen-ai/registry.yaml#/attributes/53",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "gen_ai.input.messages",
+      "allowed_types": [],
+      "shape": "any_value",
+      "stability": "development",
+      "stability_source": "upstream",
+      "source_pointer": "model/gen-ai/registry.yaml#/attributes/50",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "gen_ai.memory.query.text",
+      "allowed_types": [
+        "string"
+      ],
+      "shape": "attribute",
+      "stability": "development",
+      "stability_source": "upstream",
+      "source_pointer": "model/gen-ai/registry.yaml#/attributes/47",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "gen_ai.memory.record.count",
+      "allowed_types": [
+        "int64"
+      ],
+      "shape": "attribute",
+      "stability": "development",
+      "stability_source": "upstream",
+      "source_pointer": "model/gen-ai/registry.yaml#/attributes/46",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "gen_ai.memory.record.id",
+      "allowed_types": [
+        "string"
+      ],
+      "shape": "attribute",
+      "stability": "development",
+      "stability_source": "upstream",
+      "source_pointer": "model/gen-ai/registry.yaml#/attributes/45",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "gen_ai.memory.records",
+      "allowed_types": [],
+      "shape": "any_value",
+      "stability": "development",
+      "stability_source": "upstream",
+      "source_pointer": "model/gen-ai/registry.yaml#/attributes/48",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "gen_ai.memory.store.id",
+      "allowed_types": [
+        "string"
+      ],
+      "shape": "attribute",
+      "stability": "development",
+      "stability_source": "upstream",
+      "source_pointer": "model/gen-ai/registry.yaml#/attributes/44",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "gen_ai.operation.name",
+      "allowed_types": [
+        "string"
+      ],
+      "shape": "attribute",
+      "stability": "development",
+      "stability_source": "upstream",
+      "source_pointer": "model/gen-ai/registry.yaml#/attributes/38",
+      "enum": [
+        "chat",
+        "create_agent",
+        "create_memory",
+        "create_memory_store",
+        "delete_memory",
+        "delete_memory_store",
+        "embeddings",
+        "execute_tool",
+        "generate_content",
+        "invoke_agent",
+        "invoke_workflow",
+        "plan",
+        "retrieval",
+        "search_memory",
+        "text_completion",
+        "update_memory",
+        "upsert_memory"
+      ],
+      "deprecated": false
+    },
+    {
+      "id": "gen_ai.output.messages",
+      "allowed_types": [],
+      "shape": "any_value",
+      "stability": "development",
+      "stability_source": "upstream",
+      "source_pointer": "model/gen-ai/registry.yaml#/attributes/51",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "gen_ai.output.type",
+      "allowed_types": [
+        "string"
+      ],
+      "shape": "attribute",
+      "stability": "development",
+      "stability_source": "upstream",
+      "source_pointer": "model/gen-ai/registry.yaml#/attributes/39",
+      "enum": [
+        "image",
+        "json",
+        "speech",
+        "text"
+      ],
+      "deprecated": false
+    },
+    {
+      "id": "gen_ai.prompt.name",
+      "allowed_types": [
+        "string"
+      ],
+      "shape": "attribute",
+      "stability": "development",
+      "stability_source": "upstream",
+      "source_pointer": "model/gen-ai/registry.yaml#/attributes/56",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "gen_ai.prompt.variable",
+      "allowed_types": [
+        "string"
+      ],
+      "shape": "attribute",
+      "stability": "development",
+      "stability_source": "upstream",
+      "source_pointer": "model/gen-ai/registry.yaml#/attributes/58",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "gen_ai.prompt.version",
+      "allowed_types": [
+        "string"
+      ],
+      "shape": "attribute",
+      "stability": "development",
+      "stability_source": "upstream",
+      "source_pointer": "model/gen-ai/registry.yaml#/attributes/57",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "gen_ai.provider.name",
+      "allowed_types": [
+        "string"
+      ],
+      "shape": "attribute",
+      "stability": "development",
+      "stability_source": "upstream",
+      "source_pointer": "model/gen-ai/registry.yaml#/attributes/0",
+      "enum": [
+        "anthropic",
+        "aws.bedrock",
+        "azure.ai.inference",
+        "azure.ai.openai",
+        "cohere",
+        "deepseek",
+        "gcp.gemini",
+        "gcp.gen_ai",
+        "gcp.vertex_ai",
+        "groq",
+        "ibm.watsonx.ai",
+        "mistral_ai",
+        "moonshot_ai",
+        "openai",
+        "perplexity",
+        "x_ai"
+      ],
+      "deprecated": false
+    },
+    {
+      "id": "gen_ai.request.choice.count",
+      "allowed_types": [
+        "int64"
+      ],
+      "shape": "attribute",
+      "stability": "development",
+      "stability_source": "upstream",
+      "source_pointer": "model/gen-ai/registry.yaml#/attributes/3",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "gen_ai.request.encoding_formats",
+      "allowed_types": [
+        "string[]"
+      ],
+      "shape": "attribute",
+      "stability": "development",
+      "stability_source": "upstream",
+      "source_pointer": "model/gen-ai/registry.yaml#/attributes/10",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "gen_ai.request.frequency_penalty",
+      "allowed_types": [
+        "double"
+      ],
+      "shape": "attribute",
+      "stability": "development",
+      "stability_source": "upstream",
+      "source_pointer": "model/gen-ai/registry.yaml#/attributes/8",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "gen_ai.request.max_tokens",
+      "allowed_types": [
+        "int64"
+      ],
+      "shape": "attribute",
+      "stability": "development",
+      "stability_source": "upstream",
+      "source_pointer": "model/gen-ai/registry.yaml#/attributes/2",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "gen_ai.request.model",
+      "allowed_types": [
+        "string"
+      ],
+      "shape": "attribute",
+      "stability": "development",
+      "stability_source": "upstream",
+      "source_pointer": "model/gen-ai/registry.yaml#/attributes/1",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "gen_ai.request.presence_penalty",
+      "allowed_types": [
+        "double"
+      ],
+      "shape": "attribute",
+      "stability": "development",
+      "stability_source": "upstream",
+      "source_pointer": "model/gen-ai/registry.yaml#/attributes/9",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "gen_ai.request.reasoning.level",
+      "allowed_types": [
+        "string"
+      ],
+      "shape": "attribute",
+      "stability": "development",
+      "stability_source": "upstream",
+      "source_pointer": "model/gen-ai/registry.yaml#/attributes/13",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "gen_ai.request.seed",
+      "allowed_types": [
+        "int64"
+      ],
+      "shape": "attribute",
+      "stability": "development",
+      "stability_source": "upstream",
+      "source_pointer": "model/gen-ai/registry.yaml#/attributes/11",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "gen_ai.request.stop_sequences",
+      "allowed_types": [
+        "string[]"
+      ],
+      "shape": "attribute",
+      "stability": "development",
+      "stability_source": "upstream",
+      "source_pointer": "model/gen-ai/registry.yaml#/attributes/7",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "gen_ai.request.stream",
+      "allowed_types": [
+        "boolean"
+      ],
+      "shape": "attribute",
+      "stability": "development",
+      "stability_source": "upstream",
+      "source_pointer": "model/gen-ai/registry.yaml#/attributes/12",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "gen_ai.request.temperature",
+      "allowed_types": [
+        "double"
+      ],
+      "shape": "attribute",
+      "stability": "development",
+      "stability_source": "upstream",
+      "source_pointer": "model/gen-ai/registry.yaml#/attributes/4",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "gen_ai.request.top_k",
+      "allowed_types": [
+        "int64"
+      ],
+      "shape": "attribute",
+      "stability": "development",
+      "stability_source": "upstream",
+      "source_pointer": "model/gen-ai/registry.yaml#/attributes/6",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "gen_ai.request.top_p",
+      "allowed_types": [
+        "double"
+      ],
+      "shape": "attribute",
+      "stability": "development",
+      "stability_source": "upstream",
+      "source_pointer": "model/gen-ai/registry.yaml#/attributes/5",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "gen_ai.response.finish_reasons",
+      "allowed_types": [
+        "string[]"
+      ],
+      "shape": "attribute",
+      "stability": "development",
+      "stability_source": "upstream",
+      "source_pointer": "model/gen-ai/registry.yaml#/attributes/16",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "gen_ai.response.id",
+      "allowed_types": [
+        "string"
+      ],
+      "shape": "attribute",
+      "stability": "development",
+      "stability_source": "upstream",
+      "source_pointer": "model/gen-ai/registry.yaml#/attributes/14",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "gen_ai.response.model",
+      "allowed_types": [
+        "string"
+      ],
+      "shape": "attribute",
+      "stability": "development",
+      "stability_source": "upstream",
+      "source_pointer": "model/gen-ai/registry.yaml#/attributes/15",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "gen_ai.response.time_to_first_chunk",
+      "allowed_types": [
+        "double"
+      ],
+      "shape": "attribute",
+      "stability": "development",
+      "stability_source": "upstream",
+      "source_pointer": "model/gen-ai/registry.yaml#/attributes/17",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "gen_ai.retrieval.documents",
+      "allowed_types": [],
+      "shape": "any_value",
+      "stability": "development",
+      "stability_source": "upstream",
+      "source_pointer": "model/gen-ai/registry.yaml#/attributes/41",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "gen_ai.retrieval.query.text",
+      "allowed_types": [
+        "string"
+      ],
+      "shape": "attribute",
+      "stability": "development",
+      "stability_source": "upstream",
+      "source_pointer": "model/gen-ai/registry.yaml#/attributes/42",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "gen_ai.retrieval.top_k",
+      "allowed_types": [
+        "int64"
+      ],
+      "shape": "attribute",
+      "stability": "development",
+      "stability_source": "upstream",
+      "source_pointer": "model/gen-ai/registry.yaml#/attributes/43",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "gen_ai.system_instructions",
+      "allowed_types": [],
+      "shape": "any_value",
+      "stability": "development",
+      "stability_source": "upstream",
+      "source_pointer": "model/gen-ai/registry.yaml#/attributes/49",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "gen_ai.token.type",
+      "allowed_types": [
+        "string"
+      ],
+      "shape": "attribute",
+      "stability": "development",
+      "stability_source": "upstream",
+      "source_pointer": "model/gen-ai/registry.yaml#/attributes/23",
+      "enum": [
+        "input",
+        "output"
+      ],
+      "deprecated": false
+    },
+    {
+      "id": "gen_ai.tool.call.arguments",
+      "allowed_types": [],
+      "shape": "any_value",
+      "stability": "development",
+      "stability_source": "upstream",
+      "source_pointer": "model/gen-ai/registry.yaml#/attributes/34",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "gen_ai.tool.call.id",
+      "allowed_types": [
+        "string"
+      ],
+      "shape": "attribute",
+      "stability": "development",
+      "stability_source": "upstream",
+      "source_pointer": "model/gen-ai/registry.yaml#/attributes/31",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "gen_ai.tool.call.result",
+      "allowed_types": [],
+      "shape": "any_value",
+      "stability": "development",
+      "stability_source": "upstream",
+      "source_pointer": "model/gen-ai/registry.yaml#/attributes/35",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "gen_ai.tool.definitions",
+      "allowed_types": [],
+      "shape": "any_value",
+      "stability": "development",
+      "stability_source": "upstream",
+      "source_pointer": "model/gen-ai/registry.yaml#/attributes/36",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "gen_ai.tool.description",
+      "allowed_types": [
+        "string"
+      ],
+      "shape": "attribute",
+      "stability": "development",
+      "stability_source": "upstream",
+      "source_pointer": "model/gen-ai/registry.yaml#/attributes/32",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "gen_ai.tool.name",
+      "allowed_types": [
+        "string"
+      ],
+      "shape": "attribute",
+      "stability": "development",
+      "stability_source": "upstream",
+      "source_pointer": "model/gen-ai/registry.yaml#/attributes/30",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "gen_ai.tool.type",
+      "allowed_types": [
+        "string"
+      ],
+      "shape": "attribute",
+      "stability": "development",
+      "stability_source": "upstream",
+      "source_pointer": "model/gen-ai/registry.yaml#/attributes/33",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "gen_ai.usage.cache_creation.input_tokens",
+      "allowed_types": [
+        "int64"
+      ],
+      "shape": "attribute",
+      "stability": "development",
+      "stability_source": "upstream",
+      "source_pointer": "model/gen-ai/registry.yaml#/attributes/20",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "gen_ai.usage.cache_read.input_tokens",
+      "allowed_types": [
+        "int64"
+      ],
+      "shape": "attribute",
+      "stability": "development",
+      "stability_source": "upstream",
+      "source_pointer": "model/gen-ai/registry.yaml#/attributes/19",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "gen_ai.usage.input_tokens",
+      "allowed_types": [
+        "int64"
+      ],
+      "shape": "attribute",
+      "stability": "development",
+      "stability_source": "upstream",
+      "source_pointer": "model/gen-ai/registry.yaml#/attributes/18",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "gen_ai.usage.output_tokens",
+      "allowed_types": [
+        "int64"
+      ],
+      "shape": "attribute",
+      "stability": "development",
+      "stability_source": "upstream",
+      "source_pointer": "model/gen-ai/registry.yaml#/attributes/21",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "gen_ai.usage.reasoning.output_tokens",
+      "allowed_types": [
+        "int64"
+      ],
+      "shape": "attribute",
+      "stability": "development",
+      "stability_source": "upstream",
+      "source_pointer": "model/gen-ai/registry.yaml#/attributes/22",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "gen_ai.workflow.name",
+      "allowed_types": [
+        "string"
+      ],
+      "shape": "attribute",
+      "stability": "development",
+      "stability_source": "upstream",
+      "source_pointer": "model/gen-ai/registry.yaml#/attributes/59",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "mcp.method.name",
+      "allowed_types": [
+        "string"
+      ],
+      "shape": "attribute",
+      "stability": "development",
+      "stability_source": "upstream",
+      "source_pointer": "model/mcp/registry.yaml#/attributes/0",
+      "enum": [
+        "completion/complete",
+        "elicitation/create",
+        "initialize",
+        "logging/setLevel",
+        "notifications/cancelled",
+        "notifications/initialized",
+        "notifications/message",
+        "notifications/progress",
+        "notifications/prompts/list_changed",
+        "notifications/resources/list_changed",
+        "notifications/resources/updated",
+        "notifications/roots/list_changed",
+        "notifications/tools/list_changed",
+        "ping",
+        "prompts/get",
+        "prompts/list",
+        "resources/list",
+        "resources/read",
+        "resources/subscribe",
+        "resources/templates/list",
+        "resources/unsubscribe",
+        "roots/list",
+        "sampling/createMessage",
+        "tools/call",
+        "tools/list"
+      ],
+      "deprecated": false
+    },
+    {
+      "id": "mcp.protocol.version",
+      "allowed_types": [
+        "string"
+      ],
+      "shape": "attribute",
+      "stability": "development",
+      "stability_source": "upstream",
+      "source_pointer": "model/mcp/registry.yaml#/attributes/3",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "mcp.resource.uri",
+      "allowed_types": [
+        "string"
+      ],
+      "shape": "attribute",
+      "stability": "development",
+      "stability_source": "upstream",
+      "source_pointer": "model/mcp/registry.yaml#/attributes/2",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "mcp.session.id",
+      "allowed_types": [
+        "string"
+      ],
+      "shape": "attribute",
+      "stability": "development",
+      "stability_source": "upstream",
+      "source_pointer": "model/mcp/registry.yaml#/attributes/1",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "openai.api.type",
+      "allowed_types": [
+        "string"
+      ],
+      "shape": "attribute",
+      "stability": "development",
+      "stability_source": "upstream",
+      "source_pointer": "model/openai/registry.yaml#/attributes/1",
+      "enum": [
+        "chat_completions",
+        "responses"
+      ],
+      "deprecated": false
+    },
+    {
+      "id": "openai.request.service_tier",
+      "allowed_types": [
+        "string"
+      ],
+      "shape": "attribute",
+      "stability": "development",
+      "stability_source": "upstream",
+      "source_pointer": "model/openai/registry.yaml#/attributes/0",
+      "enum": [
+        "auto",
+        "default"
+      ],
+      "deprecated": false
+    },
+    {
+      "id": "openai.response.service_tier",
+      "allowed_types": [
+        "string"
+      ],
+      "shape": "attribute",
+      "stability": "development",
+      "stability_source": "upstream",
+      "source_pointer": "model/openai/registry.yaml#/attributes/2",
+      "enum": [],
+      "deprecated": false
+    },
+    {
+      "id": "openai.response.system_fingerprint",
+      "allowed_types": [
+        "string"
+      ],
+      "shape": "attribute",
+      "stability": "development",
+      "stability_source": "upstream",
+      "source_pointer": "model/openai/registry.yaml#/attributes/3",
+      "enum": [],
+      "deprecated": false
+    }
+  ]
+}
