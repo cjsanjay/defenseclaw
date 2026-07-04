@@ -1514,15 +1514,56 @@ Effective constraints are catalog defaults replaced only by named allowlisted
 overrides; a null value cannot remove a bound. Supported constraint keys are
 `enum`, portable-RE2 `pattern`, `min`, `max`, `min_items`, `max_items`,
 `max_utf8_bytes`, `max_item_utf8_bytes`, `max_depth`, and `max_properties`.
-Enums are nonempty unique JSON scalars. Numeric bounds are finite, type-correct,
-and ordered; `numeric-range-v1` has no implicit range, so every numeric field states
-both bounds. Counts are integers, minima are nonnegative, maxima are positive, and
-item bounds are ordered. `max_utf8_bytes` is the total canonical value budget;
-`max_item_utf8_bytes` bounds each string element or structured string leaf.
-Structured values always have byte, item, depth, and property bounds. Regexes reject
-lookaround, backreferences, named groups, and other constructs outside the shared
-Go/Python RE2 subset. The compiler rejects a normalizer incompatible with the
+Enums are nonempty unique typed JSON scalars. Because JSON Schema considers the
+numeric values `1` and `1.0` equal, generated enum schemas carry an explicit typed
+membership annotation and the builder/runtime typed-enum gate remains authoritative.
+Numeric bounds are finite, type-correct, and ordered; `numeric-range-v1` has no
+implicit range, so every numeric field states both bounds. Counts are integers,
+minima are nonnegative, maxima are positive, and
+item bounds are ordered. For a scalar string, `max_utf8_bytes` counts its raw UTF-8
+bytes; for arrays, objects, and other structured values it counts canonical JSON
+UTF-8 bytes for the complete value. `max_item_utf8_bytes` bounds each string element
+or structured string leaf. Structured values always have byte, item, depth, and
+property bounds. Regexes reject lookaround, backreferences, named groups, and other
+constructs outside the shared
+Go/Python/ECMAScript subset. The compiler rejects a normalizer incompatible with the
 attribute type, so human prose can never be the only executable validation rule.
+
+Constraint evaluation is shape-aware and has one meaning across generated
+consumers. Base-normalizer and per-use constraints are conjunctive: minima tighten
+upward, maxima tighten downward, and enums intersect. Repeated patterns are
+idempotent only when byte-identical; a distinct second pattern is a nonrepresentable
+intersection and compilation/rendering fails. For array-valued attributes,
+`enum`, `pattern`, `min`, and `max` apply to every element; `min_items` applies to
+the root collection and is invalid for scalar values. Values that may be either a
+scalar or collection (`canonical_json`/unbound `any_value`) reject `min_items > 1`
+until their root shape is statically bound. `pattern` means a portable RE2 full
+match, never a substring search. The conservative shared subset
+rejects possessive quantifiers, Unicode shorthand classes, Python Unicode escapes,
+lookaround, backreferences, and named/inline constructs. Public JSON Schema emits a
+start-anchored wrapper with a strict absolute-end assertion, plus the original
+pattern and an explicit full-match enforcement annotation, while the builder/runtime
+portable-RE2 gate remains authoritative. `max_items` counts every object entry and
+array element in the complete recursive value, not only the root collection. A generated schema may
+emit root `maxItems`/`maxProperties` as a safe subset, but it also marks the required
+recursive aggregate runtime gate. `max_properties` likewise counts object entries
+across the recursive value, and `max_depth` measures maximum container depth with
+the root container at zero; root `maxProperties` and annotations do not replace
+those runtime checks. Ordinary `max_utf8_bytes` and `max_item_utf8_bytes` are also
+emitted as enforcement annotations: the builder/runtime gate measures canonical
+UTF-8 bytes using the scalar-versus-structured rule above and every string leaf,
+respectively. A general JSON Schema validator does not, by itself, satisfy these
+runtime gates.
+
+The candidate renderer treats the materialized view as a typed trust boundary. It
+revalidates the exact v1 normalizer catalog, binds every normalization ID,
+allowlisted override, and effective map to that catalog, and checks constraint keys,
+types, finite values, ranges, shape compatibility, non-weakening, and portable
+patterns. For every resolved use it recomputes traversal order, direct-reference
+provenance, typed enum/bound intersections, dominant requiredness, and the unique
+dominant conditional from the group DAG; the condition must name a registered
+`ConditionIR`. Any mismatch in direct refs, origin closure/order, resolution order,
+duplicate resolved-use views, or the resolved projection fails before rendering.
 
 ## 9. Schema and Configuration Are Separate
 
@@ -1732,6 +1773,11 @@ The architecture retains distinct enforcement levels:
 - **CI emitted-record conformance:** real Go/Python producers emit records compared
   with the registry/generated schema.
 - **Public JSON Schema:** downstream and offline validation.
+- **Annotated runtime-only constraints:** recursive aggregate item counts,
+  recursive property counts, root-zero container depth, shape-aware UTF-8 byte
+  budgets, per-string-leaf UTF-8 byte budgets, typed JSON enum membership, and
+  portable full-match regex semantics remain named builder/runtime gates even when
+  the public schema also emits a safe structural subset.
 - **Golden semantic diff:** release review of schema changes.
 
 ## 15. Galileo as a Projection, Not a Schema Fork

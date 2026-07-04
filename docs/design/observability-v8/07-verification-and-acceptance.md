@@ -778,6 +778,25 @@ Required cases:
   intersection, body-role crossings, log parent cardinality, and cycles. The real
   registry has zero unresolved family uses, and generated Go, Python, schema,
   catalog, redaction, and fixture outputs consume the same materialized tuple.
+- Constraint-parity fixtures prove string-array enums and numeric/string patterns
+  apply to each element, numeric enums retain typed membership even where JSON
+  Schema equates `1` with `1.0`, and unanchored source patterns still require a
+  portable RE2 full match for scalar and scalar/array union arms, including rejection
+  of a trailing newline. Distinct pattern intersections, possessive quantifiers,
+  Unicode shorthand classes, and Python-only Unicode escapes fail. Nested aggregate
+  `max_items` cannot pass the named runtime gate merely because root `maxItems`
+  passes public JSON Schema. Multibyte scalar and nested string-leaf fixtures also
+  prove shape-aware scalar-raw/structured-canonical `max_utf8_bytes` and
+  `max_item_utf8_bytes` remain explicit builder/runtime gates rather than
+  unenforced JSON Schema annotations. Nested
+  object fixtures make the same proof for root-zero `max_depth` and recursive
+  `max_properties` when a safe root `maxProperties` subset still passes.
+  Re-digested-view fixtures reject unknown/wrong-type constraints, scalar
+  `min_items`, polymorphic `min_items > 1`, nonportable patterns, typed-enum swaps,
+  invalid type/constraint combinations, normalizer-catalog/effective-map forgery,
+  use-level weakening, and disagreement between direct refs, group resolution
+  order, resolved copies, origin closure/order, dominant requiredness, or registered
+  conditional IDs before candidate rendering.
 - Conditional uses accept only the seven registered stable IDs. Each catalog entry
   is `builder_fact`; true/false builder fixtures enforce its required/forbidden or
   optional behavior, and the generated public schema exposes the enforcement

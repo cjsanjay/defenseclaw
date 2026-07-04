@@ -153,6 +153,15 @@ def test_public_candidate_render_index_is_identity_bound_deterministic_and_recur
     assert first.family_domains["span.model.chat"] == "genai"
     assert first.family_domains["log.finding.observed"] == "security"
     assert first.family_domains["log.telemetry.batch.rejected"] == "operations"
+    assert tuple(first.example_output_paths) == tuple(item["id"] for item in first.examples)
+    first_example = first.examples[0]
+    first_paths = first.example_output_paths[first_example["id"]]
+    category = "valid" if first_example["valid"] else "invalid"
+    assert first_paths == renderer.CandidateExampleOutputPaths(
+        first_example["id"],
+        f"{PREFIX}/examples/{category}/{first_example['id']}.json",
+        f"{PREFIX}/otlp-fixtures/cases/{first_example['id']}.json",
+    )
     assert "$type" not in json.dumps(first.domains[0].producer_mappings)
     assert set(first.families[0]["resolved_uses"][0]) == {
         "ref",
@@ -170,6 +179,10 @@ def test_public_candidate_render_index_is_identity_bound_deterministic_and_recur
         first.families[0]["brief"] = "changed"  # type: ignore[index]
     with pytest.raises(TypeError):
         first.attributes["gen_ai.input.messages"].metadata["field_class"] = "metadata"  # type: ignore[index]
+    with pytest.raises(TypeError):
+        first.example_output_paths["new"] = first_paths  # type: ignore[index]
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        first_paths.normalized_example_path = "changed"  # type: ignore[misc]
     producer_domain = next(domain for domain in first.domains if domain.producer_mappings)
     with pytest.raises(TypeError):
         producer_domain.producer_mappings[0]["source"] = "changed"  # type: ignore[index]
@@ -228,16 +241,157 @@ def test_example_ids_are_portable_path_segments_and_fail_before_payload_renderin
 ) -> None:
     facts = _copy_materialized(view.facts)
     _set_unreferenced_invalid_example_id(facts, example_id)
+    retagged = _retagged_view(renderer, view, facts)
     payload_calls: list[object] = []
+    renderer_calls: list[object] = []
 
     def unexpected_payload(document: object) -> bytes:
         payload_calls.append(document)
         return b"unexpected"
 
-    monkeypatch.setattr(renderer, "_json_payload", unexpected_payload)
+    def unexpected_renderer(model: object, marker: object) -> object:
+        renderer_calls.append((model, marker))
+        return {}
+
     with pytest.raises(renderer.CandidateRenderError, match="portable output path segment"):
-        renderer.render_candidate_artifacts(_retagged_view(renderer, view, facts))
+        renderer.build_candidate_render_index(retagged)
+    monkeypatch.setattr(renderer, "_json_payload", unexpected_payload)
+    monkeypatch.setattr(renderer, "_render_schema", unexpected_renderer)
+    with pytest.raises(renderer.CandidateRenderError, match="portable output path segment"):
+        renderer.render_candidate_artifacts(retagged)
     assert payload_calls == []
+    assert renderer_calls == []
+
+
+@pytest.mark.parametrize(
+    "example_id",
+    [
+        pytest.param("con", id="console"),
+        pytest.param("nul", id="null-device"),
+        pytest.param("com1", id="serial"),
+        pytest.param("lpt9", id="parallel"),
+    ],
+)
+def test_candidate_index_rejects_platform_reserved_example_ids(
+    renderer: ModuleType,
+    view: Any,
+    example_id: str,
+) -> None:
+    facts = _copy_materialized(view.facts)
+    _set_unreferenced_invalid_example_id(facts, example_id)
+
+    with pytest.raises(renderer.CandidateRenderError, match="platform-reserved syntax"):
+        renderer.build_candidate_render_index(_retagged_view(renderer, view, facts))
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        pytest.param(f"{PREFIX}/cases/con.json", id="device-with-extension"),
+        pytest.param(f"{PREFIX}/cases/NUL.txt", id="case-insensitive-device"),
+        pytest.param(f"{PREFIX}/cases/CLOCK$.json", id="legacy-clock-device"),
+        pytest.param(f"{PREFIX}/cases/CONIN$.txt", id="legacy-console-input-device"),
+        pytest.param(f"{PREFIX}/cases/CONOUT$.txt", id="legacy-console-output-device"),
+        pytest.param(f"{PREFIX}/cases/COM¹.json", id="superscript-serial-one"),
+        pytest.param(f"{PREFIX}/cases/com².txt", id="superscript-serial-two"),
+        pytest.param(f"{PREFIX}/cases/Com³.bin", id="superscript-serial-three"),
+        pytest.param(f"{PREFIX}/cases/LPT¹.json", id="superscript-parallel-one"),
+        pytest.param(f"{PREFIX}/cases/lpt².txt", id="superscript-parallel-two"),
+        pytest.param(f"{PREFIX}/cases/Lpt³.bin", id="superscript-parallel-three"),
+        pytest.param(f"{PREFIX}/cases/a:b.json", id="alternate-data-stream"),
+        pytest.param(f"{PREFIX}/cases/trailing.", id="trailing-dot"),
+        pytest.param(f"{PREFIX}/cases/trailing ", id="trailing-space"),
+    ],
+)
+def test_candidate_path_and_complete_preflight_reject_platform_reserved_syntax(
+    renderer: ModuleType,
+    path: str,
+) -> None:
+    with pytest.raises(renderer.CandidateRenderError, match="platform-reserved syntax"):
+        renderer._normalized_candidate_path(path)
+    with pytest.raises(renderer.CandidateRenderError, match="platform-reserved syntax"):
+        renderer._preflight_candidate_output_paths((*renderer._STATIC_CANDIDATE_OUTPUT_PATHS, path))
+
+
+@pytest.mark.parametrize(
+    "invalid_character",
+    [pytest.param(character, id=f"punctuation-{ord(character):02x}") for character in '<>"|?*']
+    + [pytest.param(chr(codepoint), id=f"control-{codepoint:02x}") for codepoint in range(1, 32)],
+)
+def test_candidate_path_preflight_rejects_every_windows_invalid_component_character(
+    renderer: ModuleType,
+    invalid_character: str,
+) -> None:
+    path = f"{PREFIX}/cases/before{invalid_character}after.json"
+
+    with pytest.raises(renderer.CandidateRenderError, match="platform-reserved syntax"):
+        renderer._normalized_candidate_path(path)
+    with pytest.raises(renderer.CandidateRenderError, match="platform-reserved syntax"):
+        renderer._preflight_candidate_output_paths((*renderer._STATIC_CANDIDATE_OUTPUT_PATHS, path))
+
+
+@pytest.mark.parametrize(
+    ("collision", "expected"),
+    [
+        pytest.param("exact", "duplicated", id="exact"),
+        pytest.param("casefold", "portable collision", id="casefold"),
+        pytest.param("nfc", "portable collision", id="nfc"),
+    ],
+)
+def test_candidate_index_preflights_complete_output_path_set_before_materialization(
+    renderer: ModuleType,
+    view: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    collision: str,
+    expected: str,
+) -> None:
+    baseline = renderer.build_candidate_render_index(view)
+    example_id = baseline.examples[0]["id"]
+    target = baseline.example_output_paths[example_id].normalized_example_path
+    if collision == "exact":
+        additions = (target,)
+    elif collision == "casefold":
+        additions = (target.replace(example_id, example_id.upper()),)
+    else:
+        additions = (
+            f"{PREFIX}/examples/valid/\u00e9.json",
+            f"{PREFIX}/examples/valid/e\u0301.json",
+        )
+    monkeypatch.setattr(
+        renderer,
+        "_STATIC_CANDIDATE_OUTPUT_PATHS",
+        (*renderer._STATIC_CANDIDATE_OUTPUT_PATHS, *additions),
+    )
+
+    with pytest.raises(renderer.CandidateRenderError, match=expected):
+        renderer.build_candidate_render_index(view)
+
+
+def test_renderer_consumes_materialized_example_output_path_facts(
+    renderer: ModuleType,
+    view: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    index = renderer.build_candidate_render_index(view)
+    example = index.examples[0]
+    original_paths = index.example_output_paths[example["id"]]
+    replacement_path = f"{PREFIX}/examples/valid/index-owned-render-path.json"
+    replacement_paths = dataclasses.replace(
+        original_paths,
+        normalized_example_path=replacement_path,
+    )
+    output_paths = dict(index.example_output_paths)
+    output_paths[example["id"]] = replacement_paths
+    replacement_index = dataclasses.replace(index, example_output_paths=output_paths)
+    monkeypatch.setattr(renderer, "build_candidate_render_index", lambda candidate_view: replacement_index)
+
+    artifacts = renderer.render_candidate_artifacts(view)
+
+    assert replacement_path in artifacts
+    assert original_paths.normalized_example_path not in artifacts
+    manifest = _json(artifacts, "examples/manifest.json")
+    entry = next(item for item in manifest["cases"] if item["id"] == example["id"])
+    assert entry["path"] == "examples/valid/index-owned-render-path.json"
 
 
 def test_candidate_artifact_insertion_rejects_exact_and_unicode_casefold_collisions_atomically(
@@ -271,9 +425,15 @@ def test_full_candidate_preflight_rejects_case_alias_collision(
         lower: renderer.CandidateArtifact(lower, b"lower", "application/json", renderer.JSON_OWNERSHIP_MARKER),
         upper: renderer.CandidateArtifact(upper, b"upper", "application/json", renderer.JSON_OWNERSHIP_MARKER),
     }
-
     with pytest.raises(renderer.CandidateRenderError, match="portable collision"):
         renderer._preflight_candidate_artifacts(candidates)
+
+
+def test_real_registry_compile_and_candidate_render_smoke(
+    artifacts: Mapping[str, Any],
+) -> None:
+    assert f"{PREFIX}/telemetry.schema.json" in artifacts
+    assert f"{PREFIX}/catalog.json" in artifacts
 
 
 def test_every_artifact_carries_candidate_authority_and_view_digest(
@@ -355,6 +515,13 @@ def test_bundle_is_complete_draft_2020_12_and_examples_have_exact_dispositions(
     assert {
         "builder_fact_conditions",
         "complete_payload_leaf_field_class_coverage",
+        "ordinary_shape_aware_utf8_byte_bounds",
+        "ordinary_container_depth_bounds",
+        "ordinary_string_leaf_utf8_byte_bounds",
+        "portable_re2_full_match_patterns",
+        "recursive_aggregate_max_items",
+        "recursive_property_count_bounds",
+        "typed_json_enum_membership",
         "span_name_pattern_rendering",
         "trace_cross_field_derivation_equality",
         "trace_time_order_relation",
@@ -447,9 +614,7 @@ def test_structured_catalog_is_closed_immutable_and_published(
     assert len(schema["x-defenseclaw-structured-property-dispositions"]) == 109
     assert catalog["structured_types"] == schema["x-defenseclaw-structured-types"]
     assert catalog["structured_bindings"] == schema["x-defenseclaw-structured-bindings"]
-    assert catalog["structured_property_dispositions"] == schema[
-        "x-defenseclaw-structured-property-dispositions"
-    ]
+    assert catalog["structured_property_dispositions"] == schema["x-defenseclaw-structured-property-dispositions"]
     assert all(f"structured:{type_id}" in schema["$defs"] for type_id in index.structured_types)
     assert "$type" not in json.dumps(catalog["structured_types"])
     assert "map[string]any" not in json.dumps(catalog["structured_types"])
@@ -482,9 +647,7 @@ def test_structured_schema_preserves_open_extras_tags_known_values_and_bounds(
     assert not input_messages.is_valid(
         [{"role": "user", "parts": [{"type": "text", "content": "x", "type_extra": None}]}]
     )
-    assert not input_messages.is_valid(
-        [{"role": "user", "parts": [{"type": "text", "opaque": 1}]}]
-    )
+    assert not input_messages.is_valid([{"role": "user", "parts": [{"type": "text", "opaque": 1}]}])
 
     chat = definitions["structured:gen_ai.chat_message"]
     chat_validator = _subschema_validator(schema, chat)
@@ -568,6 +731,459 @@ def test_metric_number_schema_declares_runtime_typed_int64_and_finite_double_arm
         renderer._json_payload({"value": float("inf")})
 
 
+def test_array_value_constraints_apply_to_each_element(renderer: ModuleType) -> None:
+    strings = renderer._apply_constraints(
+        renderer._schema_type("string[]"),
+        {"enum": ["abc123"], "pattern": "abc[0-9]+"},
+    )
+    string_validator = jsonschema.Draft202012Validator(strings)
+
+    assert strings["items"]["enum"] == ["abc123"]
+    assert strings["items"]["pattern"] == r"^(?:abc[0-9]+)$(?![\s\S])"
+    assert strings["items"]["x-defenseclaw-pattern-source"] == "abc[0-9]+"
+    assert strings["items"]["x-defenseclaw-pattern-semantics"] == "portable-re2-full-match"
+    assert string_validator.is_valid(["abc123"])
+    assert not string_validator.is_valid(["prefix-abc123"])
+    assert not string_validator.is_valid(["abc123-suffix"])
+    assert not string_validator.is_valid(["abc123\n"])
+    assert not string_validator.is_valid(["other"])
+
+    numbers = renderer._apply_constraints(renderer._schema_type("int64[]"), {"min": 2, "max": 3})
+    number_validator = jsonschema.Draft202012Validator(numbers)
+    assert numbers["items"]["minimum"] == 2
+    assert numbers["items"]["maximum"] == 3
+    assert number_validator.is_valid([2, 3])
+    assert not number_validator.is_valid([1, 2])
+    assert not number_validator.is_valid([3, 4])
+
+
+def test_full_match_constraints_cover_scalar_and_array_union_variants(renderer: ModuleType) -> None:
+    schema = renderer._apply_constraints(
+        {"oneOf": [renderer._schema_type("string"), renderer._schema_type("string[]")]},
+        {"enum": ["abc123"], "pattern": "abc123"},
+    )
+    validator = jsonschema.Draft202012Validator(schema)
+
+    assert validator.is_valid("abc123")
+    assert validator.is_valid(["abc123"])
+    assert not validator.is_valid("prefix-abc123")
+    assert not validator.is_valid(["abc123-suffix"])
+    assert not validator.is_valid("abc123\n")
+    assert schema["oneOf"][0]["pattern"] == r"^(?:abc123)$(?![\s\S])"
+    assert schema["oneOf"][1]["items"]["pattern"] == r"^(?:abc123)$(?![\s\S])"
+
+
+@pytest.mark.parametrize(
+    ("pattern", "accepted"),
+    [
+        (r"^[0-9a-f]{32}$", True),
+        (r"\x61{0,1000}", True),
+        (r"a++", False),
+        (r"\d+", False),
+        (r"\u0061", False),
+        (r"\_", False),
+        (r"a{,3}", False),
+        (r"a{1001}", False),
+    ],
+)
+def test_compiler_and_candidate_portable_pattern_policy_is_identical(
+    renderer: ModuleType,
+    generator: ModuleType,
+    pattern: str,
+    accepted: bool,
+) -> None:
+    if accepted:
+        assert generator._validate_portable_pattern(pattern, "test.pattern") == pattern
+        renderer._validate_portable_constraint_pattern(pattern, "test.pattern")
+    else:
+        with pytest.raises(generator.RegistryError):
+            generator._validate_portable_pattern(pattern, "test.pattern")
+        with pytest.raises(renderer.CandidateRenderError):
+            renderer._validate_portable_constraint_pattern(pattern, "test.pattern")
+
+
+def test_current_registry_patterns_pass_both_portable_validators(
+    renderer: ModuleType,
+    generator: ModuleType,
+    view: Any,
+) -> None:
+    patterns: set[str] = set()
+
+    def collect(value: Any) -> None:
+        if isinstance(value, Mapping):
+            if value.get("$type") == "NormalizationIR":
+                fields = value["fields"]
+                for key in ("overrides", "effective_constraints"):
+                    pattern = fields[key].get("pattern")
+                    if isinstance(pattern, str):
+                        patterns.add(pattern)
+            for item in value.values():
+                collect(item)
+        elif isinstance(value, tuple):
+            for item in value:
+                collect(item)
+
+    collect(view.facts)
+    assert patterns
+    for pattern in patterns:
+        assert generator._validate_portable_pattern(pattern, "registry.pattern") == pattern
+        renderer._validate_portable_constraint_pattern(pattern, "registry.pattern")
+
+
+def test_numeric_enum_declares_typed_runtime_membership_gate(
+    renderer: ModuleType,
+    generator: ModuleType,
+) -> None:
+    schema = renderer._apply_constraints(renderer._schema_type("double"), {"enum": [1]})
+
+    assert jsonschema.Draft202012Validator(schema).is_valid(1.0)
+    assert generator._constraints_accept(1.0, {"enum": (1,)}) is False
+    assert schema["x-defenseclaw-enum-membership-semantics"] == "typed-json-scalar"
+    assert schema["x-defenseclaw-enum-enforcement"] == "builder-runtime-typed-json-enum-gate"
+
+
+def test_attribute_base_and_per_use_constraints_form_a_restrictive_conjunction(
+    renderer: ModuleType,
+) -> None:
+    def attribute(field_type: str, effective: dict[str, Any]) -> Any:
+        normalization_id = (
+            "numeric-range-v1"
+            if field_type in {"int64", "double"}
+            else "structured-content-v1"
+            if field_type == "object"
+            else "bounded-v1"
+        )
+        return renderer.CandidateAttribute(
+            "test.attribute",
+            (field_type,),
+            None,
+            {
+                "field_class": "metadata",
+                "sensitivity": "internal",
+                "owner": "defenseclaw",
+                "normalization": {
+                    "id": normalization_id,
+                    "effective_constraints": effective,
+                },
+            },
+        )
+
+    strings = renderer._attribute_schema(
+        attribute(
+            "string[]",
+            {
+                "enum": ["abc123", "abc456"],
+                "pattern": "abc[0-9]+",
+                "max_items": 10,
+                "max_utf8_bytes": 100,
+                "max_item_utf8_bytes": 20,
+            },
+        ),
+        {
+            "enum": ["abc123"],
+            "pattern": "abc[0-9]+",
+            "max_items": 3,
+            "max_utf8_bytes": 40,
+            "max_item_utf8_bytes": 10,
+        },
+    )
+    item = strings["items"]
+    assert item["enum"] == ["abc123"]
+    assert item["pattern"] == r"^(?:abc[0-9]+)$(?![\s\S])"
+    assert "allOf" not in item
+    assert strings["maxItems"] == 3
+    assert strings["x-defenseclaw-max-items"] == 3
+    assert strings["x-defenseclaw-max-utf8-bytes"] == 40
+    assert strings["x-defenseclaw-max-item-utf8-bytes"] == 10
+    validator = jsonschema.Draft202012Validator(strings)
+    assert validator.is_valid(["abc123"])
+    assert not validator.is_valid(["abc456"])
+
+    number = renderer._attribute_schema(
+        attribute("int64", {"min": 0, "max": 10}),
+        {"min": 2, "max": 8},
+    )
+    assert number["minimum"] == 2
+    assert number["maximum"] == 8
+
+    structured = renderer._attribute_schema(
+        attribute(
+            "object",
+            {"max_items": 10, "max_depth": 5, "max_properties": 20},
+        ),
+        {"max_items": 4, "max_depth": 2, "max_properties": 3},
+    )
+    assert structured["x-defenseclaw-max-items"] == 4
+    assert structured["x-defenseclaw-max-depth"] == 2
+    assert structured["x-defenseclaw-max-properties"] == 3
+    assert structured["maxProperties"] == 3
+
+
+def test_candidate_rejects_distinct_pattern_intersection(renderer: ModuleType) -> None:
+    base = renderer._apply_constraints(renderer._schema_type("string"), {"pattern": "abc[0-9]+"})
+
+    with pytest.raises(renderer.CandidateRenderError, match="pattern constraint intersection"):
+        renderer._apply_constraints(base, {"pattern": "abc123"})
+
+
+@pytest.mark.parametrize(
+    ("field_type", "constraints"),
+    [
+        ("string", {"max_itmes": 1}),
+        ("string", {"max_items": "one"}),
+        ("string", {"min": 2, "max": 1}),
+        ("int64", {"pattern": "[0-9]+"}),
+        ("string", {"min": 1}),
+        ("string[]", {"max_depth": 1}),
+    ],
+)
+def test_apply_constraints_defensively_rejects_invalid_maps(
+    renderer: ModuleType,
+    field_type: str,
+    constraints: dict[str, Any],
+) -> None:
+    with pytest.raises(renderer.CandidateRenderError):
+        renderer._apply_constraints(renderer._schema_type(field_type), constraints)
+
+
+def test_polymorphic_canonical_json_rejects_min_items_above_scalar_cardinality(
+    renderer: ModuleType,
+) -> None:
+    with pytest.raises(renderer.CandidateRenderError, match="polymorphic JSON"):
+        renderer._apply_constraints(
+            {"$ref": f"#/$defs/{renderer.CANONICAL_JSON_DEFINITION}"},
+            {"min_items": 2},
+        )
+
+
+def test_recursive_item_and_utf8_bounds_declare_required_runtime_gates(
+    renderer: ModuleType,
+    generator: ModuleType,
+) -> None:
+    nested_value = [{"items": [1, 2, 3]}]
+    nested_schema = renderer._apply_constraints(
+        {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "additionalProperties": {"type": "array", "items": {"type": "integer"}},
+            },
+        },
+        {"max_items": 3},
+    )
+
+    # JSON Schema can enforce the safe root-array subset, but the compiler's
+    # recursive aggregate counts the root element, object member, and nested elements.
+    assert jsonschema.Draft202012Validator(nested_schema).is_valid(nested_value)
+    assert generator._constraints_accept(nested_value, {"max_items": 3}) is False
+    assert nested_schema["maxItems"] == 3
+    assert nested_schema["x-defenseclaw-max-items-semantics"] == "recursive-aggregate-members"
+    assert nested_schema["x-defenseclaw-max-items-enforcement"] == ("builder-runtime-recursive-aggregate-gate")
+    assert nested_schema["x-defenseclaw-json-schema-item-bound-scope"] == ("root-collection-safe-subset")
+
+    total_bytes = renderer._apply_constraints(renderer._schema_type("string"), {"max_utf8_bytes": 3})
+    leaf_bytes = renderer._apply_constraints(renderer._schema_type("string[]"), {"max_item_utf8_bytes": 3})
+    assert jsonschema.Draft202012Validator(total_bytes).is_valid("éé")
+    assert jsonschema.Draft202012Validator(leaf_bytes).is_valid(["éé"])
+    assert generator._constraints_accept("éé", {"max_utf8_bytes": 3}) is False
+    assert generator._constraints_accept(["éé"], {"max_item_utf8_bytes": 3}) is False
+    assert total_bytes["x-defenseclaw-max-utf8-bytes-semantics"] == "raw-scalar-string-utf8"
+    assert total_bytes["x-defenseclaw-max-utf8-bytes-enforcement"] == ("builder-runtime-shape-aware-utf8-byte-gate")
+    aggregate_bytes = renderer._apply_constraints(renderer._schema_type("string[]"), {"max_utf8_bytes": 10})
+    assert aggregate_bytes["x-defenseclaw-max-utf8-bytes-semantics"] == "canonical-json-utf8"
+    assert leaf_bytes["x-defenseclaw-max-item-utf8-bytes-enforcement"] == ("builder-runtime-string-leaf-utf8-byte-gate")
+
+    nested_object = {"outer": {"inner": {"leaf": 1}}}
+    object_schema = renderer._apply_constraints(
+        {"type": "object", "additionalProperties": True},
+        {"max_depth": 1, "max_properties": 1},
+    )
+    assert jsonschema.Draft202012Validator(object_schema).is_valid(nested_object)
+    assert generator._constraints_accept(nested_object, {"max_depth": 1}) is False
+    assert generator._constraints_accept(nested_object, {"max_properties": 1}) is False
+    assert object_schema["maxProperties"] == 1
+    assert object_schema["x-defenseclaw-max-depth-enforcement"] == ("builder-runtime-container-depth-gate")
+    assert object_schema["x-defenseclaw-max-properties-enforcement"] == (
+        "builder-runtime-recursive-property-count-gate"
+    )
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "normalization-unknown",
+        "normalization-wrong-type",
+        "normalization-scalar-min-items",
+        "normalization-bogus-id",
+        "normalization-forged-effective",
+        "normalizer-catalog-forged",
+        "local-attribute-timestamp",
+        "direct-use-unknown",
+        "direct-origin-mismatch",
+        "direct-role-mismatch",
+        "attribute-refs-mismatch",
+        "resolution-order-mismatch",
+        "resolved-use-unknown",
+        "origin-wrong-type",
+        "origin-resolved-mismatch",
+        "typed-enum-origin-mismatch",
+        "resolved-numeric-pattern",
+        "resolved-string-min",
+        "resolved-use-weakening",
+        "requirement-origin-mismatch",
+        "unknown-condition",
+        "empty-condition",
+        "resolved-use-nonportable-pattern",
+    ],
+)
+def test_candidate_rejects_digest_consistent_constraint_contract_mutations(
+    renderer: ModuleType,
+    view: Any,
+    mutation: str,
+) -> None:
+    facts = _copy_materialized(view.facts)
+    domains = facts["fields"]["domains"]
+
+    if mutation == "normalizer-catalog-forged":
+        facts["fields"]["normalizers"][0]["fields"]["kind"] = "forged"
+    elif mutation == "local-attribute-timestamp":
+        attribute = next(item for domain in domains for item in domain["fields"]["attributes"])
+        attribute["fields"]["field_type"] = "timestamp"
+    elif mutation == "resolution-order-mismatch":
+        facts["fields"]["group_resolution_order"] = tuple(reversed(facts["fields"]["group_resolution_order"]))
+    elif mutation.startswith("normalization-"):
+        attribute = next(
+            item
+            for domain in domains
+            for item in domain["fields"]["attributes"]
+            if mutation != "normalization-scalar-min-items"
+            or (
+                item["fields"]["field_type"] == "string"
+                and item["fields"]["normalization"]["fields"]["id"] == "bounded-v1"
+            )
+        )
+        normalization = attribute["fields"]["normalization"]["fields"]
+        if mutation == "normalization-unknown":
+            normalization["effective_constraints"]["max_itmes"] = 1
+        elif mutation == "normalization-wrong-type":
+            normalization["overrides"]["max_items"] = "one"
+        elif mutation == "normalization-scalar-min-items":
+            normalization["overrides"]["min_items"] = 2
+            normalization["effective_constraints"]["min_items"] = 2
+        elif mutation == "normalization-bogus-id":
+            normalization["id"] = "bogus-v1"
+        else:
+            normalization["effective_constraints"]["max_utf8_bytes"] = 1
+    elif mutation in {
+        "direct-use-unknown",
+        "direct-origin-mismatch",
+        "direct-role-mismatch",
+        "attribute-refs-mismatch",
+    }:
+        group = next(
+            item
+            for domain in domains
+            for item in domain["fields"]["groups"]
+            if (
+                item["fields"]["id"] == "scope.core"
+                if mutation in {"direct-origin-mismatch", "direct-role-mismatch", "attribute-refs-mismatch"}
+                else bool(item["fields"]["attribute_uses"])
+            )
+        )
+        if mutation == "direct-role-mismatch":
+            group["fields"]["attribute_uses"][0]["fields"]["role"] = "body_fields"
+        elif mutation == "attribute-refs-mismatch":
+            group["fields"]["attribute_refs"] = group["fields"]["attribute_refs"][1:]
+        else:
+            group["fields"]["attribute_uses"][0]["fields"]["constraints"] = (
+                {"max_utf8_bytes": 1} if mutation == "direct-origin-mismatch" else {"max_itmes": 1}
+            )
+    else:
+        resolved_by_group = facts["fields"]["resolved_group_uses"]
+        target_ref = {
+            "resolved-numeric-pattern": "defenseclaw.guardrail.confidence",
+            "resolved-string-min": "gen_ai.operation.name",
+            "resolved-use-weakening": "gen_ai.operation.name",
+        }.get(mutation)
+        if target_ref is None:
+            group_id = next(iter(resolved_by_group))
+            resolved_use = resolved_by_group[group_id][0]
+        else:
+            group_id, resolved_use = next(
+                (candidate_group, use)
+                for candidate_group, uses in resolved_by_group.items()
+                for use in uses
+                if use["fields"]["ref"] == target_ref
+            )
+        group = next(
+            item for domain in domains for item in domain["fields"]["groups"] if item["fields"]["id"] == group_id
+        )
+        group_use = next(
+            use for use in group["fields"]["resolved_uses"] if use["fields"]["ref"] == resolved_use["fields"]["ref"]
+        )
+        duplicate_uses = (resolved_use, group_use)
+        if mutation == "resolved-use-unknown":
+            for use in duplicate_uses:
+                use["fields"]["constraints"] = {"max_itmes": 1}
+                use["fields"]["origins"][0]["fields"]["constraints"] = {"max_itmes": 1}
+        elif mutation == "origin-wrong-type":
+            for use in duplicate_uses:
+                use["fields"]["constraints"] = {"max_items": 1}
+                use["fields"]["origins"][0]["fields"]["constraints"] = {"max_items": "one"}
+        elif mutation == "origin-resolved-mismatch":
+            for use in duplicate_uses:
+                use["fields"]["constraints"] = {"max_items": 2}
+                use["fields"]["origins"][0]["fields"]["constraints"] = {"max_items": 1}
+        elif mutation == "typed-enum-origin-mismatch":
+            for use in duplicate_uses:
+                use["fields"]["constraints"] = {"enum": (1,)}
+                use["fields"]["origins"][0]["fields"]["constraints"] = {"enum": (True,)}
+        elif mutation in {"resolved-numeric-pattern", "resolved-string-min", "resolved-use-weakening"}:
+            constraints = (
+                {"pattern": "[0-9]+"}
+                if mutation == "resolved-numeric-pattern"
+                else {"min": 1}
+                if mutation == "resolved-string-min"
+                else {"max_utf8_bytes": 1048576}
+            )
+            for use in duplicate_uses:
+                use["fields"]["constraints"] = constraints
+                for origin in use["fields"]["origins"]:
+                    origin["fields"]["constraints"] = constraints
+                    source_group = next(
+                        item
+                        for domain in domains
+                        for item in domain["fields"]["groups"]
+                        if item["fields"]["id"] == origin["fields"]["group_id"]
+                    )
+                    source_use = next(
+                        item
+                        for item in source_group["fields"]["attribute_uses"]
+                        if item["fields"]["ref"] == resolved_use["fields"]["ref"]
+                    )
+                    source_use["fields"]["constraints"] = constraints
+        elif mutation == "requirement-origin-mismatch":
+            replacement = "optional" if resolved_use["fields"]["requirement_level"] == "required" else "required"
+            for use in duplicate_uses:
+                use["fields"]["requirement_level"] = replacement
+                use["fields"]["conditional"] = None
+        elif mutation in {"unknown-condition", "empty-condition"}:
+            condition = "unknown.condition" if mutation == "unknown-condition" else ""
+            for use in duplicate_uses:
+                use["fields"]["requirement_level"] = "conditional"
+                use["fields"]["conditional"] = condition
+                for origin in use["fields"]["origins"]:
+                    origin["fields"]["requirement_level"] = "conditional"
+                    origin["fields"]["conditional"] = condition
+        else:
+            for use in duplicate_uses:
+                use["fields"]["constraints"] = {"pattern": "a++"}
+                use["fields"]["origins"][0]["fields"]["constraints"] = {"pattern": "a++"}
+
+    with pytest.raises(renderer.CandidateRenderError):
+        renderer.build_candidate_render_index(_retagged_view(renderer, view, facts))
+
+
 @pytest.mark.parametrize(
     "mutation",
     [
@@ -604,21 +1220,17 @@ def test_candidate_rejects_digest_consistent_malformed_nested_structured_facts(
     if mutation == "nested-extra":
         by_id["gen_ai.text_part"]["fields"]["fields"][0]["fields"]["scalar"]["fields"]["extra"] = True
     elif mutation == "dangling-ref":
-        by_id["gen_ai.input_messages"]["fields"]["items_reference"]["fields"][
-            "structured_ref"
-        ] = "gen_ai.missing"
+        by_id["gen_ai.input_messages"]["fields"]["items_reference"]["fields"]["structured_ref"] = "gen_ai.missing"
     elif mutation == "known-but-wrong-ref":
-        by_id["gen_ai.input_messages"]["fields"]["items_reference"]["fields"][
-            "structured_ref"
-        ] = "gen_ai.output_message"
+        by_id["gen_ai.input_messages"]["fields"]["items_reference"]["fields"]["structured_ref"] = (
+            "gen_ai.output_message"
+        )
     elif mutation == "side-arm":
         by_id["gen_ai.input_messages"]["fields"]["fields"] = ()
     elif mutation == "reserved-names":
         by_id["gen_ai.generic_part"]["fields"]["effective_reserved_names"] = ()
     elif mutation == "canonical-limit":
-        by_id["gen_ai.canonical_json"]["fields"]["canonical_json"]["fields"]["limits"]["fields"][
-            "max_depth"
-        ] = 9
+        by_id["gen_ai.canonical_json"]["fields"]["canonical_json"]["fields"]["limits"]["fields"]["max_depth"] = 9
     elif mutation == "binding-target":
         binding = next(
             item
@@ -627,60 +1239,49 @@ def test_candidate_rejects_digest_consistent_malformed_nested_structured_facts(
         )
         binding["fields"]["structured_type"] = "gen_ai.input_messages"
     elif mutation == "missing-disposition":
-        facts["fields"]["structured_property_dispositions"] = facts["fields"][
-            "structured_property_dispositions"
-        ][:-1]
+        facts["fields"]["structured_property_dispositions"] = facts["fields"]["structured_property_dispositions"][:-1]
     elif mutation == "known-values":
         role = next(
-            item
-            for item in by_id["gen_ai.chat_message"]["fields"]["fields"]
-            if item["fields"]["name"] == "role"
+            item for item in by_id["gen_ai.chat_message"]["fields"]["fields"] if item["fields"]["name"] == "role"
         )
         role["fields"]["scalar"]["fields"]["known_values"] = ("system", "user")
     elif mutation == "nullable-omission":
         name = next(
-            item
-            for item in by_id["gen_ai.chat_message"]["fields"]["fields"]
-            if item["fields"]["name"] == "name"
+            item for item in by_id["gen_ai.chat_message"]["fields"]["fields"] if item["fields"]["name"] == "name"
         )
         name["fields"]["nullable_omission"] = False
     elif mutation == "union-disposition-target":
         disposition = next(
             item
             for item in facts["fields"]["structured_property_dispositions"]
-            if item["fields"]["structured_type"] == "gen_ai.message_part"
-            and item["fields"]["arm_id"] == "text"
+            if item["fields"]["structured_type"] == "gen_ai.message_part" and item["fields"]["arm_id"] == "text"
         )
         disposition["fields"]["target_structured_type"] = "gen_ai.output_message"
     elif mutation == "content-sensitivity":
-        by_id["gen_ai.text_part"]["fields"]["fields"][0]["fields"]["scalar"]["fields"][
-            "sensitivity"
-        ] = "safe"
+        by_id["gen_ai.text_part"]["fields"]["fields"][0]["fields"]["scalar"]["fields"]["sensitivity"] = "safe"
     elif mutation == "content-normalization":
-        by_id["gen_ai.text_part"]["fields"]["fields"][0]["fields"]["scalar"]["fields"][
-            "normalization"
-        ]["fields"]["id"] = "identity-v1"
+        by_id["gen_ai.text_part"]["fields"]["fields"][0]["fields"]["scalar"]["fields"]["normalization"]["fields"][
+            "id"
+        ] = "identity-v1"
     elif mutation == "discriminator-name":
         by_id["gen_ai.message_part"]["fields"]["discriminator"]["fields"]["name"] = "kind"
     elif mutation == "discriminator-privacy":
         by_id["gen_ai.message_part"]["fields"]["discriminator"]["fields"]["sensitivity"] = "safe"
     elif mutation == "dynamic-name-privacy":
-        by_id["gen_ai.tool_call_arguments"]["fields"]["dynamic_members"]["fields"]["name"]["fields"][
-            "sensitivity"
-        ] = "safe"
+        by_id["gen_ai.tool_call_arguments"]["fields"]["dynamic_members"]["fields"]["name"]["fields"]["sensitivity"] = (
+            "safe"
+        )
     elif mutation == "dynamic-name-normalization":
-        by_id["gen_ai.tool_call_arguments"]["fields"]["dynamic_members"]["fields"]["name"]["fields"][
-            "normalization"
-        ]["fields"]["id"] = "identifier-v1"
+        by_id["gen_ai.tool_call_arguments"]["fields"]["dynamic_members"]["fields"]["name"]["fields"]["normalization"][
+            "fields"
+        ]["id"] = "identifier-v1"
     elif mutation == "canonical-encoding":
         canonical = by_id["gen_ai.canonical_json"]["fields"]["canonical_json"]["fields"]
         canonical["public_encoding"] = "native_object"
         canonical["wire_encoding"] = "ordered_entries"
     elif mutation == "encoding-annotation":
         blob_content = next(
-            item
-            for item in by_id["gen_ai.blob_part"]["fields"]["fields"]
-            if item["fields"]["name"] == "content"
+            item for item in by_id["gen_ai.blob_part"]["fields"]["fields"] if item["fields"]["name"] == "content"
         )
         blob_content["fields"]["scalar"]["fields"]["encoding_annotation"] = None
     else:
@@ -738,15 +1339,13 @@ def test_candidate_semantic_digests_ignore_only_tagged_normalization_notes(
     view: Any,
 ) -> None:
     facts = _copy_materialized(view.facts)
-    structured = {
-        item["fields"]["id"]: item for item in facts["fields"]["structured_types"]
-    }
-    structured_note = structured["gen_ai.text_part"]["fields"]["fields"][0]["fields"]["scalar"][
-        "fields"
-    ]["normalization"]["fields"]
-    structural_note = facts["fields"]["structural_contract"]["fields"]["envelope"]["fields"]["fields"][
-        0
-    ]["fields"]["normalization"]["fields"]
+    structured = {item["fields"]["id"]: item for item in facts["fields"]["structured_types"]}
+    structured_note = structured["gen_ai.text_part"]["fields"]["fields"][0]["fields"]["scalar"]["fields"][
+        "normalization"
+    ]["fields"]
+    structural_note = facts["fields"]["structural_contract"]["fields"]["envelope"]["fields"]["fields"][0]["fields"][
+        "normalization"
+    ]["fields"]
     structured_note["notes"] = "Structured reviewer prose."
     structural_note["notes"] = "P-069 reviewer prose."
 
@@ -755,9 +1354,12 @@ def test_candidate_semantic_digests_ignore_only_tagged_normalization_notes(
     assert index.structured_types["gen_ai.text_part"]["fields"][0]["scalar"]["normalization"]["notes"] == (
         "Structured reviewer prose."
     )
-    assert index.fields["structural_contract"]["fields"]["envelope"]["fields"]["fields"][0]["fields"][
-        "normalization"
-    ]["fields"]["notes"] == "P-069 reviewer prose."
+    assert (
+        index.fields["structural_contract"]["fields"]["envelope"]["fields"]["fields"][0]["fields"]["normalization"][
+            "fields"
+        ]["notes"]
+        == "P-069 reviewer prose."
+    )
 
 
 @pytest.mark.parametrize("surface", ["structured", "structural"])
@@ -770,16 +1372,14 @@ def test_candidate_rejects_invalid_normalization_notes_even_when_semantically_ig
 ) -> None:
     facts = _copy_materialized(view.facts)
     if surface == "structured":
-        structured = {
-            item["fields"]["id"]: item for item in facts["fields"]["structured_types"]
-        }
-        notes = structured["gen_ai.text_part"]["fields"]["fields"][0]["fields"]["scalar"]["fields"][
+        structured = {item["fields"]["id"]: item for item in facts["fields"]["structured_types"]}
+        notes = structured["gen_ai.text_part"]["fields"]["fields"][0]["fields"]["scalar"]["fields"]["normalization"][
+            "fields"
+        ]
+    else:
+        notes = facts["fields"]["structural_contract"]["fields"]["envelope"]["fields"]["fields"][0]["fields"][
             "normalization"
         ]["fields"]
-    else:
-        notes = facts["fields"]["structural_contract"]["fields"]["envelope"]["fields"]["fields"][0][
-            "fields"
-        ]["normalization"]["fields"]
     notes["notes"] = invalid_notes
 
     with pytest.raises(renderer.CandidateRenderError, match="normalization notes are invalid"):

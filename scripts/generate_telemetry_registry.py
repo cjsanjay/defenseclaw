@@ -121,9 +121,7 @@ EXPECTED_STRUCTURED_BINDINGS: Final = (
         "native_json_object",
     ),
 )
-EXPECTED_AUTHORED_STRUCTURED_TYPES_SHA256: Final = (
-    "c4ee28168fddd3e509d92b474b136e057ab0b6063a160a70f415ece0e42a9b15"
-)
+EXPECTED_AUTHORED_STRUCTURED_TYPES_SHA256: Final = "c4ee28168fddd3e509d92b474b136e057ab0b6063a160a70f415ece0e42a9b15"
 EXPECTED_MESSAGE_PART_VARIANTS: Final = (
     ("text", "gen_ai.text_part"),
     ("tool_call", "gen_ai.tool_call_request_part"),
@@ -582,6 +580,12 @@ EXPECTED_METRIC_PROFILE_LIMITS: Final = {
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _REVISION = re.compile(r"^[0-9a-f]{40}$")
 _ID = re.compile(r"^[A-Za-z][A-Za-z0-9_.:/-]{0,255}$")
+_EXAMPLE_ID = re.compile(r"^[a-z][a-z0-9-]{0,127}$")
+_RESERVED_DOS_DEVICE_IDS: Final = frozenset(
+    {"con", "prn", "aux", "nul"}
+    | {f"com{number}" for number in range(1, 10)}
+    | {f"lpt{number}" for number in range(1, 10)}
+)
 _FIELD_TYPE = frozenset(
     {
         "string",
@@ -1987,7 +1991,75 @@ def _validate_json_compatible(value: Any, path: str, *, depth: int = 0) -> None:
 
 def _validate_portable_pattern(value: Any, path: str) -> str:
     pattern = _string(value, path)
-    if "(?" in pattern or re.search(r"\\(?:[1-9]|g|k)", pattern):
+
+    def uses_nonportable_escape() -> bool:
+        index = 0
+        while index < len(pattern):
+            if pattern[index] != "\\":
+                index += 1
+                continue
+            slash_start = index
+            while index < len(pattern) and pattern[index] == "\\":
+                index += 1
+            if (index - slash_start) % 2 == 1 and index < len(pattern):
+                escaped = pattern[index]
+                if escaped == "x":
+                    hexadecimal = pattern[index + 1 : index + 3]
+                    if len(hexadecimal) != 2 or re.fullmatch(r"[0-9A-Fa-f]{2}", hexadecimal) is None:
+                        return True
+                    index += 3
+                    continue
+                if escaped in "nrtfv":
+                    index += 1
+                    continue
+                if escaped not in r"\.^$|?*+()[]{}-":
+                    return True
+                index += 1
+        return False
+
+    def uses_nonportable_repetition() -> bool:
+        index = 0
+        in_character_class = False
+        while index < len(pattern):
+            if pattern[index] == "\\":
+                index += 2
+                continue
+            if pattern[index] == "[":
+                in_character_class = True
+                index += 1
+                continue
+            if pattern[index] == "]" and in_character_class:
+                in_character_class = False
+                index += 1
+                continue
+            if in_character_class:
+                index += 1
+                continue
+            if pattern[index] in "*+?" and index + 1 < len(pattern) and pattern[index + 1] == "+":
+                return True
+            if pattern[index] == "{":
+                closing = pattern.find("}", index + 1)
+                if closing == -1:
+                    return True
+                body = pattern[index + 1 : closing]
+                quantifier = re.fullmatch(r"([0-9]+)(?:,([0-9]*))?", body)
+                if quantifier is None:
+                    return True
+                lower = int(quantifier.group(1))
+                upper_text = quantifier.group(2)
+                upper = None if upper_text in {None, ""} else int(upper_text)
+                if lower > 1000 or (upper is not None and (upper > 1000 or upper < lower)):
+                    return True
+                if closing + 1 < len(pattern) and pattern[closing + 1] == "+":
+                    return True
+                index = closing + 1
+                continue
+            if pattern[index] == "}":
+                return True
+            index += 1
+        return False
+
+    if "(?" in pattern or uses_nonportable_escape() or uses_nonportable_repetition():
         raise RegistryError(f"{path}: pattern uses syntax outside the portable RE2 subset")
     try:
         re.compile(pattern)
@@ -2120,6 +2192,18 @@ def _validate_normalization_compatibility(
     if not compatible:
         raise RegistryError(f"{path}.id: {normalization.id} is incompatible with types={sorted(types)} shape={shape}")
     effective = normalization.effective_constraints
+    if "enum" in effective:
+        string_types = {"string", "string[]"}
+        numeric_types = {"int64", "uint32", "double", "int64[]", "double[]"}
+        for value in effective["enum"]:
+            compatible = (
+                (type(value) is str and bool(types & string_types))
+                or (type(value) is bool and bool(types & {"boolean", "boolean[]"}))
+                or (type(value) is int and bool(types & numeric_types))
+                or (type(value) is float and bool(types & {"double", "double[]"}))
+            )
+            if not compatible:
+                raise RegistryError(f"{path}.overrides.enum: member type is incompatible with attribute types")
     if kind == "enum" and "enum" not in effective:
         raise RegistryError(f"{path}.overrides.enum: required for enum-v1")
     if kind == "numeric_range":
@@ -2141,6 +2225,13 @@ def _validate_normalization_compatibility(
         raise RegistryError(f"{path}: string arrays require item-count and per-item byte bounds")
     if types & {"boolean[]", "int64[]", "double[]"} and "max_items" not in effective:
         raise RegistryError(f"{path}: arrays require an explicit max_items bound")
+    collection_or_structured = shape in {"any_value", "indexed_prefix", "object_prefix"} or bool(
+        types & {"string[]", "boolean[]", "int64[]", "double[]", "object", "array"}
+    )
+    if "min_items" in effective and not collection_or_structured:
+        raise RegistryError(f"{path}: min_items requires an array or structured value")
+    if effective.get("min_items", 0) > 1 and (shape == "any_value" or "canonical_json" in types):
+        raise RegistryError(f"{path}: min_items greater than one is unsupported for polymorphic JSON")
 
 
 def _parse_normalization(
@@ -2668,9 +2759,7 @@ def _validate_structured_type_graph(items: tuple[StructuredTypeIR, ...], path: s
     for type_id in by_id:
         visit(type_id)
 
-    reserved_by_target: dict[str, set[str]] = {
-        item.id: set(item.effective_reserved_names) for item in items
-    }
+    reserved_by_target: dict[str, set[str]] = {item.id: set(item.effective_reserved_names) for item in items}
     for item in items:
         if item.discriminator is None:
             continue
@@ -2707,10 +2796,7 @@ def _parse_structured_types(
 ) -> tuple[StructuredTypeIR, ...]:
     if not isinstance(value, list):
         raise RegistryError(f"{path}: expected sequence")
-    parsed = tuple(
-        _parse_structured_type(item, f"{path}[{index}]", normalizers)
-        for index, item in enumerate(value)
-    )
+    parsed = tuple(_parse_structured_type(item, f"{path}[{index}]", normalizers) for index, item in enumerate(value))
     validated = _validate_structured_type_graph(parsed, path)
     by_id = {item.id: item for item in validated}
     canonical = by_id["gen_ai.canonical_json"]
@@ -2733,8 +2819,7 @@ def _parse_structured_types(
         or union.discriminator.field_class != "identifier"
         or union.discriminator.sensitivity != "internal"
         or union.discriminator.normalization.id != "bounded-v1"
-        or union.discriminator.normalization.overrides
-        != {"max_utf8_bytes": 256}
+        or union.discriminator.normalization.overrides != {"max_utf8_bytes": 256}
         or union.discriminator.normalization.effective_constraints.get("max_utf8_bytes") != 256
         or "enum" in union.discriminator.normalization.effective_constraints
         or "pattern" in union.discriminator.normalization.effective_constraints
@@ -2816,8 +2901,7 @@ def _parse_structured_bindings(
             raise RegistryError(f"{item_path}.structured_type: unknown structured type")
         result.append(binding)
     observed = tuple(
-        (item.attribute, item.structured_type, item.public_encoding, item.canonical_wire_encoding)
-        for item in result
+        (item.attribute, item.structured_type, item.public_encoding, item.canonical_wire_encoding) for item in result
     )
     if observed != EXPECTED_STRUCTURED_BINDINGS:
         raise RegistryError(f"{path}: structured binding inventory/order mismatch")
@@ -2833,10 +2917,7 @@ def _schema_allows_null(value: Any) -> bool:
     if isinstance(any_of, list) and any(_schema_allows_null(item) for item in any_of):
         return True
     return (
-        value.get("default", object()) is None
-        and "type" not in value
-        and "$ref" not in value
-        and "anyOf" not in value
+        value.get("default", object()) is None and "type" not in value and "$ref" not in value and "anyOf" not in value
     )
 
 
@@ -2923,19 +3004,22 @@ def _validate_source_property_shape(
             raise RegistryError(f"{path}: message parts must remain an array")
         _exact_keys(schema["items"], {"anyOf"}, set(), f"{path}.items")
         any_of = schema["items"].get("anyOf")
-        expected_refs = tuple(f"#/$defs/{name}" for name in (
-            "TextPart",
-            "ToolCallRequestPart",
-            "ToolCallResponsePart",
-            "ServerToolCallPart",
-            "ServerToolCallResponsePart",
-            "BlobPart",
-            "FilePart",
-            "UriPart",
-            "ReasoningPart",
-            "CompactionPart",
-            "GenericPart",
-        ))
+        expected_refs = tuple(
+            f"#/$defs/{name}"
+            for name in (
+                "TextPart",
+                "ToolCallRequestPart",
+                "ToolCallResponsePart",
+                "ServerToolCallPart",
+                "ServerToolCallResponsePart",
+                "BlobPart",
+                "FilePart",
+                "UriPart",
+                "ReasoningPart",
+                "CompactionPart",
+                "GenericPart",
+            )
+        )
         if isinstance(any_of, list):
             for index, item in enumerate(any_of):
                 if not isinstance(item, dict) or set(item) != {"$ref"}:
@@ -3161,9 +3245,7 @@ def _validate_structural_inputs(
             "gen_ai.tool_call_result",
         ),
     )
-    nullable_by_type = {
-        type_id: names for type_id, names in STRUCTURED_NULLABLE_OPTIONALS.items()
-    }
+    nullable_by_type = {type_id: names for type_id, names in STRUCTURED_NULLABLE_OPTIONALS.items()}
     updated: list[StructuredTypeIR] = []
     for item in types:
         if item.fields is None:
@@ -3174,9 +3256,7 @@ def _validate_structural_inputs(
         for field in item.fields:
             scalar = field.scalar
             encoding_annotation = (
-                "json-base64-bytes-v1"
-                if item.id == "gen_ai.blob_part" and field.name == "content"
-                else None
+                "json-base64-bytes-v1" if item.id == "gen_ai.blob_part" and field.name == "content" else None
             )
             known_values: tuple[str, ...] = ()
             if field.name == "role":
@@ -5973,7 +6053,9 @@ def _parse_examples(
             {"family", "record", "expected_error", "base_example", "mutation"},
             item_path,
         )
-        example_id = _string(item["id"], f"{item_path}.id", pattern=_ID)
+        example_id = _string(item["id"], f"{item_path}.id", pattern=_EXAMPLE_ID)
+        if example_id in _RESERVED_DOS_DEVICE_IDS:
+            raise RegistryError(f"{item_path}.id: platform-reserved example id")
         if example_id in seen:
             raise RegistryError(f"{item_path}.id: duplicate example")
         seen.add(example_id)
@@ -7441,9 +7523,9 @@ def _validate_attribute_use_constraints(
                     )
                     if not compatible:
                         raise RegistryError(f"group {group.id}: constraint enum type is incompatible with {use.ref}")
-            if "pattern" in constraints and not types.issubset(string_types):
+            if "pattern" in constraints and (not types or not types.issubset(string_types)):
                 raise RegistryError(f"group {group.id}: pattern constraint is incompatible with {use.ref}")
-            if ({"min", "max"} & constraints.keys()) and not types.issubset(numeric_types):
+            if ({"min", "max"} & constraints.keys()) and (not types or not types.issubset(numeric_types)):
                 raise RegistryError(f"group {group.id}: numeric constraint is incompatible with {use.ref}")
             if types & {"int64", "uint32", "int64[]"} and any(
                 key in constraints and type(constraints[key]) is not int for key in ("min", "max")
@@ -7451,6 +7533,8 @@ def _validate_attribute_use_constraints(
                 raise RegistryError(f"group {group.id}: integer use constraints must be exact integers for {use.ref}")
             if ({"min_items", "max_items"} & constraints.keys()) and not (bool(types & array_types) or structured):
                 raise RegistryError(f"group {group.id}: item constraint is incompatible with {use.ref}")
+            if constraints.get("min_items", 0) > 1 and (shape == "any_value" or "canonical_json" in types):
+                raise RegistryError(f"group {group.id}: min_items greater than one is unsupported for {use.ref}")
             if ({"max_utf8_bytes"} & constraints.keys()) and not (
                 bool(types & (string_types | {"bytes"})) or structured
             ):

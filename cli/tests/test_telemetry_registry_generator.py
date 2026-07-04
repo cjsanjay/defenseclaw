@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import dataclasses
 import hashlib
 import importlib.util
 import io
@@ -188,13 +189,17 @@ def _snapshot(
         )
         identifiers |= {f"core.attribute.{index:04d}" for index in range(923 - len(identifiers))}
     elif dependency_id == "otel_genai":
-        identifiers = deprecated_shared | active_shared | {
-            attribute,
-            "gen_ai.input.messages",
-            "gen_ai.output.messages",
-            "gen_ai.tool.call.arguments",
-            "gen_ai.tool.call.result",
-        }
+        identifiers = (
+            deprecated_shared
+            | active_shared
+            | {
+                attribute,
+                "gen_ai.input.messages",
+                "gen_ai.output.messages",
+                "gen_ai.tool.call.arguments",
+                "gen_ai.tool.call.result",
+            }
+        )
         identifiers |= {f"gen_ai.current.{index:03d}" for index in range(70 - len(identifiers))}
     else:
         identifiers = set()
@@ -207,13 +212,17 @@ def _snapshot(
             "gen_ai.tool.call.arguments",
             "gen_ai.tool.call.result",
         }
-        allowed_types = [] if structured_any else [
-            "int64"
-            if dependency_id == "otel_genai" and identifier == "gen_ai.request.top_k"
-            else "double"
-            if dependency_id == "otel_core" and identifier == "gen_ai.request.top_k"
-            else "string"
-        ]
+        allowed_types = (
+            []
+            if structured_any
+            else [
+                "int64"
+                if dependency_id == "otel_genai" and identifier == "gen_ai.request.top_k"
+                else "double"
+                if dependency_id == "otel_core" and identifier == "gen_ai.request.top_k"
+                else "string"
+            ]
+        )
         attributes.append(
             {
                 "id": identifier,
@@ -417,13 +426,9 @@ def _domain_sources() -> dict[str, dict[str, Any]]:
     )
     for reference in structured_refs:
         domains["genai.yaml"]["attribute_extensions"].append(
-            copy.deepcopy(
-                next(item for item in canonical_genai["attribute_extensions"] if item["ref"] == reference)
-            )
+            copy.deepcopy(next(item for item in canonical_genai["attribute_extensions"] if item["ref"] == reference))
         )
-        domains["genai.yaml"]["groups"][0]["attributes"].append(
-            {"ref": reference, "requirement_level": "optional"}
-        )
+        domains["genai.yaml"]["groups"][0]["attributes"].append({"ref": reference, "requirement_level": "optional"})
     for attribute_id in (
         "defenseclaw.bucket",
         "defenseclaw.outcome",
@@ -680,9 +685,7 @@ def _fixture_root(tmp_path: Path) -> Path:
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_bytes(source.read_bytes())
                 assert _sha256(target.read_bytes()) == digest
-                structural_inputs.append(
-                    {"upstream_path": upstream_path, "path": relative_path, "sha256": digest}
-                )
+                structural_inputs.append({"upstream_path": upstream_path, "path": relative_path, "sha256": digest})
             lock_dependencies[-1]["structural_inputs"] = structural_inputs
     _write_yaml(
         telemetry / "semconv.lock.yaml",
@@ -728,7 +731,7 @@ def _fixture_root(tmp_path: Path) -> Path:
             "schema_version": 1,
             "examples": [
                 {
-                    "id": "model.chat.valid",
+                    "id": "valid-model-chat",
                     "valid": True,
                     "signal": "traces",
                     "family": "span.model.chat",
@@ -1378,13 +1381,76 @@ def test_span_events_use_public_names_not_internal_group_ids(tmp_path: Path) -> 
     assert "public names without event. prefix" in result.stderr
 
 
+@pytest.mark.parametrize(
+    "example_id",
+    [
+        pytest.param("Uppercase", id="uppercase"),
+        pytest.param("a/b", id="slash"),
+        pytest.param("a/../b", id="traversal"),
+        pytest.param("a:b", id="colon"),
+        pytest.param("\u00e9xample", id="non-ascii-nfc"),
+        pytest.param("a" * 129, id="overlength"),
+    ],
+)
+def test_compiler_rejects_nonportable_example_ids(tmp_path: Path, example_id: str) -> None:
+    root = _fixture_root(tmp_path)
+    path = root / "schemas/telemetry/v8/examples.yaml"
+    document = yaml.safe_load(path.read_text(encoding="utf-8"))
+    document["examples"][0]["id"] = example_id
+    _write_yaml(path, document)
+
+    result = _run(root, "--write")
+
+    assert result.returncode == 1
+    assert "examples[0].id: invalid string syntax" in result.stderr
+
+
+@pytest.mark.parametrize(
+    "example_id",
+    [
+        pytest.param("con", id="console"),
+        pytest.param("prn", id="printer"),
+        pytest.param("aux", id="auxiliary"),
+        pytest.param("nul", id="null-device"),
+        pytest.param("com1", id="serial-lower-bound"),
+        pytest.param("com9", id="serial-upper-bound"),
+        pytest.param("lpt1", id="parallel-lower-bound"),
+        pytest.param("lpt9", id="parallel-upper-bound"),
+    ],
+)
+def test_compiler_rejects_platform_reserved_example_ids(tmp_path: Path, example_id: str) -> None:
+    root = _fixture_root(tmp_path)
+    path = root / "schemas/telemetry/v8/examples.yaml"
+    document = yaml.safe_load(path.read_text(encoding="utf-8"))
+    document["examples"][0]["id"] = example_id
+    _write_yaml(path, document)
+
+    result = _run(root, "--write")
+
+    assert result.returncode == 1
+    assert "examples[0].id: platform-reserved example id" in result.stderr
+
+
+def test_compiler_rejects_exact_example_id_collisions(tmp_path: Path) -> None:
+    root = _fixture_root(tmp_path)
+    path = root / "schemas/telemetry/v8/examples.yaml"
+    document = yaml.safe_load(path.read_text(encoding="utf-8"))
+    document["examples"].append(copy.deepcopy(document["examples"][0]))
+    _write_yaml(path, document)
+
+    result = _run(root, "--write")
+
+    assert result.returncode == 1
+    assert "examples[1].id: duplicate example" in result.stderr
+
+
 def test_invalid_top_level_example_requires_derived_mutation(tmp_path: Path) -> None:
     root = _fixture_root(tmp_path)
     path = root / "schemas/telemetry/v8/examples.yaml"
     document = yaml.safe_load(path.read_text(encoding="utf-8"))
     document["examples"].append(
         {
-            "id": "legacy.audit.invalid",
+            "id": "legacy-audit-invalid",
             "valid": False,
             "signal": "logs",
             "description": "Producer-only compatibility identity is not a family.",
@@ -1450,7 +1516,7 @@ def test_invalid_example_mutation_grammar_is_mechanical_and_exact(
     invalid_record = copy.deepcopy(valid["record"])
     invalid_record["event_name"] = "invalid.event.name"
     invalid = {
-        "id": "model.chat.invalid.event-name",
+        "id": "model-chat-invalid-event-name",
         "valid": False,
         "signal": "traces",
         "family": "span.model.chat",
@@ -1664,6 +1730,120 @@ def test_numeric_and_boolean_arrays_require_explicit_max_items(
     assert result.returncode == 0, result.stderr
 
 
+def test_scalar_normalization_rejects_min_items(tmp_path: Path) -> None:
+    root = _fixture_root(tmp_path)
+    path = root / "schemas/telemetry/v8/genai.yaml"
+    document = yaml.safe_load(path.read_text(encoding="utf-8"))
+    attribute = next(
+        item
+        for item in document["attributes"]
+        if item["type"] == "string" and item["normalization"]["id"] == "bounded-v1"
+    )
+    attribute["normalization"].setdefault("overrides", {})["min_items"] = 2
+    _write_yaml(path, document)
+
+    result = _run(root, "--write")
+
+    assert result.returncode == 1
+    assert "min_items requires an array or structured value" in result.stderr
+
+
+def test_polymorphic_json_normalization_rejects_min_items_above_one() -> None:
+    module = _load_generator_module("telemetry_registry_polymorphic_min_items")
+    normalization = module.NormalizationIR(
+        "structured-content-v1",
+        {"min_items": 2},
+        {
+            "min_items": 2,
+            "max_items": 256,
+            "max_utf8_bytes": 65536,
+            "max_item_utf8_bytes": 4096,
+            "max_depth": 8,
+            "max_properties": 256,
+        },
+        None,
+    )
+
+    with pytest.raises(module.RegistryError, match="unsupported for polymorphic JSON"):
+        module._validate_normalization_compatibility(
+            normalization,
+            ("canonical_json",),
+            "any_value",
+            "test.normalization",
+        )
+
+
+@pytest.mark.parametrize(
+    ("constraints", "expected"),
+    [
+        ({"pattern": "text"}, "pattern constraint is incompatible"),
+        ({"min_items": 2}, "min_items greater than one is unsupported"),
+    ],
+)
+def test_any_value_per_use_constraints_reject_scalar_unsafe_rules(
+    tmp_path: Path,
+    constraints: dict[str, Any],
+    expected: str,
+) -> None:
+    root = _fixture_root(tmp_path)
+    module = _load_generator_module(f"telemetry_registry_any_value_{next(iter(constraints))}")
+    ir = module.compile_registry(root)
+    group = next(group for domain in ir.domains for group in domain.groups if group.id == "span.model.chat")
+    use = module.AttributeUseIR("test.any_value", "attributes", "optional", None, constraints)
+    group = dataclasses.replace(group, attribute_uses=(use,))
+    normalization = module.NormalizationIR(
+        "structured-content-v1",
+        {},
+        {
+            "max_items": 256,
+            "max_utf8_bytes": 65536,
+            "max_item_utf8_bytes": 4096,
+            "max_depth": 8,
+            "max_properties": 256,
+        },
+        None,
+    )
+    extension = module.AttributeExtensionIR(
+        "test.any_value",
+        "content",
+        "sensitive",
+        "high",
+        normalization,
+    )
+    snapshot = module.SnapshotAttribute(
+        "test.any_value",
+        (),
+        "any_value",
+        "development",
+        "fixture",
+        "fixture#test.any_value",
+        (),
+        False,
+    )
+
+    with pytest.raises(module.RegistryError, match=expected):
+        module._validate_attribute_use_constraints(
+            {group.id: group},
+            {},
+            {extension.ref: extension},
+            {snapshot.id: ("otel_genai", snapshot)},
+        )
+
+
+def test_normalization_enum_members_match_attribute_type(tmp_path: Path) -> None:
+    root = _fixture_root(tmp_path)
+    path = root / "schemas/telemetry/v8/genai.yaml"
+    document = yaml.safe_load(path.read_text(encoding="utf-8"))
+    attribute = next(item for item in document["attributes"] if item["normalization"]["id"] == "enum-v1")
+    attribute["normalization"]["overrides"]["enum"] = [1]
+    _write_yaml(path, document)
+
+    result = _run(root, "--write")
+
+    assert result.returncode == 1
+    assert "member type is incompatible with attribute types" in result.stderr
+
+
 @pytest.mark.parametrize(
     ("constraints", "expected"),
     [
@@ -1688,6 +1868,43 @@ def test_per_use_constraints_are_typed_portable_and_restrictive(
 
     assert result.returncode == 1
     assert expected in result.stderr
+
+
+@pytest.mark.parametrize(
+    "pattern",
+    [
+        pytest.param(r"a++", id="possessive-plus"),
+        pytest.param(r"a*+", id="possessive-star"),
+        pytest.param(r"a?+", id="possessive-optional"),
+        pytest.param(r"a{1}+", id="possessive-exact-count"),
+        pytest.param(r"a{1,2}+", id="possessive-count-range"),
+        pytest.param(r"a{,3}", id="python-missing-lower-bound"),
+        pytest.param(r"a{1001}", id="go-repetition-exact-limit"),
+        pytest.param(r"a{1,1001}", id="go-repetition-upper-limit"),
+        pytest.param(r"\d+", id="unicode-digit"),
+        pytest.param(r"\D+", id="inverse-unicode-digit"),
+        pytest.param(r"\w+", id="unicode-word"),
+        pytest.param(r"\W+", id="inverse-unicode-word"),
+        pytest.param(r"\s+", id="unicode-space"),
+        pytest.param(r"\S+", id="inverse-unicode-space"),
+        pytest.param(r"\u0061", id="python-unicode-codepoint"),
+        pytest.param(r"\U00000061", id="python-long-unicode-codepoint"),
+        pytest.param(r"\N{LATIN SMALL LETTER A}", id="python-unicode-name"),
+        pytest.param(r"\_", id="python-escaped-non-metachar"),
+    ],
+)
+def test_portable_pattern_rejects_python_re2_semantic_divergences(pattern: str) -> None:
+    module = _load_generator_module(f"telemetry_registry_portable_pattern_{pattern.encode().hex()}")
+
+    with pytest.raises(module.RegistryError, match="outside the portable RE2 subset"):
+        module._validate_portable_pattern(pattern, "test.pattern")
+
+
+def test_portable_pattern_accepts_shared_hex_escape_and_repetition_limit() -> None:
+    module = _load_generator_module("telemetry_registry_portable_pattern_shared_boundary")
+    pattern = r"\x61{0,1000}"
+
+    assert module._validate_portable_pattern(pattern, "test.pattern") == pattern
 
 
 def test_per_use_pattern_cannot_replace_the_attribute_normalization_pattern(tmp_path: Path) -> None:
@@ -1820,13 +2037,13 @@ def test_compiler_ir_preserves_every_validated_public_contract(tmp_path: Path) -
     invalid_record["body"]["attributes"]["defenseclaw.bucket"] = "tool.activity"
     examples["examples"].append(
         {
-            "id": "fixture.invalid",
+            "id": "fixture-invalid",
             "valid": False,
             "signal": "traces",
             "family": "span.model.chat",
-            "base_example": "model.chat.valid",
+            "base_example": "valid-model-chat",
             "builder_context": {
-                "inheritance": {"mode": "exact_base", "base_example": "model.chat.valid"},
+                "inheritance": {"mode": "exact_base", "base_example": "valid-model-chat"},
             },
             "mutation": {
                 "kind": "family_bucket_mismatch",
@@ -1944,7 +2161,7 @@ def test_compiler_ir_preserves_every_validated_public_contract(tmp_path: Path) -
     assert ir.examples[0].field_classes["/attributes/gen_ai.operation.name"] == "metadata"
     assert ir.examples[1].valid is False
     assert ir.examples[1].expected_error == "family_bucket_mismatch"
-    assert ir.examples[1].base_example == "model.chat.valid"
+    assert ir.examples[1].base_example == "valid-model-chat"
     assert ir.examples[1].mutation is not None
     assert ir.examples[1].mutation.changes[0].path == "/record/bucket"
     assert ir.examples[1].record["bucket"] == "tool.activity"
@@ -3088,8 +3305,7 @@ attributes:
             "gen-ai-tool-call-result.json",
         ):
             payload = (
-                ROOT
-                / "schemas/telemetry/v8/upstream/otel-genai-b028dceecdad117461a785c3af35315e7184e813/"
+                ROOT / "schemas/telemetry/v8/upstream/otel-genai-b028dceecdad117461a785c3af35315e7184e813/"
                 f"model/gen-ai/{filename}"
             ).read_bytes()
             info = tarfile.TarInfo(f"semantic-conventions-genai/model/gen-ai/{filename}")
@@ -3100,8 +3316,7 @@ attributes:
 def _full_genai_upstream_archive(path: Path) -> None:
     snapshot = json.loads(
         (
-            ROOT
-            / "schemas/telemetry/v8/upstream/otel-genai-b028dceecdad117461a785c3af35315e7184e813.normalized.json"
+            ROOT / "schemas/telemetry/v8/upstream/otel-genai-b028dceecdad117461a785c3af35315e7184e813.normalized.json"
         ).read_bytes()
     )
     reverse_types = {
@@ -3143,8 +3358,7 @@ def _full_genai_upstream_archive(path: Path) -> None:
             "gen-ai-tool-call-result.json",
         ):
             payload = (
-                ROOT
-                / "schemas/telemetry/v8/upstream/otel-genai-b028dceecdad117461a785c3af35315e7184e813/"
+                ROOT / "schemas/telemetry/v8/upstream/otel-genai-b028dceecdad117461a785c3af35315e7184e813/"
                 f"model/gen-ai/{filename}"
             ).read_bytes()
             info = tarfile.TarInfo(f"semantic-conventions-genai/model/gen-ai/{filename}")
@@ -3153,9 +3367,7 @@ def _full_genai_upstream_archive(path: Path) -> None:
 
 
 def _full_core_upstream_archive(path: Path) -> None:
-    snapshot = json.loads(
-        (ROOT / "schemas/telemetry/v8/upstream/otel-core-v1.42.0.normalized.json").read_bytes()
-    )
+    snapshot = json.loads((ROOT / "schemas/telemetry/v8/upstream/otel-core-v1.42.0.normalized.json").read_bytes())
     attributes: list[dict[str, Any]] = []
     for item in snapshot["attributes"]:
         if item["enum"]:
@@ -3328,9 +3540,7 @@ def test_full_genai_updater_refresh_compiles_end_to_end(tmp_path: Path) -> None:
     lock = yaml.safe_load(lock_path.read_text(encoding="utf-8"))
     core = next(item for item in lock["dependencies"] if item["id"] == "otel_core")
     core_snapshot = root / core["snapshot"]["path"]
-    core_snapshot.write_bytes(
-        (ROOT / "schemas/telemetry/v8/upstream/otel-core-v1.42.0.normalized.json").read_bytes()
-    )
+    core_snapshot.write_bytes((ROOT / "schemas/telemetry/v8/upstream/otel-core-v1.42.0.normalized.json").read_bytes())
     core["snapshot"]["sha256"] = _sha256(core_snapshot.read_bytes())
     _write_yaml(lock_path, lock)
     archive = tmp_path / "full-genai.tar.gz"
@@ -4795,7 +5005,7 @@ def test_invalid_mutation_projection_uses_typed_json_equality(tmp_path: Path) ->
     invalid_record["body"]["start_time_unix_nano"] = 1.0
     document["examples"].append(
         {
-            "id": "model.chat.typed-projection.invalid",
+            "id": "model-chat-typed-projection-invalid",
             "valid": False,
             "signal": "traces",
             "family": "span.model.chat",
@@ -4837,7 +5047,7 @@ def test_invalid_example_must_have_exactly_one_stable_error(tmp_path: Path) -> N
     invalid_record["field_classes"]["/kind"] = "content"
     document["examples"].append(
         {
-            "id": "model.chat.two-errors.invalid",
+            "id": "model-chat-two-errors-invalid",
             "valid": False,
             "signal": "traces",
             "family": "span.model.chat",
@@ -4885,7 +5095,7 @@ def test_invalid_example_does_not_swallow_noncoverage_field_class_errors(tmp_pat
     invalid_record["field_classes"] = []
     document["examples"].append(
         {
-            "id": "model.chat.field-class-shape.invalid",
+            "id": "model-chat-field-class-shape-invalid",
             "valid": False,
             "signal": "traces",
             "family": "span.model.chat",
@@ -4943,7 +5153,7 @@ def test_signal_root_mutation_is_replayed_as_part_of_the_typed_vector(tmp_path: 
     }
     document["examples"].append(
         {
-            "id": "diagnostic.signal-root.invalid",
+            "id": "diagnostic-signal-root-invalid",
             "valid": False,
             "signal": "logs",
             "family": "diagnostic.message",
@@ -5100,7 +5310,7 @@ def test_removed_family_cannot_be_used_by_current_examples(tmp_path: Path) -> No
     examples_path = root / "schemas/telemetry/v8/examples.yaml"
     examples = yaml.safe_load(examples_path.read_text(encoding="utf-8"))
     retired_example = copy.deepcopy(examples["examples"][0])
-    retired_example["id"] = "retired.family.current.invalid"
+    retired_example["id"] = "retired-family-current-invalid"
     retired_example["family"] = "span.retired.fixture"
     examples["examples"].append(retired_example)
     _write_yaml(examples_path, examples)
@@ -5263,7 +5473,7 @@ def test_materialized_digest_preserves_ordered_registry_sequences(tmp_path: Path
         rebuilt = module._build_materialized_registry_view(reordered)
         assert rebuilt.typed_canonical_json_sha256 != ir.materialized_view.typed_canonical_json_sha256
 
-    second_example = module.replace(ir.examples[0], id="model.chat.valid.second")
+    second_example = module.replace(ir.examples[0], id="model-chat-valid-second")
     first_examples = dict(registry_values, examples=(ir.examples[0], second_example))
     second_examples = dict(registry_values, examples=(second_example, ir.examples[0]))
     assert (
@@ -5677,10 +5887,13 @@ def test_checked_in_structured_catalog_bindings_dispositions_and_privacy_are_exa
     ir = module.compile_registry(ROOT)
 
     assert tuple(item.id for item in ir.structured_types) == module.EXPECTED_STRUCTURED_TYPE_IDS
-    assert tuple(
-        (item.attribute, item.structured_type, item.public_encoding, item.canonical_wire_encoding)
-        for item in ir.structured_bindings
-    ) == module.EXPECTED_STRUCTURED_BINDINGS
+    assert (
+        tuple(
+            (item.attribute, item.structured_type, item.public_encoding, item.canonical_wire_encoding)
+            for item in ir.structured_bindings
+        )
+        == module.EXPECTED_STRUCTURED_BINDINGS
+    )
     assert len(ir.structured_property_dispositions) == 109
     assert [len(dependency.structural_inputs) for dependency in ir.dependencies] == [0, 4, 0]
     structural_digest_paths = {item.path for item in ir.input_digests if "/model/gen-ai/" in item.path}
@@ -5741,9 +5954,7 @@ def test_checked_in_structured_catalog_bindings_dispositions_and_privacy_are_exa
     assert uri.scalar is not None
     assert uri.scalar.field_class == "path"
     assert uri.scalar.normalization.effective_constraints["max_utf8_bytes"] == 8192
-    blob_content = next(
-        field for field in by_id["gen_ai.blob_part"].fields or () if field.name == "content"
-    )
+    blob_content = next(field for field in by_id["gen_ai.blob_part"].fields or () if field.name == "content")
     assert blob_content.scalar is not None
     assert blob_content.scalar.encoding_annotation == "json-base64-bytes-v1"
     with pytest.raises(TypeError):
@@ -5868,7 +6079,10 @@ def test_structural_input_json_parser_is_strict(tmp_path: Path, mutation: str) -
     result = _run(root, "--check")
 
     assert result.returncode == 1
-    assert any(marker in result.stderr for marker in ("duplicate JSON key", "invalid JSON", "invalid UTF-8", "non-finite", "nesting"))
+    assert any(
+        marker in result.stderr
+        for marker in ("duplicate JSON key", "invalid JSON", "invalid UTF-8", "non-finite", "nesting")
+    )
 
 
 def test_strict_json_nesting_scan_ignores_string_content_and_bounds_containers(tmp_path: Path) -> None:
@@ -5936,29 +6150,21 @@ def test_authored_structured_type_contract_digest_rejects_unreviewed_semantics(
     registry = yaml.safe_load(path.read_text(encoding="utf-8"))
     by_id = {item["id"]: item for item in registry["structured_types"]}
     if mutation.startswith("dynamic-name"):
-        overrides = by_id["gen_ai.tool_call_arguments"]["dynamic_members"]["name"]["normalization"][
-            "overrides"
-        ]
+        overrides = by_id["gen_ai.tool_call_arguments"]["dynamic_members"]["name"]["normalization"]["overrides"]
         if mutation.endswith("pattern"):
             overrides["pattern"] = "^x+$"
         else:
             overrides["max_utf8_bytes"] = 255
     elif mutation.startswith("canonical-name"):
-        overrides = by_id["gen_ai.canonical_json"]["object"]["members"]["name"]["normalization"][
-            "overrides"
-        ]
+        overrides = by_id["gen_ai.canonical_json"]["object"]["members"]["name"]["normalization"]["overrides"]
         if mutation.endswith("pattern"):
             overrides["pattern"] = "^x+$"
         else:
             overrides["max_utf8_bytes"] = 255
     else:
-        content = next(
-            field for field in by_id["gen_ai.text_part"]["fields"] if field["name"] == "content"
-        )
+        content = next(field for field in by_id["gen_ai.text_part"]["fields"] if field["name"] == "content")
         content["normalization"]["overrides"] = (
-            {"max_utf8_bytes": 32768}
-            if mutation == "content-extra-bound"
-            else {"max_depth": 7}
+            {"max_utf8_bytes": 32768} if mutation == "content-extra-bound" else {"max_depth": 7}
         )
     _write_yaml(path, registry)
 
@@ -6009,8 +6215,7 @@ def test_structural_source_schema_rejects_unmodeled_keyword_surfaces(mutation: s
     module = _load_generator_module(f"telemetry_registry_structural_keyword_{mutation}")
     ir = module.compile_registry(ROOT)
     source = (
-        ROOT
-        / "schemas/telemetry/v8/upstream/otel-genai-b028dceecdad117461a785c3af35315e7184e813/"
+        ROOT / "schemas/telemetry/v8/upstream/otel-genai-b028dceecdad117461a785c3af35315e7184e813/"
         "model/gen-ai/gen-ai-input-messages.json"
     )
     document = module.load_json_strict(source)
@@ -6023,9 +6228,7 @@ def test_structural_source_schema_rejects_unmodeled_keyword_surfaces(mutation: s
     elif mutation == "array-items":
         document["$defs"]["ChatMessage"]["properties"]["parts"]["items"]["minItems"] = 1
     elif mutation == "union-branch":
-        document["$defs"]["ChatMessage"]["properties"]["parts"]["items"]["anyOf"][0][
-            "title"
-        ] = "Unmodeled"
+        document["$defs"]["ChatMessage"]["properties"]["parts"]["items"]["anyOf"][0]["title"] = "Unmodeled"
     elif mutation == "nullable-default":
         document["$defs"]["ChatMessage"]["properties"]["name"]["default"] = "not-null"
     elif mutation == "blob-explicit-open":
@@ -6114,15 +6317,24 @@ def test_structured_facts_participate_in_materialized_digest() -> None:
     changed_contract = module.replace(canonical.canonical_json, limits=changed_limits)
     changed_type = module.replace(canonical, canonical_json=changed_contract)
 
-    assert module._build_materialized_registry_view(
-        dict(values, structured_types=(changed_type, *ir.structured_types[1:]))
-    ).typed_canonical_json_sha256 != ir.materialized_view.typed_canonical_json_sha256
-    assert module._build_materialized_registry_view(
-        dict(values, structured_bindings=tuple(reversed(ir.structured_bindings)))
-    ).typed_canonical_json_sha256 != ir.materialized_view.typed_canonical_json_sha256
-    assert module._build_materialized_registry_view(
-        dict(values, structured_property_dispositions=tuple(reversed(ir.structured_property_dispositions)))
-    ).typed_canonical_json_sha256 != ir.materialized_view.typed_canonical_json_sha256
+    assert (
+        module._build_materialized_registry_view(
+            dict(values, structured_types=(changed_type, *ir.structured_types[1:]))
+        ).typed_canonical_json_sha256
+        != ir.materialized_view.typed_canonical_json_sha256
+    )
+    assert (
+        module._build_materialized_registry_view(
+            dict(values, structured_bindings=tuple(reversed(ir.structured_bindings)))
+        ).typed_canonical_json_sha256
+        != ir.materialized_view.typed_canonical_json_sha256
+    )
+    assert (
+        module._build_materialized_registry_view(
+            dict(values, structured_property_dispositions=tuple(reversed(ir.structured_property_dispositions)))
+        ).typed_canonical_json_sha256
+        != ir.materialized_view.typed_canonical_json_sha256
+    )
 
 
 @pytest.mark.parametrize("surface", ["snapshot", "structural"])
@@ -6611,8 +6823,7 @@ def test_updater_concurrent_subset_refreshes_are_serialized(
     genai_snapshot = root / genai["snapshot"]["path"]
     genai_snapshot.write_bytes(
         (
-            ROOT
-            / "schemas/telemetry/v8/upstream/otel-genai-b028dceecdad117461a785c3af35315e7184e813.normalized.json"
+            ROOT / "schemas/telemetry/v8/upstream/otel-genai-b028dceecdad117461a785c3af35315e7184e813.normalized.json"
         ).read_bytes()
     )
     genai["snapshot"]["sha256"] = _sha256(genai_snapshot.read_bytes())
@@ -6660,9 +6871,7 @@ def test_updater_concurrent_subset_refreshes_are_serialized(
         snapshot_path = root / dependency["snapshot"]["path"]
         assert _sha256(snapshot_path.read_bytes()) == dependency["snapshot"]["sha256"]
     refreshed_digests = {
-        item["id"]: item["snapshot"]["sha256"]
-        for item in dependencies
-        if item["id"] in {"otel_core", "openinference"}
+        item["id"]: item["snapshot"]["sha256"] for item in dependencies if item["id"] in {"otel_core", "openinference"}
     }
     assert set(refreshed_digests) == set(before_subset_digests)
     assert all(refreshed_digests[key] != before_subset_digests[key] for key in refreshed_digests)
