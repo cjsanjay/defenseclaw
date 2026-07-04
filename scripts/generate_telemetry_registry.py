@@ -145,9 +145,14 @@ EXPECTED_COMPATIBILITY_PROFILES: Final = frozenset({"galileo-rich-v2", "local-ob
 EXPECTED_SPAN_KINDS: Final = frozenset({"CLIENT", "CONSUMER", "INTERNAL", "PRODUCER", "SERVER"})
 OUTPUT_MANIFEST = Path("schemas/telemetry/generated/output-manifest.json")
 OUTPUT_MANIFEST_SCHEMA: Final = Path("schemas/telemetry/v8/output-manifest.schema.json")
+# A v2 manifest may claim a schema digest only when these immutable,
+# digest-addressed bytes already exist.  This lets the next schema revision
+# validate prior ownership with the exact old contract instead of the new one.
+OUTPUT_MANIFEST_SCHEMA_BASELINES: Final = Path("schemas/telemetry/v8/baselines/output-manifest")
 OUTPUT_MANIFEST_MARKER: Final = b'"generated_by": "scripts/generate_telemetry_registry.py"'
 OUTPUT_MANIFEST_MODE: Final = 0o644
 OUTPUT_MANIFEST_MAX_BYTES: Final = 8 * 1024 * 1024
+OUTPUT_MANIFEST_SCHEMA_MAX_BYTES: Final = 64 * 1024
 
 EXPECTED_STRUCTURAL_CONTRACT_ID: Final = "defenseclaw.canonical-record"
 EXPECTED_OTLP_REPRESENTATION_ID: Final = "defenseclaw-otlp-v1"
@@ -3560,17 +3565,27 @@ def _registered_dynamic_fields(
     return len(errors.codes) == initial_error_count
 
 
+def _span_name_pattern_parts(pattern: str) -> tuple[tuple[str, str | None, str | None, str | None], ...] | None:
+    try:
+        return tuple(string.Formatter().parse(pattern))
+    except ValueError:
+        return None
+
+
 def _materialized_span_name(pattern: str, attributes: Mapping[str, Any]) -> str | None:
+    parts = _span_name_pattern_parts(pattern)
+    if parts is None:
+        return None
     result: list[str] = []
-    position = 0
-    for match in re.finditer(r"\{([^{}]+)\}", pattern):
-        result.append(pattern[position : match.start()])
-        reference = match.group(1)
+    for literal, reference, format_spec, conversion in parts:
+        result.append(literal)
+        if reference is None:
+            continue
+        if format_spec or conversion is not None:
+            return None
         if reference not in attributes:
             return None
         result.append(str(attributes[reference]))
-        position = match.end()
-    result.append(pattern[position:])
     return "".join(result)
 
 
@@ -3850,6 +3865,11 @@ def _validate_example_record(
         paired_value = payload.get(catalog.paired_value_attribute)
         paired_code = payload.get(catalog.code_attribute)
         if paired_value is not None and paired_code is not None:
+            if not isinstance(paired_value, str):
+                # The registered attribute validator owns the stable type
+                # error.  Never use an unhashable malformed value as a lookup
+                # key while evaluating the cross-field relationship.
+                continue
             expected_code = {entry.value: entry.code for entry in catalog.entries}.get(paired_value)
             if not _typed_json_equal(expected_code, paired_code):
                 errors.add("lifecycle_phase_code_mismatch")
@@ -4291,7 +4311,21 @@ def _parse_examples(
                 upstream_attributes,
             )
             errors = tuple(dict.fromkeys((*errors, *_field_class_pointer_coverage_errors(item["record"], signal))))
-            if family in groups and group_signals.get(family) == signal:
+            classification_unavailable = {
+                "finding_body_field_not_registered",
+                "metric_label_not_registered",
+                "resource_attribute_not_registered",
+                "scope_attribute_not_registered",
+                "span_attribute_not_registered",
+                "span_event_attribute_not_registered",
+                "span_event_not_registered",
+                "span_link_attribute_not_registered",
+            }
+            if (
+                family in groups
+                and group_signals.get(family) == signal
+                and classification_unavailable.isdisjoint(errors)
+            ):
                 try:
                     _validate_example_field_classes(
                         item["record"],
@@ -4306,6 +4340,8 @@ def _parse_examples(
                 except RegistryError as exc:
                     if "field_classes: coverage mismatch" in str(exc):
                         errors = tuple(dict.fromkeys((*errors, "field_class_classification_mismatch")))
+                    else:
+                        raise
             if not errors:
                 raise RegistryError(f"{item_path}: invalid example unexpectedly validates")
             if errors != (expected_error,):
@@ -5195,7 +5231,7 @@ def compile_registry(root: Path) -> RegistryIR:
     )
     registry_raw, _ = _read_utf8(registry_path)
     registry_digest = InputDigest("schemas/telemetry/v8/registry.yaml", _sha256(registry_raw))
-    manifest_schema_raw, _ = _read_utf8(root / OUTPUT_MANIFEST_SCHEMA)
+    manifest_schema_raw = _read_output_manifest_schema_bytes(root)
     manifest_schema_digest = InputDigest(OUTPUT_MANIFEST_SCHEMA.as_posix(), _sha256(manifest_schema_raw))
     input_digests = (
         registry_digest,
@@ -5552,6 +5588,14 @@ def _validate_attribute_use_constraints(
             if ({"max_depth", "max_properties"} & constraints.keys()) and not structured:
                 raise RegistryError(f"group {group.id}: structured constraint is incompatible with {use.ref}")
             effective = normalization.effective_constraints
+            if (
+                "pattern" in constraints
+                and "pattern" in effective
+                and constraints["pattern"] != effective["pattern"]
+            ):
+                raise RegistryError(
+                    f"group {group.id}: nonrepresentable pattern intersection for {use.ref}"
+                )
             for maximum in (
                 "max",
                 "max_items",
@@ -5682,15 +5726,13 @@ def _validate_span_name_patterns(
     upstream_extensions: dict[str, AttributeExtensionIR],
 ) -> None:
     prohibited_classes = {"content", "credential", "path", "evidence", "reason", "error"}
-    formatter = string.Formatter()
     for group in groups.values():
         if group.type != "span" or group.span_name_pattern is None:
             continue
         available = frozenset(use.ref for use in group.resolved_uses)
-        try:
-            parts = tuple(formatter.parse(group.span_name_pattern))
-        except ValueError as exc:
-            raise RegistryError(f"span {group.id}: invalid name pattern") from exc
+        parts = _span_name_pattern_parts(group.span_name_pattern)
+        if parts is None:
+            raise RegistryError(f"span {group.id}: invalid name pattern")
         for _, placeholder, format_spec, conversion in parts:
             if placeholder is None:
                 continue
@@ -5820,23 +5862,91 @@ def _decode_output_manifest(raw: bytes) -> dict[str, Any]:
     return value
 
 
-def _read_output_manifest_schema(root: Path) -> dict[str, Any]:
-    schema_path = root / OUTPUT_MANIFEST_SCHEMA
+def _read_output_manifest_schema_bytes(root: Path) -> bytes:
     try:
-        raw = schema_path.read_bytes()
+        return generated_transaction.read_repository_file_bounded(
+            root,
+            OUTPUT_MANIFEST_SCHEMA,
+            maximum=OUTPUT_MANIFEST_SCHEMA_MAX_BYTES,
+        )
+    except generated_transaction.TransactionError as exc:
+        raise RegistryError(
+            f"output manifest schema is not a safe bounded regular file: {OUTPUT_MANIFEST_SCHEMA.as_posix()}"
+        ) from exc
+
+
+def _manifest_schema_input_digest(manifest: dict[str, Any]) -> str:
+    inputs = manifest.get("inputs")
+    matches = (
+        [
+            item
+            for item in inputs
+            if isinstance(item, dict) and item.get("path") == OUTPUT_MANIFEST_SCHEMA.as_posix()
+        ]
+        if isinstance(inputs, list)
+        else []
+    )
+    if len(matches) != 1:
+        raise RegistryError("generated output manifest must contain exactly one output-manifest schema input")
+    digest = matches[0].get("sha256")
+    if not isinstance(digest, str) or _SHA256.fullmatch(digest) is None:
+        raise RegistryError("generated output manifest schema input digest is invalid")
+    return digest
+
+
+def _read_output_manifest_schema_baseline(
+    root: Path,
+    expected_sha256: str,
+    *,
+    role: str,
+) -> bytes:
+    relative = OUTPUT_MANIFEST_SCHEMA_BASELINES / f"{expected_sha256}.schema.json"
+    try:
+        raw = generated_transaction.read_repository_file_bounded(
+            root,
+            relative,
+            maximum=OUTPUT_MANIFEST_SCHEMA_MAX_BYTES,
+        )
+    except generated_transaction.TransactionError as exc:
+        raise RegistryError(
+            f"{role} output manifest schema has no safe digest-addressed baseline: "
+            + expected_sha256
+        ) from exc
+    if _sha256(raw) != expected_sha256:
+        raise RegistryError(f"{role} output manifest schema baseline digest does not match its filename")
+    return raw
+
+
+def _read_output_manifest_schema(root: Path, expected_sha256: str) -> tuple[dict[str, Any], str]:
+    current = _read_output_manifest_schema_bytes(root)
+    current_sha256 = _sha256(current)
+    if current_sha256 == expected_sha256:
+        baseline = _read_output_manifest_schema_baseline(root, expected_sha256, role="current")
+        if baseline != current:
+            raise RegistryError("current output manifest schema baseline bytes do not match the source schema")
+        raw = current
+    else:
+        raw = _read_output_manifest_schema_baseline(root, expected_sha256, role="prior")
+    try:
         schema = _decode_output_manifest(raw)
         Draft202012Validator.check_schema(schema)
-    except OSError as exc:
-        raise RegistryError(f"cannot read output manifest schema: {OUTPUT_MANIFEST_SCHEMA.as_posix()}") from exc
     except Exception as exc:
         if isinstance(exc, RegistryError):
             raise
         raise RegistryError("output manifest schema is invalid") from exc
-    return schema
+    return schema, _sha256(raw)
+
+
+def _require_matching_manifest_schema_input(manifest: dict[str, Any], schema_sha256: str) -> None:
+    if _manifest_schema_input_digest(manifest) != schema_sha256:
+        raise RegistryError("generated output manifest schema input digest does not match the schema bytes used")
 
 
 def _validate_v2_output_manifest(root: Path, manifest: dict[str, Any]) -> None:
-    validator = Draft202012Validator(_read_output_manifest_schema(root))
+    claimed_schema_sha256 = _manifest_schema_input_digest(manifest)
+    schema, schema_sha256 = _read_output_manifest_schema(root, claimed_schema_sha256)
+    _require_matching_manifest_schema_input(manifest, schema_sha256)
+    validator = Draft202012Validator(schema)
     errors = sorted(validator.iter_errors(manifest), key=lambda error: tuple(str(item) for item in error.path))
     if errors:
         error = errors[0]
@@ -5875,6 +5985,8 @@ _V1_MANIFEST_KEYS: Final = frozenset(
 def _prior_output_ownership(root: Path) -> dict[str, Any]:
     manifest_path = root / OUTPUT_MANIFEST
     try:
+        if not generated_transaction.generated_root_exists(root):
+            return {}
         opened = generated_transaction._read_regular_file_bounded(  # noqa: SLF001
             manifest_path,
             maximum=OUTPUT_MANIFEST_MAX_BYTES,
@@ -6000,9 +6112,7 @@ def check_outputs(root: Path, outputs: dict[Path, bytes]) -> None:
 
 
 def write_outputs(root: Path, outputs: dict[Path, bytes]) -> None:
-    generated_root = root / "schemas/telemetry/generated"
     try:
-        generated_root.mkdir(parents=True, exist_ok=True)
         desired = _transaction_outputs(root, outputs)
         prior = _prior_output_ownership(root)
         generated_transaction.write_outputs(root, desired, prior)

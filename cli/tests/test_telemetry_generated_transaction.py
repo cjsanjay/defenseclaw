@@ -146,6 +146,42 @@ def test_write_check_update_and_delete_are_deterministic_and_manifest_last(
     assert _worktree_snapshot(repository) == before
 
 
+def test_write_bootstraps_a_missing_generated_root_inside_the_transaction(
+    transaction: ModuleType,
+    repository: Path,
+) -> None:
+    generated = repository / "schemas/telemetry/generated"
+    generated.rmdir()
+    assert not generated.exists()
+
+    outputs = _outputs(transaction, 1)
+    result = transaction.write_outputs(repository, outputs, {})
+
+    assert result == transaction.RecoveryResult(False, "written")
+    assert generated.is_dir() and not generated.is_symlink()
+    _assert_outputs(repository, outputs)
+
+
+@pytest.mark.skipif(not hasattr(os, "symlink"), reason="symlink unavailable")
+def test_missing_generated_root_never_escapes_through_a_symlink_ancestor(
+    transaction: ModuleType,
+    tmp_path: Path,
+) -> None:
+    repository = tmp_path / "repository"
+    (repository / ".git").mkdir(parents=True)
+    (repository / "internal/observability").mkdir(parents=True)
+    (repository / "schemas").mkdir()
+    outside = tmp_path / "outside-telemetry"
+    outside.mkdir()
+    (repository / "schemas/telemetry").symlink_to(outside, target_is_directory=True)
+
+    with pytest.raises(transaction.TransactionError, match="directory chain changed or is unsafe"):
+        transaction.write_outputs(repository, _outputs(transaction, 1), {})
+
+    assert not (outside / "generated").exists()
+    assert _worktree_snapshot(repository) == {}
+
+
 def test_check_mode_is_read_only_for_clean_drift_and_pending_recovery(
     transaction: ModuleType,
     repository: Path,
@@ -1103,13 +1139,20 @@ def test_new_transaction_ancestors_are_synced_before_journal_publication(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     synced: list[Path] = []
+    synced_trees: list[Path] = []
     original = transaction._fsync_directory
+    original_tree = transaction._fsync_directory_tree
 
     def record(path: Path) -> None:
         synced.append(path)
         original(path)
 
+    def record_tree(path: Path) -> None:
+        synced_trees.append(path)
+        original_tree(path)
+
     monkeypatch.setattr(transaction, "_fsync_directory", record)
+    monkeypatch.setattr(transaction, "_fsync_directory_tree", record_tree)
 
     def assert_order(stage: str, path: str | None) -> None:
         if stage != "journal_published" or path != "prepared":
@@ -1120,9 +1163,30 @@ def test_new_transaction_ancestors_are_synced_before_journal_publication(
         assert len(tokens) == 1
         assert state in synced
         assert transactions in synced
-        assert tokens[0] in synced
+        assert tokens[0] in synced_trees
 
     transaction.write_outputs(repository, _outputs(transaction, 1), {}, fault_injector=assert_order)
+
+
+@pytest.mark.skipif(not hasattr(os, "symlink"), reason="symlink unavailable")
+def test_directory_sync_never_follows_a_symlinked_path_or_tree_entry(
+    transaction: ModuleType,
+    tmp_path: Path,
+) -> None:
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    linked_root = tmp_path / "linked-root"
+    linked_root.symlink_to(outside, target_is_directory=True)
+    with pytest.raises(transaction.TransactionError, match="directory chain changed or is unsafe"):
+        transaction._fsync_directory(linked_root)
+
+    tree = tmp_path / "tree"
+    tree.mkdir()
+    (tree / "linked-child").symlink_to(outside, target_is_directory=True)
+    with pytest.raises(transaction.TransactionError, match="unsafe symlink"):
+        transaction._fsync_directory_tree(tree)
+
+    assert list(outside.iterdir()) == []
 
 
 def test_file_mode_is_applied_before_file_fsync(

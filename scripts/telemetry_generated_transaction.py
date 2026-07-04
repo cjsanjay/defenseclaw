@@ -323,12 +323,44 @@ def _safe_root(root: Path) -> Path:
     return resolved
 
 
-def _validate_required_roots(root: Path) -> None:
-    for relative in (GENERATED_ROOT.as_posix(), "internal/observability"):
-        path = root / relative
-        metadata = _lstat(path)
-        if metadata is None or stat.S_ISLNK(metadata.st_mode) or not stat.S_ISDIR(metadata.st_mode):
-            raise TransactionError(f"generated output root is not a real directory: {relative}")
+def _generated_root_exists(root: Path) -> bool:
+    """Inspect the exact generated root without following any ancestor links."""
+
+    parent = root / GENERATED_ROOT.parent.as_posix()
+    with _directory_descriptor(parent) as parent_descriptor:
+        try:
+            metadata = os.stat(GENERATED_ROOT.name, dir_fd=parent_descriptor, follow_symlinks=False)
+        except FileNotFoundError:
+            return False
+        except OSError as exc:
+            raise TransactionError("cannot inspect the telemetry generated-output root") from exc
+    if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISDIR(metadata.st_mode):
+        raise TransactionError(f"generated output root is not a real directory: {GENERATED_ROOT.as_posix()}")
+    return True
+
+
+def generated_root_exists(root: Path) -> bool:
+    """Return whether the exact safe telemetry generated-output root exists.
+
+    This read-only bootstrap probe validates the repository root and every
+    existing parent by descriptor.  A missing ``generated`` leaf is valid; a
+    missing or linked ancestor is not.
+    """
+
+    return _generated_root_exists(_safe_root(root))
+
+
+def _validate_required_roots(root: Path, *, allow_missing_generated: bool = False) -> bool:
+    internal = root / "internal/observability"
+    try:
+        with _directory_descriptor(internal):
+            pass
+    except TransactionError as exc:
+        raise TransactionError("generated output root is not a real directory: internal/observability") from exc
+    generated_exists = _generated_root_exists(root)
+    if not generated_exists and not allow_missing_generated:
+        raise TransactionError(f"generated output root is not a real directory: {GENERATED_ROOT.as_posix()}")
+    return generated_exists
 
 
 def _lstat(path: Path) -> os.stat_result | None:
@@ -458,6 +490,43 @@ def _read_regular_file_bounded(
             return payload, before
         finally:
             os.close(descriptor)
+
+
+def _normalized_repository_source_path(raw: str | Path) -> str:
+    if isinstance(raw, Path):
+        raw = raw.as_posix()
+    if not isinstance(raw, str) or not raw or "\\" in raw or "\x00" in raw:
+        raise TransactionError("repository source path is not normalized relative POSIX syntax")
+    if raw.startswith("/") or raw.endswith("/") or "//" in raw:
+        raise TransactionError("repository source path is not normalized relative POSIX syntax")
+    path = PurePosixPath(raw)
+    if path.is_absolute() or any(part in {"", ".", ".."} for part in path.parts) or path.as_posix() != raw:
+        raise TransactionError("repository source path leaves its repository-relative identity")
+    return raw
+
+
+def read_repository_file_bounded(root: Path, relative: str | Path, *, maximum: int) -> bytes:
+    """Read one repository source through pinned, no-follow descriptors.
+
+    The source path is repository-relative and all ancestors must already be
+    real directories.  The helper never creates parents and rejects linked,
+    hard-linked, changing, missing, or over-limit files.
+    """
+
+    if type(maximum) is not int or maximum <= 0:
+        raise TransactionError("repository source size limit is invalid")
+    safe_root = _safe_root(root)
+    normalized = _normalized_repository_source_path(relative)
+    try:
+        opened = _read_regular_file_bounded(
+            safe_root / normalized,
+            maximum=maximum,
+            missing_ok=False,
+        )
+    except RecoveryRequiredError as exc:
+        raise TransactionError("repository source file exceeds its size limit") from exc
+    assert opened is not None
+    return opened[0]
 
 
 def _validate_current_ownership(
@@ -594,18 +663,52 @@ def _state_root(root: Path, *, create: bool) -> Path:
 def _fsync_directory(path: Path) -> None:
     if os.name == "nt":  # pragma: no cover - Windows has no directory fsync.
         return
-    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
-    try:
+    with _directory_descriptor(path) as descriptor:
         os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
 
 
 def _fsync_directory_tree(root: Path) -> None:
-    directories = [path for path in root.rglob("*") if path.is_dir() and not path.is_symlink()]
-    for directory in sorted(directories, key=lambda item: (-len(item.parts), item.as_posix())):
-        _fsync_directory(directory)
-    _fsync_directory(root)
+    if os.name == "nt":  # pragma: no cover - Windows has no directory fsync.
+        return
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+
+    def sync_tree(descriptor: int) -> None:
+        try:
+            names = tuple(os.listdir(descriptor))
+        except OSError as exc:
+            raise TransactionError("cannot inspect generated-output directory tree for sync") from exc
+        for name in names:
+            try:
+                expected = os.stat(name, dir_fd=descriptor, follow_symlinks=False)
+            except OSError as exc:
+                raise TransactionError("generated-output directory tree changed before sync") from exc
+            if stat.S_ISLNK(expected.st_mode):
+                raise TransactionError("generated-output directory tree contains an unsafe symlink")
+            if not stat.S_ISDIR(expected.st_mode):
+                continue
+            try:
+                child = os.open(name, flags, dir_fd=descriptor)
+            except OSError as exc:
+                raise TransactionError("cannot safely open generated-output directory tree") from exc
+            try:
+                opened = os.fstat(child)
+                if not _same_filesystem_object(_path_identity(expected), _path_identity(opened)):
+                    raise TransactionError("generated-output directory tree changed while opening for sync")
+                sync_tree(child)
+                try:
+                    observed = os.stat(name, dir_fd=descriptor, follow_symlinks=False)
+                except OSError as exc:
+                    raise TransactionError("generated-output directory tree changed during sync") from exc
+                if not _same_filesystem_object(_path_identity(observed), _path_identity(os.fstat(child))):
+                    raise TransactionError("generated-output directory tree changed during sync")
+            finally:
+                os.close(child)
+        os.fsync(descriptor)
+
+    with _directory_descriptor(root) as root_descriptor:
+        sync_tree(root_descriptor)
 
 
 def _rmtree_at_compat(parent_descriptor: int, name: str) -> None:
@@ -1196,7 +1299,7 @@ def _read_journal(state_root: Path) -> _Journal | None:
         parent.as_posix()
         for path in desired_paths
         for parent in PurePosixPath(path).parents
-        if parent != PurePosixPath(".") and parent.is_relative_to(GENERATED_ROOT) and parent != GENERATED_ROOT
+        if parent != PurePosixPath(".") and parent.is_relative_to(GENERATED_ROOT)
     }
     if any(directory not in allowed_directories for directory in normalized_directories):
         raise RecoveryRequiredError("generated-output transaction journal created-directory set is unsafe")
@@ -1434,8 +1537,41 @@ def _prepare_journal(
 
 
 def _create_target_directories(root: Path, directories: tuple[str, ...]) -> None:
-    for relative in directories:
+    pending = list(directories)
+    generated_relative = GENERATED_ROOT.as_posix()
+    if generated_relative in pending:
+        _create_generated_root(root)
+        pending.remove(generated_relative)
+    elif not _generated_root_exists(root):
+        raise TransactionError("telemetry generated-output root disappeared during transaction")
+    for relative in pending:
         _ensure_relative_directory(root, relative, 0o755)
+
+
+def _create_generated_root(root: Path) -> None:
+    """Create only ``schemas/telemetry/generated`` through its pinned parent."""
+
+    parent = root / GENERATED_ROOT.parent.as_posix()
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    with _directory_descriptor(parent) as parent_descriptor:
+        try:
+            os.mkdir(GENERATED_ROOT.name, mode=0o755, dir_fd=parent_descriptor)
+            descriptor = os.open(GENERATED_ROOT.name, flags, dir_fd=parent_descriptor)
+        except FileExistsError as exc:
+            raise TransactionError("telemetry generated-output root appeared during transaction") from exc
+        except OSError as exc:
+            raise TransactionError("cannot safely create the telemetry generated-output root") from exc
+        try:
+            metadata = os.fstat(descriptor)
+            if not stat.S_ISDIR(metadata.st_mode):
+                raise TransactionError("created telemetry generated-output root is not a directory")
+            os.fchmod(descriptor, 0o755)
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+        os.fsync(parent_descriptor)
 
 
 def _ensure_relative_directory(root: Path, relative: str, mode: int) -> None:
@@ -1876,7 +2012,7 @@ def write_outputs(
     """
 
     root = _safe_root(root)
-    _validate_required_roots(root)
+    _validate_required_roots(root, allow_missing_generated=True)
     normalized_outputs, normalized_prior = _normalize_inputs(outputs, prior)
     state_root = _state_root(root, create=True)
     with _exclusive_lock(state_root):

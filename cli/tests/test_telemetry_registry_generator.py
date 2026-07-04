@@ -96,6 +96,17 @@ def _sha256(value: bytes) -> str:
     return hashlib.sha256(value).hexdigest()
 
 
+def _install_manifest_schema_baseline(root: Path, schema_bytes: bytes) -> Path:
+    target = (
+        root
+        / "schemas/telemetry/v8/baselines/output-manifest"
+        / f"{_sha256(schema_bytes)}.schema.json"
+    )
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(schema_bytes)
+    return target
+
+
 def _grouped_outcome_contract_matrix(
     contracts: list[tuple[str, str, tuple[str, ...]]],
 ) -> tuple[tuple[str, tuple[str, ...], tuple[str, ...]], ...]:
@@ -544,7 +555,15 @@ def _fixture_root(tmp_path: Path) -> Path:
     upstream = telemetry / "upstream"
     upstream.mkdir(parents=True)
     schema_source = ROOT / "schemas/telemetry/v8/output-manifest.schema.json"
-    (telemetry / "output-manifest.schema.json").write_bytes(schema_source.read_bytes())
+    schema_bytes = schema_source.read_bytes()
+    (telemetry / "output-manifest.schema.json").write_bytes(schema_bytes)
+    schema_baseline_source = (
+        ROOT
+        / "schemas/telemetry/v8/baselines/output-manifest"
+        / f"{_sha256(schema_bytes)}.schema.json"
+    )
+    schema_baseline_target = _install_manifest_schema_baseline(root, schema_baseline_source.read_bytes())
+    assert schema_baseline_target.name == schema_baseline_source.name
     inventory_source = ROOT / "docs/design/observability-v8/current-state-inventory.yaml"
     inventory_target = root / "docs/design/observability-v8/current-state-inventory.yaml"
     inventory_target.parent.mkdir(parents=True)
@@ -869,6 +888,68 @@ def test_prior_manifest_parser_rejects_duplicate_unknown_and_disagreeing_ownersh
     manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     with pytest.raises(module.RegistryError, match="outputs disagree"):
         module._prior_output_ownership(root)
+
+
+@pytest.mark.parametrize(
+    ("mutation", "expected"),
+    [
+        ("missing", "exactly one output-manifest schema input"),
+        ("duplicate", "exactly one output-manifest schema input"),
+        ("mismatch", "prior output manifest schema has no safe digest-addressed baseline"),
+    ],
+)
+def test_prior_v2_manifest_pins_the_exact_schema_bytes_used_for_validation(
+    tmp_path: Path,
+    mutation: str,
+    expected: str,
+) -> None:
+    root = _fixture_root(tmp_path)
+    assert _run(root, "--write").returncode == 0
+    module = _load_generator_module(f"telemetry_registry_schema_pin_{mutation}")
+    manifest_path = root / module.OUTPUT_MANIFEST
+    manifest = json.loads(manifest_path.read_bytes())
+    schema_path = module.OUTPUT_MANIFEST_SCHEMA.as_posix()
+    schema_inputs = [item for item in manifest["inputs"] if item["path"] == schema_path]
+    assert len(schema_inputs) == 1
+    if mutation == "missing":
+        manifest["inputs"].remove(schema_inputs[0])
+    elif mutation == "duplicate":
+        manifest["inputs"].append(dict(schema_inputs[0]))
+    else:
+        schema_inputs[0]["sha256"] = "0" * 64
+    manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+    with pytest.raises(module.RegistryError, match=expected):
+        module._prior_output_ownership(root)
+
+
+@pytest.mark.skipif(not hasattr(os, "symlink"), reason="symlink unavailable")
+def test_manifest_schema_symlink_is_rejected_without_creating_outputs(tmp_path: Path) -> None:
+    root = _fixture_root(tmp_path)
+    schema_path = root / "schemas/telemetry/v8/output-manifest.schema.json"
+    outside = tmp_path / "outside-manifest-schema.json"
+    outside.write_bytes(schema_path.read_bytes())
+    schema_path.unlink()
+    schema_path.symlink_to(outside)
+
+    result = _run(root, "--write")
+
+    assert result.returncode == 1
+    assert "output manifest schema is not a safe bounded regular file" in result.stderr
+    assert not (root / "schemas/telemetry/generated").exists()
+
+
+def test_manifest_schema_oversize_is_rejected_before_decode_or_output(tmp_path: Path) -> None:
+    root = _fixture_root(tmp_path)
+    module = _load_generator_module("telemetry_registry_schema_size_bound")
+    schema_path = root / module.OUTPUT_MANIFEST_SCHEMA
+    schema_path.write_bytes(b" " * (module.OUTPUT_MANIFEST_SCHEMA_MAX_BYTES + 1))
+
+    result = _run(root, "--write")
+
+    assert result.returncode == 1
+    assert "output manifest schema is not a safe bounded regular file" in result.stderr
+    assert not (root / "schemas/telemetry/generated").exists()
 
 
 def test_v2_ownership_inventory_loads_exact_future_artifact_metadata(tmp_path: Path) -> None:
@@ -1460,6 +1541,20 @@ def test_per_use_constraints_are_typed_portable_and_restrictive(
 
     assert result.returncode == 1
     assert expected in result.stderr
+
+
+def test_per_use_pattern_cannot_replace_the_attribute_normalization_pattern(tmp_path: Path) -> None:
+    root = _fixture_root(tmp_path)
+    path = root / "schemas/telemetry/v8/genai.yaml"
+    document = yaml.safe_load(path.read_text(encoding="utf-8"))
+    document["attribute_extensions"][0]["normalization"] = {"id": "identifier-v1"}
+    document["groups"][0]["attributes"][0]["constraints"] = {"pattern": "^chat$"}
+    _write_yaml(path, document)
+
+    result = _run(root, "--write")
+
+    assert result.returncode == 1
+    assert "nonrepresentable pattern intersection for gen_ai.operation.name" in result.stderr
 
 
 def test_per_use_constraints_are_preserved_in_compiler_ir(tmp_path: Path) -> None:
@@ -2642,6 +2737,22 @@ def test_span_name_placeholder_rejects_high_cardinality_attribute(tmp_path: Path
     assert "unsafe name placeholder gen_ai.operation.name" in result.stderr
 
 
+def test_span_name_validation_and_materialization_share_escaped_brace_parsing(tmp_path: Path) -> None:
+    root = _fixture_root(tmp_path)
+    domain_path = root / "schemas/telemetry/v8/genai.yaml"
+    domain = yaml.safe_load(domain_path.read_text(encoding="utf-8"))
+    domain["groups"][0]["span"]["name_pattern"] = "chat {{literal}} {gen_ai.operation.name}"
+    _write_yaml(domain_path, domain)
+    examples_path = root / "schemas/telemetry/v8/examples.yaml"
+    examples = yaml.safe_load(examples_path.read_text(encoding="utf-8"))
+    examples["examples"][0]["record"]["span_name"] = "chat {literal} chat"
+    _write_yaml(examples_path, examples)
+
+    result = _run(root, "--write")
+
+    assert result.returncode == 0, result.stderr
+
+
 def test_valid_example_field_class_map_is_complete_and_exact(tmp_path: Path) -> None:
     root = _fixture_root(tmp_path)
     examples_path = root / "schemas/telemetry/v8/examples.yaml"
@@ -3591,6 +3702,33 @@ def test_phase_value_catalog_binds_code_range(tmp_path: Path) -> None:
     assert "code attribute must use the exact catalog range" in result.stderr
 
 
+def test_nonstring_paired_phase_value_reports_validation_instead_of_type_error(tmp_path: Path) -> None:
+    root = _fixture_root(tmp_path)
+    domain_path = root / "schemas/telemetry/v8/genai.yaml"
+    domain = yaml.safe_load(domain_path.read_text(encoding="utf-8"))
+    domain["groups"][0]["attributes"].extend(
+        [
+            {"ref": "defenseclaw.agent.phase", "requirement_level": "optional"},
+            {"ref": "defenseclaw.agent.phase.code", "requirement_level": "optional"},
+        ]
+    )
+    _write_yaml(domain_path, domain)
+    path = root / "schemas/telemetry/v8/examples.yaml"
+    examples = yaml.safe_load(path.read_text(encoding="utf-8"))
+    record = examples["examples"][0]["record"]
+    record["body"]["attributes"]["defenseclaw.agent.phase"] = []
+    record["body"]["attributes"]["defenseclaw.agent.phase.code"] = 2
+    record["field_classes"]["/attributes/defenseclaw.agent.phase"] = "metadata"
+    record["field_classes"]["/attributes/defenseclaw.agent.phase.code"] = "metadata"
+    _write_yaml(path, examples)
+
+    result = _run(root, "--write")
+
+    assert result.returncode == 1
+    assert "dynamic_attribute_value_invalid" in result.stderr
+    assert "unhashable type" not in result.stderr
+
+
 def test_removed_group_cannot_remain_route_selectable(tmp_path: Path) -> None:
     root = _fixture_root(tmp_path)
     path = root / "schemas/telemetry/v8/genai.yaml"
@@ -3963,6 +4101,43 @@ def test_invalid_example_must_have_exactly_one_stable_error(tmp_path: Path) -> N
     assert "expected only 'family_event_name_mismatch'" in result.stderr
     assert "family_bucket_mismatch" in result.stderr
     assert "field_class_classification_mismatch" in result.stderr
+
+
+def test_invalid_example_does_not_swallow_noncoverage_field_class_errors(tmp_path: Path) -> None:
+    root = _fixture_root(tmp_path)
+    path = root / "schemas/telemetry/v8/examples.yaml"
+    document = yaml.safe_load(path.read_text(encoding="utf-8"))
+    valid = document["examples"][0]
+    invalid_record = copy.deepcopy(valid["record"])
+    invalid_record["field_classes"] = []
+    document["examples"].append(
+        {
+            "id": "model.chat.field-class-shape.invalid",
+            "valid": False,
+            "signal": "traces",
+            "family": "span.model.chat",
+            "description": "A malformed classification container is not a coverage-only negative vector.",
+            "record": invalid_record,
+            "expected_error": "field_class_coverage_mismatch",
+            "base_example": valid["id"],
+            "mutation": {
+                "kind": "field_class_coverage_mismatch",
+                "changes": [
+                    {
+                        "op": "replace",
+                        "path": "/record/field_classes",
+                        "value": [],
+                    }
+                ],
+            },
+        }
+    )
+    _write_yaml(path, document)
+
+    result = _run(root, "--write")
+
+    assert result.returncode == 1
+    assert "field_classes: expected mapping" in result.stderr
 
 
 def test_signal_root_mutation_is_replayed_as_part_of_the_typed_vector(tmp_path: Path) -> None:
@@ -4612,12 +4787,106 @@ def test_manifest_check_detects_materialized_digest_drift(tmp_path: Path) -> Non
 def test_manifest_schema_change_is_provenance_pinned_input(tmp_path: Path) -> None:
     root = _fixture_root(tmp_path)
     assert _run(root, "--write").returncode == 0
+    manifest_path = root / "schemas/telemetry/generated/output-manifest.json"
+    before = manifest_path.read_bytes()
     schema_path = root / "schemas/telemetry/v8/output-manifest.schema.json"
     schema = json.loads(schema_path.read_bytes())
     schema["title"] += " changed"
     schema_path.write_text(json.dumps(schema, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    _install_manifest_schema_baseline(root, schema_path.read_bytes())
 
     result = _run(root, "--check")
 
     assert result.returncode == 1
     assert "stale=schemas/telemetry/generated/output-manifest.json" in result.stderr
+
+    rewritten = _run(root, "--write")
+    assert rewritten.returncode == 0, rewritten.stderr
+    after = manifest_path.read_bytes()
+    assert after != before
+    current = json.loads(after)
+    schema_inputs = [
+        item for item in current["inputs"] if item["path"] == "schemas/telemetry/v8/output-manifest.schema.json"
+    ]
+    assert schema_inputs == [
+        {
+            "path": "schemas/telemetry/v8/output-manifest.schema.json",
+            "sha256": _sha256(schema_path.read_bytes()),
+        }
+    ]
+    assert _run(root, "--check").returncode == 0
+
+
+@pytest.mark.parametrize(
+    ("mutation", "expected"),
+    [
+        ("missing", "no safe digest-addressed baseline"),
+        ("mismatch", "baseline digest does not match"),
+    ],
+)
+def test_schema_evolution_requires_the_exact_prior_schema_baseline(
+    tmp_path: Path,
+    mutation: str,
+    expected: str,
+) -> None:
+    root = _fixture_root(tmp_path)
+    assert _run(root, "--write").returncode == 0
+    manifest_path = root / "schemas/telemetry/generated/output-manifest.json"
+    before = manifest_path.read_bytes()
+    prior = json.loads(before)
+    schema_input = next(
+        item
+        for item in prior["inputs"]
+        if item["path"] == "schemas/telemetry/v8/output-manifest.schema.json"
+    )
+    baseline = (
+        root
+        / "schemas/telemetry/v8/baselines/output-manifest"
+        / f"{schema_input['sha256']}.schema.json"
+    )
+    schema_path = root / "schemas/telemetry/v8/output-manifest.schema.json"
+    schema = json.loads(schema_path.read_bytes())
+    schema["title"] += " changed"
+    schema_path.write_text(json.dumps(schema, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    _install_manifest_schema_baseline(root, schema_path.read_bytes())
+    if mutation == "missing":
+        baseline.unlink()
+    else:
+        baseline.write_bytes(baseline.read_bytes() + b" ")
+
+    result = _run(root, "--write")
+
+    assert result.returncode == 1
+    assert expected in result.stderr
+    assert manifest_path.read_bytes() == before
+
+
+@pytest.mark.parametrize(
+    ("mutation", "expected"),
+    [
+        ("missing", "current output manifest schema has no safe digest-addressed baseline"),
+        ("mismatch", "current output manifest schema baseline digest does not match"),
+    ],
+)
+def test_current_schema_requires_an_exact_baseline_before_a_manifest_can_claim_it(
+    tmp_path: Path,
+    mutation: str,
+    expected: str,
+) -> None:
+    root = _fixture_root(tmp_path)
+    assert _run(root, "--write").returncode == 0
+    manifest_path = root / "schemas/telemetry/generated/output-manifest.json"
+    before = manifest_path.read_bytes()
+    schema_path = root / "schemas/telemetry/v8/output-manifest.schema.json"
+    schema = json.loads(schema_path.read_bytes())
+    schema["title"] += " changed"
+    schema_path.write_text(json.dumps(schema, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    if mutation == "mismatch":
+        baseline = _install_manifest_schema_baseline(root, schema_path.read_bytes())
+        baseline.write_bytes(baseline.read_bytes() + b" ")
+
+    result = _run(root, "--write")
+
+    assert result.returncode == 1
+    assert expected in result.stderr
+    assert manifest_path.read_bytes() == before
