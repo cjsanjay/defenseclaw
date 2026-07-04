@@ -44,6 +44,19 @@ type resolvedSchemaDerivedLogFamilyContract struct {
 	mandatory bool
 }
 
+// resolvedGeneratedLogContract is the package-private bridge between generated
+// mandatory programs and the schema-derived record constructor. Generated
+// wrappers resolve their typed mandatory facts to one boolean and seal it here;
+// no caller-visible input can provide a raw mandatory result.
+type resolvedGeneratedLogContract struct {
+	mandatory   bool
+	initialized bool
+}
+
+func resolveGeneratedLogMandatory(mandatory bool) resolvedGeneratedLogContract {
+	return resolvedGeneratedLogContract{mandatory: mandatory, initialized: true}
+}
+
 func (contract resolvedSchemaDerivedLogFamilyContract) schemaDerivedLogIdentity() EventIdentity {
 	return contract.identity
 }
@@ -67,7 +80,43 @@ func (builder *FamilyBuilder) buildGeneratedLog(
 	if resolvedIdentity != contract.identity || resolvedIdentity.Signal != SignalLogs {
 		return Record{}, familyBuildFailure(FamilyBuildInvalidDescriptor)
 	}
-	mandatory := descriptor.schemaDerivedLogMandatory()
+	return builder.buildResolvedGeneratedLog(
+		contract,
+		resolveGeneratedLogMandatory(descriptor.schemaDerivedLogMandatory()),
+		input,
+	)
+}
+
+// buildGeneratedResolvedLog is the private entry point used by generated
+// wrappers whose mandatory value is computed from compiler-owned typed facts.
+// The legacy generatedLogFamilyContract adapter above remains until generated
+// descriptors replace the handwritten compatibility witnesses.
+func (builder *FamilyBuilder) buildGeneratedResolvedLog(
+	descriptor familyDescriptor,
+	resolved resolvedGeneratedLogContract,
+	input familyLogBuildInput,
+) (Record, error) {
+	if !builder.ready() || nilInterface(descriptor) {
+		return Record{}, familyBuildFailure(FamilyBuildInvalidDependency)
+	}
+	return builder.buildResolvedGeneratedLog(
+		cloneFamilyDescriptorContract(descriptor.familyDescriptorContract()),
+		resolved,
+		input,
+	)
+}
+
+func (builder *FamilyBuilder) buildResolvedGeneratedLog(
+	contract familyDescriptorContract,
+	resolved resolvedGeneratedLogContract,
+	input familyLogBuildInput,
+) (Record, error) {
+	if !resolved.initialized {
+		return Record{}, familyBuildFailure(FamilyBuildInvalidDescriptor)
+	}
+	if err := validateFamilyDescriptor(contract, familySignalLog); err != nil {
+		return Record{}, err
+	}
 	if err := validateFamilyEnvelope(input.envelope); err != nil {
 		return Record{}, err
 	}
@@ -95,7 +144,7 @@ func (builder *FamilyBuilder) buildGeneratedLog(
 	recordInput.Body = body
 	recordInput.FieldClasses = classes
 	resolvedContract := resolvedSchemaDerivedLogFamilyContract{
-		identity: contract.identity, mandatory: mandatory,
+		identity: contract.identity, mandatory: resolved.mandatory,
 	}
 	if err := preflightGeneratedLogRecord(recordInput, resolvedContract); err != nil {
 		return Record{}, err
@@ -145,11 +194,8 @@ func (builder *FamilyBuilder) buildGeneratedTrace(
 	if err := validateTraceStatus(input.status); err != nil {
 		return Record{}, err
 	}
-	activeFields, err := activeFamilyTraceFields(contract, input)
+	activeConditions, err := activeFamilyTraceConditionFacts(contract, input)
 	if err != nil {
-		return Record{}, err
-	}
-	if _, err := validatedConditionStates(activeFields, input.conditions); err != nil {
 		return Record{}, err
 	}
 	context := familyContext(base, input.envelope, input.outcome)
@@ -158,7 +204,7 @@ func (builder *FamilyBuilder) buildGeneratedTrace(
 	attributes, attributeClasses, err := materializeFamilyFields(
 		contract.fields,
 		input.values,
-		selectFamilyConditionFacts(contract.fields, input.conditions),
+		selectFamilyConditionFacts(contract.fields, activeConditions),
 		context,
 	)
 	if err != nil {
@@ -171,19 +217,19 @@ func (builder *FamilyBuilder) buildGeneratedTrace(
 	if err != nil {
 		return Record{}, err
 	}
-	resource, resourceClasses, err := buildFamilyTraceResource(contract, input, context)
+	resource, resourceClasses, err := buildFamilyTraceResource(contract, input, context, activeConditions)
 	if err != nil {
 		return Record{}, err
 	}
-	scope, scopeClasses, err := buildFamilyTraceScope(contract, input, context)
+	scope, scopeClasses, err := buildFamilyTraceScope(contract, input, context, activeConditions)
 	if err != nil {
 		return Record{}, err
 	}
-	events, eventClasses, err := buildFamilyTraceEvents(contract, input, context)
+	events, eventClasses, err := buildFamilyTraceEvents(contract, input, context, activeConditions)
 	if err != nil {
 		return Record{}, err
 	}
-	links, linkClasses, err := buildFamilyTraceLinks(contract, input, context)
+	links, linkClasses, err := buildFamilyTraceLinks(contract, input, context, activeConditions)
 	if err != nil {
 		return Record{}, err
 	}
@@ -268,23 +314,34 @@ func (builder *FamilyBuilder) buildGeneratedTrace(
 	return record, nil
 }
 
-func activeFamilyTraceFields(
+func activeFamilyTraceConditionFacts(
 	contract familyTraceContract,
 	input familyTraceBuildInput,
-) ([]familyFieldDescriptor, error) {
+) (familyConditionFacts, error) {
 	if len(input.events) > contract.maxEvents || len(input.links) > contract.maxLinks {
 		return nil, familyBuildFailure(FamilyBuildConstraint)
 	}
-	fields := append([]familyFieldDescriptor(nil), contract.fields...)
-	fields = append(fields, contract.resourceFields...)
-	fields = append(fields, contract.scopeFields...)
+	familyFields := append([]familyFieldDescriptor(nil), contract.fields...)
+	familyFields = append(familyFields, contract.resourceFields...)
+	familyFields = append(familyFields, contract.scopeFields...)
+	if _, err := validatedConditionStates(familyFields, input.conditions); err != nil {
+		return nil, err
+	}
+	merged := append(familyConditionFacts(nil), input.conditions...)
 	for _, eventInput := range input.events {
 		allowed, ok := findFamilyEvent(contract.allowedEvents, eventInput.contract.id)
 		if !ok || !reflect.DeepEqual(cloneFamilyEventContract(eventInput.contract), allowed) ||
 			eventInput.TimeUnixNano == 0 {
 			return nil, familyBuildFailure(FamilyBuildInvalidTrace)
 		}
-		fields = append(fields, allowed.fields...)
+		if _, err := validatedConditionStates(allowed.fields, eventInput.conditions); err != nil {
+			return nil, err
+		}
+		var err error
+		merged, err = mergeFamilyConditionFacts(merged, eventInput.conditions)
+		if err != nil {
+			return nil, err
+		}
 	}
 	if len(input.links) != 0 {
 		for _, linkInput := range input.links {
@@ -296,10 +353,38 @@ func activeFamilyTraceFields(
 				(!utf8.ValidString(traceState) || len(traceState) > 512) {
 				return nil, familyBuildFailure(FamilyBuildInvalidTrace)
 			}
+			if _, err := validatedConditionStates(contract.linkFields, linkInput.conditions); err != nil {
+				return nil, err
+			}
+			var err error
+			merged, err = mergeFamilyConditionFacts(merged, linkInput.conditions)
+			if err != nil {
+				return nil, err
+			}
 		}
-		fields = append(fields, contract.linkFields...)
 	}
-	return fields, nil
+	return merged, nil
+}
+
+func mergeFamilyConditionFacts(
+	merged familyConditionFacts,
+	component familyConditionFacts,
+) (familyConditionFacts, error) {
+	states := make(map[string]familyConditionState, len(merged)+len(component))
+	for _, fact := range merged {
+		states[fact.id] = fact.state
+	}
+	for _, fact := range component {
+		if state, exists := states[fact.id]; exists {
+			if state != fact.state {
+				return nil, familyBuildFailure(FamilyBuildInvalidCondition)
+			}
+			continue
+		}
+		states[fact.id] = fact.state
+		merged = append(merged, fact)
+	}
+	return merged, nil
 }
 
 func (builder *FamilyBuilder) buildGeneratedMetric(
@@ -622,6 +707,7 @@ func buildFamilyTraceResource(
 	contract familyTraceContract,
 	input familyTraceBuildInput,
 	context familyDerivationContext,
+	conditions familyConditionFacts,
 ) (map[string]any, map[string]FieldClass, error) {
 	if !validFamilySchemaURL(input.resource.SchemaURL) {
 		return nil, nil, familyBuildFailure(FamilyBuildInvalidTrace)
@@ -629,7 +715,7 @@ func buildFamilyTraceResource(
 	attributes, attributeClasses, err := materializeFamilyFields(
 		contract.resourceFields,
 		input.resource.values,
-		selectFamilyConditionFacts(contract.resourceFields, input.conditions),
+		selectFamilyConditionFacts(contract.resourceFields, conditions),
 		context,
 	)
 	if err != nil {
@@ -652,11 +738,12 @@ func buildFamilyTraceScope(
 	contract familyTraceContract,
 	input familyTraceBuildInput,
 	context familyDerivationContext,
+	conditions familyConditionFacts,
 ) (map[string]any, map[string]FieldClass, error) {
 	attributes, attributeClasses, err := materializeFamilyFields(
 		contract.scopeFields,
 		input.scope.values,
-		selectFamilyConditionFacts(contract.scopeFields, input.conditions),
+		selectFamilyConditionFacts(contract.scopeFields, conditions),
 		context,
 	)
 	if err != nil {
@@ -684,6 +771,7 @@ func buildFamilyTraceEvents(
 	contract familyTraceContract,
 	input familyTraceBuildInput,
 	context familyDerivationContext,
+	conditions familyConditionFacts,
 ) ([]any, map[string]FieldClass, error) {
 	if input.events == nil {
 		return nil, nil, nil
@@ -702,7 +790,7 @@ func buildFamilyTraceEvents(
 		attributes, attributeClasses, err := materializeFamilyFields(
 			allowed.fields,
 			eventInput.values,
-			selectFamilyConditionFacts(allowed.fields, input.conditions),
+			selectFamilyConditionFacts(allowed.fields, conditions),
 			context,
 		)
 		if err != nil {
@@ -731,6 +819,7 @@ func buildFamilyTraceLinks(
 	contract familyTraceContract,
 	input familyTraceBuildInput,
 	context familyDerivationContext,
+	conditions familyConditionFacts,
 ) ([]any, map[string]FieldClass, error) {
 	if input.links == nil {
 		return nil, nil, nil
@@ -754,7 +843,7 @@ func buildFamilyTraceLinks(
 		attributes, attributeClasses, err := materializeFamilyFields(
 			contract.linkFields,
 			linkInput.values,
-			selectFamilyConditionFacts(contract.linkFields, input.conditions),
+			selectFamilyConditionFacts(contract.linkFields, conditions),
 			linkContext,
 		)
 		if err != nil {

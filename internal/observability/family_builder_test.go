@@ -341,6 +341,45 @@ func TestFamilyBuilderBuildsImmutableLogFromPrivateContract(t *testing.T) {
 	}
 }
 
+func TestFamilyBuilderUsesPrivateResolvedMandatoryResult(t *testing.T) {
+	for _, mandatory := range []bool{false, true} {
+		t.Run("mandatory="+map[bool]string{false: "false", true: "true"}[mandatory], func(t *testing.T) {
+			builder, ids := testFamilyBuilder(t)
+			family := testLogFamily()
+			family.mandatory = !mandatory
+			record, err := builder.buildGeneratedResolvedLog(
+				family,
+				resolveGeneratedLogMandatory(mandatory),
+				validLogBuildInput(),
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if record.Mandatory() != mandatory {
+				t.Fatalf("record mandatory = %t, want %t", record.Mandatory(), mandatory)
+			}
+			if ids.count.Load() != 1 {
+				t.Fatalf("occurrence calls = %d", ids.count.Load())
+			}
+		})
+	}
+
+	t.Run("uninitialized contract rejected", func(t *testing.T) {
+		builder, ids := testFamilyBuilder(t)
+		_, err := builder.buildGeneratedResolvedLog(
+			testLogFamily(),
+			resolvedGeneratedLogContract{},
+			validLogBuildInput(),
+		)
+		if !IsFamilyBuildError(err, FamilyBuildInvalidDescriptor) {
+			t.Fatalf("uninitialized contract error = %v", err)
+		}
+		if ids.count.Load() != 0 {
+			t.Fatalf("uninitialized contract consumed occurrence: %d", ids.count.Load())
+		}
+	})
+}
+
 func TestFamilyBuilderEnforcesForbiddenOutcomeContract(t *testing.T) {
 	builder, ids := testFamilyBuilder(t)
 	family := testLogFamily()
@@ -622,10 +661,12 @@ func TestFamilyBuilderTraceConditionClosureUsesOnlyInstantiatedEventsAndLinks(t 
 		builder, _ := testFamilyBuilder(t)
 		family := testConditionalTraceFamily()
 		input := validTraceBuildInput(family)
-		input.conditions = append(input.conditions,
-			familyConditionFact{id: "event-detail-present", state: familyConditionFalse},
-			familyConditionFact{id: "link-detail-present", state: familyConditionFalse},
-		)
+		input.events[0].conditions = familyConditionFacts{{
+			id: "event-detail-present", state: familyConditionFalse,
+		}}
+		input.links[0].conditions = familyConditionFacts{{
+			id: "link-detail-present", state: familyConditionFalse,
+		}}
 		if _, err := builder.buildGeneratedTrace(family, input); err != nil {
 			t.Fatal(err)
 		}
@@ -635,10 +676,12 @@ func TestFamilyBuilderTraceConditionClosureUsesOnlyInstantiatedEventsAndLinks(t 
 		builder, _ := testFamilyBuilder(t)
 		family := testConditionalTraceFamily()
 		input := validTraceBuildInput(family)
-		input.conditions = append(input.conditions,
-			familyConditionFact{id: "event-detail-present", state: familyConditionTrue},
-			familyConditionFact{id: "link-detail-present", state: familyConditionTrue},
-		)
+		input.events[0].conditions = familyConditionFacts{{
+			id: "event-detail-present", state: familyConditionTrue,
+		}}
+		input.links[0].conditions = familyConditionFacts{{
+			id: "link-detail-present", state: familyConditionTrue,
+		}}
 		input.events[0].values = familyFieldValues{{key: "event.detail", value: "event evidence", present: true}}
 		input.links[0].values = familyFieldValues{{key: "link.detail", value: "link reason", present: true}}
 		record, err := builder.buildGeneratedTrace(family, input)
@@ -671,6 +714,211 @@ func TestFamilyBuilderTraceConditionClosureUsesOnlyInstantiatedEventsAndLinks(t 
 			}
 		})
 	}
+}
+
+func TestFamilyBuilderRejectsMissingExtraAndMisplacedComponentConditions(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*familyTraceBuildInput)
+	}{
+		{
+			name: "family missing",
+			mutate: func(input *familyTraceBuildInput) {
+				input.conditions = nil
+			},
+		},
+		{
+			name: "family has event fact",
+			mutate: func(input *familyTraceBuildInput) {
+				input.conditions = append(input.conditions, familyConditionFact{
+					id: "event-detail-present", state: familyConditionFalse,
+				})
+			},
+		},
+		{
+			name: "event missing",
+			mutate: func(input *familyTraceBuildInput) {
+				input.events[0].conditions = nil
+			},
+		},
+		{
+			name: "event has family fact",
+			mutate: func(input *familyTraceBuildInput) {
+				input.events[0].conditions = append(input.events[0].conditions, familyConditionFact{
+					id: "technical-failure", state: familyConditionFalse,
+				})
+			},
+		},
+		{
+			name: "event duplicate",
+			mutate: func(input *familyTraceBuildInput) {
+				input.events[0].conditions = append(input.events[0].conditions, input.events[0].conditions[0])
+			},
+		},
+		{
+			name: "event invalid state",
+			mutate: func(input *familyTraceBuildInput) {
+				input.events[0].conditions[0].state = familyConditionUnknown
+			},
+		},
+		{
+			name: "link missing",
+			mutate: func(input *familyTraceBuildInput) {
+				input.links[0].conditions = nil
+			},
+		},
+		{
+			name: "link has family fact",
+			mutate: func(input *familyTraceBuildInput) {
+				input.links[0].conditions = append(input.links[0].conditions, familyConditionFact{
+					id: "technical-failure", state: familyConditionFalse,
+				})
+			},
+		},
+		{
+			name: "link duplicate",
+			mutate: func(input *familyTraceBuildInput) {
+				input.links[0].conditions = append(input.links[0].conditions, input.links[0].conditions[0])
+			},
+		},
+		{
+			name: "link invalid state",
+			mutate: func(input *familyTraceBuildInput) {
+				input.links[0].conditions[0].state = familyConditionUnknown
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			builder, ids := testFamilyBuilder(t)
+			family := testConditionalTraceFamily()
+			input := validTraceBuildInput(family)
+			input.events[0].conditions = familyConditionFacts{{
+				id: "event-detail-present", state: familyConditionFalse,
+			}}
+			input.links[0].conditions = familyConditionFacts{{
+				id: "link-detail-present", state: familyConditionFalse,
+			}}
+			test.mutate(&input)
+			_, err := builder.buildGeneratedTrace(family, input)
+			if !IsFamilyBuildError(err, FamilyBuildInvalidCondition) {
+				t.Fatalf("component condition error = %v", err)
+			}
+			if ids.count.Load() != 0 {
+				t.Fatalf("invalid component condition consumed occurrence: %d", ids.count.Load())
+			}
+		})
+	}
+}
+
+func TestFamilyBuilderMergesOnlyActiveComponentConditions(t *testing.T) {
+	t.Run("inactive component fact rejected", func(t *testing.T) {
+		builder, ids := testFamilyBuilder(t)
+		family := testConditionalTraceFamily()
+		input := validTraceBuildInput(family)
+		input.events = nil
+		input.links = nil
+		input.conditions = append(input.conditions, familyConditionFact{
+			id: "event-detail-present", state: familyConditionFalse,
+		})
+		_, err := builder.buildGeneratedTrace(family, input)
+		if !IsFamilyBuildError(err, FamilyBuildInvalidCondition) {
+			t.Fatalf("inactive component fact error = %v", err)
+		}
+		if ids.count.Load() != 0 {
+			t.Fatalf("inactive component fact consumed occurrence: %d", ids.count.Load())
+		}
+	})
+
+	t.Run("matching shared fact accepted", func(t *testing.T) {
+		builder, _ := testFamilyBuilder(t)
+		family := testConditionalTraceFamily()
+		family.trace.linkFields[1].conditionID = "event-detail-present"
+		input := validTraceBuildInput(family)
+		input.events[0].conditions = familyConditionFacts{{
+			id: "event-detail-present", state: familyConditionFalse,
+		}}
+		input.links[0].conditions = familyConditionFacts{{
+			id: "event-detail-present", state: familyConditionFalse,
+		}}
+		if _, err := builder.buildGeneratedTrace(family, input); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	t.Run("conflicting shared fact rejected", func(t *testing.T) {
+		builder, ids := testFamilyBuilder(t)
+		family := testConditionalTraceFamily()
+		family.trace.linkFields[1].conditionID = "event-detail-present"
+		input := validTraceBuildInput(family)
+		input.events[0].conditions = familyConditionFacts{{
+			id: "event-detail-present", state: familyConditionFalse,
+		}}
+		input.links[0].conditions = familyConditionFacts{{
+			id: "event-detail-present", state: familyConditionTrue,
+		}}
+		_, err := builder.buildGeneratedTrace(family, input)
+		if !IsFamilyBuildError(err, FamilyBuildInvalidCondition) {
+			t.Fatalf("conflicting component fact error = %v", err)
+		}
+		if ids.count.Load() != 0 {
+			t.Fatalf("conflicting component fact consumed occurrence: %d", ids.count.Load())
+		}
+	})
+
+	t.Run("matching family and event fact accepted", func(t *testing.T) {
+		builder, _ := testFamilyBuilder(t)
+		family := testConditionalTraceFamily()
+		family.trace.allowedEvents[0].fields[0].conditionID = "technical-failure"
+		input := validTraceBuildInput(family)
+		input.events[0].conditions = familyConditionFacts{{
+			id: "technical-failure", state: familyConditionFalse,
+		}}
+		input.links = nil
+		if _, err := builder.buildGeneratedTrace(family, input); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	t.Run("conflicting family and event fact rejected", func(t *testing.T) {
+		builder, ids := testFamilyBuilder(t)
+		family := testConditionalTraceFamily()
+		family.trace.allowedEvents[0].fields[0].conditionID = "technical-failure"
+		input := validTraceBuildInput(family)
+		input.events[0].conditions = familyConditionFacts{{
+			id: "technical-failure", state: familyConditionTrue,
+		}}
+		input.links = nil
+		_, err := builder.buildGeneratedTrace(family, input)
+		if !IsFamilyBuildError(err, FamilyBuildInvalidCondition) {
+			t.Fatalf("conflicting family/event fact error = %v", err)
+		}
+		if ids.count.Load() != 0 {
+			t.Fatalf("conflicting family/event fact consumed occurrence: %d", ids.count.Load())
+		}
+	})
+
+	t.Run("every repeated event instance must provide its fact", func(t *testing.T) {
+		builder, ids := testFamilyBuilder(t)
+		family := testConditionalTraceFamily()
+		input := validTraceBuildInput(family)
+		input.events[0].conditions = familyConditionFacts{{
+			id: "event-detail-present", state: familyConditionFalse,
+		}}
+		input.events = append(input.events, TraceEventInput{
+			TimeUnixNano: 16,
+			contract:     family.trace.allowedEvents[0],
+		})
+		input.links = nil
+		_, err := builder.buildGeneratedTrace(family, input)
+		if !IsFamilyBuildError(err, FamilyBuildInvalidCondition) {
+			t.Fatalf("repeated event missing fact error = %v", err)
+		}
+		if ids.count.Load() != 0 {
+			t.Fatalf("repeated event missing fact consumed occurrence: %d", ids.count.Load())
+		}
+	})
 }
 
 func TestFamilyBuilderRejectsMetricTypeAndFiniteViolations(t *testing.T) {

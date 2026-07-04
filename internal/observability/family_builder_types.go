@@ -104,16 +104,19 @@ type TraceScopeInput struct {
 }
 
 // TraceEventInput cannot be given an event family/name or attribute map by an
-// ordinary caller. Generated wrappers bind the private event contract and values.
+// ordinary caller. Generated wrappers bind the private event contract, values,
+// and the condition facts owned by that event instance.
 type TraceEventInput struct {
 	TimeUnixNano           uint64
 	DroppedAttributesCount Optional[uint32]
 	contract               familyEventContract
 	values                 familyFieldValues
+	conditions             familyConditionFacts
 }
 
 // TraceLinkInput exposes genuine OTel relationship data but not a free-form
-// relation or attributes. Generated wrappers bind those catalog-owned values.
+// relation or attributes. Generated wrappers bind those catalog-owned values and
+// the condition facts owned by that link instance.
 type TraceLinkInput struct {
 	TraceID                string
 	SpanID                 string
@@ -121,6 +124,7 @@ type TraceLinkInput struct {
 	DroppedAttributesCount Optional[uint32]
 	relation               string
 	values                 familyFieldValues
+	conditions             familyConditionFacts
 }
 
 type familySignal uint8
