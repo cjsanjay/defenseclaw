@@ -5,7 +5,7 @@
   "registry_schema_version": 1,
   "registry_version": 1,
   "bucket_catalog_version": 1,
-  "materialized_view_sha256": "963a1d59309e634163e44482a3f391a594469b4955123908b9da9253b9b0ccaf",
+  "materialized_view_sha256": "59181c54b92f358792252053a603f9893c68efe9481bc877cf42477426bf7f23",
   "canonical_import_order": [
     "genai.yaml",
     "security.yaml",
@@ -14,7 +14,7 @@
   "inputs": [
     {
       "path": "schemas/telemetry/v8/registry.yaml",
-      "sha256": "1a555677d890540e0ada6beca10dd3d02be5cf978972cc380d672aa4858a88a7"
+      "sha256": "c4330c1ce73b0571a85e3c5b3d9a61ca5991102edf0ddd8b40bc9fa44b6dbbd4"
     },
     {
       "path": "schemas/telemetry/v8/output-manifest.schema.json",
@@ -34,7 +34,23 @@
     },
     {
       "path": "schemas/telemetry/v8/semconv.lock.yaml",
-      "sha256": "32aa49761b50a8fdfd7d8cc0fc3ec08924ad4fc94b2bd2103314a8247a2e0829"
+      "sha256": "ef3caf547a94716be8572296c23bca3b6f8006cc77029b8fcc573beab789cd7a"
+    },
+    {
+      "path": "schemas/telemetry/v8/upstream/otel-genai-b028dceecdad117461a785c3af35315e7184e813/model/gen-ai/gen-ai-input-messages.json",
+      "sha256": "034fcd8c87f1e013f3a5a5018503210e2bee4d2499c361823b96e906d40a50ad"
+    },
+    {
+      "path": "schemas/telemetry/v8/upstream/otel-genai-b028dceecdad117461a785c3af35315e7184e813/model/gen-ai/gen-ai-output-messages.json",
+      "sha256": "a825a6c0cc1b7b22fdbfb9488d8dc3a318be3897ef6d3dbae01a10297bb6e569"
+    },
+    {
+      "path": "schemas/telemetry/v8/upstream/otel-genai-b028dceecdad117461a785c3af35315e7184e813/model/gen-ai/gen-ai-tool-call-arguments.json",
+      "sha256": "73607a8e8d9e84393475ef460108c59dbb9e1d2ddc0d0177fce6f735a62367ea"
+    },
+    {
+      "path": "schemas/telemetry/v8/upstream/otel-genai-b028dceecdad117461a785c3af35315e7184e813/model/gen-ai/gen-ai-tool-call-result.json",
+      "sha256": "44eb4a93b05eea7da14489f1d253814c6429772d1fe869f8f6fc1749d7593412"
     },
     {
       "path": "docs/design/observability-v8/current-state-inventory.yaml",

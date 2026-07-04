@@ -76,6 +76,368 @@ value_catalogs:
       - {value: interrupted, code: 11}
       - {value: observed, code: 12}
     compatibility: {value: unknown, code: 0, canonical_emittable: false}
+structured_types:
+  - id: gen_ai.canonical_json
+    kind: canonical_json
+    introduced_in: telemetry-registry-v1
+    discriminator: {visibility: internal, wire: false}
+    arms: [boolean, int64, finite_double, string, array, object]
+    leaf_privacy: {field_class: content, sensitivity: sensitive}
+    array: {items_ref: gen_ai.canonical_json}
+    object:
+      members:
+        member_id: entry
+        name:
+          type: string
+          field_class: identifier
+          sensitivity: internal
+          normalization: {id: bounded-v1, overrides: {max_utf8_bytes: 256}}
+        value: {structured_ref: gen_ai.canonical_json}
+      public_encoding: ordered_typed_entries
+      wire_encoding: native_object_properties
+    limits:
+      max_depth: 8
+      max_aggregate_members: 256
+      max_array_items: 256
+      max_string_utf8_bytes: 4096
+      max_member_name_utf8_bytes: 256
+      max_item_bytes: 32768
+      max_canonical_bytes: 65536
+  - id: gen_ai.tool_call_arguments
+    kind: object
+    introduced_in: telemetry-registry-v1
+    additional_properties: false
+    fields: []
+    dynamic_members:
+      member_id: entry
+      name:
+        type: string
+        field_class: identifier
+        sensitivity: internal
+        normalization: {id: bounded-v1, overrides: {max_utf8_bytes: 256}}
+      value: {structured_ref: gen_ai.canonical_json}
+      max_items: 256
+      public_encoding: ordered_typed_entries
+      wire_encoding: native_object_properties
+      duplicate_name_policy: reject
+      fixed_name_collision_policy: reject
+      post_redaction_name_collision_policy: reject
+  - id: gen_ai.tool_call_result
+    kind: object
+    introduced_in: telemetry-registry-v1
+    additional_properties: false
+    fields: []
+    dynamic_members:
+      member_id: entry
+      name:
+        type: string
+        field_class: identifier
+        sensitivity: internal
+        normalization: {id: bounded-v1, overrides: {max_utf8_bytes: 256}}
+      value: {structured_ref: gen_ai.canonical_json}
+      max_items: 256
+      public_encoding: ordered_typed_entries
+      wire_encoding: native_object_properties
+      duplicate_name_policy: reject
+      fixed_name_collision_policy: reject
+      post_redaction_name_collision_policy: reject
+  - id: gen_ai.input_messages
+    kind: array
+    introduced_in: telemetry-registry-v1
+    items: {structured_ref: gen_ai.chat_message}
+    min_items: 0
+    max_items: 256
+  - id: gen_ai.output_messages
+    kind: array
+    introduced_in: telemetry-registry-v1
+    items: {structured_ref: gen_ai.output_message}
+    min_items: 0
+    max_items: 256
+  - id: gen_ai.message_parts
+    kind: array
+    introduced_in: telemetry-registry-v1
+    items: {structured_ref: gen_ai.message_part}
+    min_items: 0
+    max_items: 256
+  - id: gen_ai.message_part
+    kind: tagged_union
+    introduced_in: telemetry-registry-v1
+    discriminator:
+      name: type
+      type: string
+      field_class: identifier
+      sensitivity: internal
+      normalization: {id: bounded-v1, overrides: {max_utf8_bytes: 256}}
+    variants:
+      - {tag: text, structured_ref: gen_ai.text_part}
+      - {tag: tool_call, structured_ref: gen_ai.tool_call_request_part}
+      - {tag: tool_call_response, structured_ref: gen_ai.tool_call_response_part}
+      - {tag: server_tool_call, structured_ref: gen_ai.server_tool_call_part}
+      - {tag: server_tool_call_response, structured_ref: gen_ai.server_tool_call_response_part}
+      - {tag: blob, structured_ref: gen_ai.blob_part}
+      - {tag: file, structured_ref: gen_ai.file_part}
+      - {tag: uri, structured_ref: gen_ai.uri_part}
+      - {tag: reasoning, structured_ref: gen_ai.reasoning_part}
+      - {tag: compaction, structured_ref: gen_ai.compaction_part}
+    dynamic_variant:
+      arm_id: generic
+      tag_normalization: {id: bounded-v1, overrides: {max_utf8_bytes: 256}}
+      structured_ref: gen_ai.generic_part
+      exclude_registered_tags: true
+  - id: gen_ai.chat_message
+    kind: object
+    introduced_in: telemetry-registry-v1
+    additional_properties: false
+    fields:
+      - {name: role, required: true, type: string, field_class: metadata, sensitivity: internal, normalization: {id: bounded-v1, overrides: {max_utf8_bytes: 256}}}
+      - {name: parts, required: true, structured_ref: gen_ai.message_parts}
+      - {name: name, required: false, type: string, field_class: identifier, sensitivity: sensitive, normalization: {id: bounded-v1, overrides: {max_utf8_bytes: 512}}}
+    dynamic_members:
+      member_id: entry
+      name:
+        type: string
+        field_class: identifier
+        sensitivity: internal
+        normalization: {id: bounded-v1, overrides: {max_utf8_bytes: 256}}
+      value: {structured_ref: gen_ai.canonical_json}
+      max_items: 256
+      public_encoding: ordered_typed_entries
+      wire_encoding: native_object_properties
+      duplicate_name_policy: reject
+      fixed_name_collision_policy: reject
+      post_redaction_name_collision_policy: reject
+  - id: gen_ai.output_message
+    kind: object
+    introduced_in: telemetry-registry-v1
+    additional_properties: false
+    fields:
+      - {name: role, required: true, type: string, field_class: metadata, sensitivity: internal, normalization: {id: bounded-v1, overrides: {max_utf8_bytes: 256}}}
+      - {name: parts, required: true, structured_ref: gen_ai.message_parts}
+      - {name: name, required: false, type: string, field_class: identifier, sensitivity: sensitive, normalization: {id: bounded-v1, overrides: {max_utf8_bytes: 512}}}
+      - {name: finish_reason, required: true, type: string, field_class: metadata, sensitivity: internal, normalization: {id: bounded-v1, overrides: {max_utf8_bytes: 256}}}
+    dynamic_members:
+      member_id: entry
+      name:
+        type: string
+        field_class: identifier
+        sensitivity: internal
+        normalization: {id: bounded-v1, overrides: {max_utf8_bytes: 256}}
+      value: {structured_ref: gen_ai.canonical_json}
+      max_items: 256
+      public_encoding: ordered_typed_entries
+      wire_encoding: native_object_properties
+      duplicate_name_policy: reject
+      fixed_name_collision_policy: reject
+      post_redaction_name_collision_policy: reject
+  - id: gen_ai.text_part
+    kind: object
+    introduced_in: telemetry-registry-v1
+    additional_properties: false
+    fields:
+      - {name: content, required: true, type: string, field_class: content, sensitivity: sensitive, normalization: {id: redacted-content-v1}}
+    dynamic_members:
+      member_id: entry
+      name: {type: string, field_class: identifier, sensitivity: internal, normalization: {id: bounded-v1, overrides: {max_utf8_bytes: 256}}}
+      value: {structured_ref: gen_ai.canonical_json}
+      max_items: 256
+      public_encoding: ordered_typed_entries
+      wire_encoding: native_object_properties
+      duplicate_name_policy: reject
+      fixed_name_collision_policy: reject
+      post_redaction_name_collision_policy: reject
+  - id: gen_ai.tool_call_request_part
+    kind: object
+    introduced_in: telemetry-registry-v1
+    additional_properties: false
+    fields:
+      - {name: id, required: false, type: string, field_class: identifier, sensitivity: sensitive, normalization: {id: bounded-v1, overrides: {max_utf8_bytes: 512}}}
+      - {name: name, required: true, type: string, field_class: identifier, sensitivity: internal, normalization: {id: bounded-v1, overrides: {max_utf8_bytes: 512}}}
+      - {name: arguments, required: false, structured_ref: gen_ai.canonical_json}
+    dynamic_members:
+      member_id: entry
+      name: {type: string, field_class: identifier, sensitivity: internal, normalization: {id: bounded-v1, overrides: {max_utf8_bytes: 256}}}
+      value: {structured_ref: gen_ai.canonical_json}
+      max_items: 256
+      public_encoding: ordered_typed_entries
+      wire_encoding: native_object_properties
+      duplicate_name_policy: reject
+      fixed_name_collision_policy: reject
+      post_redaction_name_collision_policy: reject
+  - id: gen_ai.tool_call_response_part
+    kind: object
+    introduced_in: telemetry-registry-v1
+    additional_properties: false
+    fields:
+      - {name: id, required: false, type: string, field_class: identifier, sensitivity: sensitive, normalization: {id: bounded-v1, overrides: {max_utf8_bytes: 512}}}
+      - {name: response, required: true, structured_ref: gen_ai.canonical_json}
+    dynamic_members:
+      member_id: entry
+      name: {type: string, field_class: identifier, sensitivity: internal, normalization: {id: bounded-v1, overrides: {max_utf8_bytes: 256}}}
+      value: {structured_ref: gen_ai.canonical_json}
+      max_items: 256
+      public_encoding: ordered_typed_entries
+      wire_encoding: native_object_properties
+      duplicate_name_policy: reject
+      fixed_name_collision_policy: reject
+      post_redaction_name_collision_policy: reject
+  - id: gen_ai.server_tool_call_part
+    kind: object
+    introduced_in: telemetry-registry-v1
+    additional_properties: false
+    fields:
+      - {name: id, required: false, type: string, field_class: identifier, sensitivity: sensitive, normalization: {id: bounded-v1, overrides: {max_utf8_bytes: 512}}}
+      - {name: name, required: true, type: string, field_class: identifier, sensitivity: internal, normalization: {id: bounded-v1, overrides: {max_utf8_bytes: 512}}}
+      - {name: server_tool_call, required: true, structured_ref: gen_ai.generic_server_tool_payload}
+    dynamic_members:
+      member_id: entry
+      name: {type: string, field_class: identifier, sensitivity: internal, normalization: {id: bounded-v1, overrides: {max_utf8_bytes: 256}}}
+      value: {structured_ref: gen_ai.canonical_json}
+      max_items: 256
+      public_encoding: ordered_typed_entries
+      wire_encoding: native_object_properties
+      duplicate_name_policy: reject
+      fixed_name_collision_policy: reject
+      post_redaction_name_collision_policy: reject
+  - id: gen_ai.server_tool_call_response_part
+    kind: object
+    introduced_in: telemetry-registry-v1
+    additional_properties: false
+    fields:
+      - {name: id, required: false, type: string, field_class: identifier, sensitivity: sensitive, normalization: {id: bounded-v1, overrides: {max_utf8_bytes: 512}}}
+      - {name: server_tool_call_response, required: true, structured_ref: gen_ai.generic_server_tool_payload}
+    dynamic_members:
+      member_id: entry
+      name: {type: string, field_class: identifier, sensitivity: internal, normalization: {id: bounded-v1, overrides: {max_utf8_bytes: 256}}}
+      value: {structured_ref: gen_ai.canonical_json}
+      max_items: 256
+      public_encoding: ordered_typed_entries
+      wire_encoding: native_object_properties
+      duplicate_name_policy: reject
+      fixed_name_collision_policy: reject
+      post_redaction_name_collision_policy: reject
+  - id: gen_ai.blob_part
+    kind: object
+    introduced_in: telemetry-registry-v1
+    additional_properties: false
+    fields:
+      - {name: mime_type, required: false, type: string, field_class: metadata, sensitivity: internal, normalization: {id: bounded-v1, overrides: {max_utf8_bytes: 256}}}
+      - {name: modality, required: true, type: string, field_class: metadata, sensitivity: internal, normalization: {id: bounded-v1, overrides: {max_utf8_bytes: 256}}}
+      - {name: content, required: true, type: string, field_class: content, sensitivity: sensitive, normalization: {id: redacted-content-v1}}
+    dynamic_members:
+      member_id: entry
+      name: {type: string, field_class: identifier, sensitivity: internal, normalization: {id: bounded-v1, overrides: {max_utf8_bytes: 256}}}
+      value: {structured_ref: gen_ai.canonical_json}
+      max_items: 256
+      public_encoding: ordered_typed_entries
+      wire_encoding: native_object_properties
+      duplicate_name_policy: reject
+      fixed_name_collision_policy: reject
+      post_redaction_name_collision_policy: reject
+  - id: gen_ai.file_part
+    kind: object
+    introduced_in: telemetry-registry-v1
+    additional_properties: false
+    fields:
+      - {name: mime_type, required: false, type: string, field_class: metadata, sensitivity: internal, normalization: {id: bounded-v1, overrides: {max_utf8_bytes: 256}}}
+      - {name: modality, required: true, type: string, field_class: metadata, sensitivity: internal, normalization: {id: bounded-v1, overrides: {max_utf8_bytes: 256}}}
+      - {name: file_id, required: true, type: string, field_class: identifier, sensitivity: sensitive, normalization: {id: bounded-v1, overrides: {max_utf8_bytes: 512}}}
+    dynamic_members:
+      member_id: entry
+      name: {type: string, field_class: identifier, sensitivity: internal, normalization: {id: bounded-v1, overrides: {max_utf8_bytes: 256}}}
+      value: {structured_ref: gen_ai.canonical_json}
+      max_items: 256
+      public_encoding: ordered_typed_entries
+      wire_encoding: native_object_properties
+      duplicate_name_policy: reject
+      fixed_name_collision_policy: reject
+      post_redaction_name_collision_policy: reject
+  - id: gen_ai.uri_part
+    kind: object
+    introduced_in: telemetry-registry-v1
+    additional_properties: false
+    fields:
+      - {name: mime_type, required: false, type: string, field_class: metadata, sensitivity: internal, normalization: {id: bounded-v1, overrides: {max_utf8_bytes: 256}}}
+      - {name: modality, required: true, type: string, field_class: metadata, sensitivity: internal, normalization: {id: bounded-v1, overrides: {max_utf8_bytes: 256}}}
+      - {name: uri, required: true, type: string, field_class: path, sensitivity: sensitive, normalization: {id: path-v1, overrides: {max_utf8_bytes: 8192}}}
+    dynamic_members:
+      member_id: entry
+      name: {type: string, field_class: identifier, sensitivity: internal, normalization: {id: bounded-v1, overrides: {max_utf8_bytes: 256}}}
+      value: {structured_ref: gen_ai.canonical_json}
+      max_items: 256
+      public_encoding: ordered_typed_entries
+      wire_encoding: native_object_properties
+      duplicate_name_policy: reject
+      fixed_name_collision_policy: reject
+      post_redaction_name_collision_policy: reject
+  - id: gen_ai.reasoning_part
+    kind: object
+    introduced_in: telemetry-registry-v1
+    additional_properties: false
+    fields:
+      - {name: content, required: true, type: string, field_class: content, sensitivity: sensitive, normalization: {id: redacted-content-v1}}
+    dynamic_members:
+      member_id: entry
+      name: {type: string, field_class: identifier, sensitivity: internal, normalization: {id: bounded-v1, overrides: {max_utf8_bytes: 256}}}
+      value: {structured_ref: gen_ai.canonical_json}
+      max_items: 256
+      public_encoding: ordered_typed_entries
+      wire_encoding: native_object_properties
+      duplicate_name_policy: reject
+      fixed_name_collision_policy: reject
+      post_redaction_name_collision_policy: reject
+  - id: gen_ai.compaction_part
+    kind: object
+    introduced_in: telemetry-registry-v1
+    additional_properties: false
+    fields:
+      - {name: id, required: false, type: string, field_class: identifier, sensitivity: sensitive, normalization: {id: bounded-v1, overrides: {max_utf8_bytes: 512}}}
+      - {name: content, required: false, type: string, field_class: content, sensitivity: sensitive, normalization: {id: redacted-content-v1}}
+    dynamic_members:
+      member_id: entry
+      name: {type: string, field_class: identifier, sensitivity: internal, normalization: {id: bounded-v1, overrides: {max_utf8_bytes: 256}}}
+      value: {structured_ref: gen_ai.canonical_json}
+      max_items: 256
+      public_encoding: ordered_typed_entries
+      wire_encoding: native_object_properties
+      duplicate_name_policy: reject
+      fixed_name_collision_policy: reject
+      post_redaction_name_collision_policy: reject
+  - id: gen_ai.generic_part
+    kind: object
+    introduced_in: telemetry-registry-v1
+    additional_properties: false
+    fields: []
+    dynamic_members:
+      member_id: entry
+      name: {type: string, field_class: identifier, sensitivity: internal, normalization: {id: bounded-v1, overrides: {max_utf8_bytes: 256}}}
+      value: {structured_ref: gen_ai.canonical_json}
+      max_items: 256
+      public_encoding: ordered_typed_entries
+      wire_encoding: native_object_properties
+      duplicate_name_policy: reject
+      fixed_name_collision_policy: reject
+      post_redaction_name_collision_policy: reject
+  - id: gen_ai.generic_server_tool_payload
+    kind: object
+    introduced_in: telemetry-registry-v1
+    additional_properties: false
+    fields:
+      - {name: type, required: true, type: string, field_class: identifier, sensitivity: internal, normalization: {id: bounded-v1, overrides: {max_utf8_bytes: 256}}}
+    dynamic_members:
+      member_id: entry
+      name: {type: string, field_class: identifier, sensitivity: internal, normalization: {id: bounded-v1, overrides: {max_utf8_bytes: 256}}}
+      value: {structured_ref: gen_ai.canonical_json}
+      max_items: 256
+      public_encoding: ordered_typed_entries
+      wire_encoding: native_object_properties
+      duplicate_name_policy: reject
+      fixed_name_collision_policy: reject
+      post_redaction_name_collision_policy: reject
+structured_bindings:
+  - {attribute: gen_ai.input.messages, structured_type: gen_ai.input_messages, public_encoding: sealed_typed, canonical_wire_encoding: native_json}
+  - {attribute: gen_ai.output.messages, structured_type: gen_ai.output_messages, public_encoding: sealed_typed, canonical_wire_encoding: native_json}
+  - {attribute: gen_ai.tool.call.arguments, structured_type: gen_ai.tool_call_arguments, public_encoding: ordered_typed_entries, canonical_wire_encoding: native_json_object}
+  - {attribute: gen_ai.tool.call.result, structured_type: gen_ai.tool_call_result, public_encoding: ordered_typed_entries, canonical_wire_encoding: native_json_object}
 structural_contract:
   id: defenseclaw.canonical-record
   version: 1

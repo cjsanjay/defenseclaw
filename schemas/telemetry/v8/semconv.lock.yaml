@@ -18,6 +18,19 @@ dependencies:
     path: schemas/telemetry/v8/upstream/otel-genai-b028dceecdad117461a785c3af35315e7184e813.normalized.json
     format: defenseclaw-normalized-semconv-v1
     sha256: 48d450685930c9a8734aa4b49f79985c4c5c20ef37922aa0bb4e8e36cbfc6156
+  structural_inputs:
+  - upstream_path: model/gen-ai/gen-ai-input-messages.json
+    path: schemas/telemetry/v8/upstream/otel-genai-b028dceecdad117461a785c3af35315e7184e813/model/gen-ai/gen-ai-input-messages.json
+    sha256: 034fcd8c87f1e013f3a5a5018503210e2bee4d2499c361823b96e906d40a50ad
+  - upstream_path: model/gen-ai/gen-ai-output-messages.json
+    path: schemas/telemetry/v8/upstream/otel-genai-b028dceecdad117461a785c3af35315e7184e813/model/gen-ai/gen-ai-output-messages.json
+    sha256: a825a6c0cc1b7b22fdbfb9488d8dc3a318be3897ef6d3dbae01a10297bb6e569
+  - upstream_path: model/gen-ai/gen-ai-tool-call-arguments.json
+    path: schemas/telemetry/v8/upstream/otel-genai-b028dceecdad117461a785c3af35315e7184e813/model/gen-ai/gen-ai-tool-call-arguments.json
+    sha256: 73607a8e8d9e84393475ef460108c59dbb9e1d2ddc0d0177fce6f735a62367ea
+  - upstream_path: model/gen-ai/gen-ai-tool-call-result.json
+    path: schemas/telemetry/v8/upstream/otel-genai-b028dceecdad117461a785c3af35315e7184e813/model/gen-ai/gen-ai-tool-call-result.json
+    sha256: 44eb4a93b05eea7da14489f1d253814c6429772d1fe869f8f6fc1749d7593412
 - id: openinference
   repository: https://github.com/Arize-ai/openinference
   version: 0.1.30

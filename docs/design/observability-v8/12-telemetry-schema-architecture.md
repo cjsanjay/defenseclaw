@@ -184,6 +184,20 @@ refreshed only by an explicit dependency-update operation that derives it from t
 pinned revision and produces a reviewed semantic diff; a self-authored subset plus
 its own digest is not sufficient provenance.
 
+The dependency-update operation serializes writers with one repository-root
+advisory lock held from the initial no-follow lock-file read through publication.
+Publication compare-and-swaps the exact original lock inode and bytes, verifies
+every snapshot and structural-input path/digest referenced by the complete
+candidate lock (including unselected dependencies) immediately before and after
+installing the lock commit marker, and fails rather than overwriting an intervening
+edit. Installed targets are rechecked by no-follow inode identity and exact bytes,
+so replacement and same-inode mutation cannot produce a successful mixed lock.
+The final lock fsync plus the second complete-reference validation is the commit
+point. A later private-transaction cleanup failure reports the stable explicit
+state `update committed; transaction cleanup failed`; it never claims rollback
+after the new lock is live. A failure before that commit point restores prior bytes
+when safe, or preserves transaction evidence rather than deleting a foreign inode.
+
 OpenInference normalization uses only the pinned Python semantic-conventions
 package version source, its trace and resource constant modules, and
 `spec/semantic_conventions.md`. The Reserved Attributes table is authoritative for
@@ -688,12 +702,21 @@ structured bindings below and does not reclassify or replace any P-069 field.
 
 - `kind: object` adds `additional_properties: false`, `fields`, and optional
   `dynamic_members`. `fields` is nonempty unless `dynamic_members` is present. A
-  fixed field uses exactly one closed arm. The scalar-leaf arm is
+  fixed field uses exactly one closed arm. The scalar-leaf arm is authored as
   `{name, required, type, field_class, sensitivity, normalization}`, where `type`
-  is one ordinary scalar registry type. The container/reference arm is
+  is one ordinary scalar registry type. After exact upstream-property disposition,
+  the compiler enriches the materialized scalar descriptor with
+  `encoding_annotation`; it is absent except for the closed version-1 value
+  `json-base64-bytes-v1` derived from pinned upstream `format: binary` on
+  `gen_ai.blob_part.content`. Generated JSON Schema emits
+  `contentEncoding: base64` and `x-defenseclaw-upstream-format: binary`, while
+  typed builders continue to accept a string and do not turn the upstream SHOULD
+  into a new decoding/rejection MUST. Moving, adding, or removing the upstream
+  format fails compilation rather than requiring a duplicate authored registry
+  fact. The container/reference arm is
   `{name, required, structured_ref}` and carries no `field_class`, `sensitivity`,
-  or `normalization`; those properties belong only to the referenced concrete
-  leaves. `dynamic_members`, when present, is the following closed block (with
+  `normalization`, or `encoding_annotation`; those properties belong only to the
+  referenced concrete leaves. `dynamic_members`, when present, is the following closed block (with
   concrete finite normalization/bounds in the registry):
 
   ```yaml

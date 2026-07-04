@@ -311,7 +311,7 @@ def test_bundle_is_complete_draft_2020_12_and_examples_have_exact_dispositions(
     assert schema["$schema"] == "https://json-schema.org/draft/2020-12/schema"
     assert schema["$id"] == "https://defenseclaw.dev/schemas/telemetry/v8/telemetry.schema.json"
     assert len(schema["oneOf"]) == 243
-    assert len(schema["$defs"]) == 594
+    assert len(schema["$defs"]) == 615
     assert set(schema["x-defenseclaw-conditions"][0]) == {"description", "enforcement", "false_requirement", "id"}
     assert "$type" not in json.dumps(schema["x-defenseclaw-conditions"])
     assert len(schema["x-defenseclaw-conditions"]) == 7
@@ -358,6 +358,7 @@ def test_bundle_is_complete_draft_2020_12_and_examples_have_exact_dispositions(
         "span_name_pattern_rendering",
         "trace_cross_field_derivation_equality",
         "trace_time_order_relation",
+        "typed_numeric_arm_int64_vs_finite_double",
     }.issubset(conformance["non_json_schema_gates"])
 
     observed = {True: 0, False: 0}
@@ -412,21 +413,418 @@ def test_canonical_json_is_a_closed_recursive_non_null_union(
     for value in (None, [None], {"value": None}, [1, {"nested": [None]}]):
         assert not validator.is_valid(value), value
 
+    contexts = (
+        canonical,
+        schema["$defs"]["structural:envelope"]["properties"]["body"],
+        schema["$defs"]["structural:trace_body"]["properties"]["attributes"],
+    )
+    for context in contexts:
+        context_validator = _subschema_validator(schema, context)
+        assert context_validator.is_valid(-(2**63))
+        assert context_validator.is_valid(2**63 - 1)
+        assert context_validator.is_valid(0.5)
+        assert context_validator.is_valid(1e20)
+    assert not renderer._runtime_numeric_arm_accepts(-(2**63) - 1, "int64")
+    assert not renderer._runtime_numeric_arm_accepts(2**63, "int64")
+    assert renderer._runtime_numeric_arm_accepts(1e20, "finite_double")
+
+
+def test_structured_catalog_is_closed_immutable_and_published(
+    renderer: ModuleType,
+    view: Any,
+    artifacts: Mapping[str, Any],
+) -> None:
+    index = renderer.build_candidate_render_index(view)
+    schema = _json(artifacts, "telemetry.schema.json")
+    catalog = _json(artifacts, "catalog.json")
+
+    assert len(index.structured_types) == 21
+    assert len(index.structured_bindings) == 4
+    assert len(index.structured_property_dispositions) == 109
+    assert tuple(index.structured_types) == renderer._STRUCTURED_TYPE_IDS
+    assert len(schema["x-defenseclaw-structured-types"]) == 21
+    assert len(schema["x-defenseclaw-structured-bindings"]) == 4
+    assert len(schema["x-defenseclaw-structured-property-dispositions"]) == 109
+    assert catalog["structured_types"] == schema["x-defenseclaw-structured-types"]
+    assert catalog["structured_bindings"] == schema["x-defenseclaw-structured-bindings"]
+    assert catalog["structured_property_dispositions"] == schema[
+        "x-defenseclaw-structured-property-dispositions"
+    ]
+    assert all(f"structured:{type_id}" in schema["$defs"] for type_id in index.structured_types)
+    assert "$type" not in json.dumps(catalog["structured_types"])
+    assert "map[string]any" not in json.dumps(catalog["structured_types"])
+    with pytest.raises(TypeError):
+        index.structured_types["new"] = index.structured_types["gen_ai.text_part"]  # type: ignore[index]
+    with pytest.raises(TypeError):
+        index.structured_types["gen_ai.text_part"]["kind"] = "array"  # type: ignore[index]
+
+
+def test_structured_schema_preserves_open_extras_tags_known_values_and_bounds(
+    renderer: ModuleType,
+    artifacts: Mapping[str, Any],
+) -> None:
+    schema = _json(artifacts, "telemetry.schema.json")
+    definitions = schema["$defs"]
+    input_messages = _subschema_validator(schema, definitions["structured:gen_ai.input_messages"])
+
+    valid = [
+        {
+            "role": "provider.custom-role",
+            "parts": [
+                {"type": "text", "content": "hello", "provider_extra": {"nested": [1, "two"]}},
+                {"type": "provider.custom-part", "opaque": {"ok": True}},
+            ],
+            "provider_message_extra": "kept",
+        }
+    ]
+    assert input_messages.is_valid(valid)
+    assert not input_messages.is_valid([{"role": "user", "parts": [{"type": "text", "content": None}]}])
+    assert not input_messages.is_valid(
+        [{"role": "user", "parts": [{"type": "text", "content": "x", "type_extra": None}]}]
+    )
+    assert not input_messages.is_valid(
+        [{"role": "user", "parts": [{"type": "text", "opaque": 1}]}]
+    )
+
+    chat = definitions["structured:gen_ai.chat_message"]
+    chat_validator = _subschema_validator(schema, chat)
+    dynamic_256 = {f"extra_{index}": index for index in range(256)}
+    assert chat_validator.is_valid({"role": "user", "parts": [], **dynamic_256})
+    assert chat_validator.is_valid({"role": "user", "parts": [], "name": "Alice", **dynamic_256})
+    assert not chat_validator.is_valid({"role": "user", "parts": [], **dynamic_256, "overflow": 1})
+    assert chat["x-defenseclaw-max-dynamic-members"] == 256
+
+    for definition_name, fixed in (
+        ("structured:gen_ai.text_part", {"content": "hello"}),
+        ("structured:gen_ai.generic_part", {}),
+    ):
+        validator = _subschema_validator(schema, definitions[definition_name])
+        assert validator.is_valid({**fixed, **dynamic_256})
+        assert not validator.is_valid({**fixed, **dynamic_256, "overflow": 1})
+        assert validator.is_valid({**fixed, "type": "provider.part", **dynamic_256})
+        assert not validator.is_valid({**fixed, "type": "provider.part", **dynamic_256, "overflow": 1})
+
+    role = chat["properties"]["role"]
+    assert role["x-defenseclaw-known-values"] == ["system", "user", "assistant", "tool"]
+    assert role["x-defenseclaw-known-values-enforcement"] == "non-enforcing"
+    assert "enum" not in role
+    assert chat["properties"]["name"]["x-defenseclaw-sensitivity"] == "sensitive"
+    assert chat["properties"]["name"]["x-defenseclaw-max-utf8-bytes"] == 512
+    uri = definitions["structured:gen_ai.uri_part"]["properties"]["uri"]
+    assert uri["x-defenseclaw-field-class"] == "path"
+    assert uri["x-defenseclaw-sensitivity"] == "sensitive"
+    assert uri["x-defenseclaw-max-utf8-bytes"] == 8192
+    blob_content = definitions["structured:gen_ai.blob_part"]["properties"]["content"]
+    assert blob_content["contentEncoding"] == "base64"
+    assert blob_content["x-defenseclaw-upstream-format"] == "binary"
+    assert blob_content["x-defenseclaw-encoding-annotation"] == "json-base64-bytes-v1"
+
+    union = definitions["structured:gen_ai.message_part"]
+    assert union["x-defenseclaw-discriminator"] == {
+        "name": "type",
+        "owner": "tagged_union",
+        "serialized_once": True,
+        "field_class": "identifier",
+        "sensitivity": "internal",
+        "normalization": {
+            "effective_constraints": {"max_items": 256, "max_item_utf8_bytes": 4096, "max_utf8_bytes": 256},
+            "id": "bounded-v1",
+            "notes": None,
+            "overrides": {"max_utf8_bytes": 256},
+        },
+    }
+    assert definitions["structured:gen_ai.generic_part"]["x-defenseclaw-reserved-names"] == ["type"]
+
+    canonical = definitions["structured:gen_ai.canonical_json"]
+    assert canonical["x-defenseclaw-limits"] == renderer._CANONICAL_JSON_LIMITS
+    assert canonical["x-defenseclaw-null-policy"] == "reject"
+    assert canonical["oneOf"][4]["maxProperties"] == 256
+    assert canonical["oneOf"][4]["x-defenseclaw-duplicate-name-policy"] == "reject"
+    assert canonical["oneOf"][4]["x-defenseclaw-post-redaction-name-collision-policy"] == "reject"
+
+
+def test_metric_number_schema_declares_runtime_typed_int64_and_finite_double_arms(renderer: ModuleType) -> None:
+    schema = renderer._schema_type("metric_number")
+    validator = jsonschema.Draft202012Validator(schema)
+
+    assert validator.is_valid(-(2**63))
+    assert validator.is_valid(2**63 - 1)
+    assert validator.is_valid(1.5)
+    assert validator.is_valid(1e20)
+    assert schema["anyOf"][1]["x-defenseclaw-finite"] is True
+    assert schema["x-defenseclaw-numeric-kind-runtime"] == "typed-int64-or-finite-double"
+    assert renderer._runtime_numeric_arm_accepts(-(2**63), "int64")
+    assert renderer._runtime_numeric_arm_accepts(2**63 - 1, "int64")
+    assert not renderer._runtime_numeric_arm_accepts(-(2**63) - 1, "int64")
+    assert not renderer._runtime_numeric_arm_accepts(2**63, "int64")
+    assert renderer._runtime_numeric_arm_accepts(1e20, "finite_double")
+    assert not renderer._runtime_numeric_arm_accepts(float("inf"), "finite_double")
+    int64_family = jsonschema.Draft202012Validator(renderer._schema_type("int64"))
+    assert int64_family.is_valid(-(2**63))
+    assert int64_family.is_valid(2**63 - 1)
+    assert not int64_family.is_valid(-(2**63) - 1)
+    assert not int64_family.is_valid(2**63)
+    with pytest.raises(ValueError, match="Out of range float values"):
+        renderer._json_payload({"value": float("inf")})
+
 
 @pytest.mark.parametrize(
-    ("definition_name", "property_name"),
+    "mutation",
     [
-        pytest.param("structural:envelope", "body", id="envelope-body"),
-        pytest.param("structural:trace_body", "attributes", id="trace-attributes"),
-        pytest.param("structural:trace_resource", "attributes", id="resource-attributes"),
-        pytest.param("structural:trace_scope", "attributes", id="scope-attributes"),
-        pytest.param("structural:trace_event", "attributes", id="event-attributes"),
-        pytest.param("structural:trace_link", "attributes", id="link-attributes"),
-        pytest.param("structural:metric_instrument_data", "attributes", id="metric-attributes"),
-        pytest.param("attribute:gen_ai.input.messages", None, id="genai-input-messages"),
-        pytest.param("attribute:gen_ai.output.messages", None, id="genai-output-messages"),
-        pytest.param("attribute:gen_ai.tool.call.arguments", None, id="genai-tool-arguments"),
-        pytest.param("attribute:gen_ai.tool.call.result", None, id="genai-tool-result"),
+        "nested-extra",
+        "dangling-ref",
+        "known-but-wrong-ref",
+        "side-arm",
+        "reserved-names",
+        "canonical-limit",
+        "binding-target",
+        "missing-disposition",
+        "known-values",
+        "nullable-omission",
+        "union-disposition-target",
+        "content-sensitivity",
+        "content-normalization",
+        "discriminator-name",
+        "discriminator-privacy",
+        "dynamic-name-privacy",
+        "dynamic-name-normalization",
+        "canonical-encoding",
+        "introduced-in",
+        "encoding-annotation",
+    ],
+)
+def test_candidate_rejects_digest_consistent_malformed_nested_structured_facts(
+    renderer: ModuleType,
+    view: Any,
+    mutation: str,
+) -> None:
+    facts = _copy_materialized(view.facts)
+    types = facts["fields"]["structured_types"]
+    by_id = {item["fields"]["id"]: item for item in types}
+    if mutation == "nested-extra":
+        by_id["gen_ai.text_part"]["fields"]["fields"][0]["fields"]["scalar"]["fields"]["extra"] = True
+    elif mutation == "dangling-ref":
+        by_id["gen_ai.input_messages"]["fields"]["items_reference"]["fields"][
+            "structured_ref"
+        ] = "gen_ai.missing"
+    elif mutation == "known-but-wrong-ref":
+        by_id["gen_ai.input_messages"]["fields"]["items_reference"]["fields"][
+            "structured_ref"
+        ] = "gen_ai.output_message"
+    elif mutation == "side-arm":
+        by_id["gen_ai.input_messages"]["fields"]["fields"] = ()
+    elif mutation == "reserved-names":
+        by_id["gen_ai.generic_part"]["fields"]["effective_reserved_names"] = ()
+    elif mutation == "canonical-limit":
+        by_id["gen_ai.canonical_json"]["fields"]["canonical_json"]["fields"]["limits"]["fields"][
+            "max_depth"
+        ] = 9
+    elif mutation == "binding-target":
+        binding = next(
+            item
+            for item in facts["fields"]["structured_bindings"]
+            if item["fields"]["attribute"] == "gen_ai.output.messages"
+        )
+        binding["fields"]["structured_type"] = "gen_ai.input_messages"
+    elif mutation == "missing-disposition":
+        facts["fields"]["structured_property_dispositions"] = facts["fields"][
+            "structured_property_dispositions"
+        ][:-1]
+    elif mutation == "known-values":
+        role = next(
+            item
+            for item in by_id["gen_ai.chat_message"]["fields"]["fields"]
+            if item["fields"]["name"] == "role"
+        )
+        role["fields"]["scalar"]["fields"]["known_values"] = ("system", "user")
+    elif mutation == "nullable-omission":
+        name = next(
+            item
+            for item in by_id["gen_ai.chat_message"]["fields"]["fields"]
+            if item["fields"]["name"] == "name"
+        )
+        name["fields"]["nullable_omission"] = False
+    elif mutation == "union-disposition-target":
+        disposition = next(
+            item
+            for item in facts["fields"]["structured_property_dispositions"]
+            if item["fields"]["structured_type"] == "gen_ai.message_part"
+            and item["fields"]["arm_id"] == "text"
+        )
+        disposition["fields"]["target_structured_type"] = "gen_ai.output_message"
+    elif mutation == "content-sensitivity":
+        by_id["gen_ai.text_part"]["fields"]["fields"][0]["fields"]["scalar"]["fields"][
+            "sensitivity"
+        ] = "safe"
+    elif mutation == "content-normalization":
+        by_id["gen_ai.text_part"]["fields"]["fields"][0]["fields"]["scalar"]["fields"][
+            "normalization"
+        ]["fields"]["id"] = "identity-v1"
+    elif mutation == "discriminator-name":
+        by_id["gen_ai.message_part"]["fields"]["discriminator"]["fields"]["name"] = "kind"
+    elif mutation == "discriminator-privacy":
+        by_id["gen_ai.message_part"]["fields"]["discriminator"]["fields"]["sensitivity"] = "safe"
+    elif mutation == "dynamic-name-privacy":
+        by_id["gen_ai.tool_call_arguments"]["fields"]["dynamic_members"]["fields"]["name"]["fields"][
+            "sensitivity"
+        ] = "safe"
+    elif mutation == "dynamic-name-normalization":
+        by_id["gen_ai.tool_call_arguments"]["fields"]["dynamic_members"]["fields"]["name"]["fields"][
+            "normalization"
+        ]["fields"]["id"] = "identifier-v1"
+    elif mutation == "canonical-encoding":
+        canonical = by_id["gen_ai.canonical_json"]["fields"]["canonical_json"]["fields"]
+        canonical["public_encoding"] = "native_object"
+        canonical["wire_encoding"] = "ordered_entries"
+    elif mutation == "encoding-annotation":
+        blob_content = next(
+            item
+            for item in by_id["gen_ai.blob_part"]["fields"]["fields"]
+            if item["fields"]["name"] == "content"
+        )
+        blob_content["fields"]["scalar"]["fields"]["encoding_annotation"] = None
+    else:
+        by_id["gen_ai.text_part"]["fields"]["introduced_in"] = "telemetry-registry-v2"
+
+    with pytest.raises(renderer.CandidateRenderError):
+        renderer.build_candidate_render_index(_retagged_view(renderer, view, facts))
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "envelope-open",
+        "field-privacy",
+        "field-type",
+        "field-required",
+        "signal-arm-target",
+        "relation",
+        "derivation",
+        "otlp-mapping",
+    ],
+)
+def test_candidate_rejects_digest_consistent_structural_contract_retargeting(
+    renderer: ModuleType,
+    view: Any,
+    mutation: str,
+) -> None:
+    facts = _copy_materialized(view.facts)
+    contract = facts["fields"]["structural_contract"]["fields"]
+    envelope = contract["envelope"]["fields"]
+    first_field = envelope["fields"][0]["fields"]
+    if mutation == "envelope-open":
+        envelope["additional_properties"] = True
+    elif mutation == "field-privacy":
+        first_field["sensitivity"] = "critical"
+    elif mutation == "field-type":
+        first_field["field_type"] = "string"
+    elif mutation == "field-required":
+        first_field["required"] = False
+    elif mutation == "signal-arm-target":
+        contract["signal_arms"][0]["fields"]["payload_field"] = "instrument_data"
+    elif mutation == "relation":
+        contract["trace_relations"][0]["fields"]["right"] = "start_time_unix_nano"
+    elif mutation == "derivation":
+        contract["trace_derivations"][0]["fields"]["target_attribute"] = "defenseclaw.source"
+    else:
+        contract["canonical_to_otlp"]["fields"]["json_mapping"] = "retargeted-json-mapping"
+
+    with pytest.raises(renderer.CandidateRenderError, match="structural contract is not canonical"):
+        renderer.build_candidate_render_index(_retagged_view(renderer, view, facts))
+
+
+def test_candidate_semantic_digests_ignore_only_tagged_normalization_notes(
+    renderer: ModuleType,
+    view: Any,
+) -> None:
+    facts = _copy_materialized(view.facts)
+    structured = {
+        item["fields"]["id"]: item for item in facts["fields"]["structured_types"]
+    }
+    structured_note = structured["gen_ai.text_part"]["fields"]["fields"][0]["fields"]["scalar"][
+        "fields"
+    ]["normalization"]["fields"]
+    structural_note = facts["fields"]["structural_contract"]["fields"]["envelope"]["fields"]["fields"][
+        0
+    ]["fields"]["normalization"]["fields"]
+    structured_note["notes"] = "Structured reviewer prose."
+    structural_note["notes"] = "P-069 reviewer prose."
+
+    index = renderer.build_candidate_render_index(_retagged_view(renderer, view, facts))
+
+    assert index.structured_types["gen_ai.text_part"]["fields"][0]["scalar"]["normalization"]["notes"] == (
+        "Structured reviewer prose."
+    )
+    assert index.fields["structural_contract"]["fields"]["envelope"]["fields"]["fields"][0]["fields"][
+        "normalization"
+    ]["fields"]["notes"] == "P-069 reviewer prose."
+
+
+@pytest.mark.parametrize("surface", ["structured", "structural"])
+@pytest.mark.parametrize("invalid_notes", [{"not": "prose"}, "x" * 4097])
+def test_candidate_rejects_invalid_normalization_notes_even_when_semantically_ignored(
+    renderer: ModuleType,
+    view: Any,
+    surface: str,
+    invalid_notes: Any,
+) -> None:
+    facts = _copy_materialized(view.facts)
+    if surface == "structured":
+        structured = {
+            item["fields"]["id"]: item for item in facts["fields"]["structured_types"]
+        }
+        notes = structured["gen_ai.text_part"]["fields"]["fields"][0]["fields"]["scalar"]["fields"][
+            "normalization"
+        ]["fields"]
+    else:
+        notes = facts["fields"]["structural_contract"]["fields"]["envelope"]["fields"]["fields"][0][
+            "fields"
+        ]["normalization"]["fields"]
+    notes["notes"] = invalid_notes
+
+    with pytest.raises(renderer.CandidateRenderError, match="normalization notes are invalid"):
+        renderer.build_candidate_render_index(_retagged_view(renderer, view, facts))
+
+
+@pytest.mark.parametrize(
+    ("definition_name", "property_name", "expected_ref"),
+    [
+        pytest.param("structural:envelope", "body", "value:canonical_json", id="envelope-body"),
+        pytest.param("structural:trace_body", "attributes", "value:canonical_json", id="trace-attributes"),
+        pytest.param("structural:trace_resource", "attributes", "value:canonical_json", id="resource-attributes"),
+        pytest.param("structural:trace_scope", "attributes", "value:canonical_json", id="scope-attributes"),
+        pytest.param("structural:trace_event", "attributes", "value:canonical_json", id="event-attributes"),
+        pytest.param("structural:trace_link", "attributes", "value:canonical_json", id="link-attributes"),
+        pytest.param(
+            "structural:metric_instrument_data",
+            "attributes",
+            "value:canonical_json",
+            id="metric-attributes",
+        ),
+        pytest.param(
+            "attribute:gen_ai.input.messages",
+            None,
+            "structured:gen_ai.input_messages",
+            id="genai-input-messages",
+        ),
+        pytest.param(
+            "attribute:gen_ai.output.messages",
+            None,
+            "structured:gen_ai.output_messages",
+            id="genai-output-messages",
+        ),
+        pytest.param(
+            "attribute:gen_ai.tool.call.arguments",
+            None,
+            "structured:gen_ai.tool_call_arguments",
+            id="genai-tool-arguments",
+        ),
+        pytest.param(
+            "attribute:gen_ai.tool.call.result",
+            None,
+            "structured:gen_ai.tool_call_result",
+            id="genai-tool-result",
+        ),
     ],
 )
 def test_every_canonical_json_context_rejects_direct_null(
@@ -434,12 +832,13 @@ def test_every_canonical_json_context_rejects_direct_null(
     artifacts: Mapping[str, Any],
     definition_name: str,
     property_name: str | None,
+    expected_ref: str,
 ) -> None:
     schema = _json(artifacts, "telemetry.schema.json")
     definition = schema["$defs"][definition_name]
     subject = definition if property_name is None else definition["properties"][property_name]
 
-    assert subject["$ref"] == f"#/$defs/{renderer.CANONICAL_JSON_DEFINITION}"
+    assert subject["$ref"] == f"#/$defs/{expected_ref}"
     assert not _subschema_validator(schema, subject).is_valid(None)
 
 
@@ -687,5 +1086,5 @@ def test_renderer_rejects_incomplete_resolution_unknown_profiles_and_malformed_e
 
     incomplete_structure = _copy_materialized(view.facts)
     del incomplete_structure["fields"]["structural_contract"]["fields"]["trace_body"]["fields"]["fields"]
-    with pytest.raises(renderer.CandidateRenderError, match="StructuralObjectIR fields are incomplete"):
+    with pytest.raises(renderer.CandidateRenderError, match="structural contract is not canonical"):
         renderer.render_candidate_artifacts(_retagged_view(renderer, view, incomplete_structure))

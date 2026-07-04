@@ -53,8 +53,232 @@ generated_transaction = _load_transaction_module()
 
 GENERATOR_VERSION: Final = 1
 NORMALIZED_SNAPSHOT_FORMAT: Final = "defenseclaw-normalized-semconv-v1"
+MAX_AUTHORED_JSON_NESTING: Final = 256
 EXPECTED_IMPORTS: Final = ("genai.yaml", "security.yaml", "operations.yaml")
 EXPECTED_DEPENDENCIES: Final = ("otel_core", "otel_genai", "openinference")
+EXPECTED_STRUCTURAL_INPUTS: Final = (
+    (
+        "model/gen-ai/gen-ai-input-messages.json",
+        "schemas/telemetry/v8/upstream/otel-genai-b028dceecdad117461a785c3af35315e7184e813/"
+        "model/gen-ai/gen-ai-input-messages.json",
+        "034fcd8c87f1e013f3a5a5018503210e2bee4d2499c361823b96e906d40a50ad",
+    ),
+    (
+        "model/gen-ai/gen-ai-output-messages.json",
+        "schemas/telemetry/v8/upstream/otel-genai-b028dceecdad117461a785c3af35315e7184e813/"
+        "model/gen-ai/gen-ai-output-messages.json",
+        "a825a6c0cc1b7b22fdbfb9488d8dc3a318be3897ef6d3dbae01a10297bb6e569",
+    ),
+    (
+        "model/gen-ai/gen-ai-tool-call-arguments.json",
+        "schemas/telemetry/v8/upstream/otel-genai-b028dceecdad117461a785c3af35315e7184e813/"
+        "model/gen-ai/gen-ai-tool-call-arguments.json",
+        "73607a8e8d9e84393475ef460108c59dbb9e1d2ddc0d0177fce6f735a62367ea",
+    ),
+    (
+        "model/gen-ai/gen-ai-tool-call-result.json",
+        "schemas/telemetry/v8/upstream/otel-genai-b028dceecdad117461a785c3af35315e7184e813/"
+        "model/gen-ai/gen-ai-tool-call-result.json",
+        "44eb4a93b05eea7da14489f1d253814c6429772d1fe869f8f6fc1749d7593412",
+    ),
+)
+EXPECTED_STRUCTURED_TYPE_IDS: Final = (
+    "gen_ai.canonical_json",
+    "gen_ai.tool_call_arguments",
+    "gen_ai.tool_call_result",
+    "gen_ai.input_messages",
+    "gen_ai.output_messages",
+    "gen_ai.message_parts",
+    "gen_ai.message_part",
+    "gen_ai.chat_message",
+    "gen_ai.output_message",
+    "gen_ai.text_part",
+    "gen_ai.tool_call_request_part",
+    "gen_ai.tool_call_response_part",
+    "gen_ai.server_tool_call_part",
+    "gen_ai.server_tool_call_response_part",
+    "gen_ai.blob_part",
+    "gen_ai.file_part",
+    "gen_ai.uri_part",
+    "gen_ai.reasoning_part",
+    "gen_ai.compaction_part",
+    "gen_ai.generic_part",
+    "gen_ai.generic_server_tool_payload",
+)
+EXPECTED_STRUCTURED_BINDINGS: Final = (
+    ("gen_ai.input.messages", "gen_ai.input_messages", "sealed_typed", "native_json"),
+    ("gen_ai.output.messages", "gen_ai.output_messages", "sealed_typed", "native_json"),
+    (
+        "gen_ai.tool.call.arguments",
+        "gen_ai.tool_call_arguments",
+        "ordered_typed_entries",
+        "native_json_object",
+    ),
+    (
+        "gen_ai.tool.call.result",
+        "gen_ai.tool_call_result",
+        "ordered_typed_entries",
+        "native_json_object",
+    ),
+)
+EXPECTED_AUTHORED_STRUCTURED_TYPES_SHA256: Final = (
+    "c4ee28168fddd3e509d92b474b136e057ab0b6063a160a70f415ece0e42a9b15"
+)
+EXPECTED_MESSAGE_PART_VARIANTS: Final = (
+    ("text", "gen_ai.text_part"),
+    ("tool_call", "gen_ai.tool_call_request_part"),
+    ("tool_call_response", "gen_ai.tool_call_response_part"),
+    ("server_tool_call", "gen_ai.server_tool_call_part"),
+    ("server_tool_call_response", "gen_ai.server_tool_call_response_part"),
+    ("blob", "gen_ai.blob_part"),
+    ("file", "gen_ai.file_part"),
+    ("uri", "gen_ai.uri_part"),
+    ("reasoning", "gen_ai.reasoning_part"),
+    ("compaction", "gen_ai.compaction_part"),
+)
+EXPECTED_STRUCTURED_OBJECT_FIELDS: Final = {
+    "gen_ai.tool_call_arguments": (),
+    "gen_ai.tool_call_result": (),
+    "gen_ai.chat_message": (
+        ("role", True, "scalar", "string"),
+        ("parts", True, "reference", "gen_ai.message_parts"),
+        ("name", False, "scalar", "string"),
+    ),
+    "gen_ai.output_message": (
+        ("role", True, "scalar", "string"),
+        ("parts", True, "reference", "gen_ai.message_parts"),
+        ("name", False, "scalar", "string"),
+        ("finish_reason", True, "scalar", "string"),
+    ),
+    "gen_ai.text_part": (("content", True, "scalar", "string"),),
+    "gen_ai.tool_call_request_part": (
+        ("id", False, "scalar", "string"),
+        ("name", True, "scalar", "string"),
+        ("arguments", False, "reference", "gen_ai.canonical_json"),
+    ),
+    "gen_ai.tool_call_response_part": (
+        ("id", False, "scalar", "string"),
+        ("response", True, "reference", "gen_ai.canonical_json"),
+    ),
+    "gen_ai.server_tool_call_part": (
+        ("id", False, "scalar", "string"),
+        ("name", True, "scalar", "string"),
+        ("server_tool_call", True, "reference", "gen_ai.generic_server_tool_payload"),
+    ),
+    "gen_ai.server_tool_call_response_part": (
+        ("id", False, "scalar", "string"),
+        ("server_tool_call_response", True, "reference", "gen_ai.generic_server_tool_payload"),
+    ),
+    "gen_ai.blob_part": (
+        ("mime_type", False, "scalar", "string"),
+        ("modality", True, "scalar", "string"),
+        ("content", True, "scalar", "string"),
+    ),
+    "gen_ai.file_part": (
+        ("mime_type", False, "scalar", "string"),
+        ("modality", True, "scalar", "string"),
+        ("file_id", True, "scalar", "string"),
+    ),
+    "gen_ai.uri_part": (
+        ("mime_type", False, "scalar", "string"),
+        ("modality", True, "scalar", "string"),
+        ("uri", True, "scalar", "string"),
+    ),
+    "gen_ai.reasoning_part": (("content", True, "scalar", "string"),),
+    "gen_ai.compaction_part": (
+        ("id", False, "scalar", "string"),
+        ("content", False, "scalar", "string"),
+    ),
+    "gen_ai.generic_part": (),
+    "gen_ai.generic_server_tool_payload": (("type", True, "scalar", "string"),),
+}
+EXPECTED_STRUCTURED_ARRAYS: Final = {
+    "gen_ai.input_messages": ("gen_ai.chat_message", 0, 256),
+    "gen_ai.output_messages": ("gen_ai.output_message", 0, 256),
+    "gen_ai.message_parts": ("gen_ai.message_part", 0, 256),
+}
+STRUCTURED_SOURCE_DEFINITIONS: Final = {
+    "model/gen-ai/gen-ai-input-messages.json": {
+        "ChatMessage": "gen_ai.chat_message",
+        "TextPart": "gen_ai.text_part",
+        "ToolCallRequestPart": "gen_ai.tool_call_request_part",
+        "ToolCallResponsePart": "gen_ai.tool_call_response_part",
+        "ServerToolCallPart": "gen_ai.server_tool_call_part",
+        "ServerToolCallResponsePart": "gen_ai.server_tool_call_response_part",
+        "BlobPart": "gen_ai.blob_part",
+        "FilePart": "gen_ai.file_part",
+        "UriPart": "gen_ai.uri_part",
+        "ReasoningPart": "gen_ai.reasoning_part",
+        "CompactionPart": "gen_ai.compaction_part",
+        "GenericPart": "gen_ai.generic_part",
+        "GenericServerToolCall": "gen_ai.generic_server_tool_payload",
+        "GenericServerToolCallResponse": "gen_ai.generic_server_tool_payload",
+    },
+    "model/gen-ai/gen-ai-output-messages.json": {
+        "OutputMessage": "gen_ai.output_message",
+        "TextPart": "gen_ai.text_part",
+        "ToolCallRequestPart": "gen_ai.tool_call_request_part",
+        "ToolCallResponsePart": "gen_ai.tool_call_response_part",
+        "ServerToolCallPart": "gen_ai.server_tool_call_part",
+        "ServerToolCallResponsePart": "gen_ai.server_tool_call_response_part",
+        "BlobPart": "gen_ai.blob_part",
+        "FilePart": "gen_ai.file_part",
+        "UriPart": "gen_ai.uri_part",
+        "ReasoningPart": "gen_ai.reasoning_part",
+        "CompactionPart": "gen_ai.compaction_part",
+        "GenericPart": "gen_ai.generic_part",
+        "GenericServerToolCall": "gen_ai.generic_server_tool_payload",
+        "GenericServerToolCallResponse": "gen_ai.generic_server_tool_payload",
+    },
+}
+STRUCTURED_NULLABLE_OPTIONALS: Final = {
+    "gen_ai.chat_message": frozenset({"name"}),
+    "gen_ai.output_message": frozenset({"name"}),
+    "gen_ai.blob_part": frozenset({"mime_type"}),
+    "gen_ai.compaction_part": frozenset({"id", "content"}),
+    "gen_ai.file_part": frozenset({"mime_type"}),
+    "gen_ai.server_tool_call_part": frozenset({"id"}),
+    "gen_ai.server_tool_call_response_part": frozenset({"id"}),
+    "gen_ai.tool_call_request_part": frozenset({"id", "arguments"}),
+    "gen_ai.tool_call_response_part": frozenset({"id"}),
+    "gen_ai.uri_part": frozenset({"mime_type"}),
+}
+EXPECTED_STRUCTURAL_SOURCE_ENUMS: Final = {
+    "Modality": ("image", "video", "audio", "document"),
+    "Role": ("system", "user", "assistant", "tool"),
+    "FinishReason": ("stop", "length", "content_filter", "tool_call", "compaction", "error"),
+}
+AUDITED_STRUCTURED_SCALARS: Final = {
+    ("gen_ai.chat_message", "role"): ("metadata", "internal", "bounded-v1", 256),
+    ("gen_ai.chat_message", "name"): ("identifier", "sensitive", "bounded-v1", 512),
+    ("gen_ai.output_message", "role"): ("metadata", "internal", "bounded-v1", 256),
+    ("gen_ai.output_message", "name"): ("identifier", "sensitive", "bounded-v1", 512),
+    ("gen_ai.output_message", "finish_reason"): ("metadata", "internal", "bounded-v1", 256),
+    ("gen_ai.tool_call_request_part", "id"): ("identifier", "sensitive", "bounded-v1", 512),
+    ("gen_ai.tool_call_request_part", "name"): ("identifier", "internal", "bounded-v1", 512),
+    ("gen_ai.tool_call_response_part", "id"): ("identifier", "sensitive", "bounded-v1", 512),
+    ("gen_ai.server_tool_call_part", "id"): ("identifier", "sensitive", "bounded-v1", 512),
+    ("gen_ai.server_tool_call_part", "name"): ("identifier", "internal", "bounded-v1", 512),
+    ("gen_ai.server_tool_call_response_part", "id"): ("identifier", "sensitive", "bounded-v1", 512),
+    ("gen_ai.blob_part", "mime_type"): ("metadata", "internal", "bounded-v1", 256),
+    ("gen_ai.blob_part", "modality"): ("metadata", "internal", "bounded-v1", 256),
+    ("gen_ai.file_part", "mime_type"): ("metadata", "internal", "bounded-v1", 256),
+    ("gen_ai.file_part", "modality"): ("metadata", "internal", "bounded-v1", 256),
+    ("gen_ai.file_part", "file_id"): ("identifier", "sensitive", "bounded-v1", 512),
+    ("gen_ai.uri_part", "mime_type"): ("metadata", "internal", "bounded-v1", 256),
+    ("gen_ai.uri_part", "modality"): ("metadata", "internal", "bounded-v1", 256),
+    ("gen_ai.uri_part", "uri"): ("path", "sensitive", "path-v1", 8192),
+    ("gen_ai.compaction_part", "id"): ("identifier", "sensitive", "bounded-v1", 512),
+    ("gen_ai.generic_server_tool_payload", "type"): ("identifier", "internal", "bounded-v1", 256),
+}
+AUDITED_STRUCTURED_CONTENT_FIELDS: Final = frozenset(
+    {
+        ("gen_ai.text_part", "content"),
+        ("gen_ai.blob_part", "content"),
+        ("gen_ai.reasoning_part", "content"),
+        ("gen_ai.compaction_part", "content"),
+    }
+)
 EXPECTED_SNAPSHOT_ATTRIBUTE_COUNTS: Final = {
     "otel_core": 923,
     "otel_genai": 70,
@@ -510,8 +734,13 @@ def _read_utf8(path: Path) -> tuple[bytes, str]:
     return raw, text
 
 
-def load_yaml_strict(path: Path) -> dict[str, Any]:
-    _, text = _read_utf8(path)
+def _parse_yaml_strict_bytes(path: Path, raw: bytes) -> dict[str, Any]:
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise RegistryError(f"{path}: invalid UTF-8") from exc
+    if text.startswith("\ufeff"):
+        raise RegistryError(f"{path}: UTF-8 BOM is not allowed")
     try:
         for token in yaml.scan(text):
             if isinstance(token, (yaml.tokens.AnchorToken, yaml.tokens.AliasToken)):
@@ -528,8 +757,42 @@ def load_yaml_strict(path: Path) -> dict[str, Any]:
     return value
 
 
-def load_json_strict(path: Path) -> dict[str, Any]:
-    _, text = _read_utf8(path)
+def _load_yaml_strict_with_bytes(path: Path) -> tuple[bytes, dict[str, Any]]:
+    raw, _ = _read_utf8(path)
+    return raw, _parse_yaml_strict_bytes(path, raw)
+
+
+def load_yaml_strict(path: Path) -> dict[str, Any]:
+    return _load_yaml_strict_with_bytes(path)[1]
+
+
+def _parse_json_strict_bytes(path: Path, raw: bytes) -> dict[str, Any]:
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise RegistryError(f"{path}: invalid UTF-8") from exc
+    if text.startswith("\ufeff"):
+        raise RegistryError(f"{path}: UTF-8 BOM is not allowed")
+
+    depth = 0
+    in_string = False
+    escaped = False
+    for character in text:
+        if in_string:
+            if escaped:
+                escaped = False
+            elif character == "\\":
+                escaped = True
+            elif character == '"':
+                in_string = False
+        elif character == '"':
+            in_string = True
+        elif character in "[{":
+            depth += 1
+            if depth > MAX_AUTHORED_JSON_NESTING:
+                raise RegistryError(f"{path}: JSON nesting exceeds the parser limit")
+        elif character in "]}":
+            depth = max(0, depth - 1)
 
     def pairs(items: list[tuple[str, Any]]) -> dict[str, Any]:
         result: dict[str, Any] = {}
@@ -539,15 +802,25 @@ def load_json_strict(path: Path) -> dict[str, Any]:
             result[key] = value
         return result
 
+    def reject_constant(value: str) -> None:
+        raise RegistryError(f"{path}: non-finite JSON number {value!r} is not allowed")
+
     try:
-        value = json.loads(text, object_pairs_hook=pairs)
+        value = json.loads(text, object_pairs_hook=pairs, parse_constant=reject_constant)
     except RegistryError:
         raise
     except json.JSONDecodeError as exc:
         raise RegistryError(f"{path}: invalid JSON") from exc
+    except RecursionError as exc:
+        raise RegistryError(f"{path}: JSON nesting exceeds the parser limit") from exc
     if not isinstance(value, dict):
         raise RegistryError(f"{path}: document root must be an object")
     return value
+
+
+def load_json_strict(path: Path) -> dict[str, Any]:
+    raw, _ = _read_utf8(path)
+    return _parse_json_strict_bytes(path, raw)
 
 
 def _exact_keys(value: dict[str, Any], required: set[str], optional: set[str], path: str) -> None:
@@ -633,6 +906,13 @@ class SourceFileIR:
 
 
 @dataclass(frozen=True, slots=True)
+class StructuralInputIR:
+    upstream_path: str
+    path: str
+    sha256: str
+
+
+@dataclass(frozen=True, slots=True)
 class SnapshotAttribute:
     id: str
     allowed_types: tuple[str, ...]
@@ -666,6 +946,7 @@ class DependencyIR:
     profile_id: str
     revision: str
     snapshot: SnapshotIR
+    structural_inputs: tuple[StructuralInputIR, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -818,6 +1099,149 @@ class MandatoryRuleIR:
 class MandatoryRuleCatalogIR:
     version: int
     rules: tuple[MandatoryRuleIR, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class StructuredScalarIR:
+    field_type: str
+    field_class: str
+    sensitivity: str
+    normalization: NormalizationIR
+    encoding_annotation: str | None
+    known_values: tuple[str, ...]
+    __hash__ = None
+
+
+@dataclass(frozen=True, slots=True)
+class StructuredReferenceIR:
+    structured_ref: str
+
+
+@dataclass(frozen=True, slots=True)
+class StructuredFieldIR:
+    name: str
+    required: bool
+    nullable_omission: bool
+    scalar: StructuredScalarIR | None
+    reference: StructuredReferenceIR | None
+
+
+@dataclass(frozen=True, slots=True)
+class StructuredDynamicNameIR:
+    field_type: str
+    field_class: str
+    sensitivity: str
+    normalization: NormalizationIR
+    __hash__ = None
+
+
+@dataclass(frozen=True, slots=True)
+class StructuredDynamicMembersIR:
+    member_id: str
+    name: StructuredDynamicNameIR
+    value: StructuredReferenceIR
+    max_items: int
+    public_encoding: str
+    wire_encoding: str
+    duplicate_name_policy: str
+    fixed_name_collision_policy: str
+    post_redaction_name_collision_policy: str
+    reserved_names: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class StructuredDiscriminatorIR:
+    name: str
+    field_type: str
+    field_class: str
+    sensitivity: str
+    normalization: NormalizationIR
+    __hash__ = None
+
+
+@dataclass(frozen=True, slots=True)
+class StructuredVariantIR:
+    tag: str
+    structured_ref: str
+
+
+@dataclass(frozen=True, slots=True)
+class StructuredDynamicVariantIR:
+    arm_id: str
+    tag_normalization: NormalizationIR
+    structured_ref: str
+    exclude_registered_tags: bool
+    __hash__ = None
+
+
+@dataclass(frozen=True, slots=True)
+class CanonicalJSONLimitsIR:
+    max_depth: int
+    max_aggregate_members: int
+    max_array_items: int
+    max_string_utf8_bytes: int
+    max_member_name_utf8_bytes: int
+    max_item_bytes: int
+    max_canonical_bytes: int
+
+
+@dataclass(frozen=True, slots=True)
+class CanonicalJSONContractIR:
+    discriminator_visibility: str
+    discriminator_wire: bool
+    arms: tuple[str, ...]
+    leaf_field_class: str
+    leaf_sensitivity: str
+    array_items_ref: str
+    object_member_id: str
+    object_name: StructuredDynamicNameIR
+    object_value: StructuredReferenceIR
+    public_encoding: str
+    wire_encoding: str
+    duplicate_name_policy: str
+    fixed_name_collision_policy: str
+    post_redaction_name_collision_policy: str
+    limits: CanonicalJSONLimitsIR
+    __hash__ = None
+
+
+@dataclass(frozen=True, slots=True)
+class StructuredTypeIR:
+    id: str
+    kind: str
+    introduced_in: str
+    additional_properties: bool | None
+    fields: tuple[StructuredFieldIR, ...] | None
+    dynamic_members: StructuredDynamicMembersIR | None
+    items_scalar: StructuredScalarIR | None
+    items_reference: StructuredReferenceIR | None
+    min_items: int | None
+    max_items: int | None
+    discriminator: StructuredDiscriminatorIR | None
+    variants: tuple[StructuredVariantIR, ...] | None
+    dynamic_variant: StructuredDynamicVariantIR | None
+    canonical_json: CanonicalJSONContractIR | None
+    effective_reserved_names: tuple[str, ...]
+    __hash__ = None
+
+
+@dataclass(frozen=True, slots=True)
+class StructuredBindingIR:
+    attribute: str
+    structured_type: str
+    public_encoding: str
+    canonical_wire_encoding: str
+
+
+@dataclass(frozen=True, slots=True)
+class StructuredPropertyDispositionIR:
+    input_path: str
+    json_pointer: str
+    disposition: str
+    structured_type: str
+    member_name: str | None
+    arm_id: str | None
+    target_structured_type: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -1146,6 +1570,9 @@ class RegistryIR:
     normalizers: tuple[NormalizerIR, ...]
     conditions: tuple[ConditionIR, ...]
     mandatory_rule_catalog: MandatoryRuleCatalogIR
+    structured_types: tuple[StructuredTypeIR, ...]
+    structured_bindings: tuple[StructuredBindingIR, ...]
+    structured_property_dispositions: tuple[StructuredPropertyDispositionIR, ...]
     value_catalogs: tuple[ValueCatalogIR, ...]
     structural_contract: StructuralContractIR
     metric_cardinality_limit: int
@@ -1182,7 +1609,7 @@ def _parse_snapshot(
     actual_digest = _sha256(raw)
     if actual_digest != expected_digest:
         raise RegistryError(f"{dependency_path}.snapshot.sha256: snapshot digest mismatch")
-    document = load_json_strict(snapshot_path)
+    document = _parse_json_strict_bytes(snapshot_path, raw)
     _exact_keys(
         document,
         {
@@ -1343,14 +1770,62 @@ def _parse_snapshot(
     )
 
 
-def _parse_lock(root: Path, relative: str) -> tuple[tuple[DependencyIR, ...], InputDigest]:
+def _parse_structural_inputs(
+    root: Path,
+    value: Any,
+    path: str,
+) -> tuple[tuple[StructuralInputIR, ...], Mapping[str, dict[str, Any]], tuple[InputDigest, ...]]:
+    if not isinstance(value, list):
+        raise RegistryError(f"{path}: expected sequence")
+    parsed: list[StructuralInputIR] = []
+    documents: dict[str, dict[str, Any]] = {}
+    digests: list[InputDigest] = []
+    for index, item in enumerate(value):
+        item_path = f"{path}[{index}]"
+        if not isinstance(item, dict):
+            raise RegistryError(f"{item_path}: expected mapping")
+        _exact_keys(item, {"upstream_path", "path", "sha256"}, set(), item_path)
+        upstream_path = _string(item["upstream_path"], f"{item_path}.upstream_path")
+        expected_path = _string(item["path"], f"{item_path}.path")
+        expected_digest = _string(item["sha256"], f"{item_path}.sha256", pattern=_SHA256)
+        source_path, normalized = _safe_relative(
+            root,
+            expected_path,
+            f"{item_path}.path",
+            prefix=Path("schemas/telemetry/v8/upstream"),
+        )
+        raw, _ = _read_utf8(source_path)
+        actual_digest = _sha256(raw)
+        if actual_digest != expected_digest:
+            raise RegistryError(f"{item_path}.sha256: structural input digest mismatch")
+        document = _parse_json_strict_bytes(source_path, raw)
+        if upstream_path in documents:
+            raise RegistryError(f"{path}: duplicate structural upstream path")
+        parsed.append(StructuralInputIR(upstream_path, normalized, actual_digest))
+        documents[upstream_path] = document
+        digests.append(InputDigest(normalized, actual_digest))
+    observed = tuple((item.upstream_path, item.path, item.sha256) for item in parsed)
+    if observed != EXPECTED_STRUCTURAL_INPUTS:
+        raise RegistryError(f"{path}: structural input inventory/order mismatch")
+    return tuple(parsed), MappingProxyType(documents), tuple(digests)
+
+
+def _parse_lock(
+    root: Path,
+    relative: str,
+) -> tuple[
+    tuple[DependencyIR, ...],
+    InputDigest,
+    Mapping[str, dict[str, Any]],
+    tuple[InputDigest, ...],
+]:
     path, normalized = _safe_relative(
         root,
         relative,
         "registry.dependency_lock",
         prefix=Path("schemas/telemetry/v8"),
     )
-    document = load_yaml_strict(path)
+    raw, document = _load_yaml_strict_with_bytes(path)
     _exact_keys(document, {"schema_version", "dependencies"}, set(), normalized)
     if _integer(document["schema_version"], f"{normalized}.schema_version") != 1:
         raise RegistryError(f"{normalized}.schema_version: unsupported version")
@@ -1358,6 +1833,8 @@ def _parse_lock(root: Path, relative: str) -> tuple[tuple[DependencyIR, ...], In
     if not isinstance(raw_dependencies, list):
         raise RegistryError(f"{normalized}.dependencies: expected sequence")
     dependencies: list[DependencyIR] = []
+    structural_documents: Mapping[str, dict[str, Any]] = MappingProxyType({})
+    structural_digests: tuple[InputDigest, ...] = ()
     for index, item in enumerate(raw_dependencies):
         item_path = f"{normalized}.dependencies[{index}]"
         if not isinstance(item, dict):
@@ -1365,10 +1842,22 @@ def _parse_lock(root: Path, relative: str) -> tuple[tuple[DependencyIR, ...], In
         _exact_keys(
             item,
             {"id", "repository", "version", "profile_id", "revision", "snapshot"},
-            set(),
+            {"structural_inputs"},
             item_path,
         )
         snapshot = _parse_snapshot(root, item, item_path)
+        if snapshot.dependency_id == "otel_genai":
+            if "structural_inputs" not in item:
+                raise RegistryError(f"{item_path}.structural_inputs: required for otel_genai")
+            parsed_inputs, structural_documents, structural_digests = _parse_structural_inputs(
+                root,
+                item["structural_inputs"],
+                f"{item_path}.structural_inputs",
+            )
+        else:
+            if "structural_inputs" in item:
+                raise RegistryError(f"{item_path}.structural_inputs: only otel_genai may declare structural inputs")
+            parsed_inputs = ()
         dependencies.append(
             DependencyIR(
                 id=snapshot.dependency_id,
@@ -1377,13 +1866,18 @@ def _parse_lock(root: Path, relative: str) -> tuple[tuple[DependencyIR, ...], In
                 profile_id=_string(item["profile_id"], f"{item_path}.profile_id", pattern=_ID),
                 revision=snapshot.revision,
                 snapshot=snapshot,
+                structural_inputs=parsed_inputs,
             )
         )
     ids = tuple(item.id for item in dependencies)
     if ids != EXPECTED_DEPENDENCIES:
         raise RegistryError(f"{normalized}.dependencies: expected canonical order {EXPECTED_DEPENDENCIES}")
-    raw, _ = _read_utf8(path)
-    return tuple(dependencies), InputDigest(normalized, _sha256(raw))
+    return (
+        tuple(dependencies),
+        InputDigest(normalized, _sha256(raw)),
+        structural_documents,
+        structural_digests,
+    )
 
 
 def _parse_producer_inventory(
@@ -1396,7 +1890,7 @@ def _parse_producer_inventory(
         "producer_inventory",
         prefix=Path("docs/design/observability-v8"),
     )
-    document = load_yaml_strict(path)
+    raw, document = _load_yaml_strict_with_bytes(path)
     if document.get("inventory_version") != 1 or not isinstance(document.get("classes"), dict):
         raise RegistryError(f"{normalized}: unsupported producer inventory")
     classes = document["classes"]
@@ -1462,7 +1956,6 @@ def _parse_producer_inventory(
         )
     if len(metric_inventory) != EXPECTED_METRIC_FAMILIES:
         raise RegistryError(f"{normalized}.classes.emitted_metrics.items: expected {EXPECTED_METRIC_FAMILIES} entries")
-    raw, _ = _read_utf8(path)
     return result, metric_inventory, InputDigest(normalized, _sha256(raw))
 
 
@@ -1684,6 +2177,1032 @@ def _parse_normalization(
     if field_types is not None:
         _validate_normalization_compatibility(normalization, field_types, shape, path)
     return normalization
+
+
+def _parse_structured_scalar(
+    value: Any,
+    path: str,
+    normalizers: dict[str, NormalizerIR],
+) -> StructuredScalarIR:
+    if not isinstance(value, dict):
+        raise RegistryError(f"{path}: expected mapping")
+    _exact_keys(value, {"type", "field_class", "sensitivity", "normalization"}, set(), path)
+    field_type = _string(value["type"], f"{path}.type", pattern=_ID)
+    if field_type not in {"boolean", "int64", "double", "string"}:
+        raise RegistryError(f"{path}.type: unsupported structured scalar type")
+    field_class = _string(value["field_class"], f"{path}.field_class")
+    sensitivity = _string(value["sensitivity"], f"{path}.sensitivity")
+    if field_class not in _FIELD_CLASS or sensitivity not in _SENSITIVITY:
+        raise RegistryError(f"{path}: invalid structured scalar privacy")
+    normalization = _parse_normalization(
+        value["normalization"],
+        f"{path}.normalization",
+        normalizers,
+        field_types=(field_type,),
+    )
+    return StructuredScalarIR(field_type, field_class, sensitivity, normalization, None, ())
+
+
+def _parse_structured_reference(value: Any, path: str) -> StructuredReferenceIR:
+    if not isinstance(value, dict):
+        raise RegistryError(f"{path}: expected mapping")
+    _exact_keys(value, {"structured_ref"}, set(), path)
+    return StructuredReferenceIR(_string(value["structured_ref"], f"{path}.structured_ref", pattern=_ID))
+
+
+def _parse_structured_field(
+    value: Any,
+    path: str,
+    normalizers: dict[str, NormalizerIR],
+) -> StructuredFieldIR:
+    if not isinstance(value, dict):
+        raise RegistryError(f"{path}: expected mapping")
+    required = {"name", "required"}
+    scalar_keys = {"type", "field_class", "sensitivity", "normalization"}
+    reference_keys = {"structured_ref"}
+    keys = set(value)
+    if keys == required | scalar_keys:
+        name = _string(value["name"], f"{path}.name", pattern=_ID)
+        if type(value["required"]) is not bool:
+            raise RegistryError(f"{path}.required: expected boolean")
+        scalar = _parse_structured_scalar({key: value[key] for key in scalar_keys}, path, normalizers)
+        return StructuredFieldIR(name, value["required"], False, scalar, None)
+    if keys == required | reference_keys:
+        name = _string(value["name"], f"{path}.name", pattern=_ID)
+        if type(value["required"]) is not bool:
+            raise RegistryError(f"{path}.required: expected boolean")
+        reference = _parse_structured_reference({"structured_ref": value["structured_ref"]}, path)
+        return StructuredFieldIR(name, value["required"], False, None, reference)
+    raise RegistryError(f"{path}: expected exactly one structured field arm")
+
+
+def _parse_structured_dynamic_name(
+    value: Any,
+    path: str,
+    normalizers: dict[str, NormalizerIR],
+) -> StructuredDynamicNameIR:
+    scalar = _parse_structured_scalar(value, path, normalizers)
+    if scalar.field_type != "string":
+        raise RegistryError(f"{path}.type: dynamic member names must be strings")
+    return StructuredDynamicNameIR(
+        scalar.field_type,
+        scalar.field_class,
+        scalar.sensitivity,
+        scalar.normalization,
+    )
+
+
+def _parse_structured_dynamic_members(
+    value: Any,
+    path: str,
+    normalizers: dict[str, NormalizerIR],
+) -> StructuredDynamicMembersIR:
+    if not isinstance(value, dict):
+        raise RegistryError(f"{path}: expected mapping")
+    _exact_keys(
+        value,
+        {
+            "member_id",
+            "name",
+            "value",
+            "max_items",
+            "public_encoding",
+            "wire_encoding",
+            "duplicate_name_policy",
+            "fixed_name_collision_policy",
+            "post_redaction_name_collision_policy",
+        },
+        set(),
+        path,
+    )
+    member_id = _string(value["member_id"], f"{path}.member_id", pattern=_ID)
+    name = _parse_structured_dynamic_name(value["name"], f"{path}.name", normalizers)
+    reference = _parse_structured_reference(value["value"], f"{path}.value")
+    max_items = _integer(value["max_items"], f"{path}.max_items", minimum=1)
+    policies = tuple(
+        _string(value[key], f"{path}.{key}")
+        for key in (
+            "duplicate_name_policy",
+            "fixed_name_collision_policy",
+            "post_redaction_name_collision_policy",
+        )
+    )
+    if (
+        member_id != "entry"
+        or name.field_class != "identifier"
+        or name.sensitivity != "internal"
+        or name.normalization.id != "bounded-v1"
+        or name.normalization.effective_constraints.get("max_utf8_bytes") != 256
+        or reference.structured_ref != "gen_ai.canonical_json"
+        or max_items != 256
+        or value["public_encoding"] != "ordered_typed_entries"
+        or value["wire_encoding"] != "native_object_properties"
+        or policies != ("reject", "reject", "reject")
+    ):
+        raise RegistryError(f"{path}: dynamic member contract differs from P-070")
+    return StructuredDynamicMembersIR(
+        member_id,
+        name,
+        reference,
+        max_items,
+        value["public_encoding"],
+        value["wire_encoding"],
+        *policies,
+        (),
+    )
+
+
+def _parse_structured_discriminator(
+    value: Any,
+    path: str,
+    normalizers: dict[str, NormalizerIR],
+) -> StructuredDiscriminatorIR:
+    expected_keys = {"name", "type", "field_class", "sensitivity", "normalization"}
+    if not isinstance(value, dict) or set(value) != expected_keys:
+        raise RegistryError(f"{path}: invalid discriminator shape")
+    name = _string(value["name"], f"{path}.name", pattern=_ID)
+    scalar = _parse_structured_scalar(
+        {key: value[key] for key in expected_keys - {"name"}},
+        path,
+        normalizers,
+    )
+    if scalar.field_type != "string":
+        raise RegistryError(f"{path}.type: discriminator must be a string")
+    return StructuredDiscriminatorIR(
+        name,
+        scalar.field_type,
+        scalar.field_class,
+        scalar.sensitivity,
+        scalar.normalization,
+    )
+
+
+def _parse_canonical_json_contract(
+    value: dict[str, Any],
+    path: str,
+    normalizers: dict[str, NormalizerIR],
+) -> CanonicalJSONContractIR:
+    _exact_keys(
+        value,
+        {"id", "kind", "introduced_in", "discriminator", "arms", "leaf_privacy", "array", "object", "limits"},
+        set(),
+        path,
+    )
+    discriminator = value["discriminator"]
+    if not isinstance(discriminator, dict):
+        raise RegistryError(f"{path}.discriminator: expected mapping")
+    _exact_keys(discriminator, {"visibility", "wire"}, set(), f"{path}.discriminator")
+    if discriminator != {"visibility": "internal", "wire": False}:
+        raise RegistryError(f"{path}.discriminator: canonical discriminator must be internal and non-wire")
+    arms = _string_list(value["arms"], f"{path}.arms", allow_empty=False)
+    if arms != ("boolean", "int64", "finite_double", "string", "array", "object"):
+        raise RegistryError(f"{path}.arms: canonical JSON arm inventory/order mismatch")
+    privacy = value["leaf_privacy"]
+    if not isinstance(privacy, dict):
+        raise RegistryError(f"{path}.leaf_privacy: expected mapping")
+    _exact_keys(privacy, {"field_class", "sensitivity"}, set(), f"{path}.leaf_privacy")
+    if privacy != {"field_class": "content", "sensitivity": "sensitive"}:
+        raise RegistryError(f"{path}.leaf_privacy: canonical JSON privacy mismatch")
+    array = value["array"]
+    if not isinstance(array, dict):
+        raise RegistryError(f"{path}.array: expected mapping")
+    _exact_keys(array, {"items_ref"}, set(), f"{path}.array")
+    array_ref = _string(array["items_ref"], f"{path}.array.items_ref", pattern=_ID)
+    object_value = value["object"]
+    if not isinstance(object_value, dict):
+        raise RegistryError(f"{path}.object: expected mapping")
+    _exact_keys(
+        object_value,
+        {"members", "public_encoding", "wire_encoding"},
+        set(),
+        f"{path}.object",
+    )
+    members = object_value["members"]
+    if not isinstance(members, dict):
+        raise RegistryError(f"{path}.object.members: expected mapping")
+    _exact_keys(members, {"member_id", "name", "value"}, set(), f"{path}.object.members")
+    member_id = _string(members["member_id"], f"{path}.object.members.member_id", pattern=_ID)
+    name = _parse_structured_dynamic_name(members["name"], f"{path}.object.members.name", normalizers)
+    member_value = _parse_structured_reference(members["value"], f"{path}.object.members.value")
+    limits_value = value["limits"]
+    if not isinstance(limits_value, dict):
+        raise RegistryError(f"{path}.limits: expected mapping")
+    limit_keys = {
+        "max_depth",
+        "max_aggregate_members",
+        "max_array_items",
+        "max_string_utf8_bytes",
+        "max_member_name_utf8_bytes",
+        "max_item_bytes",
+        "max_canonical_bytes",
+    }
+    _exact_keys(limits_value, limit_keys, set(), f"{path}.limits")
+    parsed_limits = {key: _integer(limits_value[key], f"{path}.limits.{key}", minimum=1) for key in limit_keys}
+    expected_limits = {
+        "max_depth": 8,
+        "max_aggregate_members": 256,
+        "max_array_items": 256,
+        "max_string_utf8_bytes": 4096,
+        "max_member_name_utf8_bytes": 256,
+        "max_item_bytes": 32768,
+        "max_canonical_bytes": 65536,
+    }
+    if (
+        array_ref != "gen_ai.canonical_json"
+        or member_id != "entry"
+        or name.field_class != "identifier"
+        or name.sensitivity != "internal"
+        or name.normalization.id != "bounded-v1"
+        or name.normalization.effective_constraints.get("max_utf8_bytes") != 256
+        or member_value.structured_ref != "gen_ai.canonical_json"
+        or object_value["public_encoding"] != "ordered_typed_entries"
+        or object_value["wire_encoding"] != "native_object_properties"
+        or parsed_limits != expected_limits
+    ):
+        raise RegistryError(f"{path}: canonical JSON contract differs from P-070")
+    return CanonicalJSONContractIR(
+        "internal",
+        False,
+        arms,
+        "content",
+        "sensitive",
+        array_ref,
+        member_id,
+        name,
+        member_value,
+        "ordered_typed_entries",
+        "native_object_properties",
+        "reject",
+        "reject",
+        "reject",
+        CanonicalJSONLimitsIR(**parsed_limits),
+    )
+
+
+def _parse_structured_type(
+    value: Any,
+    path: str,
+    normalizers: dict[str, NormalizerIR],
+) -> StructuredTypeIR:
+    if not isinstance(value, dict):
+        raise RegistryError(f"{path}: expected mapping")
+    kind = _string(value.get("kind"), f"{path}.kind", pattern=_ID)
+    type_id = _string(value.get("id"), f"{path}.id", pattern=_ID)
+    introduced_in = _string(value.get("introduced_in"), f"{path}.introduced_in")
+    common = {"id", "kind", "introduced_in"}
+    if introduced_in != "telemetry-registry-v1":
+        raise RegistryError(f"{path}.introduced_in: expected telemetry-registry-v1")
+    if kind == "canonical_json":
+        contract = _parse_canonical_json_contract(value, path, normalizers)
+        return StructuredTypeIR(
+            id=type_id,
+            kind=kind,
+            introduced_in=introduced_in,
+            additional_properties=None,
+            fields=None,
+            dynamic_members=None,
+            items_scalar=None,
+            items_reference=None,
+            min_items=None,
+            max_items=None,
+            discriminator=None,
+            variants=None,
+            dynamic_variant=None,
+            canonical_json=contract,
+            effective_reserved_names=(),
+        )
+    if kind == "object":
+        _exact_keys(value, common | {"additional_properties", "fields"}, {"dynamic_members"}, path)
+        if value["additional_properties"] is not False:
+            raise RegistryError(f"{path}.additional_properties: structured objects must be closed")
+        raw_fields = value["fields"]
+        if not isinstance(raw_fields, list):
+            raise RegistryError(f"{path}.fields: expected sequence")
+        fields = tuple(
+            _parse_structured_field(item, f"{path}.fields[{index}]", normalizers)
+            for index, item in enumerate(raw_fields)
+        )
+        names = tuple(item.name for item in fields)
+        if len(names) != len(set(names)):
+            raise RegistryError(f"{path}.fields: duplicate field name")
+        dynamic = (
+            _parse_structured_dynamic_members(value["dynamic_members"], f"{path}.dynamic_members", normalizers)
+            if "dynamic_members" in value
+            else None
+        )
+        if not fields and dynamic is None:
+            raise RegistryError(f"{path}: empty object requires dynamic_members")
+        if dynamic is not None:
+            dynamic = replace(dynamic, reserved_names=tuple(sorted(names)))
+        return StructuredTypeIR(
+            id=type_id,
+            kind=kind,
+            introduced_in=introduced_in,
+            additional_properties=False,
+            fields=fields,
+            dynamic_members=dynamic,
+            items_scalar=None,
+            items_reference=None,
+            min_items=None,
+            max_items=None,
+            discriminator=None,
+            variants=None,
+            dynamic_variant=None,
+            canonical_json=None,
+            effective_reserved_names=tuple(sorted(names)),
+        )
+    if kind == "array":
+        _exact_keys(value, common | {"items", "min_items", "max_items"}, set(), path)
+        items = value["items"]
+        if not isinstance(items, dict):
+            raise RegistryError(f"{path}.items: expected mapping")
+        if set(items) == {"structured_ref"}:
+            item_scalar = None
+            item_ref = _parse_structured_reference(items, f"{path}.items")
+        elif set(items) == {"type", "field_class", "sensitivity", "normalization"}:
+            item_scalar = _parse_structured_scalar(items, f"{path}.items", normalizers)
+            item_ref = None
+        else:
+            raise RegistryError(f"{path}.items: expected exactly one item arm")
+        min_items = _integer(value["min_items"], f"{path}.min_items", minimum=0)
+        max_items = _integer(value["max_items"], f"{path}.max_items", minimum=1)
+        if min_items > max_items:
+            raise RegistryError(f"{path}: min_items exceeds max_items")
+        return StructuredTypeIR(
+            id=type_id,
+            kind=kind,
+            introduced_in=introduced_in,
+            additional_properties=None,
+            fields=None,
+            dynamic_members=None,
+            items_scalar=item_scalar,
+            items_reference=item_ref,
+            min_items=min_items,
+            max_items=max_items,
+            discriminator=None,
+            variants=None,
+            dynamic_variant=None,
+            canonical_json=None,
+            effective_reserved_names=(),
+        )
+    if kind == "tagged_union":
+        _exact_keys(value, common | {"discriminator", "variants"}, {"dynamic_variant"}, path)
+        discriminator = _parse_structured_discriminator(
+            value["discriminator"],
+            f"{path}.discriminator",
+            normalizers,
+        )
+        raw_variants = value["variants"]
+        if not isinstance(raw_variants, list) or len(raw_variants) < 2:
+            raise RegistryError(f"{path}.variants: expected at least two variants")
+        variants: list[StructuredVariantIR] = []
+        for index, item in enumerate(raw_variants):
+            item_path = f"{path}.variants[{index}]"
+            if not isinstance(item, dict):
+                raise RegistryError(f"{item_path}: expected mapping")
+            _exact_keys(item, {"tag", "structured_ref"}, set(), item_path)
+            variants.append(
+                StructuredVariantIR(
+                    _string(item["tag"], f"{item_path}.tag"),
+                    _string(item["structured_ref"], f"{item_path}.structured_ref", pattern=_ID),
+                )
+            )
+        tags = tuple(item.tag for item in variants)
+        targets = tuple(item.structured_ref for item in variants)
+        if len(tags) != len(set(tags)) or len(targets) != len(set(targets)):
+            raise RegistryError(f"{path}.variants: tags and targets must be unique")
+        dynamic: StructuredDynamicVariantIR | None = None
+        if "dynamic_variant" in value:
+            raw_dynamic = value["dynamic_variant"]
+            dynamic_path = f"{path}.dynamic_variant"
+            if not isinstance(raw_dynamic, dict):
+                raise RegistryError(f"{dynamic_path}: expected mapping")
+            _exact_keys(
+                raw_dynamic,
+                {"arm_id", "tag_normalization", "structured_ref", "exclude_registered_tags"},
+                set(),
+                dynamic_path,
+            )
+            normalization = _parse_normalization(
+                raw_dynamic["tag_normalization"],
+                f"{dynamic_path}.tag_normalization",
+                normalizers,
+                field_types=("string",),
+            )
+            if raw_dynamic["exclude_registered_tags"] is not True:
+                raise RegistryError(f"{dynamic_path}.exclude_registered_tags: expected true")
+            dynamic = StructuredDynamicVariantIR(
+                _string(raw_dynamic["arm_id"], f"{dynamic_path}.arm_id", pattern=_ID),
+                normalization,
+                _string(raw_dynamic["structured_ref"], f"{dynamic_path}.structured_ref", pattern=_ID),
+                True,
+            )
+            if normalization != discriminator.normalization:
+                raise RegistryError(f"{dynamic_path}.tag_normalization: must equal discriminator normalization")
+        return StructuredTypeIR(
+            id=type_id,
+            kind=kind,
+            introduced_in=introduced_in,
+            additional_properties=None,
+            fields=None,
+            dynamic_members=None,
+            items_scalar=None,
+            items_reference=None,
+            min_items=None,
+            max_items=None,
+            discriminator=discriminator,
+            variants=tuple(variants),
+            dynamic_variant=dynamic,
+            canonical_json=None,
+            effective_reserved_names=(discriminator.name,),
+        )
+    raise RegistryError(f"{path}.kind: unsupported structured type kind")
+
+
+def _structured_references(item: StructuredTypeIR) -> tuple[str, ...]:
+    references: list[str] = []
+    for field in item.fields or ():
+        if field.reference is not None:
+            references.append(field.reference.structured_ref)
+    if item.dynamic_members is not None:
+        references.append(item.dynamic_members.value.structured_ref)
+    if item.items_reference is not None:
+        references.append(item.items_reference.structured_ref)
+    for variant in item.variants or ():
+        references.append(variant.structured_ref)
+    if item.dynamic_variant is not None:
+        references.append(item.dynamic_variant.structured_ref)
+    if item.canonical_json is not None:
+        references.extend((item.canonical_json.array_items_ref, item.canonical_json.object_value.structured_ref))
+    return tuple(references)
+
+
+def _validate_structured_type_graph(items: tuple[StructuredTypeIR, ...], path: str) -> tuple[StructuredTypeIR, ...]:
+    by_id = {item.id: item for item in items}
+    if len(by_id) != len(items):
+        raise RegistryError(f"{path}: duplicate structured type ID")
+    if tuple(by_id) != EXPECTED_STRUCTURED_TYPE_IDS:
+        raise RegistryError(f"{path}: structured type inventory/order mismatch")
+    for item in items:
+        for reference in _structured_references(item):
+            if reference not in by_id:
+                raise RegistryError(f"{path}: {item.id} has unknown structured_ref {reference}")
+            if reference == item.id and item.id != "gen_ai.canonical_json":
+                raise RegistryError(f"{path}: only gen_ai.canonical_json may self-reference")
+    visiting: set[str] = set()
+    visited: set[str] = set()
+
+    def visit(type_id: str) -> None:
+        if type_id in visited:
+            return
+        if type_id in visiting:
+            raise RegistryError(f"{path}: structured reference graph contains a cycle")
+        visiting.add(type_id)
+        for reference in _structured_references(by_id[type_id]):
+            if type_id == reference == "gen_ai.canonical_json":
+                continue
+            visit(reference)
+        visiting.remove(type_id)
+        visited.add(type_id)
+
+    for type_id in by_id:
+        visit(type_id)
+
+    reserved_by_target: dict[str, set[str]] = {
+        item.id: set(item.effective_reserved_names) for item in items
+    }
+    for item in items:
+        if item.discriminator is None:
+            continue
+        for target in (variant.structured_ref for variant in item.variants or ()):
+            target_item = by_id[target]
+            if target_item.kind != "object":
+                raise RegistryError(f"{path}: tagged-union targets must be objects")
+            if any(field.name == item.discriminator.name for field in target_item.fields or ()):
+                raise RegistryError(f"{path}: discriminator collides with target fixed field")
+            reserved_by_target[target].add(item.discriminator.name)
+        if item.dynamic_variant is not None:
+            target = item.dynamic_variant.structured_ref
+            target_item = by_id[target]
+            if target_item.kind != "object" or any(
+                field.name == item.discriminator.name for field in target_item.fields or ()
+            ):
+                raise RegistryError(f"{path}: dynamic discriminator collides with target")
+            reserved_by_target[target].add(item.discriminator.name)
+
+    result: list[StructuredTypeIR] = []
+    for item in items:
+        reserved = tuple(sorted(reserved_by_target[item.id]))
+        dynamic = item.dynamic_members
+        if dynamic is not None:
+            dynamic = replace(dynamic, reserved_names=reserved)
+        result.append(replace(item, dynamic_members=dynamic, effective_reserved_names=reserved))
+    return tuple(result)
+
+
+def _parse_structured_types(
+    value: Any,
+    path: str,
+    normalizers: dict[str, NormalizerIR],
+) -> tuple[StructuredTypeIR, ...]:
+    if not isinstance(value, list):
+        raise RegistryError(f"{path}: expected sequence")
+    parsed = tuple(
+        _parse_structured_type(item, f"{path}[{index}]", normalizers)
+        for index, item in enumerate(value)
+    )
+    validated = _validate_structured_type_graph(parsed, path)
+    by_id = {item.id: item for item in validated}
+    canonical = by_id["gen_ai.canonical_json"]
+    if canonical.kind != "canonical_json" or canonical.canonical_json is None:
+        raise RegistryError(f"{path}: reserved canonical JSON type is invalid")
+    for type_id, expected in EXPECTED_STRUCTURED_ARRAYS.items():
+        item = by_id[type_id]
+        observed = (
+            None if item.items_reference is None else item.items_reference.structured_ref,
+            item.min_items,
+            item.max_items,
+        )
+        if item.kind != "array" or observed != expected:
+            raise RegistryError(f"{path}: {type_id} array contract mismatch")
+    union = by_id["gen_ai.message_part"]
+    if (
+        union.kind != "tagged_union"
+        or union.discriminator is None
+        or union.discriminator.name != "type"
+        or union.discriminator.field_class != "identifier"
+        or union.discriminator.sensitivity != "internal"
+        or union.discriminator.normalization.id != "bounded-v1"
+        or union.discriminator.normalization.overrides
+        != {"max_utf8_bytes": 256}
+        or union.discriminator.normalization.effective_constraints.get("max_utf8_bytes") != 256
+        or "enum" in union.discriminator.normalization.effective_constraints
+        or "pattern" in union.discriminator.normalization.effective_constraints
+        or tuple((variant.tag, variant.structured_ref) for variant in union.variants or ())
+        != EXPECTED_MESSAGE_PART_VARIANTS
+        or union.dynamic_variant is None
+        or union.dynamic_variant.arm_id != "generic"
+        or union.dynamic_variant.structured_ref != "gen_ai.generic_part"
+    ):
+        raise RegistryError(f"{path}: gen_ai.message_part union contract mismatch")
+    for type_id, expected_fields in EXPECTED_STRUCTURED_OBJECT_FIELDS.items():
+        item = by_id[type_id]
+        observed_fields = tuple(
+            (
+                field.name,
+                field.required,
+                "scalar" if field.scalar is not None else "reference",
+                field.scalar.field_type if field.scalar is not None else field.reference.structured_ref,
+            )
+            for field in item.fields or ()
+        )
+        if item.kind != "object" or observed_fields != expected_fields or item.dynamic_members is None:
+            raise RegistryError(f"{path}: {type_id} object contract mismatch")
+    for (type_id, field_name), expected in AUDITED_STRUCTURED_SCALARS.items():
+        field = next(field for field in by_id[type_id].fields or () if field.name == field_name)
+        scalar = field.scalar
+        observed = (
+            None if scalar is None else scalar.field_class,
+            None if scalar is None else scalar.sensitivity,
+            None if scalar is None else scalar.normalization.id,
+            None if scalar is None else scalar.normalization.effective_constraints.get("max_utf8_bytes"),
+        )
+        if observed != expected:
+            raise RegistryError(f"{path}: {type_id}.{field_name} audited privacy/bound mismatch")
+    for type_id, field_name in AUDITED_STRUCTURED_CONTENT_FIELDS:
+        field = next(field for field in by_id[type_id].fields or () if field.name == field_name)
+        scalar = field.scalar
+        if (
+            scalar is None
+            or scalar.field_class != "content"
+            or scalar.sensitivity != "sensitive"
+            or scalar.normalization.id != "redacted-content-v1"
+            or scalar.normalization.effective_constraints.get("max_item_utf8_bytes") != 4096
+        ):
+            raise RegistryError(f"{path}: {type_id}.{field_name} content privacy mismatch")
+    materialized = _semantic_digest_projection(_materialize_registry_fact(validated))
+    digest = hashlib.sha256(_canonical_json_bytes(_typed_materialized_node(materialized))).hexdigest()
+    if digest != EXPECTED_AUTHORED_STRUCTURED_TYPES_SHA256:
+        raise RegistryError(f"{path}: complete canonical contract digest mismatch")
+    return validated
+
+
+def _parse_structured_bindings(
+    value: Any,
+    path: str,
+    types: tuple[StructuredTypeIR, ...],
+) -> tuple[StructuredBindingIR, ...]:
+    if not isinstance(value, list):
+        raise RegistryError(f"{path}: expected sequence")
+    known_types = {item.id for item in types}
+    result: list[StructuredBindingIR] = []
+    for index, item in enumerate(value):
+        item_path = f"{path}[{index}]"
+        if not isinstance(item, dict):
+            raise RegistryError(f"{item_path}: expected mapping")
+        _exact_keys(
+            item,
+            {"attribute", "structured_type", "public_encoding", "canonical_wire_encoding"},
+            set(),
+            item_path,
+        )
+        binding = StructuredBindingIR(
+            _string(item["attribute"], f"{item_path}.attribute", pattern=_ID),
+            _string(item["structured_type"], f"{item_path}.structured_type", pattern=_ID),
+            _string(item["public_encoding"], f"{item_path}.public_encoding", pattern=_ID),
+            _string(item["canonical_wire_encoding"], f"{item_path}.canonical_wire_encoding", pattern=_ID),
+        )
+        if binding.structured_type not in known_types:
+            raise RegistryError(f"{item_path}.structured_type: unknown structured type")
+        result.append(binding)
+    observed = tuple(
+        (item.attribute, item.structured_type, item.public_encoding, item.canonical_wire_encoding)
+        for item in result
+    )
+    if observed != EXPECTED_STRUCTURED_BINDINGS:
+        raise RegistryError(f"{path}: structured binding inventory/order mismatch")
+    return tuple(result)
+
+
+def _schema_allows_null(value: Any) -> bool:
+    if not isinstance(value, dict):
+        return False
+    if value.get("type") == "null":
+        return True
+    any_of = value.get("anyOf")
+    if isinstance(any_of, list) and any(_schema_allows_null(item) for item in any_of):
+        return True
+    return (
+        value.get("default", object()) is None
+        and "type" not in value
+        and "$ref" not in value
+        and "anyOf" not in value
+    )
+
+
+def _json_pointer_token(value: str) -> str:
+    return value.replace("~", "~0").replace("/", "~1")
+
+
+def _expected_source_fields(type_id: str) -> tuple[tuple[str, bool, str, str], ...]:
+    fields = EXPECTED_STRUCTURED_OBJECT_FIELDS[type_id]
+    if type_id in {target for _, target in EXPECTED_MESSAGE_PART_VARIANTS} or type_id == "gen_ai.generic_part":
+        return (("type", True, "discriminator", "string"), *fields)
+    return fields
+
+
+def _validate_source_property_shape(
+    schema: Any,
+    *,
+    type_id: str,
+    field_name: str,
+    arm: str,
+    target: str,
+    path: str,
+) -> None:
+    if not isinstance(schema, dict):
+        raise RegistryError(f"{path}: expected property schema object")
+    if arm == "discriminator":
+        if type_id == "gen_ai.generic_part":
+            _exact_keys(schema, {"type"}, {"description", "title"}, path)
+            if schema.get("type") != "string" or "const" in schema:
+                raise RegistryError(f"{path}: GenericPart discriminator must remain open")
+        else:
+            _exact_keys(schema, {"const", "type"}, {"description", "title"}, path)
+            expected_tag = next(tag for tag, ref in EXPECTED_MESSAGE_PART_VARIANTS if ref == type_id)
+            if schema.get("type") != "string" or schema.get("const") != expected_tag:
+                raise RegistryError(f"{path}: registered discriminator tag mismatch")
+        return
+    if arm == "scalar":
+        if target != "string":
+            raise RegistryError(f"{path}: unsupported source scalar expectation")
+        variants = schema.get("anyOf")
+        if variants is not None:
+            _exact_keys(schema, {"anyOf"}, {"default", "description", "title"}, path)
+            if not isinstance(variants, list) or not variants:
+                raise RegistryError(f"{path}.anyOf: expected nonempty sequence")
+            for index, item in enumerate(variants):
+                branch_path = f"{path}.anyOf[{index}]"
+                if not isinstance(item, dict) or set(item) not in ({"type"}, {"$ref"}):
+                    raise RegistryError(f"{branch_path}: unsupported schema surface")
+            nullable = field_name in STRUCTURED_NULLABLE_OPTIONALS.get(type_id, frozenset())
+            enum_ref = {
+                "role": "Role",
+                "modality": "Modality",
+                "finish_reason": "FinishReason",
+            }.get(field_name)
+            if nullable:
+                if (
+                    variants != [{"type": "string"}, {"type": "null"}]
+                    or "default" not in schema
+                    or schema["default"] is not None
+                ):
+                    raise RegistryError(f"{path}.anyOf: nullable string contract changed")
+            elif enum_ref is not None:
+                if variants != [{"$ref": f"#/$defs/{enum_ref}"}, {"type": "string"}] or "default" in schema:
+                    raise RegistryError(f"{path}.anyOf: open enum string contract changed")
+            else:
+                raise RegistryError(f"{path}.anyOf: unexpected scalar union")
+        else:
+            _exact_keys(schema, {"type"}, {"description", "format", "title"}, path)
+            binary_content = type_id == "gen_ai.blob_part" and field_name == "content"
+            if binary_content != (schema.get("format") == "binary") or (
+                "format" in schema and schema["format"] != "binary"
+            ):
+                raise RegistryError(f"{path}.format: source string format contract changed")
+        scalar_ok = schema.get("type") == "string" or (
+            isinstance(variants, list)
+            and any(isinstance(item, dict) and item.get("type") == "string" for item in variants)
+        )
+        if not scalar_ok:
+            raise RegistryError(f"{path}: expected string-compatible property")
+        return
+    if field_name == "parts":
+        _exact_keys(schema, {"items", "type"}, {"description", "title"}, path)
+        if schema.get("type") != "array" or not isinstance(schema.get("items"), dict):
+            raise RegistryError(f"{path}: message parts must remain an array")
+        _exact_keys(schema["items"], {"anyOf"}, set(), f"{path}.items")
+        any_of = schema["items"].get("anyOf")
+        expected_refs = tuple(f"#/$defs/{name}" for name in (
+            "TextPart",
+            "ToolCallRequestPart",
+            "ToolCallResponsePart",
+            "ServerToolCallPart",
+            "ServerToolCallResponsePart",
+            "BlobPart",
+            "FilePart",
+            "UriPart",
+            "ReasoningPart",
+            "CompactionPart",
+            "GenericPart",
+        ))
+        if isinstance(any_of, list):
+            for index, item in enumerate(any_of):
+                if not isinstance(item, dict) or set(item) != {"$ref"}:
+                    raise RegistryError(f"{path}.items.anyOf[{index}]: unsupported union branch surface")
+        observed_refs = tuple(item.get("$ref") for item in any_of) if isinstance(any_of, list) else ()
+        if observed_refs != expected_refs:
+            raise RegistryError(f"{path}: message-part union inventory/order mismatch")
+        return
+    expected_ref_by_field = {
+        "server_tool_call": "#/$defs/GenericServerToolCall",
+        "server_tool_call_response": "#/$defs/GenericServerToolCallResponse",
+    }
+    if field_name in expected_ref_by_field:
+        _exact_keys(schema, {"$ref"}, {"description"}, path)
+        if schema.get("$ref") != expected_ref_by_field[field_name]:
+            raise RegistryError(f"{path}: server-tool payload reference mismatch")
+        return
+    if field_name not in {"arguments", "response"}:
+        raise RegistryError(f"{path}: unrecognized structured reference property")
+    semantic_keys = set(schema) - {"default", "description", "title"}
+    if semantic_keys:
+        raise RegistryError(f"{path}: tool payload must remain unconstrained any JSON")
+
+
+def _validate_message_structural_input(
+    input_path: str,
+    document: dict[str, Any],
+    types_by_id: Mapping[str, StructuredTypeIR],
+) -> tuple[StructuredPropertyDispositionIR, ...]:
+    expected_root = {
+        "model/gen-ai/gen-ai-input-messages.json": ("InputMessages", "#/$defs/ChatMessage", "gen_ai.input_messages"),
+        "model/gen-ai/gen-ai-output-messages.json": (
+            "OutputMessages",
+            "#/$defs/OutputMessage",
+            "gen_ai.output_messages",
+        ),
+    }[input_path]
+    if set(document) != {"$defs", "description", "items", "title", "type"}:
+        raise RegistryError(f"{input_path}: message schema root surface changed")
+    if (
+        document["title"] != expected_root[0]
+        or document["type"] != "array"
+        or document["items"] != {"$ref": expected_root[1]}
+    ):
+        raise RegistryError(f"{input_path}: message schema root changed")
+    definitions = document["$defs"]
+    if not isinstance(definitions, dict):
+        raise RegistryError(f"{input_path}#/$defs: expected mapping")
+    definition_map = STRUCTURED_SOURCE_DEFINITIONS[input_path]
+    scalar_definitions = {"Modality", "Role"}
+    if "OutputMessage" in definition_map:
+        scalar_definitions.add("FinishReason")
+    if set(definitions) != set(definition_map) | scalar_definitions:
+        raise RegistryError(f"{input_path}#/$defs: definition inventory changed")
+    for name in scalar_definitions:
+        definition = definitions[name]
+        if not isinstance(definition, dict) or definition.get("type") != "string":
+            raise RegistryError(f"{input_path}#/$defs/{name}: scalar definition changed")
+        _exact_keys(
+            definition,
+            {"enum", "type"},
+            {"description", "title"},
+            f"{input_path}#/$defs/{name}",
+        )
+        if tuple(definition.get("enum", ())) != EXPECTED_STRUCTURAL_SOURCE_ENUMS[name]:
+            raise RegistryError(f"{input_path}#/$defs/{name}: enum changed")
+
+    dispositions: list[StructuredPropertyDispositionIR] = []
+    open_surfaces = 0
+    property_occurrences = 0
+    for definition_name in sorted(definition_map):
+        type_id = definition_map[definition_name]
+        definition_path = f"{input_path}#/$defs/{definition_name}"
+        definition = definitions[definition_name]
+        if not isinstance(definition, dict) or definition.get("type") != "object":
+            raise RegistryError(f"{definition_path}: expected object definition")
+        required_definition_keys = {"properties", "required", "type"}
+        if definition_name != "BlobPart":
+            required_definition_keys.add("additionalProperties")
+        _exact_keys(
+            definition,
+            required_definition_keys,
+            {"description", "title"},
+            definition_path,
+        )
+        properties = definition.get("properties")
+        required = definition.get("required")
+        if not isinstance(properties, dict) or not isinstance(required, list):
+            raise RegistryError(f"{definition_path}: object properties/required changed")
+        expected_fields = _expected_source_fields(type_id)
+        expected_names = tuple(field[0] for field in expected_fields)
+        expected_required = tuple(field[0] for field in expected_fields if field[1])
+        if tuple(properties) != expected_names or tuple(required) != expected_required:
+            raise RegistryError(f"{definition_path}: property inventory/order changed")
+        if definition_name != "BlobPart" and definition["additionalProperties"] is not True:
+            raise RegistryError(f"{definition_path}: open-object surface was closed")
+        open_surfaces += 1
+        dynamic_pointer = (
+            f"#/$defs/{_json_pointer_token(definition_name)}"
+            if definition_name == "BlobPart"
+            else f"#/$defs/{_json_pointer_token(definition_name)}/additionalProperties"
+        )
+        dispositions.append(
+            StructuredPropertyDispositionIR(
+                input_path,
+                dynamic_pointer,
+                "dynamic_members",
+                type_id,
+                None,
+                None,
+                None,
+            )
+        )
+        type_fields = {field.name: field for field in types_by_id[type_id].fields or ()}
+        nullable_names = STRUCTURED_NULLABLE_OPTIONALS.get(type_id, frozenset())
+        for field_name, is_required, arm, target in expected_fields:
+            property_occurrences += 1
+            property_path = f"{definition_path}/properties/{field_name}"
+            schema = properties[field_name]
+            _validate_source_property_shape(
+                schema,
+                type_id=type_id,
+                field_name=field_name,
+                arm=arm,
+                target=target,
+                path=property_path,
+            )
+            if field_name == "type":
+                if type_id == "gen_ai.generic_part":
+                    disposition = "dynamic_variant"
+                    disposition_type = "gen_ai.message_part"
+                    arm_id = "generic"
+                elif type_id in {target for _, target in EXPECTED_MESSAGE_PART_VARIANTS}:
+                    disposition = "fixed_field"
+                    disposition_type = "gen_ai.message_part"
+                    arm_id = next(tag for tag, target in EXPECTED_MESSAGE_PART_VARIANTS if target == type_id)
+                else:
+                    disposition = "fixed_field"
+                    disposition_type = type_id
+                    arm_id = None
+                target_type = type_id if disposition_type == "gen_ai.message_part" else None
+            else:
+                target_field = type_fields.get(field_name)
+                if target_field is None or target_field.required is not is_required:
+                    raise RegistryError(f"{property_path}: authored structured field mismatch")
+                if arm == "scalar":
+                    if target_field.scalar is None or target_field.scalar.field_type != target:
+                        raise RegistryError(f"{property_path}: authored scalar field mismatch")
+                elif target_field.reference is None or target_field.reference.structured_ref != target:
+                    raise RegistryError(f"{property_path}: authored structured reference mismatch")
+                nullable = field_name in nullable_names
+                if nullable != (not is_required and _schema_allows_null(schema)):
+                    raise RegistryError(f"{property_path}: nullable-optional disposition changed")
+                disposition = "nullable_optional_omission" if nullable else "fixed_field"
+                disposition_type = type_id
+                arm_id = None
+                target_type = None
+            dispositions.append(
+                StructuredPropertyDispositionIR(
+                    input_path,
+                    f"#/$defs/{_json_pointer_token(definition_name)}/properties/{_json_pointer_token(field_name)}",
+                    disposition,
+                    disposition_type,
+                    field_name,
+                    arm_id,
+                    target_type,
+                )
+            )
+    expected_occurrences = 39 if "ChatMessage" in definition_map else 40
+    if property_occurrences != expected_occurrences or open_surfaces != 14:
+        raise RegistryError(f"{input_path}: property/open-surface inventory changed")
+    return tuple(dispositions)
+
+
+def _validate_tool_structural_input(
+    input_path: str,
+    document: dict[str, Any],
+    type_id: str,
+) -> tuple[StructuredPropertyDispositionIR, ...]:
+    if set(document) != {"additionalProperties", "description", "title", "type"}:
+        raise RegistryError(f"{input_path}: tool object schema surface changed")
+    if document["type"] != "object" or document["additionalProperties"] is not True:
+        raise RegistryError(f"{input_path}: tool root must remain an open object")
+    return (
+        StructuredPropertyDispositionIR(
+            input_path,
+            "#/additionalProperties",
+            "dynamic_members",
+            type_id,
+            None,
+            None,
+            None,
+        ),
+    )
+
+
+def _validate_structural_inputs(
+    documents: Mapping[str, dict[str, Any]],
+    types: tuple[StructuredTypeIR, ...],
+) -> tuple[tuple[StructuredTypeIR, ...], tuple[StructuredPropertyDispositionIR, ...]]:
+    if tuple(documents) != tuple(item[0] for item in EXPECTED_STRUCTURAL_INPUTS):
+        raise RegistryError("structural inputs: parsed document inventory/order mismatch")
+    by_id = {item.id: item for item in types}
+    dispositions = (
+        *_validate_message_structural_input(
+            "model/gen-ai/gen-ai-input-messages.json",
+            documents["model/gen-ai/gen-ai-input-messages.json"],
+            by_id,
+        ),
+        *_validate_message_structural_input(
+            "model/gen-ai/gen-ai-output-messages.json",
+            documents["model/gen-ai/gen-ai-output-messages.json"],
+            by_id,
+        ),
+        *_validate_tool_structural_input(
+            "model/gen-ai/gen-ai-tool-call-arguments.json",
+            documents["model/gen-ai/gen-ai-tool-call-arguments.json"],
+            "gen_ai.tool_call_arguments",
+        ),
+        *_validate_tool_structural_input(
+            "model/gen-ai/gen-ai-tool-call-result.json",
+            documents["model/gen-ai/gen-ai-tool-call-result.json"],
+            "gen_ai.tool_call_result",
+        ),
+    )
+    nullable_by_type = {
+        type_id: names for type_id, names in STRUCTURED_NULLABLE_OPTIONALS.items()
+    }
+    updated: list[StructuredTypeIR] = []
+    for item in types:
+        if item.fields is None:
+            updated.append(item)
+            continue
+        nullable = nullable_by_type.get(item.id, frozenset())
+        enriched_fields: list[StructuredFieldIR] = []
+        for field in item.fields:
+            scalar = field.scalar
+            encoding_annotation = (
+                "json-base64-bytes-v1"
+                if item.id == "gen_ai.blob_part" and field.name == "content"
+                else None
+            )
+            known_values: tuple[str, ...] = ()
+            if field.name == "role":
+                known_values = EXPECTED_STRUCTURAL_SOURCE_ENUMS["Role"]
+            elif field.name == "modality":
+                known_values = EXPECTED_STRUCTURAL_SOURCE_ENUMS["Modality"]
+            elif field.name == "finish_reason":
+                known_values = EXPECTED_STRUCTURAL_SOURCE_ENUMS["FinishReason"]
+            if scalar is not None and known_values:
+                scalar = replace(scalar, known_values=known_values)
+            if scalar is not None:
+                scalar = replace(scalar, encoding_annotation=encoding_annotation)
+            enriched_fields.append(
+                replace(
+                    field,
+                    nullable_omission=field.name in nullable,
+                    scalar=scalar,
+                )
+            )
+        updated.append(
+            replace(
+                item,
+                fields=tuple(enriched_fields),
+            )
+        )
+    return tuple(updated), tuple(dispositions)
 
 
 def _parse_conditions(value: Any, path: str) -> tuple[ConditionIR, ...]:
@@ -3181,7 +4700,7 @@ def _parse_domain(
         f"registry.imports.{relative}",
         prefix=Path("schemas/telemetry/v8"),
     )
-    document = load_yaml_strict(path)
+    raw, document = _load_yaml_strict_with_bytes(path)
     _exact_keys(
         document,
         {
@@ -3242,7 +4761,6 @@ def _parse_domain(
     ):
         if len(values) != len(set(values)):
             raise RegistryError(f"{normalized}.{label}: duplicate ID")
-    raw, _ = _read_utf8(path)
     return DomainIR(
         expected_domain,
         normalized,
@@ -4431,7 +5949,7 @@ def _parse_examples(
         "registry.examples",
         prefix=Path("schemas/telemetry/v8"),
     )
-    document = load_yaml_strict(path)
+    raw, document = _load_yaml_strict_with_bytes(path)
     _exact_keys(document, {"schema_version", "examples"}, set(), normalized)
     if _integer(document["schema_version"], f"{normalized}.schema_version") != 1:
         raise RegistryError(f"{normalized}.schema_version: unsupported version")
@@ -4664,7 +6182,6 @@ def _parse_examples(
         raw_vectors[example_id] = raw_vector
         validity_by_id[example_id] = item["valid"]
         builder_contexts_by_id[example_id] = builder_context
-    raw, _ = _read_utf8(path)
     return tuple(parsed_examples), InputDigest(normalized, _sha256(raw))
 
 
@@ -5043,6 +6560,19 @@ def _typed_materialized_node(value: FrozenJSON) -> FrozenJSON:
     raise RegistryError("materialized registry contains an unsupported value")
 
 
+def _semantic_digest_projection(value: FrozenJSON) -> FrozenJSON:
+    if isinstance(value, Mapping):
+        projected = {key: _semantic_digest_projection(item) for key, item in value.items()}
+        if projected.get("$type") == "NormalizationIR" and isinstance(projected.get("fields"), Mapping):
+            fields = dict(projected["fields"])
+            fields["notes"] = None
+            projected["fields"] = fields
+        return MappingProxyType(projected)
+    if isinstance(value, tuple):
+        return tuple(_semantic_digest_projection(item) for item in value)
+    return value
+
+
 def _materialized_sort_key(value: FrozenJSON) -> bytes:
     return _canonical_json_bytes(_typed_materialized_node(value))
 
@@ -5155,7 +6685,7 @@ def _validate_entity_lifecycle(
 def compile_registry(root: Path) -> RegistryIR:
     root = root.resolve()
     registry_path = root / "schemas/telemetry/v8/registry.yaml"
-    registry = load_yaml_strict(registry_path)
+    registry_raw, registry = _load_yaml_strict_with_bytes(registry_path)
     _exact_keys(
         registry,
         {
@@ -5169,6 +6699,8 @@ def compile_registry(root: Path) -> RegistryIR:
             "normalizers",
             "conditions",
             "mandatory_rule_catalog",
+            "structured_types",
+            "structured_bindings",
             "value_catalogs",
             "structural_contract",
             "metric_defaults",
@@ -5188,10 +6720,24 @@ def compile_registry(root: Path) -> RegistryIR:
     lock_relative = _string(registry["dependency_lock"], "registry.dependency_lock")
     if lock_relative != "schemas/telemetry/v8/semconv.lock.yaml":
         raise RegistryError("registry.dependency_lock: unexpected path")
-    dependencies, lock_digest = _parse_lock(root, lock_relative)
+    dependencies, lock_digest, structural_documents, structural_input_digests = _parse_lock(root, lock_relative)
     producer_inventory, metric_inventory, inventory_digest = _parse_producer_inventory(root)
     normalizers = _parse_normalizer_catalog(registry["normalizers"], "registry.normalizers")
     normalizers_by_id = {item.id: item for item in normalizers}
+    structured_types = _parse_structured_types(
+        registry["structured_types"],
+        "registry.structured_types",
+        normalizers_by_id,
+    )
+    structured_types, structured_property_dispositions = _validate_structural_inputs(
+        structural_documents,
+        structured_types,
+    )
+    structured_bindings = _parse_structured_bindings(
+        registry["structured_bindings"],
+        "registry.structured_bindings",
+        structured_types,
+    )
     conditions = _parse_conditions(registry["conditions"], "registry.conditions")
     mandatory_rule_catalog = _parse_mandatory_rule_catalog(
         registry["mandatory_rule_catalog"],
@@ -5497,6 +7043,18 @@ def compile_registry(root: Path) -> RegistryIR:
         missing = sorted(referenced_upstream - set(upstream_extensions))
         unreferenced = sorted(set(upstream_extensions) - referenced_upstream)
         raise RegistryError(f"attribute extensions: coverage mismatch missing={missing} unreferenced={unreferenced}")
+    for binding in structured_bindings:
+        upstream = upstream_attributes.get(binding.attribute)
+        extension = upstream_extensions.get(binding.attribute)
+        if (
+            upstream is None
+            or upstream[0] != "otel_genai"
+            or upstream[1].shape != "any_value"
+            or extension is None
+            or extension.field_class != "content"
+            or extension.sensitivity != "sensitive"
+        ):
+            raise RegistryError(f"structured binding {binding.attribute}: incompatible upstream attribute/privacy")
     _validate_attribute_use_constraints(
         group_owners,
         local_attributes,
@@ -5539,7 +7097,6 @@ def compile_registry(root: Path) -> RegistryIR:
         value_catalogs,
         semantic_profiles,
     )
-    registry_raw, _ = _read_utf8(registry_path)
     registry_digest = InputDigest("schemas/telemetry/v8/registry.yaml", _sha256(registry_raw))
     manifest_schema_raw = _read_output_manifest_schema_bytes(root)
     manifest_schema_digest = InputDigest(OUTPUT_MANIFEST_SCHEMA.as_posix(), _sha256(manifest_schema_raw))
@@ -5548,6 +7105,7 @@ def compile_registry(root: Path) -> RegistryIR:
         manifest_schema_digest,
         *domain_digests,
         lock_digest,
+        *structural_input_digests,
         inventory_digest,
         examples_digest,
     )
@@ -5565,6 +7123,9 @@ def compile_registry(root: Path) -> RegistryIR:
         "normalizers": normalizers,
         "conditions": conditions,
         "mandatory_rule_catalog": mandatory_rule_catalog,
+        "structured_types": structured_types,
+        "structured_bindings": structured_bindings,
+        "structured_property_dispositions": structured_property_dispositions,
         "value_catalogs": value_catalogs,
         "structural_contract": structural_contract,
         "metric_cardinality_limit": metric_cardinality_limit,

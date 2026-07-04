@@ -864,6 +864,11 @@ Required cases:
   only by omission; explicit emitted null and required null fail under P-069.
   Public Go/Python APIs expose no map, `any`, `interface{}`, raw `Value`, or other
   untyped escape hatch.
+- The pinned BlobPart binary annotation is preserved exactly once on
+  `gen_ai.blob_part.content`: removing it, moving it to another string, or adding
+  another binary-formatted property fails. Candidate JSON Schema emits advisory
+  `contentEncoding: base64` and `x-defenseclaw-upstream-format: binary`; builders
+  keep the upstream SHOULD advisory and do not invent a mandatory base64 decoder.
 - The exact P-070 `go_symbol_policy` is compiled before rendering. Golden fixtures
   cover every ID/input/method/event/link/structured-type/structured-member/
   structured-arm/member-constructor namespace, initialism, exact
@@ -910,6 +915,16 @@ Required cases:
   absolute/backslash/NUL/doubled/trailing-separator paths, exact output collisions,
   and NFC-case-fold collisions before renderer invocation; the transaction repeats
   containment/collision validation.
+- Upstream dependency refresh tests serialize two concurrent subset updates,
+  compare-and-swap the original lock inode and bytes, and validate every path and
+  digest named by the complete candidate lock before and after the lock commit.
+  Pre-/post-lock inode replacement, same-inode byte mutation, stale external lock
+  edits cannot report success or publish a mixed lock. Concurrent core and
+  OpenInference subset refreshes may both succeed only after serialization; the
+  second derives from the first committed lock and the final lock coherently
+  retains both updates. Post-commit cleanup injection reports the explicit
+  committed state while retaining the new coherent lock; pre-commit failures
+  restore prior bytes or preserve evidence without deleting foreign state.
 - Each curated valid record passes the real generated builder and complete candidate
   bundle. Each invalid record names one valid `base_example` plus exactly one typed
   mutation. The compiler applies its ordered RFC 6901 changes to the base

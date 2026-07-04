@@ -11,7 +11,10 @@ import os
 import subprocess
 import sys
 import tarfile
+import threading
+import time
 from collections.abc import Mapping
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
@@ -185,14 +188,26 @@ def _snapshot(
         )
         identifiers |= {f"core.attribute.{index:04d}" for index in range(923 - len(identifiers))}
     elif dependency_id == "otel_genai":
-        identifiers = deprecated_shared | active_shared | {attribute}
+        identifiers = deprecated_shared | active_shared | {
+            attribute,
+            "gen_ai.input.messages",
+            "gen_ai.output.messages",
+            "gen_ai.tool.call.arguments",
+            "gen_ai.tool.call.result",
+        }
         identifiers |= {f"gen_ai.current.{index:03d}" for index in range(70 - len(identifiers))}
     else:
         identifiers = set()
     attributes = []
     for index, identifier in enumerate(sorted(identifiers)):
         deprecated = dependency_id == "otel_core" and identifier in (deprecated_shared | legacy_core)
-        allowed_types = [
+        structured_any = identifier in {
+            "gen_ai.input.messages",
+            "gen_ai.output.messages",
+            "gen_ai.tool.call.arguments",
+            "gen_ai.tool.call.result",
+        }
+        allowed_types = [] if structured_any else [
             "int64"
             if dependency_id == "otel_genai" and identifier == "gen_ai.request.top_k"
             else "double"
@@ -203,7 +218,7 @@ def _snapshot(
             {
                 "id": identifier,
                 "allowed_types": allowed_types,
-                "shape": "attribute",
+                "shape": "any_value" if structured_any else "attribute",
                 "stability": "deprecated" if deprecated else "development",
                 "stability_source": "upstream",
                 "source_pointer": f"{source_path}#/attributes/{index}",
@@ -394,6 +409,21 @@ def _domain_sources() -> dict[str, dict[str, Any]]:
         },
     }
     canonical_genai = yaml.safe_load((ROOT / "schemas/telemetry/v8/genai.yaml").read_text(encoding="utf-8"))
+    structured_refs = (
+        "gen_ai.input.messages",
+        "gen_ai.output.messages",
+        "gen_ai.tool.call.arguments",
+        "gen_ai.tool.call.result",
+    )
+    for reference in structured_refs:
+        domains["genai.yaml"]["attribute_extensions"].append(
+            copy.deepcopy(
+                next(item for item in canonical_genai["attribute_extensions"] if item["ref"] == reference)
+            )
+        )
+        domains["genai.yaml"]["groups"][0]["attributes"].append(
+            {"ref": reference, "requirement_level": "optional"}
+        )
     for attribute_id in (
         "defenseclaw.bucket",
         "defenseclaw.outcome",
@@ -617,6 +647,43 @@ def _fixture_root(tmp_path: Path) -> Path:
                 },
             }
         )
+        if dependency_id == "otel_genai":
+            structural_inputs = []
+            for upstream_path, relative_path, digest in (
+                (
+                    "model/gen-ai/gen-ai-input-messages.json",
+                    "schemas/telemetry/v8/upstream/otel-genai-b028dceecdad117461a785c3af35315e7184e813/"
+                    "model/gen-ai/gen-ai-input-messages.json",
+                    "034fcd8c87f1e013f3a5a5018503210e2bee4d2499c361823b96e906d40a50ad",
+                ),
+                (
+                    "model/gen-ai/gen-ai-output-messages.json",
+                    "schemas/telemetry/v8/upstream/otel-genai-b028dceecdad117461a785c3af35315e7184e813/"
+                    "model/gen-ai/gen-ai-output-messages.json",
+                    "a825a6c0cc1b7b22fdbfb9488d8dc3a318be3897ef6d3dbae01a10297bb6e569",
+                ),
+                (
+                    "model/gen-ai/gen-ai-tool-call-arguments.json",
+                    "schemas/telemetry/v8/upstream/otel-genai-b028dceecdad117461a785c3af35315e7184e813/"
+                    "model/gen-ai/gen-ai-tool-call-arguments.json",
+                    "73607a8e8d9e84393475ef460108c59dbb9e1d2ddc0d0177fce6f735a62367ea",
+                ),
+                (
+                    "model/gen-ai/gen-ai-tool-call-result.json",
+                    "schemas/telemetry/v8/upstream/otel-genai-b028dceecdad117461a785c3af35315e7184e813/"
+                    "model/gen-ai/gen-ai-tool-call-result.json",
+                    "44eb4a93b05eea7da14489f1d253814c6429772d1fe869f8f6fc1749d7593412",
+                ),
+            ):
+                source = ROOT / relative_path
+                target = root / relative_path
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(source.read_bytes())
+                assert _sha256(target.read_bytes()) == digest
+                structural_inputs.append(
+                    {"upstream_path": upstream_path, "path": relative_path, "sha256": digest}
+                )
+            lock_dependencies[-1]["structural_inputs"] = structural_inputs
     _write_yaml(
         telemetry / "semconv.lock.yaml",
         {"schema_version": 1, "dependencies": lock_dependencies},
@@ -645,6 +712,8 @@ def _fixture_root(tmp_path: Path) -> Path:
             "normalizers": registry_source["normalizers"],
             "conditions": registry_source["conditions"],
             "mandatory_rule_catalog": registry_source["mandatory_rule_catalog"],
+            "structured_types": registry_source["structured_types"],
+            "structured_bindings": registry_source["structured_bindings"],
             "value_catalogs": registry_source["value_catalogs"],
             "structural_contract": registry_source["structural_contract"],
             "metric_defaults": registry_source["metric_defaults"],
@@ -777,6 +846,17 @@ def _load_generator_module(name: str):
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def _load_updater_module(name: str):
+    if "generate_telemetry_registry" not in sys.modules:
+        _load_generator_module("generate_telemetry_registry")
+    spec = importlib.util.spec_from_file_location(name, UPDATER)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
     spec.loader.exec_module(module)
     return module
 
@@ -1203,7 +1283,10 @@ def test_upstream_attribute_extension_is_required_exactly_once(tmp_path: Path) -
     result = _run(root, "--write")
 
     assert result.returncode == 1
-    assert "coverage mismatch missing=['gen_ai.operation.name']" in result.stderr
+    assert (
+        "coverage mismatch missing=['gen_ai.input.messages', 'gen_ai.operation.name', "
+        "'gen_ai.output.messages', 'gen_ai.tool.call.arguments', 'gen_ai.tool.call.result']"
+    ) in result.stderr
 
 
 @pytest.mark.parametrize(
@@ -2998,6 +3081,106 @@ attributes:
         info = tarfile.TarInfo("semantic-conventions-genai/model/gen-ai/registry.yaml")
         info.size = len(source)
         archive.addfile(info, io.BytesIO(source))
+        for filename in (
+            "gen-ai-input-messages.json",
+            "gen-ai-output-messages.json",
+            "gen-ai-tool-call-arguments.json",
+            "gen-ai-tool-call-result.json",
+        ):
+            payload = (
+                ROOT
+                / "schemas/telemetry/v8/upstream/otel-genai-b028dceecdad117461a785c3af35315e7184e813/"
+                f"model/gen-ai/{filename}"
+            ).read_bytes()
+            info = tarfile.TarInfo(f"semantic-conventions-genai/model/gen-ai/{filename}")
+            info.size = len(payload)
+            archive.addfile(info, io.BytesIO(payload))
+
+
+def _full_genai_upstream_archive(path: Path) -> None:
+    snapshot = json.loads(
+        (
+            ROOT
+            / "schemas/telemetry/v8/upstream/otel-genai-b028dceecdad117461a785c3af35315e7184e813.normalized.json"
+        ).read_bytes()
+    )
+    reverse_types = {
+        "string": "string",
+        "boolean": "boolean",
+        "int64": "int64",
+        "double": "double",
+        "string[]": "string[]",
+    }
+    attributes: list[dict[str, Any]] = []
+    for item in snapshot["attributes"]:
+        if item["enum"]:
+            field_type: Any = {"members": [{"value": value} for value in item["enum"]]}
+        elif item["shape"] == "any_value":
+            field_type = "any"
+        else:
+            assert len(item["allowed_types"]) == 1
+            field_type = reverse_types[item["allowed_types"][0]]
+        attributes.append(
+            {
+                "id": item["id"],
+                "type": field_type,
+                "stability": item["stability"],
+                "deprecated": item["deprecated"],
+            }
+        )
+    source = yaml.safe_dump(
+        {"file_format": "definition/2", "attributes": attributes},
+        sort_keys=False,
+    ).encode("utf-8")
+    with tarfile.open(path, "w:gz") as archive:
+        info = tarfile.TarInfo("semantic-conventions-genai/model/gen-ai/registry.yaml")
+        info.size = len(source)
+        archive.addfile(info, io.BytesIO(source))
+        for filename in (
+            "gen-ai-input-messages.json",
+            "gen-ai-output-messages.json",
+            "gen-ai-tool-call-arguments.json",
+            "gen-ai-tool-call-result.json",
+        ):
+            payload = (
+                ROOT
+                / "schemas/telemetry/v8/upstream/otel-genai-b028dceecdad117461a785c3af35315e7184e813/"
+                f"model/gen-ai/{filename}"
+            ).read_bytes()
+            info = tarfile.TarInfo(f"semantic-conventions-genai/model/gen-ai/{filename}")
+            info.size = len(payload)
+            archive.addfile(info, io.BytesIO(payload))
+
+
+def _full_core_upstream_archive(path: Path) -> None:
+    snapshot = json.loads(
+        (ROOT / "schemas/telemetry/v8/upstream/otel-core-v1.42.0.normalized.json").read_bytes()
+    )
+    attributes: list[dict[str, Any]] = []
+    for item in snapshot["attributes"]:
+        if item["enum"]:
+            field_type: Any = {"members": [{"value": value} for value in item["enum"]]}
+        elif item["shape"] == "any_value":
+            field_type = "any"
+        else:
+            assert len(item["allowed_types"]) == 1
+            field_type = item["allowed_types"][0]
+        attributes.append(
+            {
+                "id": item["id"],
+                "type": field_type,
+                "stability": item["stability"],
+                "deprecated": item["deprecated"],
+            }
+        )
+    source = yaml.safe_dump(
+        {"file_format": "definition/2", "attributes": attributes},
+        sort_keys=False,
+    ).encode("utf-8")
+    with tarfile.open(path, "w:gz") as archive:
+        info = tarfile.TarInfo("semantic-conventions/model/registry.yaml")
+        info.size = len(source)
+        archive.addfile(info, io.BytesIO(source))
 
 
 def _openinference_archive(
@@ -3026,8 +3209,10 @@ def _openinference_archive(
         "metadata": "JSON String",
         "document.id": "String/Integer",
     }
-    for index in range(79):
+    for index in range(77):
         typed[f"fixture.attribute.{index:03d}"] = "String"
+    typed["session.id"] = "String"
+    typed["user.id"] = "String"
     assert len(typed) == 92
     constants_only = {
         "completion.text",
@@ -3125,6 +3310,57 @@ def test_explicit_updater_derives_snapshot_from_local_pinned_archive(tmp_path: P
     lock = yaml.safe_load((root / "schemas/telemetry/v8/semconv.lock.yaml").read_text(encoding="utf-8"))
     dependency = next(item for item in lock["dependencies"] if item["id"] == "otel_genai")
     assert dependency["snapshot"]["sha256"] == _sha256(snapshot_path.read_bytes())
+    assert [item["upstream_path"] for item in dependency["structural_inputs"]] == [
+        "model/gen-ai/gen-ai-input-messages.json",
+        "model/gen-ai/gen-ai-output-messages.json",
+        "model/gen-ai/gen-ai-tool-call-arguments.json",
+        "model/gen-ai/gen-ai-tool-call-result.json",
+    ]
+    for item in dependency["structural_inputs"]:
+        target = root / item["path"]
+        assert target.read_bytes()
+        assert item["sha256"] == _sha256(target.read_bytes())
+
+
+def test_full_genai_updater_refresh_compiles_end_to_end(tmp_path: Path) -> None:
+    root = _fixture_root(tmp_path)
+    lock_path = root / "schemas/telemetry/v8/semconv.lock.yaml"
+    lock = yaml.safe_load(lock_path.read_text(encoding="utf-8"))
+    core = next(item for item in lock["dependencies"] if item["id"] == "otel_core")
+    core_snapshot = root / core["snapshot"]["path"]
+    core_snapshot.write_bytes(
+        (ROOT / "schemas/telemetry/v8/upstream/otel-core-v1.42.0.normalized.json").read_bytes()
+    )
+    core["snapshot"]["sha256"] = _sha256(core_snapshot.read_bytes())
+    _write_yaml(lock_path, lock)
+    archive = tmp_path / "full-genai.tar.gz"
+    _full_genai_upstream_archive(archive)
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(UPDATER),
+            "--write",
+            "--root",
+            str(root),
+            "--dependency",
+            "otel_genai",
+            "--archive",
+            f"otel_genai={archive}",
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert result.returncode == 0, result.stderr
+
+    compiler = _load_generator_module("telemetry_registry_full_genai_refresh_compile")
+    ir = compiler.compile_registry(root)
+
+    genai = next(item for item in ir.dependencies if item.id == "otel_genai")
+    assert len(genai.snapshot.attributes) == 70
+    assert len(genai.structural_inputs) == 4
 
 
 def test_updater_rejects_malformed_yaml_with_source_context(tmp_path: Path) -> None:
@@ -5427,3 +5663,1047 @@ def test_current_schema_requires_an_exact_baseline_before_a_manifest_can_claim_i
     assert result.returncode == 1
     assert expected in result.stderr
     assert manifest_path.read_bytes() == before
+
+
+def _structural_lock_rows(root: Path) -> tuple[Path, dict[str, Any], list[dict[str, Any]]]:
+    lock_path = root / "schemas/telemetry/v8/semconv.lock.yaml"
+    lock = yaml.safe_load(lock_path.read_text(encoding="utf-8"))
+    dependency = next(item for item in lock["dependencies"] if item["id"] == "otel_genai")
+    return lock_path, lock, dependency["structural_inputs"]
+
+
+def test_checked_in_structured_catalog_bindings_dispositions_and_privacy_are_exact() -> None:
+    module = _load_generator_module("telemetry_registry_structured_exact")
+    ir = module.compile_registry(ROOT)
+
+    assert tuple(item.id for item in ir.structured_types) == module.EXPECTED_STRUCTURED_TYPE_IDS
+    assert tuple(
+        (item.attribute, item.structured_type, item.public_encoding, item.canonical_wire_encoding)
+        for item in ir.structured_bindings
+    ) == module.EXPECTED_STRUCTURED_BINDINGS
+    assert len(ir.structured_property_dispositions) == 109
+    assert [len(dependency.structural_inputs) for dependency in ir.dependencies] == [0, 4, 0]
+    structural_digest_paths = {item.path for item in ir.input_digests if "/model/gen-ai/" in item.path}
+    assert structural_digest_paths == {item[1] for item in module.EXPECTED_STRUCTURAL_INPUTS}
+
+    by_id = {item.id: item for item in ir.structured_types}
+    canonical = by_id["gen_ai.canonical_json"].canonical_json
+    assert canonical is not None
+    assert canonical.limits == module.CanonicalJSONLimitsIR(8, 256, 256, 4096, 256, 32768, 65536)
+    assert canonical.object_member_id == "entry"
+    assert canonical.duplicate_name_policy == "reject"
+    assert canonical.post_redaction_name_collision_policy == "reject"
+    union = by_id["gen_ai.message_part"]
+    assert tuple((item.tag, item.structured_ref) for item in union.variants or ()) == (
+        module.EXPECTED_MESSAGE_PART_VARIANTS
+    )
+    assert union.dynamic_variant is not None and union.dynamic_variant.arm_id == "generic"
+    assert by_id["gen_ai.generic_part"].effective_reserved_names == ("type",)
+
+    union_dispositions = [
+        item
+        for item in ir.structured_property_dispositions
+        if item.structured_type == "gen_ai.message_part" and item.member_name == "type"
+    ]
+    assert len(union_dispositions) == 22
+    assert {item.arm_id for item in union_dispositions} == {
+        *(tag for tag, _ in module.EXPECTED_MESSAGE_PART_VARIANTS),
+        "generic",
+    }
+    assert all(item.target_structured_type is not None for item in union_dispositions)
+    blob_dynamic_surfaces = {
+        (item.input_path, item.json_pointer)
+        for item in ir.structured_property_dispositions
+        if item.disposition == "dynamic_members" and item.json_pointer.endswith("BlobPart")
+    }
+    assert blob_dynamic_surfaces == {
+        ("model/gen-ai/gen-ai-input-messages.json", "#/$defs/BlobPart"),
+        ("model/gen-ai/gen-ai-output-messages.json", "#/$defs/BlobPart"),
+    }
+    nullable = {
+        (item.structured_type, item.member_name)
+        for item in ir.structured_property_dispositions
+        if item.disposition == "nullable_optional_omission"
+    }
+    assert nullable == {
+        (type_id, field_name)
+        for type_id, fields in module.STRUCTURED_NULLABLE_OPTIONALS.items()
+        for field_name in fields
+    }
+    chat = by_id["gen_ai.chat_message"]
+    chat_fields = {field.name: field for field in chat.fields or ()}
+    assert chat_fields["role"].scalar is not None
+    assert chat_fields["role"].scalar.known_values == ("system", "user", "assistant", "tool")
+    assert chat_fields["name"].scalar is not None
+    assert chat_fields["name"].scalar.sensitivity == "sensitive"
+    assert chat_fields["name"].scalar.normalization.effective_constraints["max_utf8_bytes"] == 512
+    uri = next(field for field in by_id["gen_ai.uri_part"].fields or () if field.name == "uri")
+    assert uri.scalar is not None
+    assert uri.scalar.field_class == "path"
+    assert uri.scalar.normalization.effective_constraints["max_utf8_bytes"] == 8192
+    blob_content = next(
+        field for field in by_id["gen_ai.blob_part"].fields or () if field.name == "content"
+    )
+    assert blob_content.scalar is not None
+    assert blob_content.scalar.encoding_annotation == "json-base64-bytes-v1"
+    with pytest.raises(TypeError):
+        canonical.object_name.normalization.effective_constraints["max_utf8_bytes"] = 1  # type: ignore[index]
+
+
+def test_updater_and_compiler_structural_pins_and_profiles_have_exact_parity() -> None:
+    compiler = _load_generator_module("telemetry_registry_pin_parity_compiler")
+    updater = _load_updater_module("telemetry_registry_pin_parity_updater")
+    ir = compiler.compile_registry(ROOT)
+    dependencies = {item.id: item for item in ir.dependencies}
+    genai = dependencies["otel_genai"]
+
+    assert tuple((upstream, digest) for upstream, _path, digest in compiler.EXPECTED_STRUCTURAL_INPUTS) == (
+        updater.OTEL_GENAI_STRUCTURAL_INPUTS
+    )
+    assert tuple(
+        updater._structural_input_local_path(genai.revision, upstream)
+        for upstream, _digest in updater.OTEL_GENAI_STRUCTURAL_INPUTS
+    ) == tuple(path for _upstream, path, _digest in compiler.EXPECTED_STRUCTURAL_INPUTS)
+    assert {dependency_id: item.profile_id for dependency_id, item in dependencies.items()} == (
+        updater.EXPECTED_PROFILE_IDS
+    )
+
+
+@pytest.mark.parametrize(
+    ("mutation", "expected"),
+    [
+        ("unknown-ref", "unknown structured_ref"),
+        ("cycle", "only gen_ai.canonical_json may self-reference"),
+        ("discriminator-collision", "discriminator collides"),
+        ("canonical-limit", "canonical JSON contract differs"),
+        ("dynamic-policy", "dynamic member contract differs"),
+        ("extra-binding", "structured binding inventory/order mismatch"),
+        ("reordered-types", "structured type inventory/order mismatch"),
+    ],
+)
+def test_structured_registry_grammar_and_graph_fail_closed(
+    tmp_path: Path,
+    mutation: str,
+    expected: str,
+) -> None:
+    root = _fixture_root(tmp_path)
+    path = root / "schemas/telemetry/v8/registry.yaml"
+    registry = yaml.safe_load(path.read_text(encoding="utf-8"))
+    by_id = {item["id"]: item for item in registry["structured_types"]}
+    if mutation == "unknown-ref":
+        by_id["gen_ai.input_messages"]["items"]["structured_ref"] = "gen_ai.missing"
+    elif mutation == "cycle":
+        by_id["gen_ai.chat_message"]["fields"][1]["structured_ref"] = "gen_ai.chat_message"
+    elif mutation == "discriminator-collision":
+        by_id["gen_ai.text_part"]["fields"].append(
+            {
+                "name": "type",
+                "required": True,
+                "type": "string",
+                "field_class": "identifier",
+                "sensitivity": "internal",
+                "normalization": {"id": "bounded-v1", "overrides": {"max_utf8_bytes": 256}},
+            }
+        )
+    elif mutation == "canonical-limit":
+        by_id["gen_ai.canonical_json"]["limits"]["max_depth"] = 9
+    elif mutation == "dynamic-policy":
+        by_id["gen_ai.generic_part"]["dynamic_members"]["duplicate_name_policy"] = "last_wins"
+    elif mutation == "extra-binding":
+        registry["structured_bindings"].append(copy.deepcopy(registry["structured_bindings"][0]))
+    else:
+        registry["structured_types"][0], registry["structured_types"][1] = (
+            registry["structured_types"][1],
+            registry["structured_types"][0],
+        )
+    _write_yaml(path, registry)
+
+    result = _run(root, "--check")
+
+    assert result.returncode == 1
+    assert expected in result.stderr
+
+
+@pytest.mark.parametrize("mutation", ["missing", "extra", "reordered", "digest", "source"])
+def test_structural_input_lock_and_source_inventory_fail_closed(tmp_path: Path, mutation: str) -> None:
+    root = _fixture_root(tmp_path)
+    lock_path, lock, rows = _structural_lock_rows(root)
+    if mutation == "missing":
+        rows.pop()
+    elif mutation == "extra":
+        rows.append(copy.deepcopy(rows[-1]))
+    elif mutation == "reordered":
+        rows[0], rows[1] = rows[1], rows[0]
+    elif mutation == "digest":
+        rows[0]["sha256"] = "0" * 64
+    else:
+        (root / rows[0]["path"]).write_bytes((root / rows[0]["path"]).read_bytes() + b" ")
+    _write_yaml(lock_path, lock)
+
+    result = _run(root, "--check")
+
+    assert result.returncode == 1
+    assert "structural" in result.stderr
+
+
+@pytest.mark.parametrize("mutation", ["duplicate", "trailing", "utf8", "nonfinite", "nesting"])
+def test_structural_input_json_parser_is_strict(tmp_path: Path, mutation: str) -> None:
+    root = _fixture_root(tmp_path)
+    lock_path, lock, rows = _structural_lock_rows(root)
+    row = rows[2]
+    if mutation == "duplicate":
+        payload = b'{"type":"object","type":"object","additionalProperties":true}'
+    elif mutation == "trailing":
+        payload = b'{"type":"object","additionalProperties":true} trailing'
+    elif mutation == "utf8":
+        payload = b'{"type":"object","additionalProperties":true,"x":"\xff"}'
+    elif mutation == "nonfinite":
+        payload = b'{"type":"object","additionalProperties":true,"x":NaN}'
+    else:
+        payload = b'{"type":"object","additionalProperties":true,"x":' + b"[" * 2000 + b"0" + b"]" * 2000 + b"}"
+    (root / row["path"]).write_bytes(payload)
+    row["sha256"] = _sha256(payload)
+    _write_yaml(lock_path, lock)
+
+    result = _run(root, "--check")
+
+    assert result.returncode == 1
+    assert any(marker in result.stderr for marker in ("duplicate JSON key", "invalid JSON", "invalid UTF-8", "non-finite", "nesting"))
+
+
+def test_strict_json_nesting_scan_ignores_string_content_and_bounds_containers(tmp_path: Path) -> None:
+    module = _load_generator_module("telemetry_registry_json_nesting_scanner")
+    path = tmp_path / "authored.json"
+    string_value = 'escaped backslash and quote: \\" ' + "[{" * 300
+    accepted = json.dumps({"value": string_value}).encode("utf-8")
+
+    assert module._parse_json_strict_bytes(path, accepted) == {"value": string_value}
+
+    rejected = b'{"value":' + b"[" * 256 + b"0" + b"]" * 256 + b"}"
+    with pytest.raises(module.RegistryError, match="JSON nesting exceeds the parser limit"):
+        module._parse_json_strict_bytes(path, rejected)
+
+
+def test_structural_inputs_are_parsed_from_the_exact_hashed_read(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = _fixture_root(tmp_path)
+    _, _, rows = _structural_lock_rows(root)
+    module = _load_generator_module("telemetry_registry_structural_single_read")
+    original_read = module._read_utf8
+    reads = 0
+
+    def counted(path: Path) -> tuple[bytes, str]:
+        nonlocal reads
+        reads += 1
+        return original_read(path)
+
+    monkeypatch.setattr(module, "_read_utf8", counted)
+    monkeypatch.setattr(
+        module,
+        "load_json_strict",
+        lambda _path: pytest.fail("structural parser reopened a hashed input"),
+    )
+
+    parsed, documents, digests = module._parse_structural_inputs(
+        root,
+        rows,
+        "fixture.structural_inputs",
+    )
+
+    assert reads == 4
+    assert len(parsed) == len(documents) == len(digests) == 4
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "dynamic-name-pattern",
+        "dynamic-name-bound",
+        "canonical-name-pattern",
+        "canonical-name-bound",
+        "content-extra-bound",
+        "content-weakened-bound",
+    ],
+)
+def test_authored_structured_type_contract_digest_rejects_unreviewed_semantics(
+    tmp_path: Path,
+    mutation: str,
+) -> None:
+    root = _fixture_root(tmp_path)
+    path = root / "schemas/telemetry/v8/registry.yaml"
+    registry = yaml.safe_load(path.read_text(encoding="utf-8"))
+    by_id = {item["id"]: item for item in registry["structured_types"]}
+    if mutation.startswith("dynamic-name"):
+        overrides = by_id["gen_ai.tool_call_arguments"]["dynamic_members"]["name"]["normalization"][
+            "overrides"
+        ]
+        if mutation.endswith("pattern"):
+            overrides["pattern"] = "^x+$"
+        else:
+            overrides["max_utf8_bytes"] = 255
+    elif mutation.startswith("canonical-name"):
+        overrides = by_id["gen_ai.canonical_json"]["object"]["members"]["name"]["normalization"][
+            "overrides"
+        ]
+        if mutation.endswith("pattern"):
+            overrides["pattern"] = "^x+$"
+        else:
+            overrides["max_utf8_bytes"] = 255
+    else:
+        content = next(
+            field for field in by_id["gen_ai.text_part"]["fields"] if field["name"] == "content"
+        )
+        content["normalization"]["overrides"] = (
+            {"max_utf8_bytes": 32768}
+            if mutation == "content-extra-bound"
+            else {"max_depth": 7}
+        )
+    _write_yaml(path, registry)
+
+    result = _run(root, "--check")
+
+    assert result.returncode == 1
+    assert "registry.structured_types" in result.stderr
+    assert "contract" in result.stderr
+
+
+def test_authored_structured_type_digest_ignores_only_normalization_notes(tmp_path: Path) -> None:
+    root = _fixture_root(tmp_path)
+    path = root / "schemas/telemetry/v8/registry.yaml"
+    registry = yaml.safe_load(path.read_text(encoding="utf-8"))
+    text_part = next(item for item in registry["structured_types"] if item["id"] == "gen_ai.text_part")
+    content = next(field for field in text_part["fields"] if field["name"] == "content")
+    content["normalization"]["notes"] = "Reviewer-only explanatory prose."
+    _write_yaml(path, registry)
+    module = _load_generator_module("telemetry_registry_structured_note_projection")
+
+    ir = module.compile_registry(root)
+
+    parsed_text = next(item for item in ir.structured_types if item.id == "gen_ai.text_part")
+    parsed_content = next(field for field in parsed_text.fields or () if field.name == "content")
+    assert parsed_content.scalar is not None
+    assert parsed_content.scalar.normalization.notes == "Reviewer-only explanatory prose."
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "root",
+        "definition",
+        "fixed-property",
+        "array-items",
+        "union-branch",
+        "enum-extra-integer",
+        "enum-extra-null",
+        "enum-unknown-ref",
+        "nullable-default",
+        "blob-explicit-open",
+        "explicit-open-removed",
+        "blob-format-removed",
+        "text-format-added",
+    ],
+)
+def test_structural_source_schema_rejects_unmodeled_keyword_surfaces(mutation: str) -> None:
+    module = _load_generator_module(f"telemetry_registry_structural_keyword_{mutation}")
+    ir = module.compile_registry(ROOT)
+    source = (
+        ROOT
+        / "schemas/telemetry/v8/upstream/otel-genai-b028dceecdad117461a785c3af35315e7184e813/"
+        "model/gen-ai/gen-ai-input-messages.json"
+    )
+    document = module.load_json_strict(source)
+    if mutation == "root":
+        document["allOf"] = []
+    elif mutation == "definition":
+        document["$defs"]["TextPart"]["propertyNames"] = {"pattern": "^x+$"}
+    elif mutation == "fixed-property":
+        document["$defs"]["TextPart"]["properties"]["content"]["pattern"] = "^x+$"
+    elif mutation == "array-items":
+        document["$defs"]["ChatMessage"]["properties"]["parts"]["items"]["minItems"] = 1
+    elif mutation == "union-branch":
+        document["$defs"]["ChatMessage"]["properties"]["parts"]["items"]["anyOf"][0][
+            "title"
+        ] = "Unmodeled"
+    elif mutation == "nullable-default":
+        document["$defs"]["ChatMessage"]["properties"]["name"]["default"] = "not-null"
+    elif mutation == "blob-explicit-open":
+        document["$defs"]["BlobPart"]["additionalProperties"] = True
+    elif mutation == "explicit-open-removed":
+        document["$defs"]["TextPart"].pop("additionalProperties")
+    elif mutation == "blob-format-removed":
+        document["$defs"]["BlobPart"]["properties"]["content"].pop("format")
+    elif mutation == "text-format-added":
+        document["$defs"]["TextPart"]["properties"]["content"]["format"] = "binary"
+    else:
+        role_branches = document["$defs"]["ChatMessage"]["properties"]["role"]["anyOf"]
+        if mutation == "enum-extra-integer":
+            role_branches.append({"type": "integer"})
+        elif mutation == "enum-extra-null":
+            role_branches.append({"type": "null"})
+        else:
+            role_branches[0]["$ref"] = "#/$defs/UnknownRole"
+
+    with pytest.raises(module.RegistryError):
+        module._validate_message_structural_input(
+            "model/gen-ai/gen-ai-input-messages.json",
+            document,
+            {item.id: item for item in ir.structured_types},
+        )
+
+
+def test_every_hashed_authored_input_is_read_once_for_parse_and_digest(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = _fixture_root(tmp_path)
+    _, _, structural_rows = _structural_lock_rows(root)
+    relative_paths = (
+        "schemas/telemetry/v8/registry.yaml",
+        "schemas/telemetry/v8/semconv.lock.yaml",
+        "schemas/telemetry/v8/genai.yaml",
+        "schemas/telemetry/v8/security.yaml",
+        "schemas/telemetry/v8/operations.yaml",
+        "schemas/telemetry/v8/examples.yaml",
+        "docs/design/observability-v8/current-state-inventory.yaml",
+        *(f"schemas/telemetry/v8/upstream/{dependency[5]}" for dependency in DEPENDENCIES),
+        *(row["path"] for row in structural_rows),
+    )
+    monitored = {root / relative for relative in relative_paths}
+    reads = {path.resolve(): 0 for path in monitored}
+    module = _load_generator_module("telemetry_registry_all_inputs_single_read")
+    original_read = module._read_utf8
+
+    def counted(path: Path) -> tuple[bytes, str]:
+        resolved = path.resolve()
+        if resolved in reads:
+            reads[resolved] += 1
+        return original_read(path)
+
+    monkeypatch.setattr(module, "_read_utf8", counted)
+    monkeypatch.setattr(
+        module,
+        "load_yaml_strict",
+        lambda _path: pytest.fail("compiler reopened a hashed YAML input"),
+    )
+    monkeypatch.setattr(
+        module,
+        "load_json_strict",
+        lambda _path: pytest.fail("compiler reopened a hashed JSON input"),
+    )
+
+    module.compile_registry(root)
+
+    assert {path.relative_to(root).as_posix(): count for path, count in reads.items()} == {
+        relative: 1 for relative in relative_paths
+    }
+
+
+def test_structured_facts_participate_in_materialized_digest() -> None:
+    module = _load_generator_module("telemetry_registry_structured_digest")
+    ir = module.compile_registry(ROOT)
+    values = {
+        field.name: getattr(ir, field.name)
+        for field in module.dataclass_fields(module.RegistryIR)
+        if field.name != "materialized_view"
+    }
+    canonical = ir.structured_types[0]
+    assert canonical.canonical_json is not None
+    changed_limits = module.replace(canonical.canonical_json.limits, max_depth=7)
+    changed_contract = module.replace(canonical.canonical_json, limits=changed_limits)
+    changed_type = module.replace(canonical, canonical_json=changed_contract)
+
+    assert module._build_materialized_registry_view(
+        dict(values, structured_types=(changed_type, *ir.structured_types[1:]))
+    ).typed_canonical_json_sha256 != ir.materialized_view.typed_canonical_json_sha256
+    assert module._build_materialized_registry_view(
+        dict(values, structured_bindings=tuple(reversed(ir.structured_bindings)))
+    ).typed_canonical_json_sha256 != ir.materialized_view.typed_canonical_json_sha256
+    assert module._build_materialized_registry_view(
+        dict(values, structured_property_dispositions=tuple(reversed(ir.structured_property_dispositions)))
+    ).typed_canonical_json_sha256 != ir.materialized_view.typed_canonical_json_sha256
+
+
+@pytest.mark.parametrize("surface", ["snapshot", "structural"])
+def test_updater_publication_rejects_symlinked_target_parents(tmp_path: Path, surface: str) -> None:
+    root = _fixture_root(tmp_path)
+    module = _load_updater_module(f"telemetry_updater_parent_symlink_{surface}")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    link_parent = root / "schemas/telemetry/v8/upstream/redirect"
+    link_parent.symlink_to(outside, target_is_directory=True)
+    filename = "snapshot.json" if surface == "snapshot" else "model/gen-ai/structural.json"
+    relative = f"schemas/telemetry/v8/upstream/redirect/{filename}"
+    lock_path = root / "schemas/telemetry/v8/semconv.lock.yaml"
+    before_lock = lock_path.read_bytes()
+
+    with pytest.raises(module.RegistryError):
+        module._install_rendered(
+            root,
+            {relative: b"new\n", "schemas/telemetry/v8/semconv.lock.yaml": before_lock},
+            "schemas/telemetry/v8/semconv.lock.yaml",
+        )
+
+    assert not (outside / filename).exists()
+    assert lock_path.read_bytes() == before_lock
+
+
+def test_updater_mid_publish_failure_restores_prior_bytes_and_inodes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = _fixture_root(tmp_path)
+    module = _load_updater_module("telemetry_updater_mid_publish_rollback")
+    paths = (
+        root / "schemas/telemetry/v8/upstream/rollback-a.json",
+        root / "schemas/telemetry/v8/upstream/rollback-b.json",
+        root / "schemas/telemetry/v8/semconv.lock.yaml",
+    )
+    paths[0].write_bytes(b"old-a\n")
+    paths[1].write_bytes(b"old-b\n")
+    before = {path: (path.read_bytes(), path.stat().st_ino) for path in paths}
+    rendered = {
+        "schemas/telemetry/v8/upstream/rollback-a.json": b"new-a\n",
+        "schemas/telemetry/v8/upstream/rollback-b.json": b"new-b\n",
+        "schemas/telemetry/v8/semconv.lock.yaml": b"new-lock\n",
+    }
+    original_link = module.os.link
+    calls = 0
+
+    def fail_once(*args: Any, **kwargs: Any) -> None:
+        nonlocal calls
+        calls += 1
+        if calls == 4:
+            raise OSError("injected publication failure")
+        original_link(*args, **kwargs)
+
+    monkeypatch.setattr(module.os, "link", fail_once)
+
+    with pytest.raises(
+        module.RegistryError,
+        match="telemetry upstream publication failed and was rolled back",
+    ) as exc_info:
+        module._install_rendered(root, rendered, "schemas/telemetry/v8/semconv.lock.yaml")
+
+    assert isinstance(exc_info.value.__cause__, OSError)
+    assert str(exc_info.value.__cause__) == "injected publication failure"
+    for path, (payload, inode) in before.items():
+        assert path.read_bytes() == payload
+        assert path.stat().st_ino == inode
+    assert not tuple(root.glob(".telemetry-upstream-update-*"))
+
+
+def test_updater_transaction_directory_substitution_blocks_cleanup(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = _fixture_root(tmp_path)
+    module = _load_updater_module("telemetry_updater_transaction_substitution")
+    lock_path = root / "schemas/telemetry/v8/semconv.lock.yaml"
+    output_path = root / "schemas/telemetry/v8/upstream/substitution.json"
+    original_remove = module._remove_tree_at
+    replacement_name: str | None = None
+
+    def substitute(parent_descriptor: int, name: str, identity: tuple[int, int]) -> None:
+        nonlocal replacement_name
+        replacement_name = name
+        module.os.rename(
+            name,
+            f"{name}.original",
+            src_dir_fd=parent_descriptor,
+            dst_dir_fd=parent_descriptor,
+        )
+        module.os.mkdir(name, mode=0o700, dir_fd=parent_descriptor)
+        original_remove(parent_descriptor, name, identity)
+
+    monkeypatch.setattr(module, "_remove_tree_at", substitute)
+
+    with pytest.raises(
+        module.RegistryError,
+        match="telemetry upstream update committed; transaction cleanup failed",
+    ) as exc_info:
+        module._install_rendered(
+            root,
+            {
+                "schemas/telemetry/v8/upstream/substitution.json": b"new\n",
+                "schemas/telemetry/v8/semconv.lock.yaml": b"new-lock\n",
+            },
+            "schemas/telemetry/v8/semconv.lock.yaml",
+        )
+
+    assert isinstance(exc_info.value.__cause__, module.RegistryError)
+    assert "transaction directory was replaced" in str(exc_info.value.__cause__)
+    assert output_path.read_bytes() == b"new\n"
+    assert lock_path.read_bytes() == b"new-lock\n"
+    assert replacement_name is not None
+    assert (root / replacement_name).is_dir()
+    assert (root / f"{replacement_name}.original").is_dir()
+
+
+def test_updater_post_commit_cleanup_fsync_failure_reports_live_commit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = _fixture_root(tmp_path)
+    module = _load_updater_module("telemetry_updater_cleanup_fsync")
+    lock_path = root / "schemas/telemetry/v8/semconv.lock.yaml"
+    output_path = root / "schemas/telemetry/v8/upstream/cleanup-fsync.json"
+    original_remove = module._remove_tree_at
+    original_fsync = module.os.fsync
+    injected = False
+
+    def fail_cleanup_fsync(parent_descriptor: int, name: str, identity: tuple[int, int]) -> None:
+        nonlocal injected
+
+        def fail_once(descriptor: int) -> None:
+            nonlocal injected
+            if not injected:
+                injected = True
+                raise OSError("injected transaction cleanup fsync failure")
+            original_fsync(descriptor)
+
+        monkeypatch.setattr(module.os, "fsync", fail_once)
+        try:
+            original_remove(parent_descriptor, name, identity)
+        finally:
+            monkeypatch.setattr(module.os, "fsync", original_fsync)
+
+    monkeypatch.setattr(module, "_remove_tree_at", fail_cleanup_fsync)
+
+    with pytest.raises(
+        module.RegistryError,
+        match="telemetry upstream update committed; transaction cleanup failed",
+    ) as exc_info:
+        module._install_rendered(
+            root,
+            {
+                "schemas/telemetry/v8/upstream/cleanup-fsync.json": b"new\n",
+                "schemas/telemetry/v8/semconv.lock.yaml": b"new-lock\n",
+            },
+            "schemas/telemetry/v8/semconv.lock.yaml",
+        )
+
+    assert injected is True
+    assert isinstance(exc_info.value.__cause__, OSError)
+    assert str(exc_info.value.__cause__) == "injected transaction cleanup fsync failure"
+    assert output_path.read_bytes() == b"new\n"
+    assert lock_path.read_bytes() == b"new-lock\n"
+    assert tuple(root.glob(".telemetry-upstream-update-*"))
+
+
+def test_updater_failure_removes_newly_created_parent_directories(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = _fixture_root(tmp_path)
+    module = _load_updater_module("telemetry_updater_created_parent_rollback")
+    lock_path = root / "schemas/telemetry/v8/semconv.lock.yaml"
+
+    def fail_stage(*_args: Any, **_kwargs: Any) -> None:
+        raise OSError("injected staging failure")
+
+    monkeypatch.setattr(module, "_write_staged_file", fail_stage)
+
+    with pytest.raises(
+        module.RegistryError,
+        match="telemetry upstream publication failed and was rolled back",
+    ) as exc_info:
+        module._install_rendered(
+            root,
+            {
+                "schemas/telemetry/v8/upstream/new-parent/nested/value.json": b"new\n",
+                "schemas/telemetry/v8/semconv.lock.yaml": lock_path.read_bytes(),
+            },
+            "schemas/telemetry/v8/semconv.lock.yaml",
+        )
+
+    assert isinstance(exc_info.value.__cause__, OSError)
+    assert str(exc_info.value.__cause__) == "injected staging failure"
+    assert not (root / "schemas/telemetry/v8/upstream/new-parent").exists()
+    assert not tuple(root.glob(".telemetry-upstream-update-*"))
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "schema-version-bool",
+        "dependency-scalar",
+        "version-too-long",
+        "profile-malformed",
+        "profile-retargeted",
+        "snapshot-shape",
+        "snapshot-path-type",
+        "snapshot-path-noncanonical",
+        "snapshot-path-too-long",
+        "snapshot-path-surrogate",
+        "snapshot-format",
+        "snapshot-digest-type",
+        "snapshot-digest-noncanonical",
+        "duplicate-snapshot-path",
+        "snapshot-structural-collision",
+    ],
+)
+def test_updater_lock_validation_rejects_compiler_incompatible_inputs(
+    tmp_path: Path,
+    mutation: str,
+) -> None:
+    root = _fixture_root(tmp_path)
+    module = _load_updater_module(f"telemetry_updater_lock_contract_{mutation}")
+    lock_path = root / "schemas/telemetry/v8/semconv.lock.yaml"
+    lock = yaml.safe_load(lock_path.read_text(encoding="utf-8"))
+    dependencies = lock["dependencies"]
+    target = dependencies[0]
+    if mutation == "schema-version-bool":
+        lock["schema_version"] = True
+    elif mutation == "dependency-scalar":
+        target["repository"] = 7
+    elif mutation == "version-too-long":
+        target["version"] = "v" * 4097
+    elif mutation == "profile-malformed":
+        target["profile_id"] = "invalid profile!"
+    elif mutation == "profile-retargeted":
+        target["profile_id"] = "valid-but-wrong-profile"
+    elif mutation == "snapshot-shape":
+        target["snapshot"] = "not-a-mapping"
+    elif mutation == "snapshot-path-type":
+        target["snapshot"]["path"] = 7
+    elif mutation == "snapshot-path-noncanonical":
+        target["snapshot"]["path"] = "schemas/telemetry/v8/upstream/../escape.json"
+    elif mutation == "snapshot-path-too-long":
+        target["snapshot"]["path"] = "schemas/telemetry/v8/upstream/" + "x" * 4097
+    elif mutation == "snapshot-path-surrogate":
+        target["snapshot"]["path"] = "schemas/telemetry/v8/upstream/\ud800.json"
+    elif mutation == "snapshot-format":
+        target["snapshot"]["format"] = 7
+    elif mutation == "snapshot-digest-type":
+        target["snapshot"]["sha256"] = 7
+    elif mutation == "snapshot-digest-noncanonical":
+        target["snapshot"]["sha256"] = "A" * 64
+    elif mutation == "duplicate-snapshot-path":
+        dependencies[1]["snapshot"]["path"] = target["snapshot"]["path"]
+    else:
+        target["snapshot"]["path"] = dependencies[1]["structural_inputs"][0]["path"]
+    _write_yaml(lock_path, lock)
+
+    with pytest.raises(module.RegistryError):
+        module._load_lock(lock_path)
+
+
+@pytest.mark.parametrize(
+    ("phase", "swap_on_upstream_validation"),
+    [
+        ("before-snapshot", 1),
+        ("before-lock", 2),
+        ("after-lock", 3),
+    ],
+)
+def test_updater_namespace_swap_cannot_publish_through_detached_parent(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    phase: str,
+    swap_on_upstream_validation: int,
+) -> None:
+    root = _fixture_root(tmp_path)
+    module = _load_updater_module(f"telemetry_updater_namespace_swap_{phase}")
+    upstream = root / "schemas/telemetry/v8/upstream"
+    displaced = root / "schemas/telemetry/v8/upstream.displaced"
+    lock_path = root / "schemas/telemetry/v8/semconv.lock.yaml"
+    before_lock = (lock_path.read_bytes(), lock_path.stat().st_ino)
+    original_validate = module._validate_parent_binding
+    swapped = False
+    upstream_validations = 0
+
+    def swap_before_validation(root_descriptor: int, state: dict[str, Any]) -> None:
+        nonlocal swapped, upstream_validations
+        if state["parent_parts"] == ("schemas", "telemetry", "v8", "upstream"):
+            upstream_validations += 1
+            if not swapped and upstream_validations == swap_on_upstream_validation:
+                upstream.rename(displaced)
+                upstream.mkdir()
+                swapped = True
+        original_validate(root_descriptor, state)
+
+    monkeypatch.setattr(module, "_validate_parent_binding", swap_before_validation)
+
+    with pytest.raises(
+        module.RegistryError,
+        match="telemetry upstream publication failed and was rolled back",
+    ) as exc_info:
+        module._install_rendered(
+            root,
+            {
+                "schemas/telemetry/v8/upstream/namespace-swap.json": b"new\n",
+                "schemas/telemetry/v8/semconv.lock.yaml": lock_path.read_bytes(),
+            },
+            "schemas/telemetry/v8/semconv.lock.yaml",
+        )
+
+    assert swapped is True
+    assert isinstance(exc_info.value.__cause__, module.RegistryError)
+    assert "canonical namespace" in str(exc_info.value.__cause__)
+    assert not (upstream / "namespace-swap.json").exists()
+    assert not (displaced / "namespace-swap.json").exists()
+    assert lock_path.read_bytes() == before_lock[0]
+    assert lock_path.stat().st_ino == before_lock[1]
+    assert not tuple(root.glob(".telemetry-upstream-update-*"))
+
+
+@pytest.mark.parametrize("phase", ["before-lock", "after-lock"])
+@pytest.mark.parametrize("tamper", ["replace-inode", "in-place-bytes"])
+def test_updater_installed_target_tampering_never_commits_a_new_lock(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    phase: str,
+    tamper: str,
+) -> None:
+    root = _fixture_root(tmp_path)
+    module = _load_updater_module(f"telemetry_updater_target_tamper_{phase}_{tamper}")
+    target_path = root / "schemas/telemetry/v8/upstream/tamper.json"
+    target_path.write_bytes(b"old-snapshot\n")
+    lock_path = root / "schemas/telemetry/v8/semconv.lock.yaml"
+    before_target = (target_path.read_bytes(), target_path.stat().st_ino)
+    before_lock = (lock_path.read_bytes(), lock_path.stat().st_ino)
+    original_validate = module._validate_installed_target
+    target_validations = 0
+    tampered = False
+
+    def tamper_before_validation(root_descriptor: int, state: dict[str, Any]) -> None:
+        nonlocal target_validations, tampered
+        if state["relative"] == "schemas/telemetry/v8/upstream/tamper.json":
+            target_validations += 1
+            target_phase = 1 if phase == "before-lock" else 2
+            if not tampered and target_validations == target_phase:
+                if tamper == "replace-inode":
+                    replacement = target_path.with_suffix(".replacement")
+                    replacement.write_bytes(b"foreign-replacement\n")
+                    replacement.replace(target_path)
+                else:
+                    target_path.write_bytes(b"foreign-in-place\n")
+                tampered = True
+        original_validate(root_descriptor, state)
+
+    monkeypatch.setattr(module, "_validate_installed_target", tamper_before_validation)
+
+    expected = (
+        "telemetry upstream rollback failed; transaction evidence was preserved"
+        if tamper == "replace-inode"
+        else "telemetry upstream publication failed and was rolled back"
+    )
+    with pytest.raises(module.RegistryError, match=expected):
+        module._install_rendered(
+            root,
+            {
+                "schemas/telemetry/v8/upstream/tamper.json": b"new-snapshot\n",
+                "schemas/telemetry/v8/semconv.lock.yaml": b"new-lock\n",
+            },
+            "schemas/telemetry/v8/semconv.lock.yaml",
+        )
+
+    assert tampered is True
+    assert lock_path.read_bytes() == before_lock[0]
+    assert lock_path.stat().st_ino == before_lock[1]
+    if tamper == "replace-inode":
+        assert target_path.read_bytes() == b"foreign-replacement\n"
+        assert target_path.stat().st_ino != before_target[1]
+        assert tuple(root.glob(".telemetry-upstream-update-*"))
+    else:
+        assert target_path.read_bytes() == before_target[0]
+        assert target_path.stat().st_ino == before_target[1]
+        assert not tuple(root.glob(".telemetry-upstream-update-*"))
+
+
+def test_updater_structural_json_nesting_matches_compiler_boundary() -> None:
+    module = _load_updater_module("telemetry_updater_structural_nesting")
+    path = "model/gen-ai/fixture.json"
+    depth_256 = b'{"value":' + b"[" * 255 + b"0" + b"]" * 255 + b"}"
+    depth_257 = b'{"value":' + b"[" * 256 + b"0" + b"]" * 256 + b"}"
+    string_value = 'escaped backslash and quote: \\" ' + "[{" * 300
+
+    module._validate_structural_json(path, depth_256)
+    module._validate_structural_json(path, json.dumps({"value": string_value}).encode("utf-8"))
+    with pytest.raises(module.RegistryError, match="JSON nesting exceeds the parser limit"):
+        module._validate_structural_json(path, depth_257)
+
+
+@pytest.mark.parametrize("mutation", ["same-inode", "replacement-inode"])
+def test_updater_lock_cas_preserves_external_stale_lock_mutation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mutation: str,
+) -> None:
+    root = _fixture_root(tmp_path)
+    module = _load_updater_module(f"telemetry_updater_stale_lock_{mutation}")
+    archive = tmp_path / "genai.tar.gz"
+    _upstream_archive(archive)
+    lock_path = root / "schemas/telemetry/v8/semconv.lock.yaml"
+    snapshot_path = root / "schemas/telemetry/v8/upstream/otel-genai.normalized.json"
+    before_snapshot = (snapshot_path.read_bytes(), snapshot_path.stat().st_ino)
+    original_install = module._install_rendered
+    external_payload = f"external-{mutation}\n".encode()
+
+    def mutate_then_install(*args: Any, **kwargs: Any) -> None:
+        if mutation == "same-inode":
+            lock_path.write_bytes(external_payload)
+        else:
+            replacement = lock_path.with_suffix(".replacement")
+            replacement.write_bytes(external_payload)
+            replacement.replace(lock_path)
+        original_install(*args, **kwargs)
+
+    monkeypatch.setattr(module, "_install_rendered", mutate_then_install)
+
+    with pytest.raises(module.RegistryError, match="telemetry upstream publication failed and was rolled back"):
+        module.update(root, ("otel_genai",), {"otel_genai": archive})
+
+    assert lock_path.read_bytes() == external_payload
+    assert snapshot_path.read_bytes() == before_snapshot[0]
+    assert snapshot_path.stat().st_ino == before_snapshot[1]
+    assert not tuple(root.glob(".telemetry-upstream-update-*"))
+
+
+def test_updater_unselected_reference_digest_drift_rolls_back_selected_subset(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = _fixture_root(tmp_path)
+    module = _load_updater_module("telemetry_updater_unselected_digest_drift")
+    archive = tmp_path / "genai.tar.gz"
+    _upstream_archive(archive)
+    lock_path = root / "schemas/telemetry/v8/semconv.lock.yaml"
+    selected_path = root / "schemas/telemetry/v8/upstream/otel-genai.normalized.json"
+    unselected_path = root / "schemas/telemetry/v8/upstream/otel-core.normalized.json"
+    before_lock = (lock_path.read_bytes(), lock_path.stat().st_ino)
+    before_selected = (selected_path.read_bytes(), selected_path.stat().st_ino)
+    original_install = module._install_rendered
+
+    def drift_then_install(*args: Any, **kwargs: Any) -> None:
+        unselected_path.write_bytes(b"external-unselected-drift\n")
+        original_install(*args, **kwargs)
+
+    monkeypatch.setattr(module, "_install_rendered", drift_then_install)
+
+    with pytest.raises(module.RegistryError, match="telemetry upstream publication failed and was rolled back"):
+        module.update(root, ("otel_genai",), {"otel_genai": archive})
+
+    assert unselected_path.read_bytes() == b"external-unselected-drift\n"
+    assert selected_path.read_bytes() == before_selected[0]
+    assert selected_path.stat().st_ino == before_selected[1]
+    assert lock_path.read_bytes() == before_lock[0]
+    assert lock_path.stat().st_ino == before_lock[1]
+    assert not tuple(root.glob(".telemetry-upstream-update-*"))
+
+
+def test_updater_concurrent_subset_refreshes_are_serialized(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = _fixture_root(tmp_path)
+    module = _load_updater_module("telemetry_updater_concurrent_subset")
+    lock_path = root / "schemas/telemetry/v8/semconv.lock.yaml"
+    lock = yaml.safe_load(lock_path.read_text(encoding="utf-8"))
+    before_subset_digests = {
+        item["id"]: item["snapshot"]["sha256"]
+        for item in lock["dependencies"]
+        if item["id"] in {"otel_core", "openinference"}
+    }
+    genai = next(item for item in lock["dependencies"] if item["id"] == "otel_genai")
+    genai_snapshot = root / genai["snapshot"]["path"]
+    genai_snapshot.write_bytes(
+        (
+            ROOT
+            / "schemas/telemetry/v8/upstream/otel-genai-b028dceecdad117461a785c3af35315e7184e813.normalized.json"
+        ).read_bytes()
+    )
+    genai["snapshot"]["sha256"] = _sha256(genai_snapshot.read_bytes())
+    _write_yaml(lock_path, lock)
+    core_archive = tmp_path / "core.tar.gz"
+    openinference_archive = tmp_path / "openinference.tar.gz"
+    _full_core_upstream_archive(core_archive)
+    _openinference_archive(openinference_archive)
+    original_archive_files = module._archive_files
+    guard = threading.Lock()
+    start = threading.Barrier(2)
+    active = 0
+    maximum_active = 0
+
+    def observed_archive_files(payload: bytes) -> dict[str, bytes]:
+        nonlocal active, maximum_active
+        with guard:
+            active += 1
+            maximum_active = max(maximum_active, active)
+        try:
+            time.sleep(0.05)
+            return original_archive_files(payload)
+        finally:
+            with guard:
+                active -= 1
+
+    def refresh(dependency: str, archive: Path) -> None:
+        start.wait(timeout=5)
+        module.update(root, (dependency,), {dependency: archive})
+
+    monkeypatch.setattr(module, "_archive_files", observed_archive_files)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [
+            executor.submit(refresh, "otel_core", core_archive),
+            executor.submit(refresh, "openinference", openinference_archive),
+        ]
+        for future in futures:
+            future.result(timeout=30)
+
+    assert maximum_active == 1
+    assert not tuple(root.glob(".telemetry-upstream-update-*"))
+    refreshed_lock, dependencies = module._load_lock(lock_path)
+    assert refreshed_lock["schema_version"] == 1
+    for dependency in dependencies:
+        snapshot_path = root / dependency["snapshot"]["path"]
+        assert _sha256(snapshot_path.read_bytes()) == dependency["snapshot"]["sha256"]
+    refreshed_digests = {
+        item["id"]: item["snapshot"]["sha256"]
+        for item in dependencies
+        if item["id"] in {"otel_core", "openinference"}
+    }
+    assert set(refreshed_digests) == set(before_subset_digests)
+    assert all(refreshed_digests[key] != before_subset_digests[key] for key in refreshed_digests)
+    compiler = _load_generator_module("telemetry_registry_concurrent_subset_compile")
+    compiler.compile_registry(root)
+
+
+def test_updater_candidate_reference_rejects_sparse_oversized_file(tmp_path: Path) -> None:
+    root = _fixture_root(tmp_path)
+    module = _load_updater_module("telemetry_updater_sparse_reference")
+    relative = "schemas/telemetry/v8/upstream/oversized-reference.json"
+    target = root / relative
+    with target.open("wb") as stream:
+        stream.truncate(module.MAX_EXPANDED_BYTES + 1)
+
+    with module._directory_descriptor(root) as root_descriptor:
+        with pytest.raises(module.RegistryError, match="exceeds the read limit"):
+            module._validate_candidate_references(root_descriptor, ((relative, "0" * 64),))
+
+
+def test_updater_transaction_bootstrap_failure_removes_exact_created_inode(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = _fixture_root(tmp_path)
+    module = _load_updater_module("telemetry_updater_bootstrap_cleanup")
+    original_fsync = module.os.fsync
+    injected = False
+
+    def fail_first_fsync(descriptor: int) -> None:
+        nonlocal injected
+        if not injected:
+            injected = True
+            raise OSError("injected bootstrap failure")
+        original_fsync(descriptor)
+
+    monkeypatch.setattr(module.os, "fsync", fail_first_fsync)
+
+    with module._directory_descriptor(root) as root_descriptor:
+        with pytest.raises(module.RegistryError, match="cannot initialize telemetry upstream transaction directory"):
+            module._create_transaction_directory(root_descriptor)
+
+    assert injected is True
+    assert not tuple(root.glob(".telemetry-upstream-update-*"))
