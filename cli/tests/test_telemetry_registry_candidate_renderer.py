@@ -63,6 +63,51 @@ def _json(artifacts: Mapping[str, Any], relative: str) -> dict[str, Any]:
     return json.loads(artifacts[f"{PREFIX}/{relative}"].payload)
 
 
+def _subschema_validator(schema: Mapping[str, Any], subschema: Mapping[str, Any]) -> jsonschema.Draft202012Validator:
+    definitions = dict(schema["$defs"])
+    definitions["test:subject"] = subschema
+    return jsonschema.Draft202012Validator(
+        {
+            "$schema": schema["$schema"],
+            "$ref": "#/$defs/test:subject",
+            "$defs": definitions,
+        }
+    )
+
+
+def _span_record_for_family(
+    artifacts: Mapping[str, Any],
+    schema: Mapping[str, Any],
+    family_id: str,
+) -> dict[str, Any]:
+    record = json.loads(
+        json.dumps(
+            _json(
+                artifacts,
+                "examples/valid/valid-model-chat-with-honest-missing-content-and-usage.json",
+            )["record"]
+        )
+    )
+    definition = schema["$defs"][f"family:{family_id}"]
+    metadata = definition["x-defenseclaw-family"]
+    body_overlay = definition["allOf"][1]["properties"]["body"]["allOf"][1]
+    attributes_schema = body_overlay["properties"]["attributes"]
+    allowed_attributes = attributes_schema["properties"]
+    record["body"]["attributes"] = {
+        key: value for key, value in record["body"]["attributes"].items() if key in allowed_attributes
+    }
+    for key, attribute_schema in allowed_attributes.items():
+        if "const" in attribute_schema:
+            record["body"]["attributes"][key] = attribute_schema["const"]
+    record["body"]["kind"] = body_overlay["properties"]["kind"]["enum"][0]
+    record["body"].pop("events", None)
+    record["bucket"] = metadata["bucket"]
+    record["event_name"] = metadata["event_name"]
+    record["span_name"] = metadata["span_name_pattern"]
+    record["outcome"] = "completed"
+    return record
+
+
 def _retagged_view(renderer: ModuleType, view: Any, facts: Mapping[str, Any]) -> Any:
     typed = renderer._typed_materialized_node(facts)
     digest = hashlib.sha256(
@@ -187,7 +232,7 @@ def test_bundle_is_complete_draft_2020_12_and_examples_have_exact_dispositions(
     assert schema["$schema"] == "https://json-schema.org/draft/2020-12/schema"
     assert schema["$id"] == "https://defenseclaw.dev/schemas/telemetry/v8/telemetry.schema.json"
     assert len(schema["oneOf"]) == 243
-    assert len(schema["$defs"]) == 593
+    assert len(schema["$defs"]) == 594
     assert set(schema["x-defenseclaw-conditions"][0]) == {"description", "enforcement", "false_requirement", "id"}
     assert "$type" not in json.dumps(schema["x-defenseclaw-conditions"])
     assert len(schema["x-defenseclaw-conditions"]) == 7
@@ -233,6 +278,95 @@ def test_bundle_is_complete_draft_2020_12_and_examples_have_exact_dispositions(
             assert example["mutation"]["kind"] == example["expected_error"]
             assert example["mutation"]["changes"]
     assert observed == {True: 7, False: 5}
+
+
+def test_canonical_json_is_a_closed_recursive_non_null_union(
+    renderer: ModuleType,
+    artifacts: Mapping[str, Any],
+) -> None:
+    schema = _json(artifacts, "telemetry.schema.json")
+    canonical = schema["$defs"][renderer.CANONICAL_JSON_DEFINITION]
+    validator = _subschema_validator(schema, canonical)
+
+    assert canonical["x-defenseclaw-null-policy"] == "reject"
+    assert schema["x-defenseclaw-canonical-to-otlp"]["null_value_policy"] == "reject"
+    for value in (False, True, -1, 1.5, "value", [], {}, ["nested", {"value": 1}]):
+        assert validator.is_valid(value), value
+    for value in (None, [None], {"value": None}, [1, {"nested": [None]}]):
+        assert not validator.is_valid(value), value
+
+
+@pytest.mark.parametrize(
+    ("definition_name", "property_name"),
+    [
+        pytest.param("structural:envelope", "body", id="envelope-body"),
+        pytest.param("structural:trace_body", "attributes", id="trace-attributes"),
+        pytest.param("structural:trace_resource", "attributes", id="resource-attributes"),
+        pytest.param("structural:trace_scope", "attributes", id="scope-attributes"),
+        pytest.param("structural:trace_event", "attributes", id="event-attributes"),
+        pytest.param("structural:trace_link", "attributes", id="link-attributes"),
+        pytest.param("structural:metric_instrument_data", "attributes", id="metric-attributes"),
+        pytest.param("attribute:gen_ai.input.messages", None, id="genai-input-messages"),
+        pytest.param("attribute:gen_ai.output.messages", None, id="genai-output-messages"),
+        pytest.param("attribute:gen_ai.tool.call.arguments", None, id="genai-tool-arguments"),
+        pytest.param("attribute:gen_ai.tool.call.result", None, id="genai-tool-result"),
+    ],
+)
+def test_every_canonical_json_context_rejects_direct_null(
+    renderer: ModuleType,
+    artifacts: Mapping[str, Any],
+    definition_name: str,
+    property_name: str | None,
+) -> None:
+    schema = _json(artifacts, "telemetry.schema.json")
+    definition = schema["$defs"][definition_name]
+    subject = definition if property_name is None else definition["properties"][property_name]
+
+    assert subject["$ref"] == f"#/$defs/{renderer.CANONICAL_JSON_DEFINITION}"
+    assert not _subschema_validator(schema, subject).is_valid(None)
+
+
+@pytest.mark.parametrize("family_id", ["span.ai.discovery", "span.ai.discovery.detector"])
+def test_eventless_ai_discovery_spans_require_events_to_be_absent(
+    artifacts: Mapping[str, Any],
+    family_id: str,
+) -> None:
+    schema = _json(artifacts, "telemetry.schema.json")
+    record = _span_record_for_family(artifacts, schema, family_id)
+    validator = _subschema_validator(schema, schema["$defs"][f"family:{family_id}"])
+
+    assert "events" not in record["body"]
+    assert validator.is_valid(record)
+
+
+@pytest.mark.parametrize(
+    ("family_id", "events"),
+    [
+        pytest.param("span.ai.discovery", [], id="discovery-empty"),
+        pytest.param(
+            "span.ai.discovery",
+            [{"name": "arbitrary", "time_unix_nano": 1, "attributes": {}}],
+            id="discovery-arbitrary",
+        ),
+        pytest.param("span.ai.discovery.detector", [], id="detector-empty"),
+        pytest.param(
+            "span.ai.discovery.detector",
+            [{"name": "arbitrary", "time_unix_nano": 1, "attributes": {}}],
+            id="detector-arbitrary",
+        ),
+    ],
+)
+def test_eventless_ai_discovery_spans_reject_empty_and_arbitrary_events(
+    artifacts: Mapping[str, Any],
+    family_id: str,
+    events: list[dict[str, Any]],
+) -> None:
+    schema = _json(artifacts, "telemetry.schema.json")
+    record = _span_record_for_family(artifacts, schema, family_id)
+    record["body"]["events"] = events
+    validator = _subschema_validator(schema, schema["$defs"][f"family:{family_id}"])
+
+    assert not validator.is_valid(record)
 
 
 def test_catalog_contains_portable_family_privacy_condition_lifecycle_and_compatibility_metadata(
