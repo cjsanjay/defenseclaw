@@ -264,6 +264,16 @@ def _validate_marker(marker: bytes, payload: bytes | None = None) -> None:
         raise TransactionError("generated output does not carry its ownership marker near the beginning")
 
 
+def _validate_complete_internal_output_set(paths: set[str], *, inventory: str) -> None:
+    """Reject a torn inventory of the exact generated Go output set."""
+
+    selected = paths & EXACT_INTERNAL_OUTPUTS
+    if selected and selected != EXACT_INTERNAL_OUTPUTS:
+        raise TransactionError(
+            f"{inventory} must contain either none or all exact internal generated outputs"
+        )
+
+
 def _normalize_inputs(
     outputs: Mapping[str | Path, RenderedOutput],
     prior: Mapping[str | Path, PriorOwnedOutput],
@@ -282,6 +292,7 @@ def _normalize_inputs(
         normalized_outputs[path] = output
     if MANIFEST_PATH not in normalized_outputs:
         raise TransactionError("generated output transaction requires the output manifest commit marker")
+    _validate_complete_internal_output_set(set(normalized_outputs), inventory="generated output inventory")
 
     normalized_prior: dict[str, PriorOwnedOutput] = {}
     for raw_path, ownership in prior.items():
@@ -293,6 +304,7 @@ def _normalize_inputs(
         _validate_mode(ownership.mode)
         _validate_marker(ownership.marker)
         normalized_prior[path] = ownership
+    _validate_complete_internal_output_set(set(normalized_prior), inventory="prior ownership inventory")
     return normalized_outputs, normalized_prior
 
 
