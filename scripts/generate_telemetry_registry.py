@@ -398,20 +398,18 @@ _CONSTRAINT_KEYS = frozenset(
 )
 _GROUP_TYPE = frozenset({"attribute_group", "body_group", "resource", "span_event", "log", "span", "metric"})
 _SIGNAL_BY_GROUP_TYPE = {"log": "logs", "span": "traces", "metric": "metrics"}
-_MANDATORY_RULES = frozenset(
-    {
-        "always",
-        "control_plane_mutation",
-        "approval_resolution",
-        "alert_mutation",
-        "protected_boundary_auth_failure",
-        "enforced_outcome",
-        "enforcement_state_change",
-        "schema_validation_failure",
-        "sqlite_failure",
-        "exporter_initialization_failure",
-        "durable_health_transition",
-    }
+_MANDATORY_RULE_CATALOG_V1: Final = (
+    ("always", "constant", True),
+    ("control_plane_mutation", "builder_fact", "control_plane_mutation"),
+    ("approval_resolution", "builder_fact", "approval_resolution"),
+    ("alert_mutation", "builder_fact", "alert_mutation"),
+    ("protected_boundary_auth_failure", "builder_fact", "protected_boundary_auth_failure"),
+    ("enforced_outcome", "builder_fact", "enforced_outcome"),
+    ("enforcement_state_change", "builder_fact", "enforcement_state_change"),
+    ("schema_validation_failure", "builder_fact", "schema_validation_failure"),
+    ("sqlite_failure", "builder_fact", "sqlite_failure"),
+    ("exporter_initialization_failure", "builder_fact", "exporter_initialization_failure"),
+    ("durable_health_transition", "builder_fact", "durable_health_transition"),
 )
 _COMPANION_RULES = frozenset(
     {
@@ -804,6 +802,25 @@ class ConditionIR:
 
 
 @dataclass(frozen=True, slots=True)
+class MandatoryRuleEnforcementIR:
+    kind: str
+    value: bool | None
+    fact: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class MandatoryRuleIR:
+    id: str
+    enforcement: MandatoryRuleEnforcementIR
+
+
+@dataclass(frozen=True, slots=True)
+class MandatoryRuleCatalogIR:
+    version: int
+    rules: tuple[MandatoryRuleIR, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class ValueCatalogEntryIR:
     value: str
     code: int
@@ -1034,6 +1051,32 @@ class DomainIR:
 
 
 @dataclass(frozen=True, slots=True)
+class BuilderOccurrenceIR:
+    timestamp: str
+    record_id: str
+
+
+@dataclass(frozen=True, slots=True)
+class BuilderFactIR:
+    fact: str
+    value: bool
+
+
+@dataclass(frozen=True, slots=True)
+class BuilderContextInheritanceIR:
+    mode: str
+    base_example: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class BuilderContextIR:
+    inheritance: BuilderContextInheritanceIR
+    occurrence: BuilderOccurrenceIR | None
+    condition_facts: tuple[BuilderFactIR, ...]
+    mandatory_facts: tuple[BuilderFactIR, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class ExampleIR:
     id: str
     valid: bool
@@ -1045,6 +1088,7 @@ class ExampleIR:
     field_classes: Mapping[str, str]
     base_example: str | None
     mutation: ExampleMutationIR | None
+    builder_context: BuilderContextIR
     __hash__ = None
 
 
@@ -1101,6 +1145,7 @@ class RegistryIR:
     semantic_profiles: tuple[SemanticProfileIR, ...]
     normalizers: tuple[NormalizerIR, ...]
     conditions: tuple[ConditionIR, ...]
+    mandatory_rule_catalog: MandatoryRuleCatalogIR
     value_catalogs: tuple[ValueCatalogIR, ...]
     structural_contract: StructuralContractIR
     metric_cardinality_limit: int
@@ -1684,6 +1729,60 @@ def _parse_conditions(value: Any, path: str) -> tuple[ConditionIR, ...]:
         seen_ids.add(condition_id)
         seen_facts.add(fact)
     return tuple(result)
+
+
+def _parse_mandatory_rule_catalog(value: Any, path: str) -> MandatoryRuleCatalogIR:
+    if not isinstance(value, dict):
+        raise RegistryError(f"{path}: expected mapping")
+    _exact_keys(value, {"version", "rules"}, set(), path)
+    version = _integer(value["version"], f"{path}.version")
+    if version != 1:
+        raise RegistryError(f"{path}.version: unsupported version")
+    raw_rules = value["rules"]
+    if not isinstance(raw_rules, list):
+        raise RegistryError(f"{path}.rules: expected sequence")
+    rules: list[MandatoryRuleIR] = []
+    seen_ids: set[str] = set()
+    seen_facts: set[str] = set()
+    for index, raw_rule in enumerate(raw_rules):
+        rule_path = f"{path}.rules[{index}]"
+        if not isinstance(raw_rule, dict):
+            raise RegistryError(f"{rule_path}: expected mapping")
+        _exact_keys(raw_rule, {"id", "enforcement"}, set(), rule_path)
+        rule_id = _string(raw_rule["id"], f"{rule_path}.id", pattern=_ID)
+        if rule_id in seen_ids:
+            raise RegistryError(f"{path}.rules: duplicate rule ID")
+        raw_enforcement = raw_rule["enforcement"]
+        if not isinstance(raw_enforcement, dict):
+            raise RegistryError(f"{rule_path}.enforcement: expected mapping")
+        kind = _string(raw_enforcement.get("kind"), f"{rule_path}.enforcement.kind", pattern=_ID)
+        if kind == "constant":
+            _exact_keys(raw_enforcement, {"kind", "value"}, set(), f"{rule_path}.enforcement")
+            if raw_enforcement["value"] is not True:
+                raise RegistryError(f"{rule_path}.enforcement.value: constant rule must be true")
+            enforcement = MandatoryRuleEnforcementIR(kind, True, None)
+        elif kind == "builder_fact":
+            _exact_keys(raw_enforcement, {"kind", "fact"}, set(), f"{rule_path}.enforcement")
+            fact = _string(raw_enforcement["fact"], f"{rule_path}.enforcement.fact", pattern=_ID)
+            if fact in seen_facts:
+                raise RegistryError(f"{path}.rules: duplicate builder fact")
+            seen_facts.add(fact)
+            enforcement = MandatoryRuleEnforcementIR(kind, None, fact)
+        else:
+            raise RegistryError(f"{rule_path}.enforcement.kind: unsupported value")
+        rules.append(MandatoryRuleIR(rule_id, enforcement))
+        seen_ids.add(rule_id)
+    observed = tuple(
+        (
+            rule.id,
+            rule.enforcement.kind,
+            rule.enforcement.value if rule.enforcement.kind == "constant" else rule.enforcement.fact,
+        )
+        for rule in rules
+    )
+    if observed != _MANDATORY_RULE_CATALOG_V1:
+        raise RegistryError(f"{path}: version 1 rule catalog does not match the exact required inventory")
+    return MandatoryRuleCatalogIR(version, tuple(rules))
 
 
 def _parse_value_catalogs(value: Any, path: str) -> tuple[ValueCatalogIR, ...]:
@@ -2625,7 +2724,7 @@ def _parse_metric_projections(value: Any, path: str) -> tuple[MetricProjectionIR
     return tuple(projections)
 
 
-def _parse_group(value: Any, path: str) -> GroupIR:
+def _parse_group(value: Any, path: str, mandatory_rule_ids: frozenset[str]) -> GroupIR:
     if not isinstance(value, dict):
         raise RegistryError(f"{path}: expected mapping")
     _exact_keys(
@@ -2821,8 +2920,10 @@ def _parse_group(value: Any, path: str) -> GroupIR:
                 extension["mandatory_floor"],
                 f"{path}.x-defenseclaw.mandatory_floor",
             )
-            if not set(mandatory_floor).issubset(_MANDATORY_RULES):
+            if not set(mandatory_floor).issubset(mandatory_rule_ids):
                 raise RegistryError(f"{path}.x-defenseclaw.mandatory_floor: unknown rule")
+            if group_type != "log":
+                raise RegistryError(f"{path}.x-defenseclaw.mandatory_floor: allowed only for log families")
         if "route_selector" in extension and type(extension["route_selector"]) is not bool:
             raise RegistryError(f"{path}.x-defenseclaw.route_selector: expected boolean")
         if "route_selector" in extension:
@@ -2953,6 +3054,7 @@ def _parse_producer_identity_sets(
 def _parse_producer_mappings(
     value: Any,
     identity_sets: dict[str, tuple[ProducerIdentityIR, ...]],
+    mandatory_rule_ids: frozenset[str],
     path: str,
 ) -> tuple[ProducerMappingIR, ...]:
     if not isinstance(value, list):
@@ -3022,7 +3124,7 @@ def _parse_producer_mappings(
         for key_name in ("mandatory_rules", "companion_rules"):
             if key_name in item:
                 rules = _string_list(item[key_name], f"{item_path}.{key_name}")
-                allowed = _MANDATORY_RULES if key_name == "mandatory_rules" else _COMPANION_RULES
+                allowed = mandatory_rule_ids if key_name == "mandatory_rules" else _COMPANION_RULES
                 if not set(rules).issubset(allowed):
                     raise RegistryError(f"{item_path}.{key_name}: unknown rule")
                 parsed_rules[key_name] = rules
@@ -3071,6 +3173,7 @@ def _parse_domain(
     relative: str,
     expected_domain: str,
     normalizers: dict[str, NormalizerIR],
+    mandatory_rule_ids: frozenset[str],
 ) -> tuple[DomainIR, InputDigest]:
     path, normalized = _safe_relative(
         root,
@@ -3118,7 +3221,9 @@ def _parse_domain(
     raw_groups = document["groups"]
     if not isinstance(raw_groups, list):
         raise RegistryError(f"{normalized}.groups: expected sequence")
-    groups = tuple(_parse_group(item, f"{normalized}.groups[{index}]") for index, item in enumerate(raw_groups))
+    groups = tuple(
+        _parse_group(item, f"{normalized}.groups[{index}]", mandatory_rule_ids) for index, item in enumerate(raw_groups)
+    )
     identity_sets = _parse_producer_identity_sets(
         document["producer_identity_sets"],
         f"{normalized}.producer_identity_sets",
@@ -3127,6 +3232,7 @@ def _parse_domain(
     producer_mappings = _parse_producer_mappings(
         document["producer_mappings"],
         identity_sets_by_id,
+        mandatory_rule_ids,
         f"{normalized}.producer_mappings",
     )
     for label, values in (
@@ -4140,6 +4246,171 @@ def _validate_example_field_classes(
     return MappingProxyType(dict(observed))
 
 
+def _parse_builder_fact_map(value: Any, path: str) -> tuple[BuilderFactIR, ...]:
+    if not isinstance(value, dict):
+        raise RegistryError(f"{path}: expected mapping")
+    facts: list[BuilderFactIR] = []
+    for raw_fact in sorted(value):
+        fact = _string(raw_fact, f"{path}: fact name", pattern=_ID)
+        fact_value = value[raw_fact]
+        if type(fact_value) is not bool:
+            raise RegistryError(f"{path}.{fact}: expected boolean")
+        facts.append(BuilderFactIR(fact, fact_value))
+    return tuple(facts)
+
+
+def _builder_fact_values(facts: tuple[BuilderFactIR, ...]) -> dict[str, bool]:
+    return {fact.fact: fact.value for fact in facts}
+
+
+def _example_condition_use_contexts(
+    signal: str,
+    family: GroupIR,
+    record: Mapping[str, Any],
+    groups: Mapping[str, GroupIR],
+) -> tuple[tuple[ResolvedAttributeUseIR, Mapping[str, Any]], ...]:
+    result: list[tuple[ResolvedAttributeUseIR, Mapping[str, Any]]] = []
+    body = record.get("body")
+    instrument = record.get("instrument_data")
+    if signal == "logs":
+        family_attributes = body
+    elif signal == "traces" and isinstance(body, Mapping):
+        family_attributes = body.get("attributes")
+    elif signal == "metrics" and isinstance(instrument, Mapping):
+        family_attributes = instrument.get("attributes")
+    else:
+        family_attributes = None
+    if not isinstance(family_attributes, Mapping):
+        raise RegistryError("valid example has no family attribute object for builder facts")
+    result.extend((use, family_attributes) for use in family.resolved_uses if use.conditional is not None)
+    if signal != "traces":
+        return tuple(result)
+    assert isinstance(body, Mapping)
+    for key, group_id in (("resource", "resource.core"), ("scope", "scope.core")):
+        container = body.get(key)
+        attributes = container.get("attributes") if isinstance(container, Mapping) else None
+        if not isinstance(attributes, Mapping):
+            raise RegistryError(f"valid trace example has no {key} attributes for builder facts")
+        result.extend((use, attributes) for use in groups[group_id].resolved_uses if use.conditional is not None)
+    events = body.get("events", ())
+    if isinstance(events, list):
+        for event in events:
+            if not isinstance(event, Mapping):
+                continue
+            event_group = groups.get("event." + str(event.get("name", "")))
+            attributes = event.get("attributes")
+            if event_group is not None and isinstance(attributes, Mapping):
+                result.extend((use, attributes) for use in event_group.resolved_uses if use.conditional is not None)
+    links = body.get("links", ())
+    if isinstance(links, list):
+        for link in links:
+            attributes = link.get("attributes") if isinstance(link, Mapping) else None
+            if isinstance(attributes, Mapping):
+                result.extend(
+                    (use, attributes) for use in groups["link.core"].resolved_uses if use.conditional is not None
+                )
+    return tuple(result)
+
+
+def _parse_explicit_builder_context(
+    value: Any,
+    path: str,
+    *,
+    signal: str,
+    family: GroupIR,
+    record: Mapping[str, Any],
+    groups: Mapping[str, GroupIR],
+    conditions: Mapping[str, ConditionIR],
+    mandatory_rules: Mapping[str, MandatoryRuleIR],
+) -> BuilderContextIR:
+    if not isinstance(value, dict):
+        raise RegistryError(f"{path}: expected mapping")
+    _exact_keys(
+        value,
+        {"inheritance", "occurrence", "condition_facts", "mandatory_facts"},
+        set(),
+        path,
+    )
+    inheritance = value["inheritance"]
+    if not isinstance(inheritance, dict):
+        raise RegistryError(f"{path}.inheritance: expected mapping")
+    _exact_keys(inheritance, {"mode"}, set(), f"{path}.inheritance")
+    if inheritance["mode"] != "explicit":
+        raise RegistryError(f"{path}.inheritance.mode: valid example requires explicit")
+    occurrence = value["occurrence"]
+    if not isinstance(occurrence, dict):
+        raise RegistryError(f"{path}.occurrence: expected mapping")
+    _exact_keys(occurrence, {"timestamp", "record_id"}, set(), f"{path}.occurrence")
+    timestamp = _string(occurrence["timestamp"], f"{path}.occurrence.timestamp")
+    record_id = _string(occurrence["record_id"], f"{path}.occurrence.record_id")
+    if timestamp != record.get("timestamp") or record_id != record.get("record_id"):
+        raise RegistryError(f"{path}.occurrence: must equal the record timestamp and record_id")
+    condition_facts = _parse_builder_fact_map(value["condition_facts"], f"{path}.condition_facts")
+    condition_values = _builder_fact_values(condition_facts)
+    use_contexts = _example_condition_use_contexts(signal, family, record, groups)
+    referenced_conditions = {use.conditional for use, _ in use_contexts if use.conditional is not None}
+    expected_condition_facts = {conditions[condition_id].enforcement.fact for condition_id in referenced_conditions}
+    if set(condition_values) != expected_condition_facts:
+        missing = sorted(expected_condition_facts - set(condition_values))
+        extra = sorted(set(condition_values) - expected_condition_facts)
+        raise RegistryError(f"{path}.condition_facts: coverage mismatch missing={missing} extra={extra}")
+    for use, attributes in use_contexts:
+        assert use.conditional is not None
+        condition = conditions[use.conditional]
+        fact_value = condition_values[condition.enforcement.fact]
+        present = use.ref in attributes
+        if fact_value and not present:
+            raise RegistryError(f"{path}.condition_facts.{condition.enforcement.fact}: true requires {use.ref}")
+        if not fact_value and condition.false_requirement == "forbidden" and present:
+            raise RegistryError(f"{path}.condition_facts.{condition.enforcement.fact}: false forbids {use.ref}")
+
+    mandatory_facts = _parse_builder_fact_map(value["mandatory_facts"], f"{path}.mandatory_facts")
+    mandatory_values = _builder_fact_values(mandatory_facts)
+    rules = (family.mandatory_floor or ()) if signal == "logs" else ()
+    expected_mandatory_facts = {
+        mandatory_rules[rule_id].enforcement.fact
+        for rule_id in rules
+        if mandatory_rules[rule_id].enforcement.kind == "builder_fact"
+    }
+    if set(mandatory_values) != expected_mandatory_facts:
+        missing = sorted(expected_mandatory_facts - set(mandatory_values))
+        extra = sorted(set(mandatory_values) - expected_mandatory_facts)
+        raise RegistryError(f"{path}.mandatory_facts: coverage mismatch missing={missing} extra={extra}")
+    mandatory = any(
+        rule.enforcement.value is True
+        or (
+            rule.enforcement.kind == "builder_fact"
+            and rule.enforcement.fact is not None
+            and mandatory_values[rule.enforcement.fact]
+        )
+        for rule in (mandatory_rules[rule_id] for rule_id in rules)
+    )
+    if signal == "logs" and record.get("mandatory") is not mandatory:
+        raise RegistryError(f"{path}.mandatory_facts: derived mandatory does not equal record.mandatory")
+    return BuilderContextIR(
+        BuilderContextInheritanceIR("explicit", None),
+        BuilderOccurrenceIR(timestamp, record_id),
+        condition_facts,
+        mandatory_facts,
+    )
+
+
+def _parse_inherited_builder_context(value: Any, path: str, base_example: str) -> BuilderContextIR:
+    if not isinstance(value, dict):
+        raise RegistryError(f"{path}: expected mapping")
+    _exact_keys(value, {"inheritance"}, set(), path)
+    inheritance = value["inheritance"]
+    if not isinstance(inheritance, dict):
+        raise RegistryError(f"{path}.inheritance: expected mapping")
+    _exact_keys(inheritance, {"mode", "base_example"}, set(), f"{path}.inheritance")
+    if inheritance["mode"] != "exact_base":
+        raise RegistryError(f"{path}.inheritance.mode: invalid example requires exact_base")
+    inherited_base = _string(inheritance["base_example"], f"{path}.inheritance.base_example", pattern=_ID)
+    if inherited_base != base_example:
+        raise RegistryError(f"{path}.inheritance.base_example: must equal example base_example")
+    return BuilderContextIR(BuilderContextInheritanceIR("exact_base", inherited_base), None, (), ())
+
+
 def _parse_examples(
     root: Path,
     relative: str,
@@ -4149,6 +4420,8 @@ def _parse_examples(
     upstream_extensions: dict[str, AttributeExtensionIR],
     upstream_attributes: dict[str, tuple[str, SnapshotAttribute]],
     structural_contract: StructuralContractIR,
+    conditions: tuple[ConditionIR, ...],
+    mandatory_rule_catalog: MandatoryRuleCatalogIR,
     value_catalogs: tuple[ValueCatalogIR, ...],
     semantic_profiles: tuple[SemanticProfileIR, ...],
 ) -> tuple[tuple[ExampleIR, ...], InputDigest]:
@@ -4169,13 +4442,16 @@ def _parse_examples(
     parsed_examples: list[ExampleIR] = []
     raw_vectors: dict[str, dict[str, Any]] = {}
     validity_by_id: dict[str, bool] = {}
+    builder_contexts_by_id: dict[str, BuilderContextIR] = {}
+    conditions_by_id = {condition.id: condition for condition in conditions}
+    mandatory_rules_by_id = {rule.id: rule for rule in mandatory_rule_catalog.rules}
     for index, item in enumerate(examples):
         item_path = f"{normalized}.examples[{index}]"
         if not isinstance(item, dict):
             raise RegistryError(f"{item_path}: expected mapping")
         _exact_keys(
             item,
-            {"id", "valid", "signal", "description"},
+            {"id", "valid", "signal", "description", "builder_context"},
             {"family", "record", "expected_error", "base_example", "mutation"},
             item_path,
         )
@@ -4218,10 +4494,18 @@ def _parse_examples(
             _validate_json_compatible(item["record"], f"{item_path}.record")
         base_example = None
         mutation_ir = None
+        builder_context: BuilderContextIR
         if not item["valid"]:
             base_example = _string(item["base_example"], f"{item_path}.base_example", pattern=_ID)
             if base_example not in raw_vectors or not validity_by_id[base_example]:
                 raise RegistryError(f"{item_path}.base_example: must reference an earlier valid example")
+            builder_context = _parse_inherited_builder_context(
+                item["builder_context"],
+                f"{item_path}.builder_context",
+                base_example,
+            )
+            if builder_contexts_by_id[base_example].inheritance.mode != "explicit":
+                raise RegistryError(f"{item_path}.builder_context: exact_base must name an explicit valid context")
             mutation = item["mutation"]
             if not isinstance(mutation, dict):
                 raise RegistryError(f"{item_path}.mutation: expected mapping")
@@ -4297,6 +4581,16 @@ def _parse_examples(
                 upstream_extensions,
                 structural_contract,
             )
+            builder_context = _parse_explicit_builder_context(
+                item["builder_context"],
+                f"{item_path}.builder_context",
+                signal=signal,
+                family=groups[family],
+                record=item["record"],
+                groups=groups,
+                conditions=conditions_by_id,
+                mandatory_rules=mandatory_rules_by_id,
+            )
         else:
             errors = _validate_example_record(
                 signal,
@@ -4361,6 +4655,7 @@ def _parse_examples(
                 field_classes,
                 base_example,
                 mutation_ir,
+                builder_context,
             )
         )
         raw_vector: dict[str, Any] = {"signal": signal, "record": copy.deepcopy(item["record"])}
@@ -4368,6 +4663,7 @@ def _parse_examples(
             raw_vector["family"] = family
         raw_vectors[example_id] = raw_vector
         validity_by_id[example_id] = item["valid"]
+        builder_contexts_by_id[example_id] = builder_context
     raw, _ = _read_utf8(path)
     return tuple(parsed_examples), InputDigest(normalized, _sha256(raw))
 
@@ -4872,6 +5168,7 @@ def compile_registry(root: Path) -> RegistryIR:
             "semantic_profiles",
             "normalizers",
             "conditions",
+            "mandatory_rule_catalog",
             "value_catalogs",
             "structural_contract",
             "metric_defaults",
@@ -4896,6 +5193,11 @@ def compile_registry(root: Path) -> RegistryIR:
     normalizers = _parse_normalizer_catalog(registry["normalizers"], "registry.normalizers")
     normalizers_by_id = {item.id: item for item in normalizers}
     conditions = _parse_conditions(registry["conditions"], "registry.conditions")
+    mandatory_rule_catalog = _parse_mandatory_rule_catalog(
+        registry["mandatory_rule_catalog"],
+        "registry.mandatory_rule_catalog",
+    )
+    mandatory_rule_ids = frozenset(rule.id for rule in mandatory_rule_catalog.rules)
     value_catalogs = _parse_value_catalogs(registry["value_catalogs"], "registry.value_catalogs")
     structural_contract = _parse_structural_contract(
         registry["structural_contract"],
@@ -4943,7 +5245,13 @@ def compile_registry(root: Path) -> RegistryIR:
     domains: list[DomainIR] = []
     domain_digests: list[InputDigest] = []
     for relative, expected_domain in zip(imports, EXPECTED_DOMAINS, strict=True):
-        domain, digest = _parse_domain(root, relative, expected_domain, normalizers_by_id)
+        domain, digest = _parse_domain(
+            root,
+            relative,
+            expected_domain,
+            normalizers_by_id,
+            mandatory_rule_ids,
+        )
         domains.append(domain)
         domain_digests.append(digest)
     active_domains: list[DomainIR] = []
@@ -5226,6 +5534,8 @@ def compile_registry(root: Path) -> RegistryIR:
         upstream_extensions,
         upstream_attributes,
         structural_contract,
+        conditions,
+        mandatory_rule_catalog,
         value_catalogs,
         semantic_profiles,
     )
@@ -5254,6 +5564,7 @@ def compile_registry(root: Path) -> RegistryIR:
         "semantic_profiles": semantic_profiles,
         "normalizers": normalizers,
         "conditions": conditions,
+        "mandatory_rule_catalog": mandatory_rule_catalog,
         "value_catalogs": value_catalogs,
         "structural_contract": structural_contract,
         "metric_cardinality_limit": metric_cardinality_limit,
@@ -5588,14 +5899,8 @@ def _validate_attribute_use_constraints(
             if ({"max_depth", "max_properties"} & constraints.keys()) and not structured:
                 raise RegistryError(f"group {group.id}: structured constraint is incompatible with {use.ref}")
             effective = normalization.effective_constraints
-            if (
-                "pattern" in constraints
-                and "pattern" in effective
-                and constraints["pattern"] != effective["pattern"]
-            ):
-                raise RegistryError(
-                    f"group {group.id}: nonrepresentable pattern intersection for {use.ref}"
-                )
+            if "pattern" in constraints and "pattern" in effective and constraints["pattern"] != effective["pattern"]:
+                raise RegistryError(f"group {group.id}: nonrepresentable pattern intersection for {use.ref}")
             for maximum in (
                 "max",
                 "max_items",
@@ -5878,11 +6183,7 @@ def _read_output_manifest_schema_bytes(root: Path) -> bytes:
 def _manifest_schema_input_digest(manifest: dict[str, Any]) -> str:
     inputs = manifest.get("inputs")
     matches = (
-        [
-            item
-            for item in inputs
-            if isinstance(item, dict) and item.get("path") == OUTPUT_MANIFEST_SCHEMA.as_posix()
-        ]
+        [item for item in inputs if isinstance(item, dict) and item.get("path") == OUTPUT_MANIFEST_SCHEMA.as_posix()]
         if isinstance(inputs, list)
         else []
     )
@@ -5909,8 +6210,7 @@ def _read_output_manifest_schema_baseline(
         )
     except generated_transaction.TransactionError as exc:
         raise RegistryError(
-            f"{role} output manifest schema has no safe digest-addressed baseline: "
-            + expected_sha256
+            f"{role} output manifest schema has no safe digest-addressed baseline: " + expected_sha256
         ) from exc
     if _sha256(raw) != expected_sha256:
         raise RegistryError(f"{role} output manifest schema baseline digest does not match its filename")

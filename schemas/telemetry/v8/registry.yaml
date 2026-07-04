@@ -42,6 +42,20 @@ conditions:
     description: The authenticated administrative principal is known.
     enforcement: {kind: builder_fact, fact: admin_principal_known}
     false_requirement: forbidden
+mandatory_rule_catalog:
+  version: 1
+  rules:
+    - {id: always, enforcement: {kind: constant, value: true}}
+    - {id: control_plane_mutation, enforcement: {kind: builder_fact, fact: control_plane_mutation}}
+    - {id: approval_resolution, enforcement: {kind: builder_fact, fact: approval_resolution}}
+    - {id: alert_mutation, enforcement: {kind: builder_fact, fact: alert_mutation}}
+    - {id: protected_boundary_auth_failure, enforcement: {kind: builder_fact, fact: protected_boundary_auth_failure}}
+    - {id: enforced_outcome, enforcement: {kind: builder_fact, fact: enforced_outcome}}
+    - {id: enforcement_state_change, enforcement: {kind: builder_fact, fact: enforcement_state_change}}
+    - {id: schema_validation_failure, enforcement: {kind: builder_fact, fact: schema_validation_failure}}
+    - {id: sqlite_failure, enforcement: {kind: builder_fact, fact: sqlite_failure}}
+    - {id: exporter_initialization_failure, enforcement: {kind: builder_fact, fact: exporter_initialization_failure}}
+    - {id: durable_health_transition, enforcement: {kind: builder_fact, fact: durable_health_transition}}
 value_catalogs:
   - id: agent-phase-v1
     kind: string-int64-bijection

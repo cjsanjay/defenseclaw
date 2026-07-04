@@ -315,6 +315,27 @@ def test_bundle_is_complete_draft_2020_12_and_examples_have_exact_dispositions(
     assert set(schema["x-defenseclaw-conditions"][0]) == {"description", "enforcement", "false_requirement", "id"}
     assert "$type" not in json.dumps(schema["x-defenseclaw-conditions"])
     assert len(schema["x-defenseclaw-conditions"]) == 7
+    mandatory_catalog = schema["x-defenseclaw-mandatory-rule-catalog"]
+    assert mandatory_catalog["version"] == 1
+    assert [rule["id"] for rule in mandatory_catalog["rules"]] == [
+        "always",
+        "control_plane_mutation",
+        "approval_resolution",
+        "alert_mutation",
+        "protected_boundary_auth_failure",
+        "enforced_outcome",
+        "enforcement_state_change",
+        "schema_validation_failure",
+        "sqlite_failure",
+        "exporter_initialization_failure",
+        "durable_health_transition",
+    ]
+    assert mandatory_catalog["rules"][0]["enforcement"] == {
+        "fact": None,
+        "kind": "constant",
+        "value": True,
+    }
+    assert "$type" not in json.dumps(mandatory_catalog)
     assert schema["x-defenseclaw-value-catalogs"][0]["id"] == "agent-phase-v1"
     otlp = schema["x-defenseclaw-canonical-to-otlp"]
     assert otlp["id"] == "defenseclaw-otlp-v1"
@@ -350,12 +371,29 @@ def test_bundle_is_complete_draft_2020_12_and_examples_have_exact_dispositions(
             assert errors == [], example["id"]
             assert example["expected_error"] is None
             assert example["mutation"] is None
+            assert example["builder_context"]["inheritance"] == {
+                "base_example": None,
+                "mode": "explicit",
+            }
+            assert example["builder_context"]["occurrence"] == {
+                "record_id": example["record"]["record_id"],
+                "timestamp": example["record"]["timestamp"],
+            }
         else:
             assert errors, example["id"]
             assert example["expected_error"]
             assert example["base_example"]
             assert example["mutation"]["kind"] == example["expected_error"]
             assert example["mutation"]["changes"]
+            assert example["builder_context"] == {
+                "condition_facts": [],
+                "inheritance": {
+                    "base_example": example["base_example"],
+                    "mode": "exact_base",
+                },
+                "mandatory_facts": [],
+                "occurrence": None,
+            }
     assert observed == {True: 7, False: 5}
 
 
@@ -632,6 +670,20 @@ def test_renderer_rejects_incomplete_resolution_unknown_profiles_and_malformed_e
     malformed_example["fields"]["examples"][0]["fields"]["record"]["signal"] = "logs"
     with pytest.raises(renderer.CandidateRenderError, match="example record is inconsistent"):
         renderer.render_candidate_artifacts(_retagged_view(renderer, view, malformed_example))
+
+    malformed_occurrence = _copy_materialized(view.facts)
+    malformed_occurrence["fields"]["examples"][0]["fields"]["builder_context"]["fields"]["occurrence"]["fields"][
+        "record_id"
+    ] = "not-the-record-id"
+    with pytest.raises(renderer.CandidateRenderError, match="builder occurrence is inconsistent"):
+        renderer.render_candidate_artifacts(_retagged_view(renderer, view, malformed_occurrence))
+
+    malformed_rule = _copy_materialized(view.facts)
+    malformed_rule["fields"]["mandatory_rule_catalog"]["fields"]["rules"][0]["fields"]["enforcement"]["fields"][
+        "value"
+    ] = False
+    with pytest.raises(renderer.CandidateRenderError, match="constant mandatory rule is invalid"):
+        renderer.render_candidate_artifacts(_retagged_view(renderer, view, malformed_rule))
 
     incomplete_structure = _copy_materialized(view.facts)
     del incomplete_structure["fields"]["structural_contract"]["fields"]["trace_body"]["fields"]["fields"]

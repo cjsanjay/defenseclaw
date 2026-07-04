@@ -129,6 +129,7 @@ _TOP_LEVEL_FIELDS: Final = frozenset(
         "semantic_profiles",
         "normalizers",
         "conditions",
+        "mandatory_rule_catalog",
         "value_catalogs",
         "structural_contract",
         "metric_cardinality_limit",
@@ -244,6 +245,7 @@ _EXAMPLE_FIELDS: Final = frozenset(
         "field_classes",
         "base_example",
         "mutation",
+        "builder_context",
     }
 )
 _STRUCTURAL_OBJECT_FIELDS: Final = frozenset({"id", "additional_properties", "fields"})
@@ -287,6 +289,13 @@ _CANONICAL_OTLP_FIELDS: Final = frozenset(
     }
 )
 _CONDITION_FIELDS: Final = frozenset({"id", "description", "enforcement", "false_requirement"})
+_MANDATORY_RULE_CATALOG_FIELDS: Final = frozenset({"version", "rules"})
+_MANDATORY_RULE_FIELDS: Final = frozenset({"id", "enforcement"})
+_MANDATORY_RULE_ENFORCEMENT_FIELDS: Final = frozenset({"kind", "value", "fact"})
+_BUILDER_CONTEXT_FIELDS: Final = frozenset({"inheritance", "occurrence", "condition_facts", "mandatory_facts"})
+_BUILDER_CONTEXT_INHERITANCE_FIELDS: Final = frozenset({"mode", "base_example"})
+_BUILDER_OCCURRENCE_FIELDS: Final = frozenset({"timestamp", "record_id"})
+_BUILDER_FACT_FIELDS: Final = frozenset({"fact", "value"})
 _SEMANTIC_PROFILE_FIELDS: Final = frozenset(
     {
         "id",
@@ -663,6 +672,80 @@ class CandidateRenderIndex:
     examples: tuple[Mapping[str, FrozenJSON], ...]
 
 
+def _validate_mandatory_rule_catalog(value: FrozenJSON) -> None:
+    catalog = _tagged(value, "MandatoryRuleCatalogIR", _MANDATORY_RULE_CATALOG_FIELDS)
+    if _integer(catalog["version"], "mandatory rule catalog version", minimum=1) != 1:
+        raise CandidateRenderError("materialized mandatory rule catalog version is unsupported")
+    rules = catalog["rules"]
+    if not isinstance(rules, tuple) or not rules:
+        raise CandidateRenderError("materialized mandatory rule catalog is incomplete")
+    seen_ids: set[str] = set()
+    seen_facts: set[str] = set()
+    for raw_rule in rules:
+        rule = _tagged(raw_rule, "MandatoryRuleIR", _MANDATORY_RULE_FIELDS)
+        rule_id = _string(rule["id"], "mandatory rule id")
+        if rule_id in seen_ids:
+            raise CandidateRenderError("materialized mandatory rule ID is duplicated")
+        enforcement = _tagged(
+            rule["enforcement"],
+            "MandatoryRuleEnforcementIR",
+            _MANDATORY_RULE_ENFORCEMENT_FIELDS,
+        )
+        if enforcement["kind"] == "constant":
+            if enforcement["value"] is not True or enforcement["fact"] is not None:
+                raise CandidateRenderError("materialized constant mandatory rule is invalid")
+        elif enforcement["kind"] == "builder_fact":
+            fact = _string(enforcement["fact"], "mandatory builder fact")
+            if enforcement["value"] is not None or fact in seen_facts:
+                raise CandidateRenderError("materialized mandatory builder fact is invalid")
+            seen_facts.add(fact)
+        else:
+            raise CandidateRenderError("materialized mandatory rule enforcement is invalid")
+        seen_ids.add(rule_id)
+
+
+def _validate_builder_context(example: Mapping[str, FrozenJSON]) -> None:
+    context = _tagged(example["builder_context"], "BuilderContextIR", _BUILDER_CONTEXT_FIELDS)
+    inheritance = _tagged(
+        context["inheritance"],
+        "BuilderContextInheritanceIR",
+        _BUILDER_CONTEXT_INHERITANCE_FIELDS,
+    )
+    condition_facts = context["condition_facts"]
+    mandatory_facts = context["mandatory_facts"]
+    if not isinstance(condition_facts, tuple) or not isinstance(mandatory_facts, tuple):
+        raise CandidateRenderError("materialized builder context facts are invalid")
+    for facts in (condition_facts, mandatory_facts):
+        seen: set[str] = set()
+        for raw_fact in facts:
+            fact = _tagged(raw_fact, "BuilderFactIR", _BUILDER_FACT_FIELDS)
+            fact_name = _string(fact["fact"], "builder fact")
+            if type(fact["value"]) is not bool or fact_name in seen:
+                raise CandidateRenderError("materialized builder fact is invalid")
+            seen.add(fact_name)
+
+    if example["valid"] is True:
+        if inheritance["mode"] != "explicit" or inheritance["base_example"] is not None:
+            raise CandidateRenderError("materialized valid example builder inheritance is invalid")
+        occurrence = _tagged(
+            context["occurrence"],
+            "BuilderOccurrenceIR",
+            _BUILDER_OCCURRENCE_FIELDS,
+        )
+        if occurrence["timestamp"] != example["record"].get("timestamp") or occurrence["record_id"] != example[
+            "record"
+        ].get("record_id"):
+            raise CandidateRenderError("materialized builder occurrence is inconsistent")
+    elif (
+        inheritance["mode"] != "exact_base"
+        or inheritance["base_example"] != example["base_example"]
+        or context["occurrence"] is not None
+        or condition_facts
+        or mandatory_facts
+    ):
+        raise CandidateRenderError("materialized invalid example builder inheritance is invalid")
+
+
 def build_candidate_render_index(view: object) -> CandidateRenderIndex:
     if type(view).__name__ != "MaterializedRegistryView":
         raise CandidateRenderError("renderer requires MaterializedRegistryView")
@@ -682,6 +765,7 @@ def build_candidate_render_index(view: object) -> CandidateRenderIndex:
     schema_version = _integer(fields["schema_version"], "schema version", minimum=1)
     registry_version = _integer(fields["registry_version"], "registry version", minimum=1)
     bucket_version = _integer(fields["bucket_catalog_version"], "bucket catalog version", minimum=1)
+    _validate_mandatory_rule_catalog(fields["mandatory_rule_catalog"])
 
     ownership: dict[str, str] = {}
     for node in fields["upstream_attribute_ownership"]:
@@ -871,6 +955,7 @@ def build_candidate_render_index(view: object) -> CandidateRenderIndex:
             raise CandidateRenderError("materialized example family is unknown")
         if not isinstance(example["record"], Mapping) or example["record"].get("signal") != example["signal"]:
             raise CandidateRenderError("materialized example record is inconsistent")
+        _validate_builder_context(example)
         examples.append(example)
     for example in examples:
         if example["valid"]:
@@ -1325,6 +1410,13 @@ def _render_schema(model: CandidateRenderIndex, marker: JSONObject) -> JSONObjec
         "x-defenseclaw-conditions": [
             _plain_ir(_tagged(item, "ConditionIR", _CONDITION_FIELDS)) for item in model.fields["conditions"]
         ],
+        "x-defenseclaw-mandatory-rule-catalog": _plain_ir(
+            _tagged(
+                model.fields["mandatory_rule_catalog"],
+                "MandatoryRuleCatalogIR",
+                _MANDATORY_RULE_CATALOG_FIELDS,
+            )
+        ),
         "x-defenseclaw-value-catalogs": [
             _plain_ir(_tagged(item, "ValueCatalogIR", _VALUE_CATALOG_FIELDS)) for item in model.fields["value_catalogs"]
         ],
@@ -1452,6 +1544,13 @@ def _render_catalog(model: CandidateRenderIndex, marker: JSONObject) -> JSONObje
         "conditions": [
             _plain_ir(_tagged(item, "ConditionIR", _CONDITION_FIELDS)) for item in model.fields["conditions"]
         ],
+        "mandatory_rule_catalog": _plain_ir(
+            _tagged(
+                model.fields["mandatory_rule_catalog"],
+                "MandatoryRuleCatalogIR",
+                _MANDATORY_RULE_CATALOG_FIELDS,
+            )
+        ),
         "value_catalogs": [
             _plain_ir(_tagged(item, "ValueCatalogIR", _VALUE_CATALOG_FIELDS)) for item in model.fields["value_catalogs"]
         ],
@@ -1577,6 +1676,7 @@ def _example_document(model: CandidateRenderIndex, example: Mapping[str, FrozenJ
         "expected_error": example["expected_error"],
         "base_example": example["base_example"],
         "mutation": _normalized_mutation(example["mutation"]),
+        "builder_context": _plain_ir(example["builder_context"]),
         "field_classes": _plain(example["field_classes"]),
         "record": _plain(example["record"]),
     }

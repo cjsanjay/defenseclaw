@@ -5,6 +5,11 @@ examples:
   signal: traces
   family: span.model.chat
   description: A bounded model chat span preserves agent lineage and honestly reports that content and token usage were not supplied.
+  builder_context:
+    inheritance: {mode: explicit}
+    occurrence: {timestamp: '2026-07-03T12:00:00Z', record_id: rec-model-001}
+    condition_facts: {connector_known: false, operation_terminal: true, technical_failure: false}
+    mandatory_facts: {}
   record:
     schema_version: 1
     bucket_catalog_version: 1
@@ -113,6 +118,11 @@ examples:
   signal: traces
   family: span.agent.transition
   description: A root-agent transition preserves conversation, lifecycle, execution, phase, and sequence identity without confusing delegation lineage with OTel parentage.
+  builder_context:
+    inheritance: {mode: explicit}
+    occurrence: {timestamp: '2026-07-03T12:00:01Z', record_id: rec-lifecycle-001}
+    condition_facts: {connector_known: false, operation_terminal: false, technical_failure: false}
+    mandatory_facts: {}
   record:
     schema_version: 1
     bucket_catalog_version: 1
@@ -214,6 +224,11 @@ examples:
   signal: logs
   family: log.finding.observed
   description: Evidence summary and remediation are bounded producer/rule-catalog facts; status open means unresolved workflow state.
+  builder_context:
+    inheritance: {mode: explicit}
+    occurrence: {timestamp: '2026-07-03T12:00:02Z', record_id: rec-finding-001}
+    condition_facts: {}
+    mandatory_facts: {}
   record:
     schema_version: 1
     bucket_catalog_version: 1
@@ -260,6 +275,11 @@ examples:
   signal: logs
   family: log.guardrail.judge.completed
   description: The gateway JudgePayload remains distinct from the GenAI judge model-call span.
+  builder_context:
+    inheritance: {mode: explicit}
+    occurrence: {timestamp: '2026-07-03T12:00:03Z', record_id: rec-judge-001}
+    condition_facts: {judge_output_parse_failed: false}
+    mandatory_facts: {}
   record:
     schema_version: 1
     bucket_catalog_version: 1
@@ -294,6 +314,11 @@ examples:
   signal: metrics
   family: metric.defenseclaw.connector.hook.latency
   description: A hook-latency observation carries only the raw value and the registered bounded labels; the family owns instrument identity, type, unit, temporality, and boundaries.
+  builder_context:
+    inheritance: {mode: explicit}
+    occurrence: {timestamp: '2026-07-03T12:00:04Z', record_id: rec-metric-001}
+    condition_facts: {}
+    mandatory_facts: {}
   record:
     schema_version: 1
     bucket_catalog_version: 1
@@ -327,6 +352,11 @@ examples:
   signal: logs
   family: log.telemetry.batch.rejected
   description: Rejected inbound telemetry records metadata and a bounded reason, never the raw OTLP payload.
+  builder_context:
+    inheritance: {mode: explicit}
+    occurrence: {timestamp: '2026-07-03T12:00:05Z', record_id: rec-ingest-001}
+    condition_facts: {}
+    mandatory_facts: {schema_validation_failure: true}
   record:
     schema_version: 1
     bucket_catalog_version: 1
@@ -361,6 +391,11 @@ examples:
   signal: logs
   family: log.scan.started
   description: An asset-scan start records the canonical scan identity and scanner before any finding exists.
+  builder_context:
+    inheritance: {mode: explicit}
+    occurrence: {timestamp: '2026-07-03T12:00:06Z', record_id: rec-scan-001}
+    condition_facts: {}
+    mandatory_facts: {}
   record:
     schema_version: 1
     bucket_catalog_version: 1
@@ -390,6 +425,7 @@ examples:
   signal: traces
   family: span.model.chat
   base_example: valid-model-chat-with-honest-missing-content-and-usage
+  builder_context: {inheritance: {mode: exact_base, base_example: valid-model-chat-with-honest-missing-content-and-usage}}
   mutation:
     kind: family_bucket_mismatch
     changes:
@@ -505,6 +541,7 @@ examples:
   signal: traces
   family: span.agent.transition
   base_example: valid-root-agent-lifecycle-transition
+  builder_context: {inheritance: {mode: exact_base, base_example: valid-root-agent-lifecycle-transition}}
   mutation:
     kind: lifecycle_phase_code_mismatch
     changes:
@@ -612,6 +649,7 @@ examples:
   signal: metrics
   family: metric.defenseclaw.connector.hook.latency
   base_example: valid-hook-latency-metric
+  builder_context: {inheritance: {mode: exact_base, base_example: valid-hook-latency-metric}}
   mutation:
     kind: metric_label_not_registered
     changes:
@@ -654,6 +692,7 @@ examples:
   signal: logs
   family: log.finding.observed
   base_example: valid-security-finding-with-derived-evidence
+  builder_context: {inheritance: {mode: exact_base, base_example: valid-security-finding-with-derived-evidence}}
   mutation:
     kind: finding_body_field_not_registered
     changes:
@@ -708,6 +747,7 @@ examples:
   valid: false
   signal: logs
   base_example: valid-asset-scan-started
+  builder_context: {inheritance: {mode: exact_base, base_example: valid-asset-scan-started}}
   mutation:
     kind: compatibility_only_identity_has_no_family
     changes:

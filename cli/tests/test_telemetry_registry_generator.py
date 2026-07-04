@@ -91,17 +91,36 @@ _CANONICAL_AGENT_PHASES = (
     "observed",
 )
 
+# Test-only review lock. Runtime consumers resolve these rules from registry.yaml.
+_MANDATORY_RULE_CATALOG_V1 = (
+    ("always", "constant", True),
+    ("control_plane_mutation", "builder_fact", "control_plane_mutation"),
+    ("approval_resolution", "builder_fact", "approval_resolution"),
+    ("alert_mutation", "builder_fact", "alert_mutation"),
+    (
+        "protected_boundary_auth_failure",
+        "builder_fact",
+        "protected_boundary_auth_failure",
+    ),
+    ("enforced_outcome", "builder_fact", "enforced_outcome"),
+    ("enforcement_state_change", "builder_fact", "enforcement_state_change"),
+    ("schema_validation_failure", "builder_fact", "schema_validation_failure"),
+    ("sqlite_failure", "builder_fact", "sqlite_failure"),
+    (
+        "exporter_initialization_failure",
+        "builder_fact",
+        "exporter_initialization_failure",
+    ),
+    ("durable_health_transition", "builder_fact", "durable_health_transition"),
+)
+
 
 def _sha256(value: bytes) -> str:
     return hashlib.sha256(value).hexdigest()
 
 
 def _install_manifest_schema_baseline(root: Path, schema_bytes: bytes) -> Path:
-    target = (
-        root
-        / "schemas/telemetry/v8/baselines/output-manifest"
-        / f"{_sha256(schema_bytes)}.schema.json"
-    )
+    target = root / "schemas/telemetry/v8/baselines/output-manifest" / f"{_sha256(schema_bytes)}.schema.json"
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_bytes(schema_bytes)
     return target
@@ -558,9 +577,7 @@ def _fixture_root(tmp_path: Path) -> Path:
     schema_bytes = schema_source.read_bytes()
     (telemetry / "output-manifest.schema.json").write_bytes(schema_bytes)
     schema_baseline_source = (
-        ROOT
-        / "schemas/telemetry/v8/baselines/output-manifest"
-        / f"{_sha256(schema_bytes)}.schema.json"
+        ROOT / "schemas/telemetry/v8/baselines/output-manifest" / f"{_sha256(schema_bytes)}.schema.json"
     )
     schema_baseline_target = _install_manifest_schema_baseline(root, schema_baseline_source.read_bytes())
     assert schema_baseline_target.name == schema_baseline_source.name
@@ -627,6 +644,7 @@ def _fixture_root(tmp_path: Path) -> Path:
             ],
             "normalizers": registry_source["normalizers"],
             "conditions": registry_source["conditions"],
+            "mandatory_rule_catalog": registry_source["mandatory_rule_catalog"],
             "value_catalogs": registry_source["value_catalogs"],
             "structural_contract": registry_source["structural_contract"],
             "metric_defaults": registry_source["metric_defaults"],
@@ -646,6 +664,18 @@ def _fixture_root(tmp_path: Path) -> Path:
                     "signal": "traces",
                     "family": "span.model.chat",
                     "description": "Small valid model trace.",
+                    "builder_context": {
+                        "inheritance": {"mode": "explicit"},
+                        "occurrence": {
+                            "timestamp": "2026-07-03T12:00:00Z",
+                            "record_id": "fixture-record-1",
+                        },
+                        "condition_facts": {
+                            "connector_known": False,
+                            "operation_terminal": False,
+                        },
+                        "mandatory_facts": {},
+                    },
                     "record": {
                         "schema_version": 1,
                         "bucket_catalog_version": 1,
@@ -749,6 +779,32 @@ def _load_generator_module(name: str):
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
+
+
+def _explicit_builder_context(
+    record: Mapping[str, Any],
+    *,
+    condition_facts: Mapping[str, bool] | None = None,
+    mandatory_facts: Mapping[str, bool] | None = None,
+) -> dict[str, Any]:
+    return {
+        "inheritance": {"mode": "explicit"},
+        "occurrence": {
+            "timestamp": record["timestamp"],
+            "record_id": record["record_id"],
+        },
+        "condition_facts": dict(condition_facts or {}),
+        "mandatory_facts": dict(mandatory_facts or {}),
+    }
+
+
+def _exact_base_builder_context(base_example: str) -> dict[str, Any]:
+    return {
+        "inheritance": {
+            "mode": "exact_base",
+            "base_example": base_example,
+        }
+    }
 
 
 def _mutate_snapshot(root: Path, dependency_id: str, mutate: Any) -> None:
@@ -1249,6 +1305,7 @@ def test_invalid_top_level_example_requires_derived_mutation(tmp_path: Path) -> 
             "valid": False,
             "signal": "logs",
             "description": "Producer-only compatibility identity is not a family.",
+            "builder_context": {},
             "record": {"event_name": "legacy.audit.scan"},
             "expected_error": "unknown_family",
         }
@@ -1278,6 +1335,10 @@ def test_invalid_top_level_example_requires_derived_mutation(tmp_path: Path) -> 
         ),
         (
             lambda invalid: invalid["mutation"]["changes"][0].__setitem__("path", "/description"),
+            "root must be signal, family, or record",
+        ),
+        (
+            lambda invalid: invalid["mutation"]["changes"][0].__setitem__("path", "/builder_context/inheritance/mode"),
             "root must be signal, family, or record",
         ),
         (
@@ -1314,6 +1375,9 @@ def test_invalid_example_mutation_grammar_is_mechanical_and_exact(
         "record": invalid_record,
         "expected_error": "family_event_name_mismatch",
         "base_example": valid["id"],
+        "builder_context": {
+            "inheritance": {"mode": "exact_base", "base_example": valid["id"]},
+        },
         "mutation": {
             "kind": "family_event_name_mismatch",
             "changes": [
@@ -1619,7 +1683,6 @@ def test_compiler_ir_preserves_every_validated_public_contract(tmp_path: Path) -
         {
             "allowed_outcomes": ["completed", "failed"],
             "link_relations": ["caused_by"],
-            "mandatory_floor": ["always"],
             "route_selector": False,
             "compatibility_profiles": ["local-observability-v1"],
             "legacy_bindings": [
@@ -1643,6 +1706,8 @@ def test_compiler_ir_preserves_every_validated_public_contract(tmp_path: Path) -
             "constraints": {"max_utf8_bytes": 64},
         }
     ]
+    diagnostic_log = next(group for group in operations["groups"] if group["id"] == "diagnostic.message")
+    diagnostic_log["x-defenseclaw"]["mandatory_floor"] = ["always"]
     metric = next(
         group
         for group in operations["groups"]
@@ -1677,6 +1742,9 @@ def test_compiler_ir_preserves_every_validated_public_contract(tmp_path: Path) -
             "signal": "traces",
             "family": "span.model.chat",
             "base_example": "model.chat.valid",
+            "builder_context": {
+                "inheritance": {"mode": "exact_base", "base_example": "model.chat.valid"},
+            },
             "mutation": {
                 "kind": "family_bucket_mismatch",
                 "changes": [
@@ -1757,7 +1825,7 @@ def test_compiler_ir_preserves_every_validated_public_contract(tmp_path: Path) -
     assert span_ir.outcome_requirement == "optional"
     assert span_ir.event_refs == ("guardrail.decision",)
     assert span_ir.link_relations == ("caused_by",)
-    assert span_ir.mandatory_floor == ("always",)
+    assert span_ir.mandatory_floor is None
     assert span_ir.route_selector is False
     assert span_ir.compatibility_profiles == ("local-observability-v1",)
     assert span_ir.family_schema_version == 1
@@ -1769,6 +1837,7 @@ def test_compiler_ir_preserves_every_validated_public_contract(tmp_path: Path) -
     assert log_ir.stability == "stable"
     assert log_ir.outcome_requirement == "forbidden"
     assert log_ir.allowed_outcomes == ()
+    assert log_ir.mandatory_floor == ("always",)
 
     assert metric_ir.instrument_type == "histogram"
     assert metric_ir.metric_description == "Preserved metric description."
@@ -3649,6 +3718,468 @@ def test_condition_builder_facts_and_false_semantics_are_closed(
     assert expected in result.stderr
 
 
+def test_mandatory_rule_catalog_v1_is_exact_and_materialized(tmp_path: Path) -> None:
+    root = _fixture_root(tmp_path)
+    module = _load_generator_module("telemetry_registry_mandatory_catalog_exact")
+
+    ir = module.compile_registry(root)
+    catalog = ir.mandatory_rule_catalog
+    observed = tuple(
+        (
+            rule.id,
+            rule.enforcement.kind,
+            rule.enforcement.value if rule.enforcement.kind == "constant" else rule.enforcement.fact,
+        )
+        for rule in catalog.rules
+    )
+
+    assert catalog.version == 1
+    assert observed == _MANDATORY_RULE_CATALOG_V1
+    materialized = ir.materialized_view.facts["fields"]["mandatory_rule_catalog"]
+    assert materialized["$type"] == "MandatoryRuleCatalogIR"
+    assert tuple(rule["fields"]["id"] for rule in materialized["fields"]["rules"]) == tuple(
+        rule_id for rule_id, _, _ in _MANDATORY_RULE_CATALOG_V1
+    )
+    assert ir.examples[0].builder_context.inheritance.mode == "explicit"
+    assert ir.examples[0].builder_context.occurrence is not None
+    assert ir.examples[0].builder_context.occurrence.record_id == "fixture-record-1"
+    assert ir.examples[0].builder_context.mandatory_facts == ()
+    assert (
+        ir.materialized_view.facts["fields"]["examples"][0]["fields"]["builder_context"]["$type"] == "BuilderContextIR"
+    )
+    with pytest.raises(AttributeError):
+        setattr(catalog, "version", 2)
+    with pytest.raises(AttributeError):
+        setattr(ir.examples[0].builder_context, "condition_facts", ())
+
+    registry_values = {
+        field.name: getattr(ir, field.name)
+        for field in module.dataclass_fields(module.RegistryIR)
+        if field.name != "materialized_view"
+    }
+    reordered_catalog = module.replace(catalog, rules=tuple(reversed(catalog.rules)))
+    reordered_values = dict(registry_values, mandatory_rule_catalog=reordered_catalog)
+    assert (
+        module._build_materialized_registry_view(reordered_values).typed_canonical_json_sha256
+        != ir.materialized_view.typed_canonical_json_sha256
+    )
+    first_fact = ir.examples[0].builder_context.condition_facts[0]
+    changed_context = module.replace(
+        ir.examples[0].builder_context,
+        condition_facts=(
+            module.replace(first_fact, value=not first_fact.value),
+            *ir.examples[0].builder_context.condition_facts[1:],
+        ),
+    )
+    changed_example = module.replace(ir.examples[0], builder_context=changed_context)
+    changed_values = dict(registry_values, examples=(changed_example, *ir.examples[1:]))
+    assert (
+        module._build_materialized_registry_view(changed_values).typed_canonical_json_sha256
+        != ir.materialized_view.typed_canonical_json_sha256
+    )
+
+
+@pytest.mark.parametrize(
+    ("mutation", "expected"),
+    [
+        (
+            lambda catalog: catalog.__setitem__("version", 2),
+            "mandatory_rule_catalog.version: unsupported version",
+        ),
+        (
+            lambda catalog: catalog["rules"].pop(),
+            "does not match the exact required inventory",
+        ),
+        (
+            lambda catalog: catalog["rules"].reverse(),
+            "does not match the exact required inventory",
+        ),
+        (
+            lambda catalog: catalog["rules"].append(
+                {
+                    "id": "extra_rule",
+                    "enforcement": {"kind": "builder_fact", "fact": "extra_rule"},
+                }
+            ),
+            "does not match the exact required inventory",
+        ),
+        (
+            lambda catalog: catalog["rules"][0]["enforcement"].__setitem__("value", False),
+            "constant rule must be true",
+        ),
+        (
+            lambda catalog: catalog["rules"][1].__setitem__("id", "always"),
+            "duplicate rule ID",
+        ),
+        (
+            lambda catalog: catalog["rules"][2]["enforcement"].__setitem__(
+                "fact", catalog["rules"][1]["enforcement"]["fact"]
+            ),
+            "duplicate builder fact",
+        ),
+        (
+            lambda catalog: catalog["rules"][1]["enforcement"].__setitem__("value", True),
+            "unknown keys ['value']",
+        ),
+        (
+            lambda catalog: catalog["rules"][1]["enforcement"].__setitem__("kind", "computed"),
+            "enforcement.kind: unsupported value",
+        ),
+    ],
+)
+def test_mandatory_rule_catalog_v1_rejects_every_inventory_drift(
+    tmp_path: Path,
+    mutation: Any,
+    expected: str,
+) -> None:
+    root = _fixture_root(tmp_path)
+    path = root / "schemas/telemetry/v8/registry.yaml"
+    registry = yaml.safe_load(path.read_text(encoding="utf-8"))
+    mutation(registry["mandatory_rule_catalog"])
+    _write_yaml(path, registry)
+
+    result = _run(root, "--write")
+
+    assert result.returncode == 1
+    assert expected in result.stderr
+
+
+@pytest.mark.parametrize(
+    ("surface", "expected"),
+    [
+        ("log", "mandatory_floor: unknown rule"),
+        ("span", "mandatory_floor: allowed only for log families"),
+        ("producer", "mandatory_rules: unknown rule"),
+        ("legacy_boolean", "unknown keys ['mandatory']"),
+    ],
+)
+def test_mandatory_rule_references_are_catalog_backed_and_signal_closed(
+    tmp_path: Path,
+    surface: str,
+    expected: str,
+) -> None:
+    root = _fixture_root(tmp_path)
+    if surface == "span":
+        path = root / "schemas/telemetry/v8/genai.yaml"
+        domain = yaml.safe_load(path.read_text(encoding="utf-8"))
+        domain["groups"][0]["x-defenseclaw"]["mandatory_floor"] = ["always"]
+    else:
+        path = root / "schemas/telemetry/v8/operations.yaml"
+        domain = yaml.safe_load(path.read_text(encoding="utf-8"))
+        if surface == "log":
+            log = next(group for group in domain["groups"] if group["id"] == "diagnostic.message")
+            log["x-defenseclaw"]["mandatory_floor"] = ["unknown_rule"]
+        elif surface == "producer":
+            domain["producer_mappings"][0]["mandatory_rules"] = ["unknown_rule"]
+        else:
+            domain["producer_mappings"][0]["mandatory"] = True
+    _write_yaml(path, domain)
+
+    result = _run(root, "--write")
+
+    assert result.returncode == 1
+    assert expected in result.stderr
+
+
+def test_builder_context_occurrence_condition_and_boolean_contract_is_exact(tmp_path: Path) -> None:
+    root = _fixture_root(tmp_path)
+    module = _load_generator_module("telemetry_registry_builder_context_exact")
+    ir = module.compile_registry(root)
+    groups = {group.id: group for domain in ir.domains for group in domain.groups}
+    conditions = {condition.id: condition for condition in ir.conditions}
+    mandatory_rules = {rule.id: rule for rule in ir.mandatory_rule_catalog.rules}
+    family = groups["span.model.chat"]
+    source = yaml.safe_load((root / "schemas/telemetry/v8/examples.yaml").read_text(encoding="utf-8"))
+    valid = source["examples"][0]
+    record = valid["record"]
+    base_context = valid["builder_context"]
+
+    cases: tuple[tuple[str, Any, str], ...] = (
+        (
+            "timestamp mismatch",
+            lambda context, _: context["occurrence"].__setitem__("timestamp", "2026-07-03T12:00:01Z"),
+            "must equal the record timestamp and record_id",
+        ),
+        (
+            "record ID mismatch",
+            lambda context, _: context["occurrence"].__setitem__("record_id", "another-record"),
+            "must equal the record timestamp and record_id",
+        ),
+        (
+            "missing fact",
+            lambda context, _: context["condition_facts"].pop("connector_known"),
+            "coverage mismatch missing=['connector_known']",
+        ),
+        (
+            "extra fact",
+            lambda context, _: context["condition_facts"].__setitem__("unregistered", False),
+            "extra=['unregistered']",
+        ),
+        (
+            "condition ID instead of enforcement fact",
+            lambda context, _: context["condition_facts"].__setitem__(
+                "connector-known-v1", context["condition_facts"].pop("connector_known")
+            ),
+            "missing=['connector_known']",
+        ),
+        (
+            "non-boolean fact",
+            lambda context, _: context["condition_facts"].__setitem__("connector_known", 1),
+            "condition_facts.connector_known: expected boolean",
+        ),
+        (
+            "true fact lacks field",
+            lambda context, _: context["condition_facts"].__setitem__("connector_known", True),
+            "true requires defenseclaw.connector.source",
+        ),
+        (
+            "false-forbidden fact has field",
+            lambda context, changed_record: (
+                changed_record["body"]["attributes"].__setitem__("defenseclaw.connector.source", "fixture"),
+                changed_record["field_classes"].__setitem__("/attributes/defenseclaw.connector.source", "identifier"),
+            ),
+            "false forbids defenseclaw.connector.source",
+        ),
+    )
+    for case_name, mutate, expected in cases:
+        context = copy.deepcopy(base_context)
+        changed_record = copy.deepcopy(record)
+        mutate(context, changed_record)
+        with pytest.raises(module.RegistryError) as raised:
+            module._parse_explicit_builder_context(
+                context,
+                f"examples.{case_name}.builder_context",
+                signal="traces",
+                family=family,
+                record=changed_record,
+                groups=groups,
+                conditions=conditions,
+                mandatory_rules=mandatory_rules,
+            )
+        assert expected in str(raised.value)
+
+
+def test_builder_condition_fact_coverage_includes_every_trace_container(tmp_path: Path) -> None:
+    root = _fixture_root(tmp_path)
+    module = _load_generator_module("telemetry_registry_builder_context_trace_coverage")
+    ir = module.compile_registry(root)
+    groups = {group.id: group for domain in ir.domains for group in domain.groups}
+    conditions = {condition.id: condition for condition in ir.conditions}
+    mandatory_rules = {rule.id: rule for rule in ir.mandatory_rule_catalog.rules}
+    family = groups["span.model.chat"]
+    source = yaml.safe_load((root / "schemas/telemetry/v8/examples.yaml").read_text(encoding="utf-8"))
+    record = copy.deepcopy(source["examples"][0]["record"])
+    record["body"]["events"] = [{"name": "guardrail.decision", "attributes": {}}]
+    record["body"]["links"] = [{"attributes": {}}]
+
+    placements = (
+        ("span.model.chat", "defenseclaw.connector.source", "connector-known-v1"),
+        ("resource.core", "defenseclaw.outcome", "operation-terminal-v1"),
+        ("scope.core", "defenseclaw.outcome", "technical-failure-v1"),
+        (
+            "event.guardrail.decision",
+            "defenseclaw.outcome",
+            "guardrail-terminal-decision-available-v1",
+        ),
+        ("link.core", "defenseclaw.outcome", "security-severity-available-v1"),
+    )
+    changed_groups = dict(groups)
+    for group_id, ref, condition_id in placements:
+        use = module.ResolvedAttributeUseIR(
+            ref,
+            "attributes",
+            "conditional",
+            condition_id,
+            {},
+            (),
+        )
+        changed_groups[group_id] = module.replace(groups[group_id], resolved_uses=(use,))
+    family = changed_groups["span.model.chat"]
+
+    contexts = module._example_condition_use_contexts(
+        "traces",
+        family,
+        record,
+        changed_groups,
+    )
+    assert tuple(use.conditional for use, _ in contexts) == tuple(condition_id for _, _, condition_id in placements)
+    facts = {conditions[condition_id].enforcement.fact: False for _, _, condition_id in placements}
+    context = _explicit_builder_context(record, condition_facts=facts)
+    parsed = module._parse_explicit_builder_context(
+        context,
+        "examples.trace.builder_context",
+        signal="traces",
+        family=family,
+        record=record,
+        groups=changed_groups,
+        conditions=conditions,
+        mandatory_rules=mandatory_rules,
+    )
+    assert {fact.fact for fact in parsed.condition_facts} == set(facts)
+    for fact in facts:
+        missing = copy.deepcopy(context)
+        missing["condition_facts"].pop(fact)
+        with pytest.raises(module.RegistryError, match=f"missing=\\['{fact}'\\]"):
+            module._parse_explicit_builder_context(
+                missing,
+                "examples.trace.builder_context",
+                signal="traces",
+                family=family,
+                record=record,
+                groups=changed_groups,
+                conditions=conditions,
+                mandatory_rules=mandatory_rules,
+            )
+
+
+def test_mandatory_builder_facts_use_or_semantics_and_exact_wire_value(tmp_path: Path) -> None:
+    root = _fixture_root(tmp_path)
+    module = _load_generator_module("telemetry_registry_mandatory_builder_or")
+    ir = module.compile_registry(root)
+    groups = {group.id: group for domain in ir.domains for group in domain.groups}
+    conditions = {condition.id: condition for condition in ir.conditions}
+    rules = {rule.id: rule for rule in ir.mandatory_rule_catalog.rules}
+    log_family = groups["diagnostic.message"]
+    record: dict[str, Any] = {
+        "timestamp": "2026-07-03T12:00:00Z",
+        "record_id": "mandatory-record",
+        "body": {},
+        "mandatory": False,
+    }
+
+    def parse(rule_ids: tuple[str, ...], facts: Mapping[str, Any], wire_value: bool) -> Any:
+        changed_record = dict(record, mandatory=wire_value)
+        family = module.replace(log_family, mandatory_floor=rule_ids)
+        return module._parse_explicit_builder_context(
+            _explicit_builder_context(changed_record, mandatory_facts=facts),
+            "examples.log.builder_context",
+            signal="logs",
+            family=family,
+            record=changed_record,
+            groups=groups,
+            conditions=conditions,
+            mandatory_rules=rules,
+        )
+
+    builder_rules = tuple(rule for rule in ir.mandatory_rule_catalog.rules if rule.id != "always")
+    all_rule_ids = tuple(rule.id for rule in builder_rules)
+    all_false = {rule.enforcement.fact: False for rule in builder_rules}
+    parse(all_rule_ids, all_false, False)
+    for selected in builder_rules:
+        assert selected.enforcement.fact is not None
+        facts = dict(all_false)
+        facts[selected.enforcement.fact] = True
+        parsed = parse(all_rule_ids, facts, True)
+        assert dict((fact.fact, fact.value) for fact in parsed.mandatory_facts) == dict(sorted(facts.items()))
+        parse(("always", selected.id), {selected.enforcement.fact: False}, True)
+
+    parse(("always",), {}, True)
+    with pytest.raises(module.RegistryError, match="coverage mismatch missing=\\['control_plane_mutation'\\]"):
+        parse(("control_plane_mutation",), {}, False)
+    with pytest.raises(module.RegistryError, match="extra=\\['unregistered'\\]"):
+        parse(("control_plane_mutation",), {"control_plane_mutation": False, "unregistered": False}, False)
+    with pytest.raises(module.RegistryError, match="expected boolean"):
+        parse(("control_plane_mutation",), {"control_plane_mutation": 1}, False)
+    with pytest.raises(module.RegistryError, match="derived mandatory does not equal record.mandatory"):
+        parse(("control_plane_mutation",), {"control_plane_mutation": True}, False)
+
+
+def test_trace_and_metric_builder_contexts_forbid_mandatory_facts(tmp_path: Path) -> None:
+    root = _fixture_root(tmp_path)
+    module = _load_generator_module("telemetry_registry_non_log_mandatory_facts")
+    ir = module.compile_registry(root)
+    groups = {group.id: group for domain in ir.domains for group in domain.groups}
+    conditions = {condition.id: condition for condition in ir.conditions}
+    rules = {rule.id: rule for rule in ir.mandatory_rule_catalog.rules}
+    source = yaml.safe_load((root / "schemas/telemetry/v8/examples.yaml").read_text(encoding="utf-8"))
+    trace = source["examples"][0]
+    trace_context = copy.deepcopy(trace["builder_context"])
+    trace_context["mandatory_facts"] = {"control_plane_mutation": False}
+    metric_family = next(group for group in groups.values() if group.type == "metric")
+    metric_record = {
+        "timestamp": "2026-07-03T12:00:02Z",
+        "record_id": "metric-record",
+        "instrument_data": {"attributes": {}},
+    }
+
+    with pytest.raises(module.RegistryError, match="extra=\\['control_plane_mutation'\\]"):
+        module._parse_explicit_builder_context(
+            trace_context,
+            "examples.trace.builder_context",
+            signal="traces",
+            family=groups["span.model.chat"],
+            record=trace["record"],
+            groups=groups,
+            conditions=conditions,
+            mandatory_rules=rules,
+        )
+    parsed = module._parse_explicit_builder_context(
+        _explicit_builder_context(metric_record),
+        "examples.metric.builder_context",
+        signal="metrics",
+        family=metric_family,
+        record=metric_record,
+        groups=groups,
+        conditions=conditions,
+        mandatory_rules=rules,
+    )
+    assert parsed.mandatory_facts == ()
+    with pytest.raises(module.RegistryError, match="extra=\\['control_plane_mutation'\\]"):
+        module._parse_explicit_builder_context(
+            _explicit_builder_context(
+                metric_record,
+                mandatory_facts={"control_plane_mutation": False},
+            ),
+            "examples.metric.builder_context",
+            signal="metrics",
+            family=metric_family,
+            record=metric_record,
+            groups=groups,
+            conditions=conditions,
+            mandatory_rules=rules,
+        )
+
+
+def test_invalid_example_builder_context_is_exact_base_only(tmp_path: Path) -> None:
+    module = _load_generator_module("telemetry_registry_builder_context_inheritance")
+    parsed = module._parse_inherited_builder_context(
+        _exact_base_builder_context("model.chat.valid"),
+        "examples.invalid.builder_context",
+        "model.chat.valid",
+    )
+    assert parsed.inheritance.mode == "exact_base"
+    assert parsed.inheritance.base_example == "model.chat.valid"
+    assert parsed.occurrence is None
+    assert parsed.condition_facts == ()
+    assert parsed.mandatory_facts == ()
+
+    cases = (
+        (
+            _exact_base_builder_context("other.valid"),
+            "must equal example base_example",
+        ),
+        (
+            {"inheritance": {"mode": "explicit", "base_example": "model.chat.valid"}},
+            "invalid example requires exact_base",
+        ),
+        (
+            {
+                **_exact_base_builder_context("model.chat.valid"),
+                "condition_facts": {},
+            },
+            "unknown keys ['condition_facts']",
+        ),
+    )
+    for value, expected in cases:
+        with pytest.raises(module.RegistryError) as raised:
+            module._parse_inherited_builder_context(
+                value,
+                "examples.invalid.builder_context",
+                "model.chat.valid",
+            )
+        assert expected in str(raised.value)
+
+
 def test_signal_family_requires_explicit_lifecycle(tmp_path: Path) -> None:
     root = _fixture_root(tmp_path)
     path = root / "schemas/telemetry/v8/genai.yaml"
@@ -4036,6 +4567,9 @@ def test_invalid_mutation_projection_uses_typed_json_equality(tmp_path: Path) ->
             "record": invalid_record,
             "expected_error": "structural_field_value_invalid",
             "base_example": valid["id"],
+            "builder_context": {
+                "inheritance": {"mode": "exact_base", "base_example": valid["id"]},
+            },
             "mutation": {
                 "kind": "structural_field_value_invalid",
                 "changes": [
@@ -4075,6 +4609,9 @@ def test_invalid_example_must_have_exactly_one_stable_error(tmp_path: Path) -> N
             "record": invalid_record,
             "expected_error": "family_event_name_mismatch",
             "base_example": valid["id"],
+            "builder_context": {
+                "inheritance": {"mode": "exact_base", "base_example": valid["id"]},
+            },
             "mutation": {
                 "kind": "family_event_name_mismatch",
                 "changes": [
@@ -4120,6 +4657,9 @@ def test_invalid_example_does_not_swallow_noncoverage_field_class_errors(tmp_pat
             "record": invalid_record,
             "expected_error": "field_class_coverage_mismatch",
             "base_example": valid["id"],
+            "builder_context": {
+                "inheritance": {"mode": "exact_base", "base_example": valid["id"]},
+            },
             "mutation": {
                 "kind": "field_class_coverage_mismatch",
                 "changes": [
@@ -4175,6 +4715,9 @@ def test_signal_root_mutation_is_replayed_as_part_of_the_typed_vector(tmp_path: 
             "record": log_record,
             "expected_error": "example_signal_mismatch",
             "base_example": valid["id"],
+            "builder_context": {
+                "inheritance": {"mode": "exact_base", "base_example": valid["id"]},
+            },
             "mutation": {
                 "kind": "example_signal_mismatch",
                 "changes": [
@@ -4835,15 +5378,9 @@ def test_schema_evolution_requires_the_exact_prior_schema_baseline(
     before = manifest_path.read_bytes()
     prior = json.loads(before)
     schema_input = next(
-        item
-        for item in prior["inputs"]
-        if item["path"] == "schemas/telemetry/v8/output-manifest.schema.json"
+        item for item in prior["inputs"] if item["path"] == "schemas/telemetry/v8/output-manifest.schema.json"
     )
-    baseline = (
-        root
-        / "schemas/telemetry/v8/baselines/output-manifest"
-        / f"{schema_input['sha256']}.schema.json"
-    )
+    baseline = root / "schemas/telemetry/v8/baselines/output-manifest" / f"{schema_input['sha256']}.schema.json"
     schema_path = root / "schemas/telemetry/v8/output-manifest.schema.json"
     schema = json.loads(schema_path.read_bytes())
     schema["title"] += " changed"
