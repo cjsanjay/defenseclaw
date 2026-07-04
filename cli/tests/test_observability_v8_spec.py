@@ -320,6 +320,7 @@ def test_observability_v8_generated_builder_source_contract_is_normative() -> No
     assert "`EnrichedFieldDescriptor`" in schemas
     assert "`EnrichedContainerDescriptor`" in schemas
     assert "`GoAPIPlanIR`" in schemas
+    assert "`GoDeclarationPlanIR`" in schemas
     assert "The 1,773-row symbol table is the package-declaration ABI" in schemas
     assert "`service.version <- provenance.binary_version`" in schemas
     assert "`trace_scope.version <- provenance.binary_version`" in schemas

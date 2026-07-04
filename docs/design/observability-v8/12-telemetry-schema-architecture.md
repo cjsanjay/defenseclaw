@@ -1168,6 +1168,7 @@ fails compilation.
 
 | Record | Required contents |
 |---|---|
+| `GoDeclarationPlanIR` | Symbol-table key, declaration form, exact output file/order, and exactly one constant/type/input/callable target; constants carry a closed `string|integer` literal kind and exact typed value |
 | `GoTypeRefIR` | Closed AST arm `builtin`, `named`, `optional`, or `slice`; nested type refs, never renderer-built Go text |
 | `GoFieldPlanIR` | Owner, exact selector, type ref, order, presence, semantic source ID, enriched descriptor ID, value source, target slot, condition/mandatory binding, and conversion op |
 | `GoInputPlanIR` | Symbol-table declaration key, exact output file, ordered fields, private kernel target, and referenced event/link/resource plans |
@@ -1291,6 +1292,10 @@ operations families to the operations file. The reviewed row partition is
 893/282/212/386 respectively. Catalog, producer, and fixture files contain only
 private generated plans/tests and own no additional symbol-table row. Every one of
 the 1,773 declaration keys appears in exactly one `GoFilePlanIR`.
+Every key also has exactly one `GoDeclarationPlanIR`; an exported constant's
+literal is resolved by the compiler from its semantic source (including numeric
+phase codes and wire/member identities), so the IDs renderer never joins a symbol
+row back to registry facts or guesses whether to quote a value.
 
 The index retains `materialized_view_sha256` and separately computes
 `candidate_render_index_sha256` over the complete enriched descriptors and

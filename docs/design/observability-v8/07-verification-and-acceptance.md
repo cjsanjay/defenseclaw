@@ -927,7 +927,8 @@ Required cases:
 - The complete compiler-owned `GoAPIPlanIR` is digest-pinned independently of the
   1,773-row declaration table. Golden tests cover every selector, type AST,
   required/optional presence, field order, callable parameter/result/error
-  contract, conversion operation, private descriptor binding, and file assignment.
+  contract, conversion operation, private descriptor binding, exact constant
+  literal kind/value, and file assignment.
   They prove the fixed common log/span/metric/event/link layouts, the common typed
   resource/scope structural inputs, family-local typed resource values,
   selected-family condition/mandatory fields, parsed span-name
