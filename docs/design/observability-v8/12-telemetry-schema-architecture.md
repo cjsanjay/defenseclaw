@@ -959,8 +959,9 @@ uppercase `initialisms` lookup second, and ordinary title-case last. Namespace
 assignment is closed and exact. The reviewed `OTEL` initialism remains in the
 closed set, but the `otel: OTel` brand entry intentionally wins for that token:
 
-Structured declarations tokenize the complete fully qualified type ID, so
-`gen_ai.canonical_json` produces `TelemetryStructuredGenAICanonicalJSON`.
+Structured declarations tokenize the complete fully qualified type ID, so the
+public structured type for `gen_ai.canonical_json` is
+`TelemetryStructuredGenAICanonicalJSON`.
 `<MemberName>` comes from a fixed field `name` or from `member_id` for a controlled
 dynamic entry. `<ArmName>` comes from a registered `tag`, or from `arm_id` for a
 dynamic variant. Identical `entry` member IDs are scoped by owning structured type
@@ -979,9 +980,9 @@ and therefore remain distinct declarations.
 | Phase ID | `TelemetryPhase<Name>` |
 | Phase-code ID | `TelemetryPhaseCode<Name>` |
 | Semantic-profile ID | `TelemetrySemanticProfile<Name>` |
-| Structured-type ID | `TelemetryStructured<Name>` |
+| Structured public type | `TelemetryStructured<Name>` |
 | Structured-member ID | `TelemetryStructuredMember<TypeName><MemberName>` |
-| Structured-union-arm ID | `TelemetryStructuredArm<TypeName><ArmName>` |
+| Structured public arm type | `TelemetryStructuredArm<TypeName><ArmName>` |
 | Typed structured-member input | `<TypeName><MemberName>MemberInput` |
 | Typed structured-member constructor | `New<TypeName><MemberName>Member` |
 | Per-family input | `Log<Name>Input`, `Span<Name>Input`, or `Metric<Name>Input` according to the family signal |
@@ -991,6 +992,16 @@ and therefore remain distinct declarations.
 | Typed link input | `Span<FamilyName><RelationName>LinkInput` |
 | Typed link constructor | `NewSpan<FamilyName><RelationName>Link` |
 
+Every `GoSymbolTableIR` row carries one compiler-owned `declaration_form` from
+the closed set `exported_const`, `exported_type`, `exported_function`, and
+`family_builder_method`. The 21 structured-type rows and 17 structured-arm rows
+are `exported_type`: their symbols are the sealed public Go declarations, while
+their stable source IDs/tags remain private generated-catalog descriptor values
+and are never exported as duplicate constants. The 49 structured-member rows and
+all other ID rows are `exported_const`. Input, constructor, and builder rows use
+their matching non-constant declaration form. A renderer emits every row exactly
+once in its recorded form and never infers a form from its prefix or source kind.
+
 `Structured-member ID` covers all forty-nine version-1 member identities: thirty-one
 ordinary fixed fields, the union-owned `gen_ai.message_part.type` discriminator,
 and seventeen controlled ordered `entry` members (sixteen `dynamic_members` plus
@@ -999,8 +1010,10 @@ the canonical-JSON object member). The `Typed structured-member input` and
 members identified by `member_id`; they do not generate forty-nine one-field APIs.
 Fixed fields are typed fields of their owning structured input, and the union
 constructor supplies its discriminator. Version 1 therefore has exactly 121
-structured symbol rows: 21 type IDs, 49 member IDs, 17 arm IDs, 17 ordered-member
-inputs, and 17 ordered-member constructors. Combined with the frozen v1 registry,
+structured symbol rows: 21 public types, 49 member IDs, 17 public arm types, 17
+ordered-member inputs, and 17 ordered-member constructors. The 38 type/arm rows
+are declarations rather than ID constants; that classification does not add rows
+or change their stable source identities. Combined with the frozen v1 registry,
 family, event/link-pair, condition, phase, and semantic-profile inventories, the
 complete symbol table contains 1,773 rows. A count change requires a source change
 and a new reviewed baseline; a renderer cannot reinterpret these row scopes.
@@ -1022,8 +1035,9 @@ brand spelling. Duplicate, unused, or policy-equivalent overrides fail. An
 override is the only reviewed collision resolution; automatic suffixing remains
 forbidden.
 The compiler materializes a complete immutable `GoSymbolTableIR` for every symbol,
-including unoverridden rows. Renderers consume that table and do not repeat the
-tokenization algorithm.
+including unoverridden rows, and records `declaration_form` on every row. Renderers
+consume that table, emit no row as both a constant and a type, and do not repeat
+the tokenization algorithm.
 
 ##### Builder context in examples
 
@@ -1674,14 +1688,14 @@ synthetic defaults.
 
 The seven Go files in §5.2.3 have these non-overlapping contracts:
 
-- `zz_generated_telemetry_ids.go` contains only the complete `GoSymbolTableIR`
-  constants. It uses only the exact ID namespaces
+- `zz_generated_telemetry_ids.go` contains only `GoSymbolTableIR` rows whose
+  `declaration_form` is `exported_const`. It uses only the exact ID namespaces
   `TelemetryAttribute`/`TelemetryFamily`/`TelemetryEvent`/`TelemetrySpanEvent`/
   `TelemetryLinkRelation`/`TelemetryInstrument`/`TelemetryCondition`/
   `TelemetryConditionFact`/`TelemetryPhase`/`TelemetryPhaseCode`/
-  `TelemetrySemanticProfile`/`TelemetryStructured`/
-  `TelemetryStructuredMember`/`TelemetryStructuredArm` and never repeats raw
-  normalization.
+  `TelemetrySemanticProfile`/`TelemetryStructuredMember` and never repeats raw
+  normalization. In particular, the 21 `TelemetryStructured*` owning types and
+  17 `TelemetryStructuredArm*` types are absent as constants.
 - `zz_generated_telemetry_catalog.go` contains immutable private family, field,
   event, link, outcome, and instrument descriptors plus copy-safe candidate
   lookups. It does not wire the current public event-registry functions before
@@ -1697,7 +1711,11 @@ The seven Go files in §5.2.3 have these non-overlapping contracts:
   `NewSpan<FamilyName><EventName>Event`; links use
   `Span<FamilyName><RelationName>LinkInput` plus
   `NewSpan<FamilyName><RelationName>Link`. There is no generic builder entrypoint.
-- Structured inputs use sealed generated union arms and
+- `zz_generated_telemetry_builders_genai.go` declares the 21 sealed structured
+  owning types and 17 sealed arm types exactly once as `exported_type` rows. Their
+  source type IDs and registered/dynamic arm tags live only in private descriptors
+  in `zz_generated_telemetry_catalog.go`; no second exported string declaration is
+  generated. Structured inputs use sealed generated union arms and
   `<TypeName><MemberName>MemberInput` plus
   `New<TypeName><MemberName>Member` for ordered members. The discriminator for
   `gen_ai.canonical_json` remains private and non-wire. No generated structured

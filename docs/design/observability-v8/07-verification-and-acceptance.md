@@ -896,7 +896,11 @@ Required cases:
   cross-kind and same-kind collisions, and reviewed exact-key overrides. Collisions
   are never repaired with an automatic suffix. The complete `GoSymbolTableIR`
   contains one stable symbol for every generated declaration; no renderer derives,
-  normalizes, or repairs a name independently.
+  normalizes, or repairs a name independently. Every row also has one exact
+  compiler-owned `declaration_form`. Fixtures prove all 21 structured-type and 17
+  structured-arm rows are emitted exactly once as `exported_type`, never as
+  `zz_generated_telemetry_ids.go` constants; all 49 structured-member rows remain
+  `exported_const`. A row emitted in two forms or omitted from its form fails.
 - Every valid example has an explicit `builder_context` with occurrence,
   condition, mandatory, and inheritance facts. Deterministic fixtures prove the
   same context yields the same timestamp/record identity inputs and exact facts.
@@ -925,7 +929,9 @@ Required cases:
   digest and symbol table, compile with the fixture suite, and agree with the
   complete candidate bundle, or none is published/accepted. Missing, extra, stale,
   mixed-digest, partially written, independently generated, or current-authority
-  files fail before cutover.
+  files fail before cutover. The compiled package must contain no duplicate
+  constant/type declaration: the 38 structured owning/arm symbols are types only
+  and are absent from the IDs file.
 - Portable example-output preflight runs before any renderer or transaction
   adapter. It accepts only IDs matching `^[a-z][a-z0-9-]{0,127}$`, direct-child
   normalized-example/OTLP-fixture outputs, and unique canonical repository-relative

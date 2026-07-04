@@ -225,8 +225,7 @@ def test_observability_v8_generated_builder_source_contract_is_normative() -> No
         "`ordered_typed_entries` | `native_json_object` |"
     ) in schemas
     assert (
-        "| `gen_ai.tool.call.result` | `gen_ai.tool_call_result` | "
-        "`ordered_typed_entries` | `native_json_object` |"
+        "| `gen_ai.tool.call.result` | `gen_ai.tool_call_result` | `ordered_typed_entries` | `native_json_object` |"
     ) in schemas
     assert "distinct closed" in schemas
     assert "invalid as the whole arguments or" in schemas
@@ -242,19 +241,28 @@ def test_observability_v8_generated_builder_source_contract_is_normative() -> No
     assert "otel: OTel" in schemas
     assert "separators: ['.', '-', '/', '_']" in schemas
     assert (
-        "initialisms: [AI, API, DB, HEC, HTTP, ID, JSON, LLM, OTEL, OTLP, PII, "
-        "RPC, SDK, SQL, TLS, URL, UTF8]"
+        "initialisms: [AI, API, DB, HEC, HTTP, ID, JSON, LLM, OTEL, OTLP, PII, RPC, SDK, SQL, TLS, URL, UTF8]"
     ) in schemas
     assert "lowercase `brand_spellings` lookup first" in schemas
     assert "uppercase `initialisms` lookup second" in schemas
     assert "ordinary title-case last" in schemas
-    assert "`gen_ai.canonical_json` produces `TelemetryStructuredGenAICanonicalJSON`" in schemas
+    assert "public structured type for `gen_ai.canonical_json` is" in schemas
+    assert "`TelemetryStructuredGenAICanonicalJSON`" in schemas
     assert "`<MemberName>` comes from a fixed field `name` or from `member_id`" in schemas
     assert "`<ArmName>` comes from a registered `tag`, or from `arm_id`" in schemas
     assert "all forty-nine version-1 member identities" in schemas
     assert "apply only to those seventeen ordered" in schemas
     assert "exactly 121" in schemas
     assert "complete symbol table contains 1,773 rows" in schemas
+    assert "compiler-owned `declaration_form`" in schemas
+    assert "`exported_const`, `exported_type`, `exported_function`, and" in schemas
+    assert "emits every row exactly" in schemas
+    assert "emit no row as both a constant and a type" in schemas
+    assert "whose\n  `declaration_form` is `exported_const`" in schemas
+    assert "17 `TelemetryStructuredArm*` types are absent as constants" in schemas
+    assert "all 21 structured-type and 17" in verification
+    assert "structured-arm rows are emitted exactly once as `exported_type`" in verification
+    assert "all 49 structured-member rows remain" in verification
     for namespace in (
         "TelemetryAttribute<Name>",
         "TelemetryFamily<Name>",
