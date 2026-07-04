@@ -17,7 +17,7 @@ import importlib.util
 import json
 import sys
 from collections.abc import Mapping
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from types import ModuleType
 from typing import Any
 
@@ -124,6 +124,15 @@ def _copy_materialized(value: Any) -> Any:
     return value
 
 
+def _set_unreferenced_invalid_example_id(facts: dict[str, Any], example_id: str) -> None:
+    examples = facts["fields"]["examples"]
+    referenced = {item["fields"]["base_example"] for item in examples if item["fields"]["base_example"] is not None}
+    target = next(
+        item for item in examples if item["fields"]["valid"] is False and item["fields"]["id"] not in referenced
+    )
+    target["fields"]["id"] = example_id
+
+
 def test_public_candidate_render_index_is_identity_bound_deterministic_and_recursively_immutable(
     renderer: ModuleType,
     view: Any,
@@ -195,6 +204,76 @@ def test_candidate_renderer_is_deterministic_complete_and_in_memory(
         assert artifact.mode == 0o644
         assert artifact.payload
         assert path.startswith(f"{PREFIX}/")
+        assert renderer._normalized_candidate_path(path) == path
+        assert not PurePosixPath(path).is_absolute()
+
+
+@pytest.mark.parametrize(
+    "example_id",
+    [
+        pytest.param("a/b", id="separator"),
+        pytest.param("a/../b", id="parent-segment"),
+        pytest.param("a..b", id="dot-dot"),
+        pytest.param("a:b", id="colon"),
+        pytest.param("Uppercase", id="uppercase"),
+        pytest.param("case.Alias", id="nonportable-case-alias"),
+        pytest.param("a" * 129, id="overlength"),
+    ],
+)
+def test_example_ids_are_portable_path_segments_and_fail_before_payload_rendering(
+    renderer: ModuleType,
+    view: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    example_id: str,
+) -> None:
+    facts = _copy_materialized(view.facts)
+    _set_unreferenced_invalid_example_id(facts, example_id)
+    payload_calls: list[object] = []
+
+    def unexpected_payload(document: object) -> bytes:
+        payload_calls.append(document)
+        return b"unexpected"
+
+    monkeypatch.setattr(renderer, "_json_payload", unexpected_payload)
+    with pytest.raises(renderer.CandidateRenderError, match="portable output path segment"):
+        renderer.render_candidate_artifacts(_retagged_view(renderer, view, facts))
+    assert payload_calls == []
+
+
+def test_candidate_artifact_insertion_rejects_exact_and_unicode_casefold_collisions_atomically(
+    renderer: ModuleType,
+) -> None:
+    def artifact(path: str, payload: bytes) -> Any:
+        return renderer.CandidateArtifact(path, payload, "application/json", renderer.JSON_OWNERSHIP_MARKER)
+
+    exact_path = f"{PREFIX}/cases/exact.json"
+    artifacts: dict[str, Any] = {}
+    renderer._add_candidate_artifact(artifacts, artifact(exact_path, b"first"))
+    before = dict(artifacts)
+    with pytest.raises(renderer.CandidateRenderError, match="duplicated"):
+        renderer._add_candidate_artifact(artifacts, artifact(exact_path, b"second"))
+    assert artifacts == before
+
+    folded: dict[str, Any] = {}
+    renderer._add_candidate_artifact(folded, artifact(f"{PREFIX}/cases/Straße.json", b"first"))
+    folded_before = dict(folded)
+    with pytest.raises(renderer.CandidateRenderError, match="portable collision"):
+        renderer._add_candidate_artifact(folded, artifact(f"{PREFIX}/cases/STRASSE.json", b"second"))
+    assert folded == folded_before
+
+
+def test_full_candidate_preflight_rejects_case_alias_collision(
+    renderer: ModuleType,
+) -> None:
+    lower = f"{PREFIX}/cases/alias.json"
+    upper = f"{PREFIX}/cases/ALIAS.json"
+    candidates = {
+        lower: renderer.CandidateArtifact(lower, b"lower", "application/json", renderer.JSON_OWNERSHIP_MARKER),
+        upper: renderer.CandidateArtifact(upper, b"upper", "application/json", renderer.JSON_OWNERSHIP_MARKER),
+    }
+
+    with pytest.raises(renderer.CandidateRenderError, match="portable collision"):
+        renderer._preflight_candidate_artifacts(candidates)
 
 
 def test_every_artifact_carries_candidate_authority_and_view_digest(
@@ -451,12 +530,16 @@ def test_normalized_example_and_otlp_manifests_cover_the_same_cases(
     assert "$type" not in json.dumps(fixtures["canonical_to_otlp"])
 
     for entry in examples["cases"]:
+        expected_parent = PurePosixPath("examples/valid" if entry["valid"] else "examples/invalid")
+        assert PurePosixPath(entry["path"]).parent == expected_parent
         normalized = _json(artifacts, entry["path"])
         fixture = _json(artifacts, f"otlp-fixtures/cases/{entry['id']}.json")
         assert normalized["record"] == fixture["canonical_record"]
         assert normalized["valid"] == fixture["expect"]["accepted"]
         if not normalized["valid"]:
             assert fixture["expect"]["error_code"] == normalized["expected_error"]
+    for entry in fixtures["cases"]:
+        assert PurePosixPath(entry["path"]).parent == PurePosixPath("otlp-fixtures/cases")
 
 
 def test_otlp_fixtures_render_direct_trace_projected_log_and_sdk_metric(
