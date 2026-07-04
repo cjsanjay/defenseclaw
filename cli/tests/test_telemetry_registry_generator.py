@@ -51,9 +51,55 @@ DEPENDENCIES = (
     ),
 )
 
+# Test-only review lock. Runtime validation derives this order from the registry source.
+_CANONICAL_OUTCOME_ORDER = (
+    "allowed",
+    "applied",
+    "approved",
+    "attempted",
+    "blocked",
+    "cancelled",
+    "completed",
+    "denied",
+    "failed",
+    "no_change",
+    "partial",
+    "quarantined",
+    "redacted",
+    "rejected",
+    "released",
+    "revoked",
+    "skipped",
+    "terminated",
+    "timed_out",
+    "validated",
+)
+_REAL_FAMILY_OUTCOME_CONTRACT_DIGEST = (
+    "8cd00e119000c51f734d9948fa0df8cd06a0b91ceea5d7d210c33fe8ae79f078"
+)
+
 
 def _sha256(value: bytes) -> str:
     return hashlib.sha256(value).hexdigest()
+
+
+def _grouped_outcome_contract_matrix(
+    contracts: list[tuple[str, str, tuple[str, ...]]],
+) -> tuple[tuple[str, tuple[str, ...], tuple[str, ...]], ...]:
+    grouped: dict[tuple[str, tuple[str, ...]], list[str]] = {}
+    for family_id, requirement, outcomes in contracts:
+        grouped.setdefault((requirement, outcomes), []).append(family_id)
+    return tuple(
+        (requirement, outcomes, tuple(sorted(family_ids)))
+        for (requirement, outcomes), family_ids in sorted(grouped.items())
+    )
+
+
+def _outcome_contract_digest(
+    contracts: list[tuple[str, str, tuple[str, ...]]],
+) -> str:
+    matrix = _grouped_outcome_contract_matrix(contracts)
+    return _sha256(json.dumps(matrix, separators=(",", ":")).encode())
 
 
 def _write_yaml(path: Path, value: Any) -> None:
@@ -243,6 +289,8 @@ def _domain_sources() -> dict[str, dict[str, Any]]:
                     "x-defenseclaw": {
                         "bucket": "model.io",
                         "family_schema_version": 1,
+                        "outcome_requirement": "optional",
+                        "allowed_outcomes": ["completed"],
                         "events": ["guardrail.decision"],
                         "route_selector": True,
                     },
@@ -274,14 +322,23 @@ def _domain_sources() -> dict[str, dict[str, Any]]:
             "attribute_extensions": [],
             "groups": [
                 {
+                    "id": "body.fixture",
+                    "type": "body_group",
+                    "brief": "A generated log body fixture.",
+                    "stability": "development",
+                },
+                {
                     "id": "diagnostic.message",
                     "type": "log",
                     "brief": "A diagnostic message.",
                     "stability": "stable",
+                    "extends": ["body.fixture"],
                     "log": {"event_name": "diagnostic.message"},
                     "x-defenseclaw": {
                         "bucket": "diagnostic",
                         "family_schema_version": 1,
+                        "outcome_requirement": "forbidden",
+                        "allowed_outcomes": [],
                     },
                 }
             ],
@@ -289,6 +346,18 @@ def _domain_sources() -> dict[str, dict[str, Any]]:
             "producer_mappings": [],
         },
     }
+    canonical_genai = yaml.safe_load(
+        (ROOT / "schemas/telemetry/v8/genai.yaml").read_text(encoding="utf-8")
+    )
+    domains["genai.yaml"]["attributes"].append(
+        copy.deepcopy(
+            next(
+                attribute
+                for attribute in canonical_genai["attributes"]
+                if attribute["id"] == "defenseclaw.outcome"
+            )
+        )
+    )
     operations = domains["operations.yaml"]
     for index in range(74):
         operations["groups"].append(
@@ -297,10 +366,13 @@ def _domain_sources() -> dict[str, dict[str, Any]]:
                 "type": "log",
                 "brief": "A generated canonical fixture log.",
                 "stability": "development",
+                "extends": ["body.fixture"],
                 "log": {"event_name": f"fixture.event.{index}"},
                 "x-defenseclaw": {
                     "bucket": "diagnostic",
                     "family_schema_version": 1,
+                    "outcome_requirement": "forbidden",
+                    "allowed_outcomes": [],
                 },
             }
         )
@@ -324,10 +396,13 @@ def _domain_sources() -> dict[str, dict[str, Any]]:
                 "type": "log",
                 "brief": "A generated compatibility fixture log.",
                 "stability": "development",
+                "extends": ["body.fixture"],
                 "log": {"event_name": event_name},
                 "x-defenseclaw": {
                     "bucket": "agent.lifecycle",
                     "family_schema_version": 1,
+                    "outcome_requirement": "forbidden",
+                    "allowed_outcomes": [],
                 },
             }
         )
@@ -346,6 +421,8 @@ def _domain_sources() -> dict[str, dict[str, Any]]:
                 "x-defenseclaw": {
                     "bucket": "diagnostic",
                     "family_schema_version": 1,
+                    "outcome_requirement": "forbidden",
+                    "allowed_outcomes": [],
                 },
             }
         )
@@ -1173,13 +1250,6 @@ def test_compiler_ir_preserves_every_validated_public_contract(tmp_path: Path) -
             },
         }
     )
-    span["body_fields"] = [
-        {
-            "ref": "defenseclaw.test.name",
-            "requirement_level": "optional",
-            "constraints": {"max_utf8_bytes": 64},
-        }
-    ]
     span["x-defenseclaw"].update(
         {
             "allowed_outcomes": ["completed", "failed"],
@@ -1200,6 +1270,14 @@ def test_compiler_ir_preserves_every_validated_public_contract(tmp_path: Path) -
 
     operations_path = root / "schemas/telemetry/v8/operations.yaml"
     operations = yaml.safe_load(operations_path.read_text(encoding="utf-8"))
+    body = next(group for group in operations["groups"] if group["id"] == "body.fixture")
+    body["body_fields"] = [
+        {
+            "ref": "defenseclaw.test.name",
+            "requirement_level": "optional",
+            "constraints": {"max_utf8_bytes": 64},
+        }
+    ]
     metric = next(
         group
         for group in operations["groups"]
@@ -1249,6 +1327,7 @@ def test_compiler_ir_preserves_every_validated_public_contract(tmp_path: Path) -
     operations_ir = domains["operations"]
     attribute_ir = next(item for item in genai_ir.attributes if item.id == "defenseclaw.test.name")
     span_ir = next(group for group in genai_ir.groups if group.id == "span.model.chat")
+    body_ir = next(group for group in operations_ir.groups if group.id == "body.fixture")
     log_ir = next(group for group in operations_ir.groups if group.id == "diagnostic.message")
     metric_ir = next(
         group
@@ -1301,8 +1380,10 @@ def test_compiler_ir_preserves_every_validated_public_contract(tmp_path: Path) -
     assert span_ir.attribute_uses[0].role == "attributes"
     assert span_ir.attribute_uses[0].requirement_level == "conditional"
     assert span_ir.attribute_uses[0].conditional == "when a chat operation is emitted"
-    assert span_ir.attribute_uses[1].role == "body_fields"
+    assert body_ir.attribute_uses[0].role == "body_fields"
+    assert body_ir.resolved_uses[0].role == "body_fields"
     assert span_ir.allowed_outcomes == ("completed", "failed")
+    assert span_ir.outcome_requirement == "optional"
     assert span_ir.event_refs == ("guardrail.decision",)
     assert span_ir.link_relations == ("caused_by",)
     assert span_ir.mandatory_floor == ("always",)
@@ -1315,12 +1396,16 @@ def test_compiler_ir_preserves_every_validated_public_contract(tmp_path: Path) -
     assert log_ir.event_name == "diagnostic.message"
     assert log_ir.brief == "A diagnostic message."
     assert log_ir.stability == "stable"
+    assert log_ir.outcome_requirement == "forbidden"
+    assert log_ir.allowed_outcomes == ()
 
     assert metric_ir.instrument_type == "histogram"
     assert metric_ir.metric_description == "Preserved metric description."
     assert metric_ir.metric_boundaries == (1, 2, 4)
     assert metric_ir.family_schema_version == 1
     assert metric_ir.bucket == "diagnostic"
+    assert metric_ir.outcome_requirement is None
+    assert metric_ir.allowed_outcomes is None
     assert mapping_ir.source == "gateway"
     assert mapping_ir.severity_policy == "canonical_or_info"
     assert mapping_ir.mandatory_rules == ("always",)
@@ -1368,6 +1453,8 @@ def test_mapping_bearing_ir_classes_are_explicitly_equality_only() -> None:
         module.AttributeExtensionIR,
         module.MetricCompatibilityProfileIR,
         module.AttributeUseIR,
+        module.AttributeUseOriginIR,
+        module.ResolvedAttributeUseIR,
         module.GroupIR,
         module.DomainIR,
         module.ExampleIR,
@@ -1478,6 +1565,802 @@ def test_group_runtime_vocabularies_are_closed(
 
     assert result.returncode == 1
     assert expected in result.stderr
+
+
+@pytest.mark.parametrize(
+    ("requirement_level", "include_clause", "expected"),
+    [
+        ("conditional", False, "required for conditional fields"),
+        ("required", True, "allowed only for conditional fields"),
+        ("recommended", True, "allowed only for conditional fields"),
+        ("optional", True, "allowed only for conditional fields"),
+    ],
+)
+def test_attribute_use_conditional_clause_is_exactly_coupled_to_level(
+    tmp_path: Path,
+    requirement_level: str,
+    include_clause: bool,
+    expected: str,
+) -> None:
+    root = _fixture_root(tmp_path)
+    path = root / "schemas/telemetry/v8/genai.yaml"
+    document = yaml.safe_load(path.read_text(encoding="utf-8"))
+    use = document["groups"][0]["attributes"][0]
+    use["requirement_level"] = requirement_level
+    if include_clause:
+        use["conditional"] = "only for the fixture condition"
+    else:
+        use.pop("conditional", None)
+    _write_yaml(path, document)
+
+    result = _run(root, "--write")
+
+    assert result.returncode == 1
+    assert expected in result.stderr
+
+
+@pytest.mark.parametrize(
+    ("mutation", "expected"),
+    [
+        ("missing_requirement", "require outcome_requirement and allowed_outcomes"),
+        ("missing_allowed", "require outcome_requirement and allowed_outcomes"),
+        ("forbidden_nonempty", "forbidden outcome requires an empty"),
+        ("required_empty", "required/optional outcome requires nonempty"),
+        ("out_of_order", "must follow defenseclaw.outcome order"),
+        ("globally_broad", "globally broad allowed_outcomes is forbidden"),
+    ],
+)
+def test_log_span_outcome_contract_is_exact(
+    tmp_path: Path,
+    mutation: str,
+    expected: str,
+) -> None:
+    root = _fixture_root(tmp_path)
+    path = root / "schemas/telemetry/v8/genai.yaml"
+    document = yaml.safe_load(path.read_text(encoding="utf-8"))
+    extension = document["groups"][0]["x-defenseclaw"]
+    vocabulary = next(
+        attribute
+        for attribute in document["attributes"]
+        if attribute["id"] == "defenseclaw.outcome"
+    )["normalization"]["overrides"]["enum"]
+    if mutation == "missing_requirement":
+        extension.pop("outcome_requirement")
+    elif mutation == "missing_allowed":
+        extension.pop("allowed_outcomes")
+    elif mutation == "forbidden_nonempty":
+        extension["outcome_requirement"] = "forbidden"
+        extension["allowed_outcomes"] = ["completed"]
+    elif mutation == "required_empty":
+        extension["outcome_requirement"] = "required"
+        extension["allowed_outcomes"] = []
+    elif mutation == "out_of_order":
+        extension["allowed_outcomes"] = ["completed", "allowed"]
+    else:
+        extension["allowed_outcomes"] = list(vocabulary)
+    _write_yaml(path, document)
+
+    result = _run(root, "--write")
+
+    assert result.returncode == 1
+    assert expected in result.stderr
+
+
+@pytest.mark.parametrize("key", ["outcome_requirement", "allowed_outcomes"])
+def test_metric_forbids_envelope_outcome_contract(tmp_path: Path, key: str) -> None:
+    root = _fixture_root(tmp_path)
+    path = root / "schemas/telemetry/v8/operations.yaml"
+    document = yaml.safe_load(path.read_text(encoding="utf-8"))
+    metric = next(group for group in document["groups"] if group["type"] == "metric")
+    metric["x-defenseclaw"][key] = "optional" if key == "outcome_requirement" else ["completed"]
+    _write_yaml(path, document)
+
+    result = _run(root, "--write")
+
+    assert result.returncode == 1
+    assert "outcome contract is allowed only on logs/spans" in result.stderr
+
+
+def test_allowed_outcome_order_is_derived_from_canonical_source(tmp_path: Path) -> None:
+    root = _fixture_root(tmp_path)
+    path = root / "schemas/telemetry/v8/genai.yaml"
+    document = yaml.safe_load(path.read_text(encoding="utf-8"))
+    outcome = next(
+        attribute
+        for attribute in document["attributes"]
+        if attribute["id"] == "defenseclaw.outcome"
+    )
+    vocabulary = outcome["normalization"]["overrides"]["enum"]
+    vocabulary.remove("completed")
+    vocabulary.insert(0, "completed")
+    document["groups"][0]["x-defenseclaw"]["allowed_outcomes"] = [
+        "completed",
+        "allowed",
+    ]
+    _write_yaml(path, document)
+
+    result = _run(root, "--write")
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_real_family_outcome_contract_matrix_is_exact() -> None:
+    module = _load_generator_module("telemetry_registry_real_outcome_contract_test")
+    ir = module.compile_registry(ROOT)
+    attributes = {
+        attribute.id: attribute for domain in ir.domains for attribute in domain.attributes
+    }
+    outcome_order = attributes[
+        "defenseclaw.outcome"
+    ].normalization.effective_constraints["enum"]
+    families = [
+        group
+        for domain in ir.domains
+        for group in domain.groups
+        if group.type in {"log", "span"}
+    ]
+
+    assert outcome_order == _CANONICAL_OUTCOME_ORDER
+    assert sum(group.type == "log" for group in families) == 87
+    assert sum(group.type == "span" for group in families) == 25
+    assert len(families) == len({group.id for group in families}) == 112
+    assert all(group.outcome_requirement is not None for group in families)
+    assert all(group.allowed_outcomes is not None for group in families)
+
+    contracts = [
+        (group.id, group.outcome_requirement, group.allowed_outcomes)
+        for group in families
+    ]
+    matrix = _grouped_outcome_contract_matrix(contracts)
+    family_counts = {
+        requirement: sum(
+            len(family_ids)
+            for matrix_requirement, _, family_ids in matrix
+            if matrix_requirement == requirement
+        )
+        for requirement in {item[0] for item in matrix}
+    }
+
+    assert len(matrix) == 46
+    assert family_counts == {"forbidden": 10, "required": 102}
+    assert _outcome_contract_digest(contracts) == _REAL_FAMILY_OUTCOME_CONTRACT_DIGEST
+
+
+def test_real_family_outcome_contract_digest_detects_single_family_drift() -> None:
+    module = _load_generator_module("telemetry_registry_outcome_drift_lock_test")
+    ir = module.compile_registry(ROOT)
+    contracts = [
+        (group.id, group.outcome_requirement, group.allowed_outcomes)
+        for domain in ir.domains
+        for group in domain.groups
+        if group.type in {"log", "span"}
+    ]
+    required_index = next(
+        index for index, (_, requirement, _) in enumerate(contracts) if requirement == "required"
+    )
+    multi_outcome_index = next(
+        index for index, (_, _, outcomes) in enumerate(contracts) if len(outcomes) > 1
+    )
+
+    broadened = list(contracts)
+    family_id, requirement, _ = broadened[required_index]
+    broadened[required_index] = (family_id, requirement, _CANONICAL_OUTCOME_ORDER[:-1])
+
+    requirement_drift = list(contracts)
+    family_id, _, outcomes = requirement_drift[required_index]
+    requirement_drift[required_index] = (family_id, "optional", outcomes)
+
+    subset_drift = list(contracts)
+    family_id, requirement, outcomes = subset_drift[multi_outcome_index]
+    subset_drift[multi_outcome_index] = (family_id, requirement, outcomes[:-1])
+
+    assert _outcome_contract_digest(contracts) == _REAL_FAMILY_OUTCOME_CONTRACT_DIGEST
+    assert {
+        _outcome_contract_digest(broadened),
+        _outcome_contract_digest(requirement_drift),
+        _outcome_contract_digest(subset_drift),
+    }.isdisjoint({_REAL_FAMILY_OUTCOME_CONTRACT_DIGEST})
+
+
+def test_group_resolution_deduplicates_diamond_origins_and_strengthens(tmp_path: Path) -> None:
+    root = _fixture_root(tmp_path)
+    path = root / "schemas/telemetry/v8/genai.yaml"
+    document = yaml.safe_load(path.read_text(encoding="utf-8"))
+    document["groups"].extend(
+        [
+            {
+                "id": "diamond.base",
+                "type": "attribute_group",
+                "brief": "Diamond base.",
+                "stability": "development",
+                "attributes": [
+                    {
+                        "ref": "defenseclaw.test.name",
+                        "requirement_level": "optional",
+                        "constraints": {"max_utf8_bytes": 128},
+                    }
+                ],
+            },
+            {
+                "id": "diamond.left",
+                "type": "attribute_group",
+                "brief": "Diamond left.",
+                "stability": "development",
+                "extends": ["diamond.base"],
+                "attributes": [
+                    {
+                        "ref": "defenseclaw.test.name",
+                        "requirement_level": "recommended",
+                        "constraints": {"max_utf8_bytes": 64},
+                    }
+                ],
+            },
+            {
+                "id": "diamond.right",
+                "type": "attribute_group",
+                "brief": "Diamond right.",
+                "stability": "development",
+                "extends": ["diamond.base"],
+                "attributes": [
+                    {
+                        "ref": "defenseclaw.test.name",
+                        "requirement_level": "required",
+                        "constraints": {"max_utf8_bytes": 96},
+                    }
+                ],
+            },
+        ]
+    )
+    document["groups"][0]["extends"] = ["diamond.left", "diamond.right"]
+    _write_yaml(path, document)
+    module = _load_generator_module("telemetry_registry_diamond_test")
+
+    ir = module.compile_registry(root)
+    span = next(
+        group for domain in ir.domains for group in domain.groups if group.id == "span.model.chat"
+    )
+    use = next(item for item in span.resolved_uses if item.ref == "defenseclaw.test.name")
+
+    assert use.role == "attributes"
+    assert use.requirement_level == "required"
+    assert dict(use.constraints) == {"max_utf8_bytes": 64}
+    assert tuple(origin.group_id for origin in use.origins) == (
+        "diamond.base",
+        "diamond.left",
+        "diamond.right",
+    )
+    assert len(ir.group_resolution_order) == len(set(ir.group_resolution_order))
+    position = {group_id: index for index, group_id in enumerate(ir.group_resolution_order)}
+    assert position["diamond.base"] < position["diamond.left"] < position["span.model.chat"]
+    assert position["diamond.base"] < position["diamond.right"] < position["span.model.chat"]
+    assert ir.resolved_group_uses[span.id] == span.resolved_uses
+
+
+def test_body_group_transposes_direct_and_inherited_uses_for_logs(tmp_path: Path) -> None:
+    root = _fixture_root(tmp_path)
+    path = root / "schemas/telemetry/v8/operations.yaml"
+    document = yaml.safe_load(path.read_text(encoding="utf-8"))
+    body = next(group for group in document["groups"] if group["id"] == "body.fixture")
+    document["groups"].append(
+        {
+            "id": "body.source",
+            "type": "attribute_group",
+            "brief": "Body source.",
+            "stability": "development",
+            "attributes": [
+                {"ref": "defenseclaw.test.name", "requirement_level": "optional"}
+            ],
+        }
+    )
+    body["extends"] = ["body.source"]
+    body["body_fields"] = [
+        {"ref": "defenseclaw.test.name", "requirement_level": "required"}
+    ]
+    _write_yaml(path, document)
+    module = _load_generator_module("telemetry_registry_body_transpose_test")
+
+    ir = module.compile_registry(root)
+    log = next(
+        group for domain in ir.domains for group in domain.groups if group.id == "diagnostic.message"
+    )
+    use = next(item for item in log.resolved_uses if item.ref == "defenseclaw.test.name")
+
+    assert use.role == "body_fields"
+    assert use.requirement_level == "required"
+    assert tuple((origin.group_id, origin.role) for origin in use.origins) == (
+        ("body.source", "attributes"),
+        ("body.fixture", "body_fields"),
+    )
+
+
+@pytest.mark.parametrize(
+    ("mutation", "expected"),
+    [
+        ("span_body_parent", "incompatible body_group parent"),
+        ("attribute_body_direct", "body_fields are not allowed for attribute_group"),
+        ("log_no_parent", "log must extend exactly one body_group"),
+        ("log_two_parents", "log must extend exactly one body_group"),
+        ("log_attribute_parent", "incompatible attribute_group parent"),
+    ],
+)
+def test_group_resolution_rejects_role_and_log_parent_ambiguity(
+    tmp_path: Path,
+    mutation: str,
+    expected: str,
+) -> None:
+    root = _fixture_root(tmp_path)
+    if mutation == "span_body_parent":
+        path = root / "schemas/telemetry/v8/genai.yaml"
+        document = yaml.safe_load(path.read_text(encoding="utf-8"))
+        document["groups"][0]["extends"] = ["body.fixture"]
+    else:
+        path = root / "schemas/telemetry/v8/operations.yaml"
+        document = yaml.safe_load(path.read_text(encoding="utf-8"))
+        log = next(group for group in document["groups"] if group["id"] == "diagnostic.message")
+        if mutation == "attribute_body_direct":
+            document["groups"].append(
+                {
+                    "id": "invalid.attribute.role",
+                    "type": "attribute_group",
+                    "brief": "Invalid role.",
+                    "stability": "development",
+                    "body_fields": [
+                        {"ref": "defenseclaw.test.name", "requirement_level": "optional"}
+                    ],
+                }
+            )
+        elif mutation == "log_no_parent":
+            log["extends"] = []
+        elif mutation == "log_two_parents":
+            document["groups"].append(
+                {
+                    "id": "body.fixture.two",
+                    "type": "body_group",
+                    "brief": "Second body.",
+                    "stability": "development",
+                }
+            )
+            log["extends"] = ["body.fixture", "body.fixture.two"]
+        else:
+            document["groups"].append(
+                {
+                    "id": "attribute.fixture.parent",
+                    "type": "attribute_group",
+                    "brief": "Attribute parent.",
+                    "stability": "development",
+                }
+            )
+            log["extends"] = ["attribute.fixture.parent"]
+    _write_yaml(path, document)
+
+    result = _run(root, "--write")
+
+    assert result.returncode == 1
+    assert expected in result.stderr
+
+
+def test_group_resolution_rejects_cycles_even_when_unreferenced(tmp_path: Path) -> None:
+    root = _fixture_root(tmp_path)
+    path = root / "schemas/telemetry/v8/genai.yaml"
+    document = yaml.safe_load(path.read_text(encoding="utf-8"))
+    document["groups"].extend(
+        [
+            {
+                "id": "cycle.one",
+                "type": "attribute_group",
+                "brief": "Cycle one.",
+                "stability": "development",
+                "extends": ["cycle.two"],
+            },
+            {
+                "id": "cycle.two",
+                "type": "attribute_group",
+                "brief": "Cycle two.",
+                "stability": "development",
+                "extends": ["cycle.one"],
+            },
+        ]
+    )
+    _write_yaml(path, document)
+
+    result = _run(root, "--write")
+
+    assert result.returncode == 1
+    assert "inheritance cycle" in result.stderr
+
+
+@pytest.mark.parametrize(
+    ("requirements", "conditionals", "expected_level", "expected_conditional", "error"),
+    [
+        (("optional", "recommended"), (None, None), "recommended", None, None),
+        (("conditional", "conditional"), ("same", "same"), "conditional", "same", None),
+        (("conditional", "conditional", "required"), ("left", "right", None), "required", None, None),
+        (("conditional", "conditional"), ("left", "right"), None, None, "conflicting dominant conditional"),
+    ],
+)
+def test_requirement_lattice_and_conditional_clause_merge(
+    tmp_path: Path,
+    requirements: tuple[str, ...],
+    conditionals: tuple[str | None, ...],
+    expected_level: str | None,
+    expected_conditional: str | None,
+    error: str | None,
+) -> None:
+    root = _fixture_root(tmp_path)
+    path = root / "schemas/telemetry/v8/genai.yaml"
+    document = yaml.safe_load(path.read_text(encoding="utf-8"))
+    parents: list[str] = []
+    for index, (requirement, conditional) in enumerate(
+        zip(requirements, conditionals, strict=True)
+    ):
+        group_id = f"lattice.{index}"
+        use: dict[str, Any] = {
+            "ref": "defenseclaw.test.name",
+            "requirement_level": requirement,
+        }
+        if conditional is not None:
+            use["conditional"] = conditional
+        document["groups"].append(
+            {
+                "id": group_id,
+                "type": "attribute_group",
+                "brief": "Lattice parent.",
+                "stability": "development",
+                "attributes": [use],
+            }
+        )
+        parents.append(group_id)
+    document["groups"][0]["extends"] = parents
+    _write_yaml(path, document)
+    if error is not None:
+        result = _run(root, "--write")
+        assert result.returncode == 1
+        assert error in result.stderr
+        return
+    module = _load_generator_module(f"telemetry_registry_lattice_{len(requirements)}")
+    ir = module.compile_registry(root)
+    span = next(
+        group for domain in ir.domains for group in domain.groups if group.id == "span.model.chat"
+    )
+    use = next(item for item in span.resolved_uses if item.ref == "defenseclaw.test.name")
+    assert use.requirement_level == expected_level
+    assert use.conditional == expected_conditional
+
+
+def test_constraint_intersection_is_restrictive_and_deterministic(tmp_path: Path) -> None:
+    root = _fixture_root(tmp_path)
+    path = root / "schemas/telemetry/v8/genai.yaml"
+    document = yaml.safe_load(path.read_text(encoding="utf-8"))
+    document["groups"].extend(
+        [
+            {
+                "id": "constraints.left",
+                "type": "attribute_group",
+                "brief": "Constraint left.",
+                "stability": "development",
+                "attributes": [
+                    {
+                        "ref": "defenseclaw.test.name",
+                        "requirement_level": "optional",
+                        "constraints": {
+                            "enum": ["alpha", "beta", "gamma"],
+                            "pattern": "^[a-z]+$",
+                            "max_utf8_bytes": 128,
+                        },
+                    }
+                ],
+            },
+            {
+                "id": "constraints.right",
+                "type": "attribute_group",
+                "brief": "Constraint right.",
+                "stability": "development",
+                "attributes": [
+                    {
+                        "ref": "defenseclaw.test.name",
+                        "requirement_level": "recommended",
+                        "constraints": {
+                            "enum": ["gamma", "beta"],
+                            "pattern": "^[a-z]+$",
+                            "max_utf8_bytes": 64,
+                        },
+                    }
+                ],
+            },
+        ]
+    )
+    document["groups"][0]["extends"] = ["constraints.left", "constraints.right"]
+    _write_yaml(path, document)
+    module = _load_generator_module("telemetry_registry_constraint_merge_test")
+
+    ir = module.compile_registry(root)
+    span = next(
+        group for domain in ir.domains for group in domain.groups if group.id == "span.model.chat"
+    )
+    use = next(item for item in span.resolved_uses if item.ref == "defenseclaw.test.name")
+
+    assert dict(use.constraints) == {
+        "enum": ("beta", "gamma"),
+        "pattern": "^[a-z]+$",
+        "max_utf8_bytes": 64,
+    }
+
+
+def test_structured_constraint_intersection_uses_lower_depth_and_property_limits(
+    tmp_path: Path,
+) -> None:
+    root = _fixture_root(tmp_path)
+    path = root / "schemas/telemetry/v8/genai.yaml"
+    document = yaml.safe_load(path.read_text(encoding="utf-8"))
+    document["attributes"].append(
+        {
+            "id": "defenseclaw.test.object",
+            "type": "object",
+            "brief": "Structured merge fixture.",
+            "examples": [{"fixture": "value"}],
+            "stability": "development",
+            "owner": "defenseclaw",
+            "field_class": "metadata",
+            "sensitivity": "safe",
+            "cardinality": "bounded",
+            "normalization": {"id": "structured-content-v1"},
+            "introduced_in": "telemetry-registry-v1",
+        }
+    )
+    parents = []
+    for index, constraints in enumerate(
+        (
+            {"max_depth": 7, "max_properties": 100},
+            {"max_depth": 4, "max_properties": 60},
+        )
+    ):
+        group_id = f"structured.constraints.{index}"
+        document["groups"].append(
+            {
+                "id": group_id,
+                "type": "attribute_group",
+                "brief": "Structured constraints.",
+                "stability": "development",
+                "attributes": [
+                    {
+                        "ref": "defenseclaw.test.object",
+                        "requirement_level": "optional",
+                        "constraints": constraints,
+                    }
+                ],
+            }
+        )
+        parents.append(group_id)
+    document["groups"][0]["extends"] = parents
+    _write_yaml(path, document)
+    module = _load_generator_module("telemetry_registry_structured_constraint_test")
+
+    ir = module.compile_registry(root)
+    span = next(
+        group for domain in ir.domains for group in domain.groups if group.id == "span.model.chat"
+    )
+    use = next(item for item in span.resolved_uses if item.ref == "defenseclaw.test.object")
+
+    assert dict(use.constraints) == {"max_depth": 4, "max_properties": 60}
+
+
+def test_enum_intersection_preserves_bool_int_and_float_type_identity() -> None:
+    module = _load_generator_module("telemetry_registry_enum_type_identity_test")
+
+    def origin(group_id: str, values: list[bool | int | float]) -> Any:
+        return module.AttributeUseOriginIR(
+            group_id,
+            "attributes",
+            "optional",
+            None,
+            module._freeze_mapping({"enum": values}),
+        )
+
+    merged = module._intersect_use_constraints(
+        "enum.identity",
+        "defenseclaw.test.scalar",
+        (
+            origin("enum.left", [True, 1, 1.0]),
+            origin("enum.right", [1.0, 1, True]),
+        ),
+    )
+
+    assert merged["enum"] == (True, 1, 1.0)
+    assert tuple(type(value) for value in merged["enum"]) == (bool, int, float)
+    for left, right in ((True, 1), (1, 1.0), (True, 1.0)):
+        with pytest.raises(module.RegistryError, match="empty enum intersection"):
+            module._intersect_use_constraints(
+                "enum.noncollision",
+                "defenseclaw.test.scalar",
+                (origin("enum.left", [left]), origin("enum.right", [right])),
+            )
+
+
+@pytest.mark.parametrize(
+    ("left", "right", "expected"),
+    [
+        ({"enum": ["alpha"]}, {"enum": ["beta"]}, "empty enum intersection"),
+        ({"pattern": "^alpha$"}, {"pattern": "^beta$"}, "nonrepresentable pattern"),
+    ],
+)
+def test_constraint_intersection_rejects_empty_or_nonrepresentable(
+    tmp_path: Path,
+    left: dict[str, Any],
+    right: dict[str, Any],
+    expected: str,
+) -> None:
+    root = _fixture_root(tmp_path)
+    path = root / "schemas/telemetry/v8/genai.yaml"
+    document = yaml.safe_load(path.read_text(encoding="utf-8"))
+    parents = []
+    for index, constraints in enumerate((left, right)):
+        group_id = f"invalid.constraints.{index}"
+        document["groups"].append(
+            {
+                "id": group_id,
+                "type": "attribute_group",
+                "brief": "Invalid constraints.",
+                "stability": "development",
+                "attributes": [
+                    {
+                        "ref": "defenseclaw.test.name",
+                        "requirement_level": "optional",
+                        "constraints": constraints,
+                    }
+                ],
+            }
+        )
+        parents.append(group_id)
+    document["groups"][0]["extends"] = parents
+    _write_yaml(path, document)
+
+    result = _run(root, "--write")
+
+    assert result.returncode == 1
+    assert expected in result.stderr
+
+
+def test_constraint_intersection_rejects_inconsistent_numeric_range(tmp_path: Path) -> None:
+    root = _fixture_root(tmp_path)
+    path = root / "schemas/telemetry/v8/genai.yaml"
+    document = yaml.safe_load(path.read_text(encoding="utf-8"))
+    document["attributes"].append(
+        {
+            "id": "defenseclaw.test.number",
+            "type": "int64",
+            "brief": "Numeric merge fixture.",
+            "examples": [50],
+            "stability": "development",
+            "owner": "defenseclaw",
+            "field_class": "metadata",
+            "sensitivity": "safe",
+            "cardinality": "bounded",
+            "normalization": {
+                "id": "numeric-range-v1",
+                "overrides": {"min": 0, "max": 100},
+            },
+            "introduced_in": "telemetry-registry-v1",
+        }
+    )
+    document["groups"].extend(
+        [
+            {
+                "id": "range.minimum",
+                "type": "attribute_group",
+                "brief": "Range minimum.",
+                "stability": "development",
+                "attributes": [
+                    {
+                        "ref": "defenseclaw.test.number",
+                        "requirement_level": "optional",
+                        "constraints": {"min": 80},
+                    }
+                ],
+            },
+            {
+                "id": "range.maximum",
+                "type": "attribute_group",
+                "brief": "Range maximum.",
+                "stability": "development",
+                "attributes": [
+                    {
+                        "ref": "defenseclaw.test.number",
+                        "requirement_level": "optional",
+                        "constraints": {"max": 40},
+                    }
+                ],
+            },
+        ]
+    )
+    document["groups"][0]["extends"] = ["range.minimum", "range.maximum"]
+    _write_yaml(path, document)
+
+    result = _run(root, "--write")
+
+    assert result.returncode == 1
+    assert "inconsistent min/max intersection" in result.stderr
+
+
+@pytest.mark.parametrize(
+    ("left", "right", "expected"),
+    [
+        (
+            {"min_items": 5},
+            {"max_items": 3},
+            "inconsistent min_items/max_items intersection",
+        ),
+        (
+            {"max_utf8_bytes": 10},
+            {"max_item_utf8_bytes": 20},
+            "incompatible UTF-8 bounds",
+        ),
+    ],
+)
+def test_constraint_intersection_rejects_inconsistent_collection_bounds(
+    tmp_path: Path,
+    left: dict[str, Any],
+    right: dict[str, Any],
+    expected: str,
+) -> None:
+    root = _fixture_root(tmp_path)
+    path = root / "schemas/telemetry/v8/genai.yaml"
+    document = yaml.safe_load(path.read_text(encoding="utf-8"))
+    attribute = copy.deepcopy(document["attributes"][0])
+    attribute.update(
+        {
+            "id": "defenseclaw.test.names",
+            "type": "string[]",
+            "examples": [["fixture"]],
+        }
+    )
+    document["attributes"].append(attribute)
+    parents = []
+    for index, constraints in enumerate((left, right)):
+        group_id = f"invalid.collection.constraints.{index}"
+        document["groups"].append(
+            {
+                "id": group_id,
+                "type": "attribute_group",
+                "brief": "Invalid collection constraints.",
+                "stability": "development",
+                "attributes": [
+                    {
+                        "ref": "defenseclaw.test.names",
+                        "requirement_level": "optional",
+                        "constraints": constraints,
+                    }
+                ],
+            }
+        )
+        parents.append(group_id)
+    document["groups"][0]["extends"] = parents
+    _write_yaml(path, document)
+
+    result = _run(root, "--write")
+
+    assert result.returncode == 1
+    assert expected in result.stderr
+
+
+def test_real_registry_resolves_once_with_zero_ambiguity() -> None:
+    module = _load_generator_module("telemetry_registry_real_resolution_test")
+
+    ir = module.compile_registry(ROOT)
+    groups = {group.id: group for domain in ir.domains for group in domain.groups}
+    positions = {group_id: index for index, group_id in enumerate(ir.group_resolution_order)}
+
+    assert len(ir.group_resolution_order) == len(groups) == len(ir.resolved_group_uses)
+    assert len(set(ir.group_resolution_order)) == len(groups)
+    for group in groups.values():
+        assert group.resolved_uses == ir.resolved_group_uses[group.id]
+        assert len({use.ref for use in group.resolved_uses}) == len(group.resolved_uses)
+        assert all(positions[parent] < positions[group.id] for parent in group.extends)
+        if group.type == "log":
+            assert len(group.extends) == 1
+            assert groups[group.extends[0]].type == "body_group"
+            assert all(use.role == "body_fields" for use in group.resolved_uses)
+        elif group.type in {"span", "resource", "metric", "span_event"}:
+            assert all(use.role == "attributes" for use in group.resolved_uses)
 
 
 def test_span_name_placeholder_rejects_high_cardinality_attribute(tmp_path: Path) -> None:

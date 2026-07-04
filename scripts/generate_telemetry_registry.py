@@ -24,7 +24,7 @@ import string
 import sys
 import tempfile
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Final, TypeAlias
@@ -120,30 +120,6 @@ EXPECTED_COMPATIBILITY_LOG_IDENTITIES: Final = frozenset(
     }
 )
 EXPECTED_PRODUCER_COUNTS: Final = {"gateway_event": 14, "audit_action": 188}
-EXPECTED_OUTCOMES: Final = frozenset(
-    {
-        "allowed",
-        "applied",
-        "approved",
-        "attempted",
-        "blocked",
-        "cancelled",
-        "completed",
-        "denied",
-        "failed",
-        "no_change",
-        "partial",
-        "quarantined",
-        "redacted",
-        "rejected",
-        "released",
-        "revoked",
-        "skipped",
-        "terminated",
-        "timed_out",
-        "validated",
-    }
-)
 EXPECTED_LINK_RELATIONS: Final = frozenset(
     {"caused_by", "correlates_with", "derived_from", "resumes"}
 )
@@ -361,7 +337,7 @@ FrozenJSON: TypeAlias = (
 def _freeze_json(value: Any) -> FrozenJSON:
     if value is None or type(value) in {str, int, float, bool}:
         return value
-    if isinstance(value, list):
+    if isinstance(value, (list, tuple)):
         return tuple(_freeze_json(item) for item in value)
     if isinstance(value, dict):
         return MappingProxyType({key: _freeze_json(item) for key, item in value.items()})
@@ -665,6 +641,27 @@ class AttributeUseIR:
 
 
 @dataclass(frozen=True, slots=True)
+class AttributeUseOriginIR:
+    group_id: str
+    role: str
+    requirement_level: str
+    conditional: str | None
+    constraints: Mapping[str, FrozenJSON]
+    __hash__ = None
+
+
+@dataclass(frozen=True, slots=True)
+class ResolvedAttributeUseIR:
+    ref: str
+    role: str
+    requirement_level: str
+    conditional: str | None
+    constraints: Mapping[str, FrozenJSON]
+    origins: tuple[AttributeUseOriginIR, ...]
+    __hash__ = None
+
+
+@dataclass(frozen=True, slots=True)
 class ProducerCompatibilityIR:
     introduced_in: str | None
     legacy_event_prefix: str | None
@@ -681,6 +678,7 @@ class GroupIR:
     extends: tuple[str, ...]
     attribute_uses: tuple[AttributeUseIR, ...]
     attribute_refs: tuple[str, ...]
+    resolved_uses: tuple[ResolvedAttributeUseIR, ...]
     event_refs: tuple[str, ...] | None
     event_name: str | None
     bucket: str | None
@@ -697,6 +695,7 @@ class GroupIR:
     empty_labels_reason: str | None
     metric_projections: tuple[MetricProjectionIR, ...]
     family_schema_version: int | None
+    outcome_requirement: str | None
     allowed_outcomes: tuple[str, ...] | None
     link_relations: tuple[str, ...] | None
     mandatory_floor: tuple[str, ...] | None
@@ -791,6 +790,8 @@ class RegistryIR:
     metric_cardinality_limit: int
     metric_compatibility_profile: MetricCompatibilityProfileIR
     domains: tuple[DomainIR, ...]
+    group_resolution_order: tuple[str, ...]
+    resolved_group_uses: Mapping[str, tuple[ResolvedAttributeUseIR, ...]]
     examples: tuple[ExampleIR, ...]
     upstream_attribute_ownership: tuple[UpstreamAttributeOwnershipIR, ...]
     legacy_only_upstream_attributes: tuple[str, ...]
@@ -1483,8 +1484,15 @@ def _parse_attribute_uses(
         requirement_level = item["requirement_level"]
         if requirement_level not in {"required", "recommended", "optional", "conditional"}:
             raise RegistryError(f"{item_path}.requirement_level: unsupported value")
-        if requirement_level == "conditional" and "conditional" not in item:
-            raise RegistryError(f"{item_path}.conditional: required for conditional fields")
+        if requirement_level == "conditional":
+            if "conditional" not in item:
+                raise RegistryError(
+                    f"{item_path}.conditional: required for conditional fields"
+                )
+        elif "conditional" in item:
+            raise RegistryError(
+                f"{item_path}.conditional: allowed only for conditional fields"
+            )
         conditional = None
         if "conditional" in item:
             conditional = _string(item["conditional"], f"{item_path}.conditional")
@@ -1694,6 +1702,7 @@ def _parse_group(value: Any, path: str) -> GroupIR:
     event_refs: tuple[str, ...] | None = None
     bucket: str | None = None
     family_schema_version: int | None = None
+    outcome_requirement: str | None = None
     allowed_outcomes: tuple[str, ...] | None = None
     link_relations: tuple[str, ...] | None = None
     mandatory_floor: tuple[str, ...] | None = None
@@ -1710,6 +1719,7 @@ def _parse_group(value: Any, path: str) -> GroupIR:
             {
                 "bucket",
                 "family_schema_version",
+                "outcome_requirement",
                 "allowed_outcomes",
                 "events",
                 "link_relations",
@@ -1729,14 +1739,19 @@ def _parse_group(value: Any, path: str) -> GroupIR:
                 extension["family_schema_version"],
                 f"{path}.x-defenseclaw.family_schema_version",
             )
+        if "outcome_requirement" in extension:
+            outcome_requirement = _string(
+                extension["outcome_requirement"],
+                f"{path}.x-defenseclaw.outcome_requirement",
+            )
+            if outcome_requirement not in {"required", "optional", "forbidden"}:
+                raise RegistryError(
+                    f"{path}.x-defenseclaw.outcome_requirement: unsupported value"
+                )
         for key in ("allowed_outcomes", "events", "link_relations", "compatibility_profiles"):
             if key in extension:
                 values = _string_list(extension[key], f"{path}.x-defenseclaw.{key}")
                 if key == "allowed_outcomes":
-                    if not set(values).issubset(EXPECTED_OUTCOMES):
-                        raise RegistryError(
-                            f"{path}.x-defenseclaw.allowed_outcomes: unknown outcome"
-                        )
                     allowed_outcomes = values
                 elif key == "events":
                     event_refs = values
@@ -1781,6 +1796,7 @@ def _parse_group(value: Any, path: str) -> GroupIR:
         extends,
         attribute_uses,
         attribute_refs,
+        (),
         event_refs,
         event_name,
         bucket,
@@ -1797,6 +1813,7 @@ def _parse_group(value: Any, path: str) -> GroupIR:
         empty_labels_reason,
         metric_projections,
         family_schema_version,
+        outcome_requirement,
         allowed_outcomes,
         link_relations,
         mandatory_floor,
@@ -2065,10 +2082,7 @@ def _parse_domain(
 
 
 def _resolved_attributes(groups: dict[str, GroupIR], group_id: str) -> frozenset[str]:
-    references = set(groups[group_id].attribute_refs)
-    for parent in groups[group_id].extends:
-        references.update(_resolved_attributes(groups, parent))
-    return frozenset(references)
+    return frozenset(use.ref for use in groups[group_id].resolved_uses)
 
 
 def _rfc6901_token(value: str) -> str:
@@ -2513,6 +2527,7 @@ def compile_registry(root: Path) -> RegistryIR:
             if group.id in group_owners:
                 raise RegistryError(f"group {group.id}: duplicate ownership")
             group_owners[group.id] = group
+    _validate_outcome_contracts(group_owners, local_attributes)
     log_event_names = [
         group.event_name
         for group in group_owners.values()
@@ -2650,7 +2665,13 @@ def compile_registry(root: Path) -> RegistryIR:
         upstream_attributes,
     )
     _validate_alias_cycles(domains)
-    _validate_group_cycles(group_owners)
+    resolved_domains, group_resolution_order, resolved_group_uses = _resolve_group_uses(
+        tuple(domains)
+    )
+    domains = list(resolved_domains)
+    group_owners = {
+        group.id: group for domain in domains for group in domain.groups
+    }
     _validate_metric_attribute_safety(
         group_owners,
         local_attributes,
@@ -2700,29 +2721,249 @@ def compile_registry(root: Path) -> RegistryIR:
         metric_cardinality_limit=metric_cardinality_limit,
         metric_compatibility_profile=metric_compatibility_profile,
         domains=tuple(domains),
+        group_resolution_order=group_resolution_order,
+        resolved_group_uses=resolved_group_uses,
         examples=examples,
         upstream_attribute_ownership=upstream_attribute_ownership,
         legacy_only_upstream_attributes=tuple(sorted(legacy_core_genai)),
     )
 
 
-def _validate_group_cycles(groups: dict[str, GroupIR]) -> None:
-    visiting: set[str] = set()
-    visited: set[str] = set()
+_REQUIREMENT_RANK: Final = {
+    "optional": 1,
+    "recommended": 2,
+    "conditional": 3,
+    "required": 4,
+}
 
-    def visit(group_id: str) -> None:
-        if group_id in visiting:
+
+def _intersect_use_constraints(
+    group_id: str,
+    reference: str,
+    origins: tuple[AttributeUseOriginIR, ...],
+) -> Mapping[str, FrozenJSON]:
+    result: dict[str, Any] = {}
+    minimum_keys = {"min", "min_items"}
+    maximum_keys = {
+        "max",
+        "max_items",
+        "max_utf8_bytes",
+        "max_item_utf8_bytes",
+        "max_depth",
+        "max_properties",
+    }
+
+    def enum_marker(value: FrozenJSON) -> tuple[type[Any], FrozenJSON]:
+        return type(value), value
+
+    for origin in origins:
+        for key, value in origin.constraints.items():
+            if key == "enum":
+                incoming = tuple(value) if isinstance(value, tuple) else ()
+                if "enum" not in result:
+                    result["enum"] = incoming
+                else:
+                    allowed = {enum_marker(item) for item in incoming}
+                    result["enum"] = tuple(
+                        item for item in result["enum"] if enum_marker(item) in allowed
+                    )
+                if not result["enum"]:
+                    raise RegistryError(
+                        f"group {group_id}: empty enum intersection for {reference}"
+                    )
+            elif key == "pattern":
+                if "pattern" in result and result["pattern"] != value:
+                    raise RegistryError(
+                        f"group {group_id}: nonrepresentable pattern intersection for {reference}"
+                    )
+                result["pattern"] = value
+            elif key in minimum_keys:
+                result[key] = value if key not in result else max(result[key], value)
+            elif key in maximum_keys:
+                result[key] = value if key not in result else min(result[key], value)
+            else:
+                raise RegistryError(
+                    f"group {group_id}: unsupported merged constraint {key} for {reference}"
+                )
+    for minimum, maximum in (("min", "max"), ("min_items", "max_items")):
+        if minimum in result and maximum in result and result[minimum] > result[maximum]:
+            raise RegistryError(
+                f"group {group_id}: inconsistent {minimum}/{maximum} intersection for {reference}"
+            )
+    if (
+        "max_item_utf8_bytes" in result
+        and "max_utf8_bytes" in result
+        and result["max_item_utf8_bytes"] > result["max_utf8_bytes"]
+    ):
+        raise RegistryError(
+            f"group {group_id}: incompatible UTF-8 bounds for {reference}"
+        )
+    if "enum" in result:
+        enum_values = result["enum"]
+        if "pattern" in result:
+            pattern = re.compile(result["pattern"])
+            enum_values = tuple(
+                value
+                for value in enum_values
+                if isinstance(value, str) and pattern.fullmatch(value) is not None
+            )
+        if "min" in result:
+            enum_values = tuple(
+                value
+                for value in enum_values
+                if type(value) in {int, float} and value >= result["min"]
+            )
+        if "max" in result:
+            enum_values = tuple(
+                value
+                for value in enum_values
+                if type(value) in {int, float} and value <= result["max"]
+            )
+        if "max_utf8_bytes" in result:
+            enum_values = tuple(
+                value
+                for value in enum_values
+                if not isinstance(value, str)
+                or len(value.encode("utf-8")) <= result["max_utf8_bytes"]
+            )
+        if not enum_values:
+            raise RegistryError(
+                f"group {group_id}: empty constrained enum intersection for {reference}"
+            )
+        result["enum"] = enum_values
+    return _freeze_mapping(result)
+
+
+def _resolve_group_uses(
+    domains: tuple[DomainIR, ...],
+) -> tuple[
+    tuple[DomainIR, ...],
+    tuple[str, ...],
+    Mapping[str, tuple[ResolvedAttributeUseIR, ...]],
+]:
+    groups = {group.id: group for domain in domains for group in domain.groups}
+    state: dict[str, int] = {}
+    resolved: dict[str, tuple[ResolvedAttributeUseIR, ...]] = {}
+    order: list[str] = []
+
+    def visit(group_id: str) -> tuple[ResolvedAttributeUseIR, ...]:
+        current_state = state.get(group_id, 0)
+        if current_state == 1:
             raise RegistryError(f"group {group_id}: inheritance cycle")
-        if group_id in visited:
-            return
-        visiting.add(group_id)
-        for parent in groups[group_id].extends:
-            visit(parent)
-        visiting.remove(group_id)
-        visited.add(group_id)
+        if current_state == 2:
+            return resolved[group_id]
+        group = groups.get(group_id)
+        if group is None:
+            raise RegistryError(f"group {group_id}: unknown inheritance target")
+        state[group_id] = 1
+        if group.type == "attribute_group":
+            allowed_parent_types = {"attribute_group"}
+            resolved_role = "attributes"
+        elif group.type == "body_group":
+            allowed_parent_types = {"attribute_group", "body_group"}
+            resolved_role = "body_fields"
+        elif group.type == "log":
+            if len(group.extends) != 1:
+                raise RegistryError(
+                    f"group {group.id}: log must extend exactly one body_group"
+                )
+            allowed_parent_types = {"body_group"}
+            resolved_role = "body_fields"
+        else:
+            allowed_parent_types = {"attribute_group"}
+            resolved_role = "attributes"
 
-    for group_id in sorted(groups):
-        visit(group_id)
+        contributions: dict[str, list[AttributeUseOriginIR]] = {}
+        reference_order: list[str] = []
+
+        def contribute(reference: str, origins: tuple[AttributeUseOriginIR, ...]) -> None:
+            if reference not in contributions:
+                contributions[reference] = []
+                reference_order.append(reference)
+            for origin in origins:
+                if origin not in contributions[reference]:
+                    contributions[reference].append(origin)
+
+        for parent_id in group.extends:
+            parent = groups.get(parent_id)
+            if parent is None:
+                raise RegistryError(f"group {group.id}: unknown extends reference {parent_id}")
+            if parent.type not in allowed_parent_types:
+                raise RegistryError(
+                    f"group {group.id}: incompatible {parent.type} parent {parent_id}"
+                )
+            for inherited in visit(parent_id):
+                if resolved_role == "attributes" and inherited.role != "attributes":
+                    raise RegistryError(
+                        f"group {group.id}: body role crosses into attribute family via {parent_id}"
+                    )
+                contribute(inherited.ref, inherited.origins)
+
+        for direct in group.attribute_uses:
+            if resolved_role == "attributes" and direct.role != "attributes":
+                raise RegistryError(
+                    f"group {group.id}: body_fields are not allowed for {group.type}"
+                )
+            origin = AttributeUseOriginIR(
+                group.id,
+                direct.role,
+                direct.requirement_level,
+                direct.conditional,
+                direct.constraints,
+            )
+            contribute(direct.ref, (origin,))
+
+        materialized: list[ResolvedAttributeUseIR] = []
+        for reference in reference_order:
+            origins = tuple(contributions[reference])
+            dominant = max(
+                origins,
+                key=lambda origin: _REQUIREMENT_RANK[origin.requirement_level],
+            ).requirement_level
+            conditional = None
+            if dominant == "conditional":
+                clauses = tuple(
+                    dict.fromkeys(
+                        origin.conditional
+                        for origin in origins
+                        if origin.requirement_level == "conditional"
+                    )
+                )
+                if len(clauses) != 1 or clauses[0] is None:
+                    raise RegistryError(
+                        f"group {group.id}: conflicting dominant conditional clauses for {reference}"
+                    )
+                conditional = clauses[0]
+            materialized.append(
+                ResolvedAttributeUseIR(
+                    reference,
+                    resolved_role,
+                    dominant,
+                    conditional,
+                    _intersect_use_constraints(group.id, reference, origins),
+                    origins,
+                )
+            )
+        result = tuple(materialized)
+        resolved[group_id] = result
+        state[group_id] = 2
+        order.append(group_id)
+        return result
+
+    for domain in domains:
+        for group in domain.groups:
+            visit(group.id)
+    updated_domains = tuple(
+        replace(
+            domain,
+            groups=tuple(
+                replace(group, resolved_uses=resolved[group.id]) for group in domain.groups
+            ),
+        )
+        for domain in domains
+    )
+    ordered_mapping = MappingProxyType({group_id: resolved[group_id] for group_id in order})
+    return updated_domains, tuple(order), ordered_mapping
 
 
 def _validate_alias_cycles(domains: list[DomainIR]) -> None:
@@ -2740,6 +2981,58 @@ def _validate_alias_cycles(domains: list[DomainIR]) -> None:
                 raise RegistryError(f"attribute {start}: alias cycle")
             seen.add(current)
             current = aliases[current]
+
+
+def _validate_outcome_contracts(
+    groups: Mapping[str, GroupIR],
+    local_attributes: Mapping[str, AttributeIR],
+) -> None:
+    outcome_attribute = local_attributes.get("defenseclaw.outcome")
+    if outcome_attribute is None:
+        raise RegistryError("attribute defenseclaw.outcome: canonical outcome enum is missing")
+    raw_vocabulary = outcome_attribute.normalization.effective_constraints.get("enum")
+    if not isinstance(raw_vocabulary, tuple) or not raw_vocabulary or not all(
+        isinstance(item, str) for item in raw_vocabulary
+    ):
+        raise RegistryError("attribute defenseclaw.outcome: expected ordered string enum")
+    vocabulary = tuple(raw_vocabulary)
+    positions = {outcome: index for index, outcome in enumerate(vocabulary)}
+    if len(positions) != len(vocabulary):
+        raise RegistryError("attribute defenseclaw.outcome: duplicate canonical outcome")
+    for group in groups.values():
+        if group.type in {"log", "span"}:
+            if group.outcome_requirement is None or group.allowed_outcomes is None:
+                raise RegistryError(
+                    f"group {group.id}: logs/spans require outcome_requirement and allowed_outcomes"
+                )
+            if group.outcome_requirement == "forbidden":
+                if group.allowed_outcomes:
+                    raise RegistryError(
+                        f"group {group.id}: forbidden outcome requires an empty allowed_outcomes"
+                    )
+                continue
+            if not group.allowed_outcomes:
+                raise RegistryError(
+                    f"group {group.id}: required/optional outcome requires nonempty allowed_outcomes"
+                )
+            unknown = [item for item in group.allowed_outcomes if item not in positions]
+            if unknown:
+                raise RegistryError(
+                    f"group {group.id}: allowed_outcomes contains unknown outcome values {unknown}"
+                )
+            indexes = tuple(positions[item] for item in group.allowed_outcomes)
+            if indexes != tuple(sorted(indexes)):
+                raise RegistryError(
+                    f"group {group.id}: allowed_outcomes must follow defenseclaw.outcome order"
+                )
+            if group.allowed_outcomes == vocabulary:
+                raise RegistryError(
+                    f"group {group.id}: globally broad allowed_outcomes is forbidden"
+                )
+        elif group.outcome_requirement is not None or group.allowed_outcomes is not None:
+            raise RegistryError(
+                f"group {group.id}: outcome contract is allowed only on logs/spans"
+            )
 
 
 def _validate_attribute_use_constraints(
@@ -2870,18 +3163,6 @@ def _validate_metric_attribute_safety(
     compatibility_profile: MetricCompatibilityProfileIR,
     metric_inventory: dict[str, MetricInventoryIR],
 ) -> None:
-    cache: dict[str, frozenset[str]] = {}
-
-    def resolved(group_id: str) -> frozenset[str]:
-        if group_id in cache:
-            return cache[group_id]
-        group = groups[group_id]
-        references = set(group.attribute_refs)
-        for parent in group.extends:
-            references.update(resolved(parent))
-        cache[group_id] = frozenset(references)
-        return cache[group_id]
-
     metric_groups = [group for group in groups.values() if group.type == "metric"]
     instruments = [group.instrument_name for group in metric_groups]
     if None in instruments or len(instruments) != len(set(instruments)):
@@ -2894,7 +3175,7 @@ def _validate_metric_attribute_safety(
         assert group.instrument_name is not None
         if group.id != f"metric.{group.instrument_name}":
             raise RegistryError(f"metric {group.id}: family ID must be metric.<instrument_name>")
-        labels = resolved(group.id)
+        labels = frozenset(use.ref for use in group.resolved_uses)
         if bool(labels) == bool(group.empty_labels_reason):
             requirement = "forbidden" if labels else "required"
             raise RegistryError(
@@ -2993,24 +3274,12 @@ def _validate_span_name_patterns(
     local_attributes: dict[str, AttributeIR],
     upstream_extensions: dict[str, AttributeExtensionIR],
 ) -> None:
-    cache: dict[str, frozenset[str]] = {}
-
-    def resolved(group_id: str) -> frozenset[str]:
-        if group_id in cache:
-            return cache[group_id]
-        group = groups[group_id]
-        references = set(group.attribute_refs)
-        for parent in group.extends:
-            references.update(resolved(parent))
-        cache[group_id] = frozenset(references)
-        return cache[group_id]
-
     prohibited_classes = {"content", "credential", "path", "evidence", "reason", "error"}
     formatter = string.Formatter()
     for group in groups.values():
         if group.type != "span" or group.span_name_pattern is None:
             continue
-        available = resolved(group.id)
+        available = frozenset(use.ref for use in group.resolved_uses)
         try:
             parts = tuple(formatter.parse(group.span_name_pattern))
         except ValueError as exc:

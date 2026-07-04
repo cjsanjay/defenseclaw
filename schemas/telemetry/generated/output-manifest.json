@@ -17,15 +17,15 @@
     },
     {
       "path": "schemas/telemetry/v8/genai.yaml",
-      "sha256": "29fb885f6b6045458b91717f93c3774d593041e9aaabd655eb83ce6a04817819"
+      "sha256": "b983a623555b82368ce5072eb856f241e4a6a29710dc8073008a675dc3561dd5"
     },
     {
       "path": "schemas/telemetry/v8/security.yaml",
-      "sha256": "8e06edcf9aee334e9c39c7f8fe089421fbb1144cb9e676565257b48f7f6e61d6"
+      "sha256": "d3a15402999d373cd7fcf6514f991467735c55838d94e7636a915d583898c9aa"
     },
     {
       "path": "schemas/telemetry/v8/operations.yaml",
-      "sha256": "ef8e06035aa50fb8dd68d473327e7f88c4f01e750861dcd1b58eb8fec17d0fcf"
+      "sha256": "748a6b87481425f3537245f3e01aaa37ef2b6b157d0fe4d47248dc9999acff47"
     },
     {
       "path": "schemas/telemetry/v8/semconv.lock.yaml",

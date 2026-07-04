@@ -1351,27 +1351,19 @@ groups:
   x-defenseclaw:
     bucket: guardrail.evaluation
     family_schema_version: 1
+    outcome_requirement: required
     allowed_outcomes:
-    - attempted
-    - validated
-    - applied
-    - completed
     - allowed
     - blocked
-    - denied
-    - approved
-    - quarantined
-    - redacted
-    - revoked
-    - released
-    - terminated
-    - rejected
-    - failed
-    - timed_out
     - cancelled
+    - completed
+    - denied
+    - failed
     - partial
+    - redacted
+    - rejected
     - skipped
-    - no_change
+    - timed_out
     route_selector: true
     events:
     - guardrail.decision
@@ -1411,27 +1403,19 @@ groups:
   x-defenseclaw:
     bucket: guardrail.evaluation
     family_schema_version: 1
+    outcome_requirement: required
     allowed_outcomes:
-    - attempted
-    - validated
-    - applied
-    - completed
     - allowed
     - blocked
-    - denied
-    - approved
-    - quarantined
-    - redacted
-    - revoked
-    - released
-    - terminated
-    - rejected
-    - failed
-    - timed_out
     - cancelled
+    - completed
+    - denied
+    - failed
     - partial
+    - redacted
+    - rejected
     - skipped
-    - no_change
+    - timed_out
     route_selector: true
     events:
     - security.finding.observed
@@ -1472,27 +1456,13 @@ groups:
   x-defenseclaw:
     bucket: guardrail.evaluation
     family_schema_version: 1
+    outcome_requirement: required
     allowed_outcomes:
-    - attempted
-    - validated
-    - applied
-    - completed
     - allowed
     - blocked
-    - denied
-    - approved
-    - quarantined
-    - redacted
-    - revoked
-    - released
-    - terminated
-    - rejected
+    - cancelled
     - failed
     - timed_out
-    - cancelled
-    - partial
-    - skipped
-    - no_change
     route_selector: true
     events:
     - model.retry
@@ -1533,27 +1503,22 @@ groups:
   x-defenseclaw:
     bucket: enforcement.action
     family_schema_version: 1
+    outcome_requirement: required
     allowed_outcomes:
-    - attempted
-    - validated
     - applied
-    - completed
-    - allowed
     - blocked
+    - cancelled
     - denied
-    - approved
+    - failed
+    - no_change
+    - partial
     - quarantined
     - redacted
-    - revoked
-    - released
-    - terminated
     - rejected
-    - failed
+    - released
+    - revoked
+    - terminated
     - timed_out
-    - cancelled
-    - partial
-    - skipped
-    - no_change
     route_selector: true
     events:
     - enforcement.requested
@@ -1591,27 +1556,13 @@ groups:
   x-defenseclaw:
     bucket: enforcement.action
     family_schema_version: 1
+    outcome_requirement: required
     allowed_outcomes:
-    - attempted
-    - validated
-    - applied
-    - completed
-    - allowed
-    - blocked
-    - denied
     - approved
-    - quarantined
-    - redacted
-    - revoked
-    - released
-    - terminated
-    - rejected
+    - cancelled
+    - denied
     - failed
     - timed_out
-    - cancelled
-    - partial
-    - skipped
-    - no_change
     route_selector: true
     events:
     - approval.requested
@@ -1649,27 +1600,15 @@ groups:
   x-defenseclaw:
     bucket: security.finding
     family_schema_version: 1
+    outcome_requirement: required
     allowed_outcomes:
-    - attempted
-    - validated
-    - applied
-    - completed
-    - allowed
-    - blocked
-    - denied
-    - approved
-    - quarantined
-    - redacted
-    - revoked
-    - released
-    - terminated
-    - rejected
-    - failed
-    - timed_out
     - cancelled
+    - completed
+    - failed
+    - no_change
     - partial
     - skipped
-    - no_change
+    - timed_out
     route_selector: true
     events:
     - security.finding.observed
@@ -1698,27 +1637,12 @@ groups:
   x-defenseclaw:
     bucket: compliance.activity
     family_schema_version: 1
+    outcome_requirement: required
     allowed_outcomes:
-    - attempted
-    - validated
-    - applied
-    - completed
-    - allowed
-    - blocked
-    - denied
     - approved
-    - quarantined
-    - redacted
-    - revoked
-    - released
-    - terminated
-    - rejected
-    - failed
-    - timed_out
     - cancelled
-    - partial
-    - skipped
-    - no_change
+    - denied
+    - timed_out
     route_selector: true
     mandatory_floor:
     - approval_resolution
@@ -1740,27 +1664,9 @@ groups:
   x-defenseclaw:
     bucket: network.egress
     family_schema_version: 1
+    outcome_requirement: required
     allowed_outcomes:
-    - attempted
-    - validated
-    - applied
-    - completed
     - allowed
-    - blocked
-    - denied
-    - approved
-    - quarantined
-    - redacted
-    - revoked
-    - released
-    - terminated
-    - rejected
-    - failed
-    - timed_out
-    - cancelled
-    - partial
-    - skipped
-    - no_change
     route_selector: true
     mandatory_floor: []
     compatibility_profiles:
@@ -1781,27 +1687,9 @@ groups:
   x-defenseclaw:
     bucket: network.egress
     family_schema_version: 1
+    outcome_requirement: required
     allowed_outcomes:
-    - attempted
-    - validated
-    - applied
-    - completed
-    - allowed
     - blocked
-    - denied
-    - approved
-    - quarantined
-    - redacted
-    - revoked
-    - released
-    - terminated
-    - rejected
-    - failed
-    - timed_out
-    - cancelled
-    - partial
-    - skipped
-    - no_change
     route_selector: true
     mandatory_floor:
     - enforced_outcome
@@ -1823,27 +1711,9 @@ groups:
   x-defenseclaw:
     bucket: network.egress
     family_schema_version: 1
+    outcome_requirement: required
     allowed_outcomes:
-    - attempted
-    - validated
-    - applied
     - completed
-    - allowed
-    - blocked
-    - denied
-    - approved
-    - quarantined
-    - redacted
-    - revoked
-    - released
-    - terminated
-    - rejected
-    - failed
-    - timed_out
-    - cancelled
-    - partial
-    - skipped
-    - no_change
     route_selector: true
     mandatory_floor: []
     compatibility_profiles:
@@ -1864,27 +1734,11 @@ groups:
   x-defenseclaw:
     bucket: network.egress
     family_schema_version: 1
+    outcome_requirement: required
     allowed_outcomes:
-    - attempted
-    - validated
-    - applied
-    - completed
-    - allowed
-    - blocked
-    - denied
-    - approved
-    - quarantined
-    - redacted
-    - revoked
-    - released
-    - terminated
-    - rejected
+    - cancelled
     - failed
     - timed_out
-    - cancelled
-    - partial
-    - skipped
-    - no_change
     route_selector: true
     mandatory_floor: []
     compatibility_profiles:
@@ -1905,27 +1759,9 @@ groups:
   x-defenseclaw:
     bucket: network.egress
     family_schema_version: 1
+    outcome_requirement: required
     allowed_outcomes:
     - attempted
-    - validated
-    - applied
-    - completed
-    - allowed
-    - blocked
-    - denied
-    - approved
-    - quarantined
-    - redacted
-    - revoked
-    - released
-    - terminated
-    - rejected
-    - failed
-    - timed_out
-    - cancelled
-    - partial
-    - skipped
-    - no_change
     route_selector: true
     mandatory_floor: []
     compatibility_profiles:
@@ -1946,27 +1782,9 @@ groups:
   x-defenseclaw:
     bucket: enforcement.action
     family_schema_version: 1
+    outcome_requirement: required
     allowed_outcomes:
-    - attempted
-    - validated
-    - applied
-    - completed
-    - allowed
-    - blocked
-    - denied
-    - approved
-    - quarantined
-    - redacted
     - revoked
-    - released
-    - terminated
-    - rejected
-    - failed
-    - timed_out
-    - cancelled
-    - partial
-    - skipped
-    - no_change
     route_selector: true
     mandatory_floor:
     - enforcement_state_change
@@ -1988,27 +1806,9 @@ groups:
   x-defenseclaw:
     bucket: enforcement.action
     family_schema_version: 1
+    outcome_requirement: required
     allowed_outcomes:
-    - attempted
-    - validated
-    - applied
-    - completed
-    - allowed
     - blocked
-    - denied
-    - approved
-    - quarantined
-    - redacted
-    - revoked
-    - released
-    - terminated
-    - rejected
-    - failed
-    - timed_out
-    - cancelled
-    - partial
-    - skipped
-    - no_change
     route_selector: true
     mandatory_floor:
     - enforced_outcome
@@ -2030,27 +1830,12 @@ groups:
   x-defenseclaw:
     bucket: enforcement.action
     family_schema_version: 1
+    outcome_requirement: required
     allowed_outcomes:
-    - attempted
-    - validated
-    - applied
-    - completed
-    - allowed
-    - blocked
-    - denied
-    - approved
-    - quarantined
-    - redacted
-    - revoked
-    - released
-    - terminated
-    - rejected
-    - failed
-    - timed_out
     - cancelled
-    - partial
-    - skipped
-    - no_change
+    - failed
+    - rejected
+    - timed_out
     route_selector: true
     mandatory_floor:
     - enforced_outcome
@@ -2072,27 +1857,9 @@ groups:
   x-defenseclaw:
     bucket: enforcement.action
     family_schema_version: 1
+    outcome_requirement: required
     allowed_outcomes:
     - attempted
-    - validated
-    - applied
-    - completed
-    - allowed
-    - blocked
-    - denied
-    - approved
-    - quarantined
-    - redacted
-    - revoked
-    - released
-    - terminated
-    - rejected
-    - failed
-    - timed_out
-    - cancelled
-    - partial
-    - skipped
-    - no_change
     route_selector: true
     mandatory_floor:
     - enforced_outcome
@@ -2114,27 +1881,9 @@ groups:
   x-defenseclaw:
     bucket: enforcement.action
     family_schema_version: 1
+    outcome_requirement: required
     allowed_outcomes:
-    - attempted
-    - validated
-    - applied
-    - completed
-    - allowed
-    - blocked
-    - denied
-    - approved
     - quarantined
-    - redacted
-    - revoked
-    - released
-    - terminated
-    - rejected
-    - failed
-    - timed_out
-    - cancelled
-    - partial
-    - skipped
-    - no_change
     route_selector: true
     mandatory_floor:
     - enforcement_state_change
@@ -2156,27 +1905,9 @@ groups:
   x-defenseclaw:
     bucket: enforcement.action
     family_schema_version: 1
+    outcome_requirement: required
     allowed_outcomes:
-    - attempted
-    - validated
-    - applied
-    - completed
-    - allowed
-    - blocked
-    - denied
-    - approved
-    - quarantined
     - redacted
-    - revoked
-    - released
-    - terminated
-    - rejected
-    - failed
-    - timed_out
-    - cancelled
-    - partial
-    - skipped
-    - no_change
     route_selector: true
     mandatory_floor:
     - enforced_outcome
@@ -2198,27 +1929,9 @@ groups:
   x-defenseclaw:
     bucket: enforcement.action
     family_schema_version: 1
+    outcome_requirement: required
     allowed_outcomes:
-    - attempted
-    - validated
-    - applied
-    - completed
-    - allowed
-    - blocked
-    - denied
-    - approved
-    - quarantined
-    - redacted
-    - revoked
     - released
-    - terminated
-    - rejected
-    - failed
-    - timed_out
-    - cancelled
-    - partial
-    - skipped
-    - no_change
     route_selector: true
     mandatory_floor:
     - enforcement_state_change
@@ -2240,27 +1953,8 @@ groups:
   x-defenseclaw:
     bucket: security.finding
     family_schema_version: 1
-    allowed_outcomes:
-    - attempted
-    - validated
-    - applied
-    - completed
-    - allowed
-    - blocked
-    - denied
-    - approved
-    - quarantined
-    - redacted
-    - revoked
-    - released
-    - terminated
-    - rejected
-    - failed
-    - timed_out
-    - cancelled
-    - partial
-    - skipped
-    - no_change
+    outcome_requirement: forbidden
+    allowed_outcomes: []
     route_selector: true
     mandatory_floor: []
     compatibility_profiles:
@@ -2281,27 +1975,8 @@ groups:
   x-defenseclaw:
     bucket: security.finding
     family_schema_version: 1
-    allowed_outcomes:
-    - attempted
-    - validated
-    - applied
-    - completed
-    - allowed
-    - blocked
-    - denied
-    - approved
-    - quarantined
-    - redacted
-    - revoked
-    - released
-    - terminated
-    - rejected
-    - failed
-    - timed_out
-    - cancelled
-    - partial
-    - skipped
-    - no_change
+    outcome_requirement: forbidden
+    allowed_outcomes: []
     route_selector: true
     mandatory_floor: []
     compatibility_profiles:
@@ -2326,27 +2001,15 @@ groups:
   x-defenseclaw:
     bucket: guardrail.evaluation
     family_schema_version: 1
+    outcome_requirement: required
     allowed_outcomes:
-    - attempted
-    - validated
-    - applied
-    - completed
     - allowed
     - blocked
+    - completed
     - denied
-    - approved
-    - quarantined
-    - redacted
-    - revoked
-    - released
-    - terminated
-    - rejected
-    - failed
-    - timed_out
-    - cancelled
     - partial
+    - redacted
     - skipped
-    - no_change
     route_selector: true
     mandatory_floor: []
     compatibility_profiles:
@@ -2367,27 +2030,11 @@ groups:
   x-defenseclaw:
     bucket: guardrail.evaluation
     family_schema_version: 1
+    outcome_requirement: required
     allowed_outcomes:
-    - attempted
-    - validated
-    - applied
-    - completed
-    - allowed
-    - blocked
-    - denied
-    - approved
-    - quarantined
-    - redacted
-    - revoked
-    - released
-    - terminated
-    - rejected
+    - cancelled
     - failed
     - timed_out
-    - cancelled
-    - partial
-    - skipped
-    - no_change
     route_selector: true
     mandatory_floor: []
     compatibility_profiles:
@@ -2408,27 +2055,9 @@ groups:
   x-defenseclaw:
     bucket: guardrail.evaluation
     family_schema_version: 1
+    outcome_requirement: required
     allowed_outcomes:
     - attempted
-    - validated
-    - applied
-    - completed
-    - allowed
-    - blocked
-    - denied
-    - approved
-    - quarantined
-    - redacted
-    - revoked
-    - released
-    - terminated
-    - rejected
-    - failed
-    - timed_out
-    - cancelled
-    - partial
-    - skipped
-    - no_change
     route_selector: true
     mandatory_floor: []
     compatibility_profiles:
@@ -2449,27 +2078,9 @@ groups:
   x-defenseclaw:
     bucket: asset.scan
     family_schema_version: 1
+    outcome_requirement: required
     allowed_outcomes:
-    - attempted
-    - validated
-    - applied
-    - completed
-    - allowed
-    - blocked
-    - denied
-    - approved
-    - quarantined
-    - redacted
-    - revoked
-    - released
-    - terminated
-    - rejected
-    - failed
-    - timed_out
     - cancelled
-    - partial
-    - skipped
-    - no_change
     route_selector: true
     mandatory_floor: []
     compatibility_profiles:
@@ -2490,27 +2101,11 @@ groups:
   x-defenseclaw:
     bucket: asset.scan
     family_schema_version: 1
+    outcome_requirement: required
     allowed_outcomes:
-    - attempted
-    - validated
-    - applied
     - completed
-    - allowed
-    - blocked
-    - denied
-    - approved
-    - quarantined
-    - redacted
-    - revoked
-    - released
-    - terminated
-    - rejected
-    - failed
-    - timed_out
-    - cancelled
     - partial
     - skipped
-    - no_change
     route_selector: true
     mandatory_floor: []
     compatibility_profiles:
@@ -2531,27 +2126,10 @@ groups:
   x-defenseclaw:
     bucket: asset.scan
     family_schema_version: 1
+    outcome_requirement: required
     allowed_outcomes:
-    - attempted
-    - validated
-    - applied
-    - completed
-    - allowed
-    - blocked
-    - denied
-    - approved
-    - quarantined
-    - redacted
-    - revoked
-    - released
-    - terminated
-    - rejected
     - failed
     - timed_out
-    - cancelled
-    - partial
-    - skipped
-    - no_change
     route_selector: true
     mandatory_floor: []
     compatibility_profiles:
@@ -2572,27 +2150,11 @@ groups:
   x-defenseclaw:
     bucket: asset.scan
     family_schema_version: 1
+    outcome_requirement: required
     allowed_outcomes:
-    - attempted
-    - validated
-    - applied
     - completed
-    - allowed
-    - blocked
-    - denied
-    - approved
-    - quarantined
-    - redacted
-    - revoked
-    - released
-    - terminated
-    - rejected
-    - failed
-    - timed_out
-    - cancelled
     - partial
     - skipped
-    - no_change
     route_selector: true
     mandatory_floor: []
     compatibility_profiles:
@@ -2613,27 +2175,9 @@ groups:
   x-defenseclaw:
     bucket: asset.scan
     family_schema_version: 1
+    outcome_requirement: required
     allowed_outcomes:
     - attempted
-    - validated
-    - applied
-    - completed
-    - allowed
-    - blocked
-    - denied
-    - approved
-    - quarantined
-    - redacted
-    - revoked
-    - released
-    - terminated
-    - rejected
-    - failed
-    - timed_out
-    - cancelled
-    - partial
-    - skipped
-    - no_change
     route_selector: true
     mandatory_floor: []
     compatibility_profiles:
@@ -2654,27 +2198,10 @@ groups:
   x-defenseclaw:
     bucket: guardrail.evaluation
     family_schema_version: 1
+    outcome_requirement: required
     allowed_outcomes:
-    - attempted
-    - validated
-    - applied
-    - completed
     - allowed
     - blocked
-    - denied
-    - approved
-    - quarantined
-    - redacted
-    - revoked
-    - released
-    - terminated
-    - rejected
-    - failed
-    - timed_out
-    - cancelled
-    - partial
-    - skipped
-    - no_change
     route_selector: true
     mandatory_floor: []
     compatibility_profiles:
@@ -2695,27 +2222,15 @@ groups:
   x-defenseclaw:
     bucket: guardrail.evaluation
     family_schema_version: 1
+    outcome_requirement: required
     allowed_outcomes:
-    - attempted
-    - validated
-    - applied
-    - completed
     - allowed
     - blocked
+    - completed
     - denied
-    - approved
-    - quarantined
-    - redacted
-    - revoked
-    - released
-    - terminated
-    - rejected
-    - failed
-    - timed_out
-    - cancelled
     - partial
+    - redacted
     - skipped
-    - no_change
     route_selector: true
     mandatory_floor: []
     compatibility_profiles:
@@ -2755,8 +2270,6 @@ groups:
   x-defenseclaw:
     bucket: guardrail.evaluation
     family_schema_version: 1
-    allowed_outcomes:
-    - completed
     route_selector: true
     compatibility_profiles:
     - local-observability-v1
@@ -2799,8 +2312,6 @@ groups:
   x-defenseclaw:
     bucket: security.finding
     family_schema_version: 1
-    allowed_outcomes:
-    - completed
     route_selector: true
     compatibility_profiles:
     - local-observability-v1
@@ -2839,8 +2350,6 @@ groups:
   x-defenseclaw:
     bucket: enforcement.action
     family_schema_version: 1
-    allowed_outcomes:
-    - completed
     route_selector: true
     compatibility_profiles:
     - local-observability-v1
@@ -2871,8 +2380,6 @@ groups:
   x-defenseclaw:
     bucket: guardrail.evaluation
     family_schema_version: 1
-    allowed_outcomes:
-    - completed
     route_selector: true
     compatibility_profiles:
     - local-observability-v1
@@ -2904,8 +2411,6 @@ groups:
   x-defenseclaw:
     bucket: guardrail.evaluation
     family_schema_version: 1
-    allowed_outcomes:
-    - completed
     route_selector: true
     compatibility_profiles:
     - local-observability-v1
@@ -2944,8 +2449,6 @@ groups:
   x-defenseclaw:
     bucket: network.egress
     family_schema_version: 1
-    allowed_outcomes:
-    - completed
     route_selector: true
     compatibility_profiles:
     - local-observability-v1
@@ -2980,8 +2483,6 @@ groups:
   x-defenseclaw:
     bucket: guardrail.evaluation
     family_schema_version: 1
-    allowed_outcomes:
-    - completed
     route_selector: true
     compatibility_profiles:
     - local-observability-v1
@@ -3020,8 +2521,6 @@ groups:
   x-defenseclaw:
     bucket: guardrail.evaluation
     family_schema_version: 1
-    allowed_outcomes:
-    - completed
     route_selector: true
     compatibility_profiles:
     - local-observability-v1
@@ -3053,8 +2552,6 @@ groups:
   x-defenseclaw:
     bucket: guardrail.evaluation
     family_schema_version: 1
-    allowed_outcomes:
-    - completed
     route_selector: true
     compatibility_profiles:
     - local-observability-v1
@@ -3101,8 +2598,6 @@ groups:
   x-defenseclaw:
     bucket: enforcement.action
     family_schema_version: 1
-    allowed_outcomes:
-    - completed
     route_selector: true
     compatibility_profiles:
     - local-observability-v1
@@ -3145,8 +2640,6 @@ groups:
   x-defenseclaw:
     bucket: guardrail.evaluation
     family_schema_version: 1
-    allowed_outcomes:
-    - completed
     route_selector: true
     compatibility_profiles:
     - local-observability-v1
@@ -3189,8 +2682,6 @@ groups:
   x-defenseclaw:
     bucket: guardrail.evaluation
     family_schema_version: 1
-    allowed_outcomes:
-    - completed
     route_selector: true
     compatibility_profiles:
     - local-observability-v1
@@ -3229,8 +2720,6 @@ groups:
   x-defenseclaw:
     bucket: guardrail.evaluation
     family_schema_version: 1
-    allowed_outcomes:
-    - completed
     route_selector: true
     compatibility_profiles:
     - local-observability-v1
@@ -3264,8 +2753,6 @@ groups:
   x-defenseclaw:
     bucket: guardrail.evaluation
     family_schema_version: 1
-    allowed_outcomes:
-    - completed
     route_selector: true
     compatibility_profiles:
     - local-observability-v1
@@ -3301,8 +2788,6 @@ groups:
   x-defenseclaw:
     bucket: guardrail.evaluation
     family_schema_version: 1
-    allowed_outcomes:
-    - completed
     route_selector: true
     compatibility_profiles:
     - local-observability-v1
@@ -3345,8 +2830,6 @@ groups:
   x-defenseclaw:
     bucket: guardrail.evaluation
     family_schema_version: 1
-    allowed_outcomes:
-    - completed
     route_selector: true
     compatibility_profiles:
     - local-observability-v1
@@ -3382,8 +2865,6 @@ groups:
   x-defenseclaw:
     bucket: guardrail.evaluation
     family_schema_version: 1
-    allowed_outcomes:
-    - completed
     route_selector: true
     compatibility_profiles:
     - local-observability-v1
@@ -3418,8 +2899,6 @@ groups:
   x-defenseclaw:
     bucket: guardrail.evaluation
     family_schema_version: 1
-    allowed_outcomes:
-    - completed
     route_selector: true
     compatibility_profiles:
     - local-observability-v1
@@ -3451,8 +2930,6 @@ groups:
   x-defenseclaw:
     bucket: guardrail.evaluation
     family_schema_version: 1
-    allowed_outcomes:
-    - completed
     route_selector: true
     compatibility_profiles:
     - local-observability-v1
@@ -3487,8 +2964,6 @@ groups:
   x-defenseclaw:
     bucket: enforcement.action
     family_schema_version: 1
-    allowed_outcomes:
-    - completed
     route_selector: true
     compatibility_profiles:
     - local-observability-v1
@@ -3527,8 +3002,6 @@ groups:
   x-defenseclaw:
     bucket: asset.scan
     family_schema_version: 1
-    allowed_outcomes:
-    - completed
     route_selector: true
     compatibility_profiles:
     - local-observability-v1
@@ -3564,8 +3037,6 @@ groups:
   x-defenseclaw:
     bucket: asset.scan
     family_schema_version: 1
-    allowed_outcomes:
-    - completed
     route_selector: true
     compatibility_profiles:
     - local-observability-v1
@@ -3604,8 +3075,6 @@ groups:
   x-defenseclaw:
     bucket: asset.scan
     family_schema_version: 1
-    allowed_outcomes:
-    - completed
     route_selector: true
     compatibility_profiles:
     - local-observability-v1
@@ -3648,8 +3117,6 @@ groups:
   x-defenseclaw:
     bucket: security.finding
     family_schema_version: 1
-    allowed_outcomes:
-    - completed
     route_selector: true
     compatibility_profiles:
     - local-observability-v1
@@ -3692,8 +3159,6 @@ groups:
   x-defenseclaw:
     bucket: security.finding
     family_schema_version: 1
-    allowed_outcomes:
-    - completed
     route_selector: true
     compatibility_profiles:
     - local-observability-v1
@@ -3728,8 +3193,6 @@ groups:
   x-defenseclaw:
     bucket: security.finding
     family_schema_version: 1
-    allowed_outcomes:
-    - completed
     route_selector: true
     compatibility_profiles:
     - local-observability-v1
@@ -3760,8 +3223,6 @@ groups:
   x-defenseclaw:
     bucket: asset.scan
     family_schema_version: 1
-    allowed_outcomes:
-    - completed
     route_selector: true
     compatibility_profiles:
     - local-observability-v1
@@ -3796,8 +3257,6 @@ groups:
   x-defenseclaw:
     bucket: network.egress
     family_schema_version: 1
-    allowed_outcomes:
-    - completed
     route_selector: true
     compatibility_profiles:
     - local-observability-v1
@@ -3828,8 +3287,6 @@ groups:
   x-defenseclaw:
     bucket: network.egress
     family_schema_version: 1
-    allowed_outcomes:
-    - completed
     route_selector: true
     compatibility_profiles:
     - local-observability-v1
@@ -3864,8 +3321,6 @@ groups:
   x-defenseclaw:
     bucket: network.egress
     family_schema_version: 1
-    allowed_outcomes:
-    - completed
     route_selector: true
     compatibility_profiles:
     - local-observability-v1
@@ -3900,8 +3355,6 @@ groups:
   x-defenseclaw:
     bucket: network.egress
     family_schema_version: 1
-    allowed_outcomes:
-    - completed
     route_selector: true
     compatibility_profiles:
     - local-observability-v1
@@ -3941,8 +3394,6 @@ groups:
   x-defenseclaw:
     bucket: network.egress
     family_schema_version: 1
-    allowed_outcomes:
-    - completed
     route_selector: true
     compatibility_profiles:
     - local-observability-v1
