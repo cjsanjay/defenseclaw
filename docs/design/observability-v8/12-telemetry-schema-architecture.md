@@ -968,6 +968,20 @@ and therefore remain distinct declarations.
 | Typed link input | `Span<FamilyName><RelationName>LinkInput` |
 | Typed link constructor | `NewSpan<FamilyName><RelationName>Link` |
 
+`Structured-member ID` covers all forty-nine version-1 member identities: thirty-one
+ordinary fixed fields, the union-owned `gen_ai.message_part.type` discriminator,
+and seventeen controlled ordered `entry` members (sixteen `dynamic_members` plus
+the canonical-JSON object member). The `Typed structured-member input` and
+`Typed structured-member constructor` rows apply only to those seventeen ordered
+members identified by `member_id`; they do not generate forty-nine one-field APIs.
+Fixed fields are typed fields of their owning structured input, and the union
+constructor supplies its discriminator. Version 1 therefore has exactly 121
+structured symbol rows: 21 type IDs, 49 member IDs, 17 arm IDs, 17 ordered-member
+inputs, and 17 ordered-member constructors. Combined with the frozen v1 registry,
+family, event/link-pair, condition, phase, and semantic-profile inventories, the
+complete symbol table contains 1,773 rows. A count change requires a source change
+and a new reviewed baseline; a renderer cannot reinterpret these row scopes.
+
 For family declarations, `<Name>` omits the leading signal token from the stable
 family ID; for example, `span.model.chat` produces `SpanModelChatInput` and
 `BuildSpanModelChat`. Event and link type/constructor names include the owning
@@ -1050,8 +1064,8 @@ from that view. It contains:
   and complete property-disposition table; exactly four structured bindings; and
   every fixed/dynamic member, dynamic-variant exclusion, canonical-JSON recursion
   bound and exact counting rule, union-owned discriminator, effective reserved-name
-  set, stable member/arm ID, and structured type/member/arm/input/constructor Go
-  symbol;
+  set, stable member/arm ID, every structured type/member/arm Go symbol, and the
+  ordered-member input/constructor Go symbols;
 - normalized examples with explicit/inherited builder contexts; and
 - the complete P-069 structural objects, relations, derivations, and OTLP
   representation.

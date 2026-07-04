@@ -251,6 +251,10 @@ def test_observability_v8_generated_builder_source_contract_is_normative() -> No
     assert "`gen_ai.canonical_json` produces `TelemetryStructuredGenAICanonicalJSON`" in schemas
     assert "`<MemberName>` comes from a fixed field `name` or from `member_id`" in schemas
     assert "`<ArmName>` comes from a registered `tag`, or from `arm_id`" in schemas
+    assert "all forty-nine version-1 member identities" in schemas
+    assert "apply only to those seventeen ordered" in schemas
+    assert "exactly 121" in schemas
+    assert "complete symbol table contains 1,773 rows" in schemas
     for namespace in (
         "TelemetryAttribute<Name>",
         "TelemetryFamily<Name>",
