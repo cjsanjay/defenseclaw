@@ -26,6 +26,7 @@ import json
 import math
 import re
 import unicodedata
+from collections import Counter
 from collections.abc import Mapping, Sequence
 from pathlib import PurePosixPath
 from types import MappingProxyType
@@ -52,6 +53,7 @@ JSONObject: TypeAlias = dict[str, Any]
 
 MATERIALIZED_VIEW_FORMAT: Final = "defenseclaw-materialized-registry-view-v1"
 MATERIALIZED_VIEW_DIGEST_DOMAIN: Final = b"DefenseClaw MaterializedRegistryView v1\x00"
+CANDIDATE_RENDER_INDEX_DIGEST_DOMAIN: Final = b"DefenseClaw CandidateRenderIndex v1\x00"
 GENERATOR_ID: Final = "defenseclaw-telemetry-candidate-renderer-v1"
 CANDIDATE_AUTHORITY: Final = "candidate-not-public-authority"
 GENERATED_PREFIX: Final = "schemas/telemetry/generated"
@@ -478,6 +480,7 @@ _GROUP_FIELDS: Final = frozenset(
         "event_name",
         "bucket",
         "span_name_pattern",
+        "span_name_parts",
         "span_kinds",
         "span_status_rule",
         "instrument_name",
@@ -768,6 +771,10 @@ _STRUCTURAL_FIELD_FIELDS: Final = frozenset(
 )
 _SIGNAL_ARM_FIELDS: Final = frozenset(
     {"signal", "payload_field", "required_fields", "forbidden_fields", "required_correlation_fields"}
+)
+_SPAN_NAME_PART_FIELDS: Final = frozenset({"kind", "literal", "field"})
+_TRACE_DERIVATION_FIELDS: Final = frozenset(
+    {"id", "target_attribute", "target_field", "source", "equality", "presence"}
 )
 _CANONICAL_OTLP_FIELDS: Final = frozenset(
     {
@@ -2126,6 +2133,166 @@ class CandidateGoSymbolTable:
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
+class EnrichedFieldDescriptor:
+    """One occurrence-scoped semantic field with every registry join resolved."""
+
+    id: str
+    context: str
+    owner_id: str
+    attribute_id: str
+    order: int
+    role: str
+    path: str
+    path_kind: str
+    input_placement: str
+    target_slot: str
+    field_types: tuple[str, ...]
+    structured_type: str | None
+    canonical_owner: str | None
+    requirement_level: str
+    condition_id: str | None
+    condition_fact: str | None
+    condition_false_requirement: str | None
+    field_class: str
+    sensitivity: str
+    cardinality: str | None
+    stability: str | None
+    introduced_in: str | None
+    deprecated_in: str | None
+    removed_in: str | None
+    normalization_id: str
+    normalization_effective_constraints: Mapping[str, FrozenJSON]
+    use_constraints: Mapping[str, FrozenJSON]
+    effective_constraints: Mapping[str, FrozenJSON]
+    value_source: str
+    origins: tuple[Mapping[str, FrozenJSON], ...]
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class EnrichedContainerDescriptor:
+    """Unclassified structural shape or structured-reference edge."""
+
+    id: str
+    context: str
+    owner_id: str
+    kind: str
+    path: str
+    closed: bool
+    requirement_level: str | None
+    introduced_in: str | None
+    deprecated_in: str | None
+    removed_in: str | None
+    bounds: Mapping[str, FrozenJSON]
+    origin: str
+    child_fields: tuple[str, ...]
+    child_containers: tuple[str, ...]
+    reference_target: str | None
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class ResolvedMandatoryProgramIR:
+    """The selected log family's sole, ordered mandatory-floor program."""
+
+    family_id: str
+    rule_ids: tuple[str, ...]
+    constant_rule_ids: tuple[str, ...]
+    fact_terms: tuple[tuple[str, str], ...]
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class EnrichedFamilyDescriptor:
+    """Typed family identity joined to its occurrence-scoped fields."""
+
+    id: str
+    domain: str
+    signal: str
+    bucket: str
+    event_name: str
+    family_schema_version: int
+    stability: str
+    introduced_in: str | None
+    deprecated_in: str | None
+    removed_in: str | None
+    outcome_requirement: str | None
+    allowed_outcomes: tuple[str, ...]
+    route_selector: bool
+    compatibility_profiles: tuple[str, ...]
+    field_descriptor_ids: tuple[str, ...]
+    mandatory_program_id: str | None
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class EnrichedTraceDescriptor:
+    """Complete trace-family shape using compiler-owned span-name parts."""
+
+    family_id: str
+    span_name_pattern: str
+    span_name_parts: tuple[Mapping[str, FrozenJSON], ...]
+    span_kinds: tuple[str, ...]
+    span_status_rule: str
+    field_descriptor_ids: tuple[str, ...]
+    resource_field_descriptor_ids: tuple[str, ...]
+    scope_field_descriptor_ids: tuple[str, ...]
+    event_field_descriptor_ids: Mapping[str, tuple[str, ...]]
+    link_field_descriptor_ids: tuple[str, ...]
+    event_refs: tuple[str, ...]
+    link_relations: tuple[str, ...]
+    derivations: tuple[Mapping[str, FrozenJSON], ...]
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class EnrichedMetricDescriptor:
+    """Complete metric instrument and resolved label contract."""
+
+    family_id: str
+    instrument_name: str
+    instrument_type: str
+    value_type: str
+    unit: str
+    description: str
+    temporality: str
+    boundaries: tuple[int | float, ...]
+    field_descriptor_ids: tuple[str, ...]
+    projections: tuple[Mapping[str, FrozenJSON], ...]
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class ExpandedProducerMappingDescriptor:
+    """One explicit producer-to-identity row after contextual-set expansion."""
+
+    id: str
+    domain: str
+    mapping_index: int
+    identity_index: int
+    identity_origin: str
+    producer: str
+    key: str
+    source: str
+    event_name_policy: str
+    severity_policy: str
+    event_name: str
+    bucket: str
+    family_id: str | None
+    compatibility_only: bool
+    selected_mandatory_program_id: str | None
+    legacy_mapping_mandatory_rules: tuple[str, ...]
+    companion_rules: tuple[str, ...]
+    compatibility: Mapping[str, FrozenJSON]
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class GoDeclarationValue:
+    """Exact literal for one reviewed exported-constant declaration row."""
+
+    kind: str
+    source_id: str
+    symbol: str
+    go_type: str
+    literal_kind: str
+    value: str | int
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
 class CandidateRenderIndex:
     """Recursively immutable, renderer-ready join of one materialized view."""
 
@@ -2133,6 +2300,8 @@ class CandidateRenderIndex:
     registry_version: int
     bucket_catalog_version: int
     digest: str
+    materialized_view_sha256: str
+    candidate_render_index_sha256: str
     fields: Mapping[str, FrozenJSON]
     go_symbol_policy: CandidateGoSymbolPolicy
     go_symbol_overrides: tuple[CandidateGoSymbolOverride, ...]
@@ -2148,6 +2317,14 @@ class CandidateRenderIndex:
     span_events: Mapping[str, Mapping[str, FrozenJSON]]
     examples: tuple[Mapping[str, FrozenJSON], ...]
     example_output_paths: Mapping[str, CandidateExampleOutputPaths]
+    enriched_fields: Mapping[str, EnrichedFieldDescriptor]
+    enriched_containers: Mapping[str, EnrichedContainerDescriptor]
+    enriched_families: Mapping[str, EnrichedFamilyDescriptor]
+    enriched_traces: Mapping[str, EnrichedTraceDescriptor]
+    enriched_metrics: Mapping[str, EnrichedMetricDescriptor]
+    mandatory_programs: Mapping[str, ResolvedMandatoryProgramIR]
+    expanded_producer_mappings: tuple[ExpandedProducerMappingDescriptor, ...]
+    go_declaration_values: tuple[GoDeclarationValue, ...]
 
 
 def _go_symbol_table_digest(rows: Sequence[CandidateGoSymbol]) -> str:
@@ -2866,6 +3043,1148 @@ def _validate_exact_structured_contracts(
         raise CandidateRenderError("materialized canonical JSON type contract is not canonical")
 
 
+def _pointer_token(value: str) -> str:
+    return value.replace("~", "~0").replace("/", "~1")
+
+
+def _descriptor_payload(value: Any) -> Any:
+    """Convert immutable descriptor records into deterministic typed-digest input."""
+
+    if dataclasses.is_dataclass(value) and not isinstance(value, type):
+        return {field.name: _descriptor_payload(getattr(value, field.name)) for field in dataclasses.fields(value)}
+    if isinstance(value, Mapping):
+        return {key: _descriptor_payload(value[key]) for key in sorted(value)}
+    if isinstance(value, tuple):
+        return tuple(_descriptor_payload(item) for item in value)
+    if value is None or type(value) in {bool, int, float, str, bytes}:
+        return value
+    raise CandidateRenderError("candidate render index digest contains an unsupported value")
+
+
+def _go_declaration_values(
+    table: CandidateGoSymbolTable,
+    fields: Mapping[str, FrozenJSON],
+) -> tuple[GoDeclarationValue, ...]:
+    """Bind all exported constant symbols to exact literals without tokenizing IDs."""
+
+    phase_codes: dict[str, int] = {}
+    raw_catalogs = fields["value_catalogs"]
+    if not isinstance(raw_catalogs, tuple):
+        raise CandidateRenderError("materialized value catalog inventory is invalid")
+    for raw_catalog in raw_catalogs:
+        catalog = _tagged(raw_catalog, "ValueCatalogIR", _VALUE_CATALOG_FIELDS)
+        raw_entries = catalog["entries"]
+        if not isinstance(raw_entries, tuple):
+            raise CandidateRenderError("materialized value catalog entries are invalid")
+        for raw_entry in raw_entries:
+            entry = _tagged(raw_entry, "ValueCatalogEntryIR", _VALUE_CATALOG_ENTRY_FIELDS)
+            value = _string(entry["value"], "value catalog value")
+            code = _integer(entry["code"], "value catalog code")
+            if value in phase_codes:
+                raise CandidateRenderError("materialized value catalog value is duplicated")
+            phase_codes[value] = code
+
+    declarations: list[GoDeclarationValue] = []
+    for row in table.rows:
+        if row.declaration_form != "exported_const":
+            continue
+        if row.kind == "phase_code":
+            value = phase_codes.get(row.source_id)
+            if value is None:
+                raise CandidateRenderError("Go phase-code declaration has no exact value")
+            declarations.append(GoDeclarationValue(row.kind, row.source_id, row.symbol, "int", "integer", value))
+            continue
+        value = row.source_id.split("#", 1)[1] if row.kind == "structured_member" else row.source_id
+        declarations.append(GoDeclarationValue(row.kind, row.source_id, row.symbol, "string", "string", value))
+    if len(declarations) != 893 or Counter(item.kind for item in declarations) != {
+        kind: count
+        for kind, count in _GO_SYMBOL_KIND_COUNTS.items()
+        if _GO_SYMBOL_DECLARATION_BY_KIND[kind] == "exported_const"
+    }:
+        raise CandidateRenderError("Go declaration value inventory is incomplete")
+    return tuple(declarations)
+
+
+def _candidate_render_index_digest(
+    materialized_view_sha256: str,
+    *,
+    enriched_fields: Mapping[str, EnrichedFieldDescriptor],
+    enriched_containers: Mapping[str, EnrichedContainerDescriptor],
+    enriched_families: Mapping[str, EnrichedFamilyDescriptor],
+    enriched_traces: Mapping[str, EnrichedTraceDescriptor],
+    enriched_metrics: Mapping[str, EnrichedMetricDescriptor],
+    mandatory_programs: Mapping[str, ResolvedMandatoryProgramIR],
+    expanded_producer_mappings: tuple[ExpandedProducerMappingDescriptor, ...],
+    go_declaration_values: tuple[GoDeclarationValue, ...],
+) -> str:
+    payload = {
+        "format": "defenseclaw-candidate-render-index-v1",
+        "materialized_view_sha256": materialized_view_sha256,
+        "enriched_fields": enriched_fields,
+        "enriched_containers": enriched_containers,
+        "enriched_families": enriched_families,
+        "enriched_traces": enriched_traces,
+        "enriched_metrics": enriched_metrics,
+        "mandatory_programs": mandatory_programs,
+        "expanded_producer_mappings": expanded_producer_mappings,
+        "go_declaration_values": go_declaration_values,
+    }
+    typed = _typed_materialized_node(_freeze(_descriptor_payload(payload)))
+    return hashlib.sha256(CANDIDATE_RENDER_INDEX_DIGEST_DOMAIN + _canonical_json_bytes(typed)).hexdigest()
+
+
+def _condition_contracts(fields: Mapping[str, FrozenJSON]) -> Mapping[str, tuple[str, str]]:
+    conditions: dict[str, tuple[str, str]] = {}
+    raw_conditions = fields["conditions"]
+    if not isinstance(raw_conditions, tuple):
+        raise CandidateRenderError("materialized condition inventory is invalid")
+    for raw_condition in raw_conditions:
+        condition = _tagged(raw_condition, "ConditionIR", _CONDITION_FIELDS)
+        condition_id = _string(condition["id"], "condition id")
+        enforcement = _tagged(
+            condition["enforcement"],
+            "ConditionEnforcementIR",
+            _CONDITION_ENFORCEMENT_FIELDS,
+        )
+        fact = _string(enforcement["fact"], "condition fact")
+        false_requirement = _string(condition["false_requirement"], "condition false requirement")
+        if (
+            enforcement["kind"] != "builder_fact"
+            or false_requirement not in {"optional", "forbidden"}
+            or condition_id in conditions
+        ):
+            raise CandidateRenderError("materialized condition contract is invalid")
+        conditions[condition_id] = (fact, false_requirement)
+    return MappingProxyType(conditions)
+
+
+def _mandatory_rule_contracts(fields: Mapping[str, FrozenJSON]) -> Mapping[str, tuple[str, str | None]]:
+    catalog = _tagged(fields["mandatory_rule_catalog"], "MandatoryRuleCatalogIR", _MANDATORY_RULE_CATALOG_FIELDS)
+    rules: dict[str, tuple[str, str | None]] = {}
+    raw_rules = catalog["rules"]
+    if not isinstance(raw_rules, tuple):
+        raise CandidateRenderError("materialized mandatory rule inventory is invalid")
+    for raw_rule in raw_rules:
+        rule = _tagged(raw_rule, "MandatoryRuleIR", _MANDATORY_RULE_FIELDS)
+        rule_id = _string(rule["id"], "mandatory rule id")
+        enforcement = _tagged(
+            rule["enforcement"],
+            "MandatoryRuleEnforcementIR",
+            _MANDATORY_RULE_ENFORCEMENT_FIELDS,
+        )
+        kind = _string(enforcement["kind"], "mandatory enforcement kind")
+        fact = enforcement["fact"]
+        if kind == "constant":
+            if enforcement["value"] is not True or fact is not None:
+                raise CandidateRenderError("materialized constant mandatory rule is invalid")
+        elif kind == "builder_fact":
+            fact = _string(fact, "mandatory builder fact")
+            if enforcement["value"] is not None:
+                raise CandidateRenderError("materialized builder mandatory rule is invalid")
+        else:
+            raise CandidateRenderError("materialized mandatory enforcement kind is invalid")
+        if rule_id in rules:
+            raise CandidateRenderError("materialized mandatory rule is duplicated")
+        rules[rule_id] = (kind, fact)
+    return MappingProxyType(rules)
+
+
+def _resolved_mandatory_programs(
+    families: Sequence[Mapping[str, FrozenJSON]],
+    rules: Mapping[str, tuple[str, str | None]],
+) -> Mapping[str, ResolvedMandatoryProgramIR]:
+    programs: dict[str, ResolvedMandatoryProgramIR] = {}
+    for family in families:
+        if family["type"] != "log":
+            continue
+        family_id = _string(family["id"], "mandatory family id")
+        raw_rule_ids = family["mandatory_floor"]
+        if not isinstance(raw_rule_ids, tuple):
+            raise CandidateRenderError("materialized log mandatory floor is invalid")
+        constant_rule_ids: list[str] = []
+        fact_terms: list[tuple[str, str]] = []
+        seen_rules: set[str] = set()
+        seen_facts: set[str] = set()
+        for rule_id in raw_rule_ids:
+            rule_id = _string(rule_id, "family mandatory rule")
+            contract = rules.get(rule_id)
+            if contract is None or rule_id in seen_rules:
+                raise CandidateRenderError("materialized family mandatory program is invalid")
+            kind, fact = contract
+            if kind == "constant":
+                constant_rule_ids.append(rule_id)
+            else:
+                assert fact is not None
+                if fact in seen_facts:
+                    raise CandidateRenderError("materialized family mandatory fact is duplicated")
+                seen_facts.add(fact)
+                fact_terms.append((rule_id, fact))
+            seen_rules.add(rule_id)
+        programs[family_id] = ResolvedMandatoryProgramIR(
+            family_id,
+            tuple(raw_rule_ids),
+            tuple(constant_rule_ids),
+            tuple(fact_terms),
+        )
+    return MappingProxyType({key: programs[key] for key in sorted(programs)})
+
+
+_TRACE_DERIVATION_CONTEXT_BY_SOURCE: Final = {
+    "envelope.bucket": "span",
+    "family.id": "span",
+    "family.family_schema_version": "span",
+    "envelope.source": "span",
+    "provenance.config_generation": "span",
+    "envelope.outcome": "span",
+    "provenance.binary_version": "resource",
+    "semantic_profile.trace_schema_version": "scope",
+    "semantic_profile.id": "scope",
+    "link.relation": "link",
+}
+
+
+def _trace_derivation_contract(
+    contract: Mapping[str, FrozenJSON],
+) -> tuple[Mapping[tuple[str, str], str], tuple[Mapping[str, FrozenJSON], ...]]:
+    raw_derivations = contract["trace_derivations"]
+    if not isinstance(raw_derivations, tuple) or len(raw_derivations) != 11:
+        raise CandidateRenderError("materialized trace derivation inventory is incomplete")
+    value_sources: dict[tuple[str, str], str] = {}
+    frozen_derivations: list[Mapping[str, FrozenJSON]] = []
+    target_field_count = 0
+    for raw_derivation in raw_derivations:
+        derivation = _tagged(raw_derivation, "TraceDerivationIR", _TRACE_DERIVATION_FIELDS)
+        target_attribute = derivation["target_attribute"]
+        target_field = derivation["target_field"]
+        source = _string(derivation["source"], "trace derivation source")
+        if (target_attribute is None) == (target_field is None):
+            raise CandidateRenderError("materialized trace derivation target is invalid")
+        if target_field is not None:
+            if target_field != "trace_scope.version" or source != "provenance.binary_version":
+                raise CandidateRenderError("materialized structural trace derivation is invalid")
+            target_field_count += 1
+        else:
+            context = _TRACE_DERIVATION_CONTEXT_BY_SOURCE.get(source)
+            if context is None:
+                raise CandidateRenderError("materialized trace derivation source is unknown")
+            key = (context, _string(target_attribute, "trace derivation attribute"))
+            if key in value_sources:
+                raise CandidateRenderError("materialized trace derivation target is duplicated")
+            value_sources[key] = source
+        frozen_derivations.append(_freeze(_plain_ir(raw_derivation)))
+    if target_field_count != 1 or len(value_sources) != 10:
+        raise CandidateRenderError("materialized trace derivation target inventory is invalid")
+    return MappingProxyType(value_sources), tuple(frozen_derivations)
+
+
+def _effective_occurrence_constraints(
+    normalization_constraints: Mapping[str, FrozenJSON],
+    use_constraints: Mapping[str, FrozenJSON],
+) -> Mapping[str, FrozenJSON]:
+    """Materialize the final restrictive overlay so downstream plans never join it."""
+
+    base = _validated_constraint_map(normalization_constraints, "enriched normalization constraints")
+    use = _validated_constraint_map(use_constraints, "enriched occurrence constraints")
+    _validate_constraint_restriction(use, base, "enriched occurrence constraints")
+    effective = dict(base)
+    effective.update(use)
+    return _freeze(effective)
+
+
+def _validated_span_name_parts(family: Mapping[str, FrozenJSON]) -> tuple[Mapping[str, FrozenJSON], ...]:
+    raw_parts = family["span_name_parts"]
+    if not isinstance(raw_parts, tuple) or not raw_parts:
+        raise CandidateRenderError("materialized span-name parts are incomplete")
+    parts: list[Mapping[str, FrozenJSON]] = []
+    rendered: list[str] = []
+    resolved_refs = {use["ref"] for raw_use in family["resolved_uses"] for use in (_resolved_use(raw_use),)}
+    for raw_part in raw_parts:
+        part = _tagged(raw_part, "SpanNamePartIR", _SPAN_NAME_PART_FIELDS)
+        kind = part["kind"]
+        literal = part["literal"]
+        field = part["field"]
+        if kind == "literal":
+            if not isinstance(literal, str) or not literal or field is not None:
+                raise CandidateRenderError("materialized literal span-name part is invalid")
+            rendered.append(literal)
+        elif kind == "field":
+            field = _string(field, "span-name field")
+            if literal is not None or field not in resolved_refs:
+                raise CandidateRenderError("materialized field span-name part is invalid")
+            rendered.append("{" + field + "}")
+        else:
+            raise CandidateRenderError("materialized span-name part kind is invalid")
+        parts.append(_freeze(_plain_ir(raw_part)))
+    if "".join(rendered) != family["span_name_pattern"]:
+        raise CandidateRenderError("materialized span-name parts disagree with pattern")
+    return tuple(parts)
+
+
+def _enriched_field_descriptors(
+    *,
+    attributes: Mapping[str, CandidateAttribute],
+    groups: Mapping[str, Mapping[str, FrozenJSON]],
+    families: Sequence[Mapping[str, FrozenJSON]],
+    span_events: Mapping[str, Mapping[str, FrozenJSON]],
+    structured_types: Mapping[str, Mapping[str, FrozenJSON]],
+    conditions: Mapping[str, tuple[str, str]],
+    value_sources: Mapping[tuple[str, str], str],
+) -> Mapping[str, EnrichedFieldDescriptor]:
+    descriptors: dict[str, EnrichedFieldDescriptor] = {}
+
+    def contribute(
+        owner: Mapping[str, FrozenJSON],
+        *,
+        context: str,
+        owner_id: str,
+        path_prefix: str,
+        input_placement: str,
+        target_slot: str,
+    ) -> tuple[str, ...]:
+        descriptor_ids: list[str] = []
+        for order, raw_use in enumerate(owner["resolved_uses"]):
+            use = _resolved_use(raw_use)
+            ref = _string(use["ref"], "enriched field attribute")
+            attribute = attributes.get(ref)
+            if attribute is None:
+                raise CandidateRenderError("enriched field references an unknown attribute")
+            metadata = attribute.metadata
+            condition_id = use["conditional"]
+            condition_fact: str | None = None
+            false_requirement: str | None = None
+            if condition_id is not None:
+                condition = conditions.get(condition_id)
+                if condition is None:
+                    raise CandidateRenderError("enriched field condition is unknown")
+                condition_fact, false_requirement = condition
+            descriptor_id = f"{context}:{owner_id}:{ref}"
+            if descriptor_id in descriptors:
+                raise CandidateRenderError("enriched field descriptor is duplicated")
+            raw_origins = use["origins"]
+            if not isinstance(raw_origins, tuple) or not raw_origins:
+                raise CandidateRenderError("enriched field origins are incomplete")
+            origins = tuple(_freeze(_origin_projection(origin)) for origin in raw_origins)
+            use_constraints = _freeze(_validated_constraint_map(use["constraints"], "enriched use constraints"))
+            normalization = metadata["normalization"]
+            value_source = value_sources.get((context, ref), "input")
+            final_constraints = _effective_occurrence_constraints(
+                normalization["effective_constraints"],
+                use_constraints,
+            )
+            descriptor = EnrichedFieldDescriptor(
+                id=descriptor_id,
+                context=context,
+                owner_id=owner_id,
+                attribute_id=ref,
+                order=order,
+                role=_string(use["role"], "enriched field role"),
+                path=f"{path_prefix}/{_pointer_token(ref)}",
+                path_kind="payload_template",
+                input_placement=input_placement if value_source == "input" else "private_derived",
+                target_slot=target_slot,
+                field_types=attribute.field_types,
+                structured_type=attribute.structured_type,
+                canonical_owner=_string(metadata["owner"], "enriched canonical owner"),
+                requirement_level=_string(use["requirement_level"], "enriched requirement"),
+                condition_id=condition_id,
+                condition_fact=condition_fact,
+                condition_false_requirement=false_requirement,
+                field_class=_string(metadata["field_class"], "enriched field class"),
+                sensitivity=_string(metadata["sensitivity"], "enriched sensitivity"),
+                cardinality=_string(metadata["cardinality"], "enriched cardinality"),
+                stability=_string(metadata["stability"], "enriched stability"),
+                introduced_in=metadata["introduced_in"],
+                deprecated_in=metadata["deprecated_in"],
+                removed_in=metadata["removed_in"],
+                normalization_id=_string(normalization["id"], "enriched normalization"),
+                normalization_effective_constraints=_freeze(normalization["effective_constraints"]),
+                use_constraints=use_constraints,
+                effective_constraints=final_constraints,
+                value_source=value_source,
+                origins=origins,
+            )
+            descriptors[descriptor_id] = descriptor
+            descriptor_ids.append(descriptor_id)
+        return tuple(descriptor_ids)
+
+    for family in families:
+        family_id = _string(family["id"], "enriched family id")
+        family_type = family["type"]
+        if family_type == "log":
+            contribute(
+                family,
+                context="log",
+                owner_id=family_id,
+                path_prefix="/body",
+                input_placement="family_input",
+                target_slot="body",
+            )
+        elif family_type == "span":
+            contribute(
+                family,
+                context="span",
+                owner_id=family_id,
+                path_prefix="/body/attributes",
+                input_placement="family_input",
+                target_slot="trace.attributes",
+            )
+        elif family_type == "metric":
+            contribute(
+                family,
+                context="metric",
+                owner_id=family_id,
+                path_prefix="/instrument_data/attributes",
+                input_placement="family_input",
+                target_slot="metric.attributes",
+            )
+        else:
+            raise CandidateRenderError("enriched family signal is invalid")
+    contribute(
+        groups["resource.core"],
+        context="resource",
+        owner_id="resource.core",
+        path_prefix="/body/resource/attributes",
+        input_placement="resource_input",
+        target_slot="trace.resource.attributes",
+    )
+    contribute(
+        groups["scope.core"],
+        context="scope",
+        owner_id="scope.core",
+        path_prefix="/body/scope/attributes",
+        input_placement="family_input",
+        target_slot="trace.scope.attributes",
+    )
+    for event_name in sorted(span_events):
+        contribute(
+            span_events[event_name],
+            context="event",
+            owner_id=event_name,
+            path_prefix="/body/events/*/attributes",
+            input_placement="event_input",
+            target_slot="trace.event.attributes",
+        )
+    contribute(
+        groups["link.core"],
+        context="link",
+        owner_id="link.core",
+        path_prefix="/body/links/*/attributes",
+        input_placement="link_input",
+        target_slot="trace.link.attributes",
+    )
+
+    def contribute_structured_scalar(
+        *,
+        type_id: str,
+        member_id: str,
+        role: str,
+        order: int,
+        requirement: str,
+        field_type: str,
+        field_class: str,
+        sensitivity: str,
+        normalization_id: str,
+        normalization_constraints: Mapping[str, FrozenJSON],
+        origin: str,
+    ) -> str:
+        descriptor_id = f"structured:{type_id}:{member_id}"
+        if descriptor_id in descriptors:
+            raise CandidateRenderError("structured scalar field descriptor is duplicated")
+        descriptors[descriptor_id] = EnrichedFieldDescriptor(
+            id=descriptor_id,
+            context="structured",
+            owner_id=type_id,
+            attribute_id=member_id,
+            order=order,
+            role=role,
+            path=f"/structured/{_pointer_token(type_id)}/{_pointer_token(member_id)}",
+            path_kind="registry_relative",
+            input_placement="structured_input",
+            target_slot="structured.value",
+            field_types=(field_type,),
+            structured_type=None,
+            canonical_owner=None,
+            requirement_level=requirement,
+            condition_id=None,
+            condition_fact=None,
+            condition_false_requirement=None,
+            field_class=field_class,
+            sensitivity=sensitivity,
+            cardinality=None,
+            stability=None,
+            introduced_in=structured_types[type_id]["introduced_in"],
+            deprecated_in=None,
+            removed_in=None,
+            normalization_id=normalization_id,
+            normalization_effective_constraints=_freeze(normalization_constraints),
+            use_constraints=MappingProxyType({}),
+            effective_constraints=_freeze(normalization_constraints),
+            value_source="input",
+            origins=(
+                MappingProxyType(
+                    {
+                        "structured_type": type_id,
+                        "member_id": member_id,
+                        "role": role,
+                        "origin": origin,
+                    }
+                ),
+            ),
+        )
+        return descriptor_id
+
+    for type_id, structured in structured_types.items():
+        order = 0
+        for raw_field in structured["fields"] or ():
+            field = _tagged(raw_field, "StructuredFieldIR", _STRUCTURED_FIELD_FIELDS)
+            if field["scalar"] is None:
+                continue
+            scalar = _validate_structured_scalar_node(field["scalar"])
+            normalization = _normalization(scalar, field_types=(scalar["field_type"],))
+            contribute_structured_scalar(
+                type_id=type_id,
+                member_id=f"field:{field['name']}",
+                role="fixed_field",
+                order=order,
+                requirement="required" if field["required"] else "optional",
+                field_type=_string(scalar["field_type"], "structured scalar type"),
+                field_class=_string(scalar["field_class"], "structured scalar class"),
+                sensitivity=_string(scalar["sensitivity"], "structured scalar sensitivity"),
+                normalization_id=normalization["id"],
+                normalization_constraints=normalization["effective_constraints"],
+                origin=f"structured_types.{type_id}.fields.{field['name']}",
+            )
+            order += 1
+        if structured["discriminator"] is not None:
+            discriminator = _tagged(
+                structured["discriminator"],
+                "StructuredDiscriminatorIR",
+                _STRUCTURED_DISCRIMINATOR_FIELDS,
+            )
+            normalization = _normalization(discriminator, field_types=(discriminator["field_type"],))
+            contribute_structured_scalar(
+                type_id=type_id,
+                member_id=f"discriminator:{discriminator['name']}",
+                role="discriminator",
+                order=order,
+                requirement="required",
+                field_type=_string(discriminator["field_type"], "structured discriminator type"),
+                field_class=_string(discriminator["field_class"], "structured discriminator class"),
+                sensitivity=_string(discriminator["sensitivity"], "structured discriminator sensitivity"),
+                normalization_id=normalization["id"],
+                normalization_constraints=normalization["effective_constraints"],
+                origin=f"structured_types.{type_id}.discriminator",
+            )
+            order += 1
+        if structured["dynamic_members"] is not None:
+            dynamic = _tagged(
+                structured["dynamic_members"],
+                "StructuredDynamicMembersIR",
+                _STRUCTURED_DYNAMIC_MEMBERS_FIELDS,
+            )
+            name = _validate_structured_scalar_node(dynamic["name"], "StructuredDynamicNameIR")
+            normalization = _normalization(name, field_types=(name["field_type"],))
+            contribute_structured_scalar(
+                type_id=type_id,
+                member_id=f"dynamic_name:{dynamic['member_id']}",
+                role="dynamic_member_name",
+                order=order,
+                requirement="required",
+                field_type=_string(name["field_type"], "dynamic member name type"),
+                field_class=_string(name["field_class"], "dynamic member name class"),
+                sensitivity=_string(name["sensitivity"], "dynamic member name sensitivity"),
+                normalization_id=normalization["id"],
+                normalization_constraints=normalization["effective_constraints"],
+                origin=f"structured_types.{type_id}.dynamic_members.name",
+            )
+            order += 1
+        if structured["canonical_json"] is not None:
+            canonical = _tagged(
+                structured["canonical_json"],
+                "CanonicalJSONContractIR",
+                _CANONICAL_JSON_CONTRACT_FIELDS,
+            )
+            object_name = _validate_structured_scalar_node(canonical["object_name"], "StructuredDynamicNameIR")
+            object_name_normalization = _normalization(
+                object_name,
+                field_types=(object_name["field_type"],),
+            )
+            contribute_structured_scalar(
+                type_id=type_id,
+                member_id=f"dynamic_name:{canonical['object_member_id']}",
+                role="canonical_object_member_name",
+                order=order,
+                requirement="required",
+                field_type=_string(object_name["field_type"], "canonical object member name type"),
+                field_class=_string(object_name["field_class"], "canonical object member name class"),
+                sensitivity=_string(object_name["sensitivity"], "canonical object member name sensitivity"),
+                normalization_id=object_name_normalization["id"],
+                normalization_constraints=object_name_normalization["effective_constraints"],
+                origin=f"structured_types.{type_id}.canonical_json.object_name",
+            )
+            order += 1
+            limits = _tagged(
+                canonical["limits"],
+                "CanonicalJSONLimitsIR",
+                _CANONICAL_JSON_LIMITS_FIELDS,
+            )
+            canonical_arms = (
+                ("boolean", "boolean", {}),
+                ("int64", "int64", {}),
+                ("finite_double", "double", {}),
+                ("string", "string", {"max_utf8_bytes": limits["max_string_utf8_bytes"]}),
+            )
+            for arm_id, field_type, constraints in canonical_arms:
+                contribute_structured_scalar(
+                    type_id=type_id,
+                    member_id=f"canonical_arm:{arm_id}",
+                    role="canonical_scalar_arm",
+                    order=order,
+                    requirement="required",
+                    field_type=field_type,
+                    field_class=_string(canonical["leaf_field_class"], "canonical leaf class"),
+                    sensitivity=_string(canonical["leaf_sensitivity"], "canonical leaf sensitivity"),
+                    normalization_id="canonical-json-contract-v1",
+                    normalization_constraints=constraints,
+                    origin=f"structured_types.{type_id}.canonical_json.{arm_id}",
+                )
+                order += 1
+    if len(descriptors) != 2728:
+        raise CandidateRenderError("enriched field descriptor inventory is incomplete")
+    return MappingProxyType({key: descriptors[key] for key in sorted(descriptors)})
+
+
+def _enriched_container_descriptors(
+    contract: Mapping[str, FrozenJSON],
+    structured_types: Mapping[str, Mapping[str, FrozenJSON]],
+    enriched_fields: Mapping[str, EnrichedFieldDescriptor],
+) -> Mapping[str, EnrichedContainerDescriptor]:
+    descriptors: dict[str, EnrichedContainerDescriptor] = {}
+    structural_paths = {
+        "envelope": "",
+        "correlation": "/correlation",
+        "provenance": "/provenance",
+        "trace_body": "/body",
+        "trace_resource": "/body/resource",
+        "trace_scope": "/body/scope",
+        "trace_status": "/body/status",
+        "trace_event": "/body/events/*",
+        "trace_link": "/body/links/*",
+        "metric_instrument_data": "/instrument_data",
+    }
+    for contract_key, base_path in structural_paths.items():
+        structural = _tagged(contract[contract_key], "StructuralObjectIR", _STRUCTURAL_OBJECT_FIELDS)
+        object_id = _string(structural["id"], "structural object id")
+        object_descriptor_id = f"structural:{object_id}"
+        fields = structural["fields"]
+        if not isinstance(fields, tuple):
+            raise CandidateRenderError("materialized structural fields are invalid")
+        child_containers: list[str] = []
+        for raw_field in fields:
+            field = _tagged(raw_field, "StructuralFieldIR", _STRUCTURAL_FIELD_FIELDS)
+            field_type = field["field_type"]
+            if field_type not in {"object", "array", "canonical_json", "field_class_map"}:
+                continue
+            field_name = _string(field["name"], "structural container field")
+            descriptor_id = f"structural-field:{object_id}:{field_name}"
+            normalization = _normalization(
+                field,
+                field_types=(field_type,),
+                structured=True,
+                polymorphic=field_type == "canonical_json",
+            )
+            effective = normalization["effective_constraints"]
+            bounds = {
+                key: effective[key]
+                for key in ("min_items", "max_items", "max_depth", "max_properties", "max_utf8_bytes")
+                if key in effective
+            }
+            reference_target = field["object_ref"] or field["item_ref"] or field["semantic_ref"]
+            descriptors[descriptor_id] = EnrichedContainerDescriptor(
+                id=descriptor_id,
+                context="structural_field",
+                owner_id=object_id,
+                kind=field_type,
+                path=f"{base_path}/{_pointer_token(field_name)}" or "/",
+                closed=field_type in {"object", "array", "field_class_map"},
+                requirement_level="required" if field["required"] else "optional",
+                introduced_in=None,
+                deprecated_in=None,
+                removed_in=None,
+                bounds=_freeze(bounds),
+                origin=f"structural_contract.{contract_key}.{field_name}",
+                child_fields=(),
+                child_containers=(),
+                reference_target=reference_target,
+            )
+            child_containers.append(descriptor_id)
+        descriptors[object_descriptor_id] = EnrichedContainerDescriptor(
+            id=object_descriptor_id,
+            context="structural_object",
+            owner_id=object_id,
+            kind="object",
+            path=base_path or "/",
+            closed=structural["additional_properties"] is False,
+            requirement_level=None,
+            introduced_in=None,
+            deprecated_in=None,
+            removed_in=None,
+            bounds=MappingProxyType({}),
+            origin=f"structural_contract.{contract_key}",
+            child_fields=tuple(
+                _string(_tagged(item, "StructuralFieldIR", _STRUCTURAL_FIELD_FIELDS)["name"], "field")
+                for item in fields
+            ),
+            child_containers=tuple(child_containers),
+            reference_target=None,
+        )
+
+    def add_structured_edge(
+        *,
+        owner: str,
+        edge_id: str,
+        path: str,
+        target: str,
+        requirement: str | None,
+        origin: str,
+    ) -> str:
+        descriptor_id = f"structured-edge:{owner}:{edge_id}"
+        if descriptor_id in descriptors or target not in structured_types:
+            raise CandidateRenderError("structured container edge is invalid")
+        descriptors[descriptor_id] = EnrichedContainerDescriptor(
+            descriptor_id,
+            "structured_reference",
+            owner,
+            "reference",
+            path,
+            True,
+            requirement,
+            structured_types[owner]["introduced_in"],
+            None,
+            None,
+            MappingProxyType({}),
+            origin,
+            (),
+            (),
+            target,
+        )
+        return descriptor_id
+
+    for type_id, structured in structured_types.items():
+        child_fields: list[str] = []
+        child_containers: list[str] = []
+        for raw_field in structured["fields"] or ():
+            field = _tagged(raw_field, "StructuredFieldIR", _STRUCTURED_FIELD_FIELDS)
+            name = _string(field["name"], "structured field name")
+            if field["scalar"] is not None:
+                descriptor_id = f"structured:{type_id}:field:{name}"
+                if descriptor_id not in enriched_fields:
+                    raise CandidateRenderError("structured scalar child descriptor is missing")
+                child_fields.append(descriptor_id)
+            else:
+                target = _string(
+                    _tagged(field["reference"], "StructuredReferenceIR", _STRUCTURED_REFERENCE_FIELDS)[
+                        "structured_ref"
+                    ],
+                    "structured field reference",
+                )
+                child_containers.append(
+                    add_structured_edge(
+                        owner=type_id,
+                        edge_id=f"field:{name}",
+                        path=f"/structured/{_pointer_token(type_id)}/{_pointer_token(name)}",
+                        target=target,
+                        requirement="required" if field["required"] else "optional",
+                        origin=f"structured_types.{type_id}.fields.{name}",
+                    )
+                )
+        if structured["discriminator"] is not None:
+            discriminator = _tagged(
+                structured["discriminator"],
+                "StructuredDiscriminatorIR",
+                _STRUCTURED_DISCRIMINATOR_FIELDS,
+            )
+            child_fields.append(f"structured:{type_id}:discriminator:{discriminator['name']}")
+        if structured["items_reference"] is not None:
+            target = _string(
+                _tagged(structured["items_reference"], "StructuredReferenceIR", _STRUCTURED_REFERENCE_FIELDS)[
+                    "structured_ref"
+                ],
+                "structured item reference",
+            )
+            child_containers.append(
+                add_structured_edge(
+                    owner=type_id,
+                    edge_id="items",
+                    path=f"/structured/{_pointer_token(type_id)}/*",
+                    target=target,
+                    requirement="required",
+                    origin=f"structured_types.{type_id}.items_reference",
+                )
+            )
+        if structured["dynamic_members"] is not None:
+            dynamic = _tagged(
+                structured["dynamic_members"], "StructuredDynamicMembersIR", _STRUCTURED_DYNAMIC_MEMBERS_FIELDS
+            )
+            target = _string(
+                _tagged(dynamic["value"], "StructuredReferenceIR", _STRUCTURED_REFERENCE_FIELDS)["structured_ref"],
+                "structured dynamic member reference",
+            )
+            child_containers.append(
+                add_structured_edge(
+                    owner=type_id,
+                    edge_id=f"dynamic:{dynamic['member_id']}",
+                    path=f"/structured/{_pointer_token(type_id)}/*",
+                    target=target,
+                    requirement="optional",
+                    origin=f"structured_types.{type_id}.dynamic_members",
+                )
+            )
+            child_fields.append(f"structured:{type_id}:dynamic_name:{dynamic['member_id']}")
+        for raw_variant in structured["variants"] or ():
+            variant = _tagged(raw_variant, "StructuredVariantIR", _STRUCTURED_VARIANT_FIELDS)
+            tag = _string(variant["tag"], "structured variant tag")
+            target = _string(variant["structured_ref"], "structured variant reference")
+            variant_id = f"structured-variant:{type_id}:{tag}"
+            edge_id = add_structured_edge(
+                owner=type_id,
+                edge_id=f"variant:{tag}",
+                path=f"/structured/{_pointer_token(type_id)}/@{_pointer_token(tag)}",
+                target=target,
+                requirement="required",
+                origin=f"structured_types.{type_id}.variants.{tag}",
+            )
+            descriptors[variant_id] = EnrichedContainerDescriptor(
+                variant_id,
+                "structured_variant",
+                type_id,
+                "tagged_union_variant",
+                f"/structured/{_pointer_token(type_id)}/@{_pointer_token(tag)}",
+                True,
+                "required",
+                structured["introduced_in"],
+                None,
+                None,
+                MappingProxyType({}),
+                f"structured_types.{type_id}.variants.{tag}",
+                (),
+                (edge_id,),
+                target,
+            )
+            child_containers.append(variant_id)
+        if structured["dynamic_variant"] is not None:
+            variant = _tagged(
+                structured["dynamic_variant"],
+                "StructuredDynamicVariantIR",
+                _STRUCTURED_DYNAMIC_VARIANT_FIELDS,
+            )
+            arm_id = _string(variant["arm_id"], "structured dynamic arm")
+            target = _string(variant["structured_ref"], "structured dynamic variant reference")
+            edge_id = add_structured_edge(
+                owner=type_id,
+                edge_id=f"variant:{arm_id}",
+                path=f"/structured/{_pointer_token(type_id)}/@{_pointer_token(arm_id)}",
+                target=target,
+                requirement="optional",
+                origin=f"structured_types.{type_id}.dynamic_variant",
+            )
+            variant_id = f"structured-variant:{type_id}:{arm_id}"
+            descriptors[variant_id] = EnrichedContainerDescriptor(
+                variant_id,
+                "structured_variant",
+                type_id,
+                "tagged_union_variant",
+                f"/structured/{_pointer_token(type_id)}/@{_pointer_token(arm_id)}",
+                True,
+                "optional",
+                structured["introduced_in"],
+                None,
+                None,
+                MappingProxyType({}),
+                f"structured_types.{type_id}.dynamic_variant",
+                (),
+                (edge_id,),
+                target,
+            )
+            child_containers.append(variant_id)
+        if structured["canonical_json"] is not None:
+            canonical = _tagged(
+                structured["canonical_json"], "CanonicalJSONContractIR", _CANONICAL_JSON_CONTRACT_FIELDS
+            )
+            child_fields.append(f"structured:{type_id}:dynamic_name:{canonical['object_member_id']}")
+            for arm in canonical["arms"]:
+                arm = _string(arm, "canonical JSON arm")
+                variant_id = f"structured-variant:{type_id}:{arm}"
+                variant_children: tuple[str, ...] = ()
+                target: str | None = None
+                if arm == "array":
+                    target = _string(canonical["array_items_ref"], "canonical JSON array reference")
+                    variant_children = (
+                        add_structured_edge(
+                            owner=type_id,
+                            edge_id="canonical:array",
+                            path=f"/structured/{_pointer_token(type_id)}/@array/*",
+                            target=target,
+                            requirement="optional",
+                            origin=f"structured_types.{type_id}.canonical_json.array",
+                        ),
+                    )
+                elif arm == "object":
+                    target = _string(
+                        _tagged(canonical["object_value"], "StructuredReferenceIR", _STRUCTURED_REFERENCE_FIELDS)[
+                            "structured_ref"
+                        ],
+                        "canonical JSON object reference",
+                    )
+                    variant_children = (
+                        add_structured_edge(
+                            owner=type_id,
+                            edge_id="canonical:object",
+                            path=f"/structured/{_pointer_token(type_id)}/@object/*",
+                            target=target,
+                            requirement="optional",
+                            origin=f"structured_types.{type_id}.canonical_json.object",
+                        ),
+                    )
+                descriptors[variant_id] = EnrichedContainerDescriptor(
+                    variant_id,
+                    "structured_variant",
+                    type_id,
+                    "sealed_union_variant",
+                    f"/structured/{_pointer_token(type_id)}/@{_pointer_token(arm)}",
+                    True,
+                    "optional",
+                    structured["introduced_in"],
+                    None,
+                    None,
+                    MappingProxyType({}),
+                    f"structured_types.{type_id}.canonical_json.{arm}",
+                    (),
+                    variant_children,
+                    target,
+                )
+                child_containers.append(variant_id)
+                if arm in {"boolean", "int64", "finite_double", "string"}:
+                    scalar_id = f"structured:{type_id}:canonical_arm:{arm}"
+                    child_fields.append(scalar_id)
+                    descriptors[variant_id] = dataclasses.replace(
+                        descriptors[variant_id],
+                        child_fields=(scalar_id,),
+                    )
+        bounds = {key: structured[key] for key in ("min_items", "max_items") if structured[key] is not None}
+        if structured["canonical_json"] is not None:
+            limits = _tagged(
+                _tagged(structured["canonical_json"], "CanonicalJSONContractIR", _CANONICAL_JSON_CONTRACT_FIELDS)[
+                    "limits"
+                ],
+                "CanonicalJSONLimitsIR",
+                _CANONICAL_JSON_LIMITS_FIELDS,
+            )
+            bounds.update(limits)
+        descriptor_id = f"structured:{type_id}"
+        descriptors[descriptor_id] = EnrichedContainerDescriptor(
+            descriptor_id,
+            "structured_type",
+            type_id,
+            _string(structured["kind"], "structured container kind"),
+            f"/structured/{_pointer_token(type_id)}",
+            structured["additional_properties"] is False,
+            None,
+            structured["introduced_in"],
+            None,
+            None,
+            _freeze(bounds),
+            f"structured_types.{type_id}",
+            tuple(child_fields),
+            tuple(child_containers),
+            None,
+        )
+    for descriptor in descriptors.values():
+        if descriptor.context in {"structured_type", "structured_variant"} and any(
+            child not in enriched_fields for child in descriptor.child_fields
+        ):
+            raise CandidateRenderError("structured container scalar child link is unresolved")
+    return MappingProxyType({key: descriptors[key] for key in sorted(descriptors)})
+
+
+def _enriched_family_descriptors(
+    *,
+    families: Sequence[Mapping[str, FrozenJSON]],
+    family_domains: Mapping[str, str],
+    fields: Mapping[str, EnrichedFieldDescriptor],
+    span_events: Mapping[str, Mapping[str, FrozenJSON]],
+    groups: Mapping[str, Mapping[str, FrozenJSON]],
+    derivations: tuple[Mapping[str, FrozenJSON], ...],
+    mandatory_programs: Mapping[str, ResolvedMandatoryProgramIR],
+) -> tuple[
+    Mapping[str, EnrichedFamilyDescriptor],
+    Mapping[str, EnrichedTraceDescriptor],
+    Mapping[str, EnrichedMetricDescriptor],
+]:
+    enriched_families: dict[str, EnrichedFamilyDescriptor] = {}
+    traces: dict[str, EnrichedTraceDescriptor] = {}
+    metrics: dict[str, EnrichedMetricDescriptor] = {}
+
+    def ids(context: str, owner_id: str) -> tuple[str, ...]:
+        return tuple(
+            descriptor.id
+            for descriptor in fields.values()
+            if descriptor.context == context and descriptor.owner_id == owner_id
+        )
+
+    resource_ids = ids("resource", "resource.core")
+    scope_ids = ids("scope", "scope.core")
+    link_ids = ids("link", "link.core")
+    event_ids = MappingProxyType({event_name: ids("event", event_name) for event_name in sorted(span_events)})
+    for family in sorted(families, key=lambda item: item["id"]):
+        family_id = _string(family["id"], "enriched family id")
+        family_type = family["type"]
+        signal = {"log": "logs", "span": "traces", "metric": "metrics"}.get(family_type)
+        if signal is None:
+            raise CandidateRenderError("enriched family signal is invalid")
+        family_field_ids = ids(family_type, family_id)
+        allowed_outcomes = family["allowed_outcomes"] or ()
+        compatibility_profiles = family["compatibility_profiles"] or ()
+        enriched_families[family_id] = EnrichedFamilyDescriptor(
+            family_id,
+            family_domains[family_id],
+            signal,
+            _string(family["bucket"], "family bucket"),
+            _family_event_name(family),
+            _integer(family["family_schema_version"], "family schema version", minimum=1),
+            _string(family["stability"], "family stability"),
+            family["introduced_in"],
+            family["deprecated_in"],
+            family["removed_in"],
+            family["outcome_requirement"],
+            tuple(allowed_outcomes),
+            family["route_selector"] is True,
+            tuple(compatibility_profiles),
+            family_field_ids,
+            family_id if family_type == "log" else None,
+        )
+        if family_type == "span":
+            parts = _validated_span_name_parts(family)
+            referenced_event_ids = MappingProxyType(
+                {event_name: event_ids[event_name] for event_name in family["event_refs"] if event_name in event_ids}
+            )
+            if len(referenced_event_ids) != len(family["event_refs"]):
+                raise CandidateRenderError("enriched trace references an unknown event")
+            traces[family_id] = EnrichedTraceDescriptor(
+                family_id,
+                _string(family["span_name_pattern"], "span name pattern"),
+                parts,
+                tuple(family["span_kinds"]),
+                _string(family["span_status_rule"], "span status rule"),
+                family_field_ids,
+                resource_ids,
+                scope_ids,
+                referenced_event_ids,
+                link_ids,
+                tuple(family["event_refs"]),
+                tuple(family["link_relations"]),
+                derivations,
+            )
+        elif family_type == "metric":
+            metrics[family_id] = EnrichedMetricDescriptor(
+                family_id,
+                _string(family["instrument_name"], "metric instrument"),
+                _string(family["instrument_type"], "metric instrument type"),
+                _string(family["metric_value_type"], "metric value type"),
+                _string(family["metric_unit"], "metric unit"),
+                _string(family["metric_description"], "metric description"),
+                _string(family["metric_temporality"], "metric temporality"),
+                tuple(family["metric_boundaries"] or ()),
+                family_field_ids,
+                tuple(_freeze(_plain_ir(item)) for item in family["metric_projections"]),
+            )
+    if len(enriched_families) != 243 or len(traces) != 25 or len(metrics) != 131:
+        raise CandidateRenderError("enriched family descriptor inventory is incomplete")
+    return (
+        MappingProxyType(enriched_families),
+        MappingProxyType(traces),
+        MappingProxyType(metrics),
+    )
+
+
+def _expanded_producer_mappings(
+    domains: Sequence[CandidateDomain],
+    families: Mapping[str, EnrichedFamilyDescriptor],
+    programs: Mapping[str, ResolvedMandatoryProgramIR],
+    mandatory_rules: Mapping[str, tuple[str, str | None]],
+) -> tuple[ExpandedProducerMappingDescriptor, ...]:
+    rows: list[ExpandedProducerMappingDescriptor] = []
+    for domain in domains:
+        for mapping_index, mapping in enumerate(domain.producer_mappings):
+            legacy_rules = mapping["mandatory_rules"]
+            if not isinstance(legacy_rules, tuple) or any(rule not in mandatory_rules for rule in legacy_rules):
+                raise CandidateRenderError("materialized producer legacy mandatory rules are invalid")
+            identities: list[tuple[str, Mapping[str, FrozenJSON]]] = []
+            default_identity = mapping["default_identity"]
+            if default_identity is not None:
+                if not isinstance(default_identity, Mapping):
+                    raise CandidateRenderError("materialized producer default identity is invalid")
+                identities.append(("default", default_identity))
+            contextual = mapping["allowed_context_identities"]
+            if not isinstance(contextual, tuple):
+                raise CandidateRenderError("materialized producer contextual identities are invalid")
+            identities.extend(("allowed_context", identity) for identity in contextual)
+            for identity_index, (origin, identity) in enumerate(identities):
+                event_name = _string(identity["event_name"], "producer identity event name")
+                bucket = _string(identity["bucket"], "producer identity bucket")
+                family_id = identity["family"]
+                compatibility_only = identity["compatibility_only"]
+                selected_program_id: str | None = None
+                if type(compatibility_only) is not bool:
+                    raise CandidateRenderError("materialized producer compatibility flag is invalid")
+                if family_id is None:
+                    if compatibility_only is not True:
+                        raise CandidateRenderError("familyless producer identity is not compatibility-only")
+                else:
+                    family_id = _string(family_id, "producer identity family")
+                    family = families.get(family_id)
+                    if (
+                        compatibility_only
+                        or family is None
+                        or family.signal != "logs"
+                        or family.removed_in is not None
+                        or family.bucket != bucket
+                        or family.event_name != event_name
+                    ):
+                        raise CandidateRenderError("producer identity disagrees with selected canonical family")
+                    if family_id not in programs:
+                        raise CandidateRenderError("producer identity has no selected-family mandatory program")
+                    selected_program_id = family_id
+                compatibility = mapping["compatibility"]
+                if not isinstance(compatibility, Mapping):
+                    raise CandidateRenderError("materialized producer compatibility is invalid")
+                rows.append(
+                    ExpandedProducerMappingDescriptor(
+                        id=f"{domain.id}:{mapping_index}:{origin}:{identity_index}",
+                        domain=domain.id,
+                        mapping_index=mapping_index,
+                        identity_index=identity_index,
+                        identity_origin=origin,
+                        producer=_string(mapping["producer"], "producer kind"),
+                        key=_string(mapping["key"], "producer key"),
+                        source=_string(mapping["source"], "producer source"),
+                        event_name_policy=_string(mapping["event_name_policy"], "producer event-name policy"),
+                        severity_policy=_string(mapping["severity_policy"], "producer severity policy"),
+                        event_name=event_name,
+                        bucket=bucket,
+                        family_id=family_id,
+                        compatibility_only=compatibility_only,
+                        selected_mandatory_program_id=selected_program_id,
+                        legacy_mapping_mandatory_rules=tuple(legacy_rules),
+                        companion_rules=tuple(mapping["companion_rules"]),
+                        compatibility=_freeze(compatibility),
+                    )
+                )
+    if len(rows) != 8038 or sum(row.family_id is not None for row in rows) != 1781:
+        raise CandidateRenderError("expanded producer identity row inventory is incomplete")
+    return tuple(rows)
+
+
 def build_candidate_render_index(view: object) -> CandidateRenderIndex:
     if type(view).__name__ != "MaterializedRegistryView":
         raise CandidateRenderError("renderer requires MaterializedRegistryView")
@@ -3549,6 +4868,55 @@ def build_candidate_render_index(view: object) -> CandidateRenderIndex:
         structured_types=structured_types,
     )
 
+    condition_contracts = _condition_contracts(fields)
+    mandatory_rule_contracts = _mandatory_rule_contracts(fields)
+    mandatory_programs = _resolved_mandatory_programs(family_nodes, mandatory_rule_contracts)
+    trace_value_sources, trace_derivations = _trace_derivation_contract(contract)
+    enriched_fields = _enriched_field_descriptors(
+        attributes=attributes,
+        groups=groups,
+        families=family_nodes,
+        span_events=span_events,
+        structured_types=structured_types,
+        conditions=condition_contracts,
+        value_sources=trace_value_sources,
+    )
+    for (context, target), source in trace_value_sources.items():
+        if not any(
+            descriptor.context == context and descriptor.attribute_id == target and descriptor.value_source == source
+            for descriptor in enriched_fields.values()
+        ):
+            raise CandidateRenderError("materialized trace derivation is unused by enriched fields")
+    enriched_containers = _enriched_container_descriptors(contract, structured_types, enriched_fields)
+    enriched_families, enriched_traces, enriched_metrics = _enriched_family_descriptors(
+        families=family_nodes,
+        family_domains=family_domains,
+        fields=enriched_fields,
+        span_events=span_events,
+        groups=groups,
+        derivations=trace_derivations,
+        mandatory_programs=mandatory_programs,
+    )
+    sorted_domains = tuple(sorted(domain_records, key=lambda item: item.id))
+    expanded_producer_mappings = _expanded_producer_mappings(
+        sorted_domains,
+        enriched_families,
+        mandatory_programs,
+        mandatory_rule_contracts,
+    )
+    go_declaration_values = _go_declaration_values(go_symbol_table, fields)
+    candidate_digest = _candidate_render_index_digest(
+        digest,
+        enriched_fields=enriched_fields,
+        enriched_containers=enriched_containers,
+        enriched_families=enriched_families,
+        enriched_traces=enriched_traces,
+        enriched_metrics=enriched_metrics,
+        mandatory_programs=mandatory_programs,
+        expanded_producer_mappings=expanded_producer_mappings,
+        go_declaration_values=go_declaration_values,
+    )
+
     frozen_attributes = MappingProxyType(
         {
             key: CandidateAttribute(
@@ -3567,6 +4935,8 @@ def build_candidate_render_index(view: object) -> CandidateRenderIndex:
         registry_version=registry_version,
         bucket_catalog_version=bucket_version,
         digest=digest,
+        materialized_view_sha256=digest,
+        candidate_render_index_sha256=candidate_digest,
         fields=_freeze(fields),
         go_symbol_policy=go_symbol_policy,
         go_symbol_overrides=go_symbol_overrides,
@@ -3580,10 +4950,18 @@ def build_candidate_render_index(view: object) -> CandidateRenderIndex:
         groups=frozen_groups,
         families=tuple(_freeze(_plain_ir(item)) for item in sorted(family_nodes, key=lambda item: item["id"])),
         family_domains=MappingProxyType({key: family_domains[key] for key in sorted(family_domains)}),
-        domains=tuple(sorted(domain_records, key=lambda item: item.id)),
+        domains=sorted_domains,
         span_events=frozen_events,
         examples=tuple(_freeze(item) for item in examples),
         example_output_paths=example_output_paths,
+        enriched_fields=enriched_fields,
+        enriched_containers=enriched_containers,
+        enriched_families=enriched_families,
+        enriched_traces=enriched_traces,
+        enriched_metrics=enriched_metrics,
+        mandatory_programs=mandatory_programs,
+        expanded_producer_mappings=expanded_producer_mappings,
+        go_declaration_values=go_declaration_values,
     )
 
 

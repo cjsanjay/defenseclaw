@@ -16,6 +16,7 @@ import hashlib
 import importlib.util
 import json
 import sys
+from collections import Counter
 from collections.abc import Mapping
 from pathlib import Path, PurePosixPath
 from types import ModuleType
@@ -209,6 +210,299 @@ def test_public_candidate_render_index_is_identity_bound_deterministic_and_recur
     producer_domain = next(domain for domain in first.domains if domain.producer_mappings)
     with pytest.raises(TypeError):
         producer_domain.producer_mappings[0]["source"] = "changed"  # type: ignore[index]
+
+
+def test_candidate_enrichment_is_complete_typed_and_recursively_immutable(
+    renderer: ModuleType,
+    view: Any,
+) -> None:
+    index = renderer.build_candidate_render_index(view)
+
+    assert index.materialized_view_sha256 == index.digest == view.typed_canonical_json_sha256
+    assert index.candidate_render_index_sha256 != index.materialized_view_sha256
+    assert len(index.candidate_render_index_sha256) == 64
+    assert len(index.enriched_fields) == 2728
+    assert Counter(item.context for item in index.enriched_fields.values()) == {
+        "log": 1420,
+        "span": 850,
+        "metric": 346,
+        "resource": 14,
+        "scope": 2,
+        "event": 48,
+        "link": 1,
+        "structured": 47,
+    }
+    assert len(index.enriched_containers) == 102
+    assert Counter(item.context for item in index.enriched_containers.values()) == {
+        "structural_object": 10,
+        "structural_field": 16,
+        "structured_type": 21,
+        "structured_variant": 17,
+        "structured_reference": 38,
+    }
+    assert all(not hasattr(item, "field_class") for item in index.enriched_containers.values())
+    assert all(not hasattr(item, "sensitivity") for item in index.enriched_containers.values())
+    assert all(not hasattr(item, "normalization_id") for item in index.enriched_containers.values())
+    assert {item.input_placement for item in index.enriched_fields.values()} == {
+        "family_input",
+        "resource_input",
+        "event_input",
+        "private_derived",
+        "structured_input",
+    }
+    assert {item.target_slot for item in index.enriched_fields.values()} == {
+        "body",
+        "trace.attributes",
+        "metric.attributes",
+        "trace.resource.attributes",
+        "trace.scope.attributes",
+        "trace.event.attributes",
+        "trace.link.attributes",
+        "structured.value",
+    }
+    owner_orders: dict[tuple[str, str], list[int]] = {}
+    for item in index.enriched_fields.values():
+        owner_orders.setdefault((item.context, item.owner_id), []).append(item.order)
+    assert all(sorted(orders) == list(range(len(orders))) for orders in owner_orders.values())
+
+    assert len(index.enriched_families) == 243
+    assert len(index.enriched_traces) == 25
+    assert len(index.enriched_metrics) == 131
+    assert len(index.mandatory_programs) == 87
+    assert sum(bool(program.rule_ids) for program in index.mandatory_programs.values()) == 42
+    assert sum(not program.rule_ids for program in index.mandatory_programs.values()) == 45
+    assert sum(len(program.rule_ids) for program in index.mandatory_programs.values()) == 43
+    assert all(
+        (family.mandatory_program_id == family.id) == (family.signal == "logs")
+        for family in index.enriched_families.values()
+    )
+
+    assert len(index.expanded_producer_mappings) == 8038
+    assert Counter(row.identity_origin for row in index.expanded_producer_mappings) == {
+        "default": 188,
+        "allowed_context": 7850,
+    }
+    assert sum(row.family_id is not None for row in index.expanded_producer_mappings) == 1781
+    assert all(
+        (row.selected_mandatory_program_id == row.family_id)
+        if row.family_id is not None
+        else row.selected_mandatory_program_id is None
+        for row in index.expanded_producer_mappings
+    )
+    assert all(row.family_id is not None or row.compatibility_only for row in index.expanded_producer_mappings)
+
+    assert len(index.go_declaration_values) == 893
+    const_rows = tuple(row for row in index.go_symbol_table.rows if row.declaration_form == "exported_const")
+    assert tuple((item.kind, item.source_id, item.symbol) for item in index.go_declaration_values) == tuple(
+        (row.kind, row.source_id, row.symbol) for row in const_rows
+    )
+    assert Counter(item.literal_kind for item in index.go_declaration_values) == {"string": 881, "integer": 12}
+    assert Counter(item.go_type for item in index.go_declaration_values) == {"string": 881, "int": 12}
+    assert (
+        next(
+            item for item in index.go_declaration_values if item.kind == "phase_code" and item.source_id == "session"
+        ).value
+        == 1
+    )
+    assert (
+        next(
+            item
+            for item in index.go_declaration_values
+            if item.kind == "structured_member" and item.source_id == "gen_ai.chat_message#role"
+        ).value
+        == "role"
+    )
+
+    derived = [item for item in index.enriched_fields.values() if item.value_source != "input"]
+    assert len(derived) == 154
+    assert index.enriched_fields["resource:resource.core:service.version"].value_source == ("provenance.binary_version")
+    assert (
+        index.enriched_fields["scope:scope.core:defenseclaw.trace.schema_version"].value_source
+        == "semantic_profile.trace_schema_version"
+    )
+    assert index.enriched_fields["scope:scope.core:defenseclaw.semantic_profile"].value_source == (
+        "semantic_profile.id"
+    )
+    assert index.enriched_fields["link:link.core:defenseclaw.link.relation"].value_source == "link.relation"
+    assert index.enriched_fields["span:span.model.chat:defenseclaw.outcome"].value_source == "envelope.outcome"
+    assert all(
+        item.value_source == "input"
+        for item in index.enriched_fields.values()
+        if item.context == "metric" and item.attribute_id == "defenseclaw.outcome"
+    )
+    assert index.enriched_traces["span.model.chat"].span_name_parts == (
+        {"field": None, "kind": "literal", "literal": "chat "},
+        {"field": "gen_ai.request.model", "kind": "field", "literal": None},
+    )
+    assert all(item.path.startswith("/") and item.origins for item in index.enriched_fields.values())
+    assert {item.path_kind for item in index.enriched_fields.values()} == {
+        "payload_template",
+        "registry_relative",
+    }
+    structured_fields = [item for item in index.enriched_fields.values() if item.context == "structured"]
+    assert len(structured_fields) == 47
+    assert all(
+        item.path_kind == "registry_relative"
+        and item.input_placement == "structured_input"
+        and item.canonical_owner is None
+        and item.cardinality is None
+        and item.stability is None
+        for item in structured_fields
+    )
+    instantiated_member_leaves = [
+        item
+        for item in structured_fields
+        if item.role in {"dynamic_member_name", "canonical_object_member_name", "canonical_scalar_arm"}
+    ]
+    assert len(instantiated_member_leaves) == 21
+    assert all(item.requirement_level == "required" for item in instantiated_member_leaves)
+    assert all(
+        child in index.enriched_fields
+        for container in index.enriched_containers.values()
+        if container.context in {"structured_type", "structured_variant"}
+        for child in container.child_fields
+    )
+    for item in index.enriched_fields.values():
+        expected = dict(item.normalization_effective_constraints)
+        expected.update(item.use_constraints)
+        assert item.effective_constraints == expected
+        if item.condition_id is None:
+            assert item.condition_fact is None and item.condition_false_requirement is None
+        else:
+            assert item.condition_fact and item.condition_false_requirement in {"optional", "forbidden"}
+
+    first_field = next(iter(index.enriched_fields.values()))
+    first_container = next(iter(index.enriched_containers.values()))
+    first_trace = next(iter(index.enriched_traces.values()))
+    first_row = index.expanded_producer_mappings[0]
+    with pytest.raises(TypeError):
+        index.enriched_fields["new"] = first_field  # type: ignore[index]
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        first_field.value_source = "changed"  # type: ignore[misc]
+    with pytest.raises(TypeError):
+        first_field.effective_constraints["max"] = 1  # type: ignore[index]
+    with pytest.raises(TypeError):
+        first_field.origins[0]["group_id"] = "changed"  # type: ignore[index]
+    with pytest.raises(TypeError):
+        first_container.bounds["max_items"] = 1  # type: ignore[index]
+    with pytest.raises(TypeError):
+        first_trace.event_field_descriptor_ids["new"] = ()  # type: ignore[index]
+    with pytest.raises(TypeError):
+        first_row.compatibility["disposition"] = "changed"  # type: ignore[index]
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        index.go_declaration_values[0].value = "changed"  # type: ignore[misc]
+
+
+def test_enriched_occurrence_constraint_overlay_is_materialized_once_and_rejects_weakening(
+    renderer: ModuleType,
+) -> None:
+    effective = renderer._effective_occurrence_constraints(
+        {"enum": ("a", "b"), "min_items": 0, "max_items": 10, "max_utf8_bytes": 128},
+        {"enum": ("a",), "min_items": 1, "max_items": 4},
+    )
+
+    assert effective == {
+        "enum": ("a",),
+        "min_items": 1,
+        "max_items": 4,
+        "max_utf8_bytes": 128,
+    }
+    with pytest.raises(TypeError):
+        effective["max_items"] = 5  # type: ignore[index]
+    with pytest.raises(renderer.CandidateRenderError, match="weakens normalization"):
+        renderer._effective_occurrence_constraints({"max_items": 4}, {"max_items": 5})
+    with pytest.raises(renderer.CandidateRenderError, match="weakens normalization"):
+        renderer._effective_occurrence_constraints({"enum": ("a",)}, {"enum": ("a", "b")})
+
+
+def test_candidate_render_index_digest_binds_materialized_view_even_when_enrichment_is_unchanged(
+    renderer: ModuleType,
+    view: Any,
+) -> None:
+    baseline = renderer.build_candidate_render_index(view)
+    facts = _copy_materialized(view.facts)
+    first_attribute = facts["fields"]["domains"][0]["fields"]["attributes"][0]["fields"]
+    first_attribute["brief"] += " Digest-binding test."
+    forged_view = _retagged_view(renderer, view, facts)
+    changed = renderer.build_candidate_render_index(forged_view)
+
+    assert changed.materialized_view_sha256 == forged_view.typed_canonical_json_sha256
+    assert changed.materialized_view_sha256 != baseline.materialized_view_sha256
+    assert changed.candidate_render_index_sha256 != baseline.candidate_render_index_sha256
+    assert {
+        key: dataclasses.replace(value, stability=value.stability) for key, value in changed.enriched_fields.items()
+    } == dict(baseline.enriched_fields)
+
+
+@pytest.mark.parametrize("mutation", ("mandatory_rule", "producer_identity", "span_name_part"))
+def test_candidate_enrichment_rejects_forged_cross_contract_joins(
+    renderer: ModuleType,
+    view: Any,
+    mutation: str,
+) -> None:
+    facts = _copy_materialized(view.facts)
+    domains = facts["fields"]["domains"]
+    if mutation == "mandatory_rule":
+        family = next(
+            group["fields"]
+            for domain in domains
+            for group in domain["fields"]["groups"]
+            if group["fields"]["id"] == "log.asset.activated"
+        )
+        family["mandatory_floor"] = ("unregistered_rule",)
+        expected = "mandatory program"
+    elif mutation == "producer_identity":
+        identity = next(
+            mapping["fields"]["default_identity"]["fields"]
+            for domain in domains
+            for mapping in domain["fields"]["producer_mappings"]
+            if mapping["fields"]["default_identity"] is not None
+            and mapping["fields"]["default_identity"]["fields"]["family"] is not None
+        )
+        identity["bucket"] = "platform.health"
+        expected = "selected canonical family"
+    else:
+        family = next(
+            group["fields"]
+            for domain in domains
+            for group in domain["fields"]["groups"]
+            if group["fields"]["type"] == "span"
+        )
+        family["span_name_parts"][0]["fields"]["literal"] += "forged"
+        expected = "span-name parts disagree"
+
+    with pytest.raises(renderer.CandidateRenderError, match=expected):
+        renderer.build_candidate_render_index(_retagged_view(renderer, view, facts))
+
+
+def test_expanded_rows_use_selected_family_floor_not_legacy_mapping_rules(
+    renderer: ModuleType,
+    view: Any,
+) -> None:
+    baseline = renderer.build_candidate_render_index(view)
+    facts = _copy_materialized(view.facts)
+    mapping = next(
+        item["fields"]
+        for domain in facts["fields"]["domains"]
+        for item in domain["fields"]["producer_mappings"]
+        if item["fields"]["default_identity"] is not None
+        and item["fields"]["default_identity"]["fields"]["family"] is not None
+        and not item["fields"]["mandatory_rules"]
+    )
+    producer = mapping["producer"]
+    key = mapping["key"]
+    family_id = mapping["default_identity"]["fields"]["family"]
+    mapping["mandatory_rules"] = ("always",)
+    changed = renderer.build_candidate_render_index(_retagged_view(renderer, view, facts))
+    changed_row = next(
+        row
+        for row in changed.expanded_producer_mappings
+        if row.producer == producer and row.key == key and row.identity_origin == "default"
+    )
+
+    assert changed_row.legacy_mapping_mandatory_rules == ("always",)
+    assert changed_row.selected_mandatory_program_id == family_id
+    assert changed.mandatory_programs[family_id] == baseline.mandatory_programs[family_id]
 
 
 def test_candidate_renderer_is_deterministic_complete_and_in_memory(
