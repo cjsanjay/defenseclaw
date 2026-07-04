@@ -1,11 +1,11 @@
 {
-  "format_version": 1,
+  "format_version": 2,
   "generated_by": "scripts/generate_telemetry_registry.py",
   "generator_version": 1,
   "registry_schema_version": 1,
   "registry_version": 1,
   "bucket_catalog_version": 1,
-  "materialized_view_sha256": "e7bdc936a70a4ec2079998b2305c881903d02ce2e3bbbb7ad67fed696470a7d2",
+  "materialized_view_sha256": "1cba6fd9d34a067d177228d1c3b240cc62b4c71cb9b31907dea606a0a0f7c72e",
   "canonical_import_order": [
     "genai.yaml",
     "security.yaml",
@@ -15,6 +15,10 @@
     {
       "path": "schemas/telemetry/v8/registry.yaml",
       "sha256": "2bfb329d554fdb0f2d568be4cec117c34ea1e133342796501cd8a09dc48273b1"
+    },
+    {
+      "path": "schemas/telemetry/v8/output-manifest.schema.json",
+      "sha256": "18427fe1219aaae964206bb7103a1ea021dd4f7ba12e81462a55d3d4920a4190"
     },
     {
       "path": "schemas/telemetry/v8/genai.yaml",
@@ -98,5 +102,14 @@
   ],
   "outputs": [
     "schemas/telemetry/generated/output-manifest.json"
-  ]
+  ],
+  "ownership_inventory": {
+    "format_version": 1,
+    "manifest": {
+      "path": "schemas/telemetry/generated/output-manifest.json",
+      "mode": 420,
+      "marker": "\"generated_by\": \"scripts/generate_telemetry_registry.py\""
+    },
+    "artifacts": []
+  }
 }

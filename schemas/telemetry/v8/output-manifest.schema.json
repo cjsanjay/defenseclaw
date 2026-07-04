@@ -1,0 +1,172 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://defenseclaw.dev/schemas/telemetry/v8/output-manifest.schema.json",
+  "title": "DefenseClaw telemetry generated-output manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "format_version",
+    "generated_by",
+    "generator_version",
+    "registry_schema_version",
+    "registry_version",
+    "bucket_catalog_version",
+    "materialized_view_sha256",
+    "canonical_import_order",
+    "inputs",
+    "snapshots",
+    "upstream_ownership_transitions",
+    "upstream_compatibility_overlaps",
+    "legacy_only_upstream_attributes",
+    "outputs",
+    "ownership_inventory"
+  ],
+  "properties": {
+    "format_version": {"const": 2},
+    "generated_by": {"const": "scripts/generate_telemetry_registry.py"},
+    "generator_version": {"type": "integer", "minimum": 1},
+    "registry_schema_version": {"type": "integer", "minimum": 1},
+    "registry_version": {"type": "integer", "minimum": 1},
+    "bucket_catalog_version": {"type": "integer", "minimum": 1},
+    "materialized_view_sha256": {"$ref": "#/$defs/sha256"},
+    "canonical_import_order": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {"type": "string", "minLength": 1}
+    },
+    "inputs": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/digested_path"}
+    },
+    "snapshots": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["dependency_id", "path", "sha256"],
+        "properties": {
+          "dependency_id": {"type": "string", "minLength": 1},
+          "path": {"type": "string", "minLength": 1},
+          "sha256": {"$ref": "#/$defs/sha256"}
+        }
+      }
+    },
+    "upstream_ownership_transitions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "attribute",
+          "from_dependency",
+          "to_dependency",
+          "from_allowed_types",
+          "to_allowed_types",
+          "disposition"
+        ],
+        "properties": {
+          "attribute": {"type": "string", "minLength": 1},
+          "from_dependency": {"type": "string", "minLength": 1},
+          "to_dependency": {"type": "string", "minLength": 1},
+          "from_allowed_types": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {"type": "string", "minLength": 1}
+          },
+          "to_allowed_types": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {"type": "string", "minLength": 1}
+          },
+          "disposition": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "upstream_compatibility_overlaps": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["attribute", "canonical_owner", "compatibility_provenance"],
+        "properties": {
+          "attribute": {"type": "string", "minLength": 1},
+          "canonical_owner": {"type": "string", "minLength": 1},
+          "compatibility_provenance": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "legacy_only_upstream_attributes": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {"type": "string", "minLength": 1}
+    },
+    "outputs": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {"$ref": "#/$defs/output_path"}
+    },
+    "ownership_inventory": {"$ref": "#/$defs/ownership_inventory"}
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "output_path": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(schemas/telemetry/generated/.+|internal/observability/zz_generated_telemetry_[a-z0-9_]+\\.go)$"
+    },
+    "digested_path": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1},
+        "sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "ownership_record": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256", "mode", "marker"],
+      "properties": {
+        "path": {"$ref": "#/$defs/output_path"},
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "mode": {"const": 420},
+        "marker": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512,
+          "pattern": "^[ -~]+$"
+        }
+      }
+    },
+    "ownership_inventory": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["format_version", "manifest", "artifacts"],
+      "properties": {
+        "format_version": {"const": 1},
+        "manifest": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["path", "mode", "marker"],
+          "properties": {
+            "path": {"const": "schemas/telemetry/generated/output-manifest.json"},
+            "mode": {"const": 420},
+            "marker": {"const": "\"generated_by\": \"scripts/generate_telemetry_registry.py\""}
+          }
+        },
+        "artifacts": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/ownership_record"}
+        }
+      }
+    }
+  }
+}

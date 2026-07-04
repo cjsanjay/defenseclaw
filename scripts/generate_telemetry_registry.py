@@ -16,14 +16,13 @@ from __future__ import annotations
 import argparse
 import copy
 import hashlib
+import importlib.util
 import json
 import math
-import os
 import re
-import shutil
+import stat
 import string
 import sys
-import tempfile
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, is_dataclass, replace
 from dataclasses import fields as dataclass_fields
@@ -32,6 +31,25 @@ from types import MappingProxyType
 from typing import Any, Final, TypeAlias
 
 import yaml
+from jsonschema import Draft202012Validator
+
+
+def _load_transaction_module():  # type: ignore[no-untyped-def]
+    module_name = "telemetry_generated_transaction"
+    existing = sys.modules.get(module_name)
+    if existing is not None:
+        return existing
+    path = Path(__file__).resolve().with_name("telemetry_generated_transaction.py")
+    spec = importlib.util.spec_from_file_location(module_name, path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError("cannot load telemetry generated-output transaction helper")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+generated_transaction = _load_transaction_module()
 
 GENERATOR_VERSION: Final = 1
 NORMALIZED_SNAPSHOT_FORMAT: Final = "defenseclaw-normalized-semconv-v1"
@@ -126,6 +144,10 @@ EXPECTED_LINK_RELATIONS: Final = frozenset({"caused_by", "correlates_with", "der
 EXPECTED_COMPATIBILITY_PROFILES: Final = frozenset({"galileo-rich-v2", "local-observability-v1", "openinference-v1"})
 EXPECTED_SPAN_KINDS: Final = frozenset({"CLIENT", "CONSUMER", "INTERNAL", "PRODUCER", "SERVER"})
 OUTPUT_MANIFEST = Path("schemas/telemetry/generated/output-manifest.json")
+OUTPUT_MANIFEST_SCHEMA: Final = Path("schemas/telemetry/v8/output-manifest.schema.json")
+OUTPUT_MANIFEST_MARKER: Final = b'"generated_by": "scripts/generate_telemetry_registry.py"'
+OUTPUT_MANIFEST_MODE: Final = 0o644
+OUTPUT_MANIFEST_MAX_BYTES: Final = 8 * 1024 * 1024
 
 EXPECTED_STRUCTURAL_CONTRACT_ID: Final = "defenseclaw.canonical-record"
 EXPECTED_OTLP_REPRESENTATION_ID: Final = "defenseclaw-otlp-v1"
@@ -5173,8 +5195,11 @@ def compile_registry(root: Path) -> RegistryIR:
     )
     registry_raw, _ = _read_utf8(registry_path)
     registry_digest = InputDigest("schemas/telemetry/v8/registry.yaml", _sha256(registry_raw))
+    manifest_schema_raw, _ = _read_utf8(root / OUTPUT_MANIFEST_SCHEMA)
+    manifest_schema_digest = InputDigest(OUTPUT_MANIFEST_SCHEMA.as_posix(), _sha256(manifest_schema_raw))
     input_digests = (
         registry_digest,
+        manifest_schema_digest,
         *domain_digests,
         lock_digest,
         inventory_digest,
@@ -5688,9 +5713,24 @@ def _validate_span_name_patterns(
                 )
 
 
-def render_outputs(ir: RegistryIR) -> dict[Path, bytes]:
+def _manifest_document(
+    ir: RegistryIR,
+    artifacts: Mapping[Path, Any],
+) -> dict[str, Any]:
+    artifact_inventory = [
+        {
+            "path": path.as_posix(),
+            "sha256": _sha256(output.payload),
+            "mode": output.mode,
+            "marker": output.marker.decode("ascii"),
+        }
+        for path, output in sorted(artifacts.items(), key=lambda item: item[0].as_posix())
+    ]
+    output_paths = sorted(
+        [OUTPUT_MANIFEST.as_posix(), *(path.as_posix() for path in artifacts)],
+    )
     manifest = {
-        "format_version": 1,
+        "format_version": 2,
         "generated_by": "scripts/generate_telemetry_registry.py",
         "generator_version": GENERATOR_VERSION,
         "registry_schema_version": ir.schema_version,
@@ -5727,64 +5767,247 @@ def render_outputs(ir: RegistryIR) -> dict[Path, bytes]:
             for attribute_id in ("session.id", "user.id")
         ],
         "legacy_only_upstream_attributes": list(ir.legacy_only_upstream_attributes),
-        "outputs": [OUTPUT_MANIFEST.as_posix()],
+        "outputs": output_paths,
+        "ownership_inventory": {
+            "format_version": 1,
+            "manifest": {
+                "path": OUTPUT_MANIFEST.as_posix(),
+                "mode": OUTPUT_MANIFEST_MODE,
+                "marker": OUTPUT_MANIFEST_MARKER.decode("ascii"),
+            },
+            "artifacts": artifact_inventory,
+        },
     }
+    return manifest
+
+
+def render_outputs(ir: RegistryIR) -> dict[Path, bytes]:
+    # Later renderer work appends typed RenderedOutput values here.  Keeping the
+    # ownership metadata beside each payload avoids a second marker authority.
+    artifacts: dict[Path, Any] = {}
+    manifest = _manifest_document(ir, artifacts)
     encoded = (json.dumps(manifest, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
-    return {OUTPUT_MANIFEST: encoded}
+    if OUTPUT_MANIFEST_MARKER not in encoded[: generated_transaction.MARKER_SCAN_BYTES]:
+        raise RegistryError("generated output manifest does not carry its ownership marker")
+    return {
+        **{path: output.payload for path, output in artifacts.items()},
+        OUTPUT_MANIFEST: encoded,
+    }
 
 
-def _render_to_directory(outputs: dict[Path, bytes], directory: Path) -> None:
-    for relative, payload in outputs.items():
-        target = directory / relative.relative_to("schemas/telemetry/generated")
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_bytes(payload)
+def _strict_manifest_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise RegistryError(f"generated output manifest contains duplicate key {key!r}")
+        result[key] = value
+    return result
+
+
+def _decode_output_manifest(raw: bytes) -> dict[str, Any]:
+    try:
+        value = json.loads(
+            raw,
+            object_pairs_hook=_strict_manifest_pairs,
+            parse_constant=lambda value: (_ for _ in ()).throw(ValueError(value)),
+        )
+    except RegistryError:
+        raise
+    except (UnicodeDecodeError, ValueError, json.JSONDecodeError, RecursionError) as exc:
+        raise RegistryError("generated output manifest is not strict JSON") from exc
+    if not isinstance(value, dict):
+        raise RegistryError("generated output manifest root must be an object")
+    return value
+
+
+def _read_output_manifest_schema(root: Path) -> dict[str, Any]:
+    schema_path = root / OUTPUT_MANIFEST_SCHEMA
+    try:
+        raw = schema_path.read_bytes()
+        schema = _decode_output_manifest(raw)
+        Draft202012Validator.check_schema(schema)
+    except OSError as exc:
+        raise RegistryError(f"cannot read output manifest schema: {OUTPUT_MANIFEST_SCHEMA.as_posix()}") from exc
+    except Exception as exc:
+        if isinstance(exc, RegistryError):
+            raise
+        raise RegistryError("output manifest schema is invalid") from exc
+    return schema
+
+
+def _validate_v2_output_manifest(root: Path, manifest: dict[str, Any]) -> None:
+    validator = Draft202012Validator(_read_output_manifest_schema(root))
+    errors = sorted(validator.iter_errors(manifest), key=lambda error: tuple(str(item) for item in error.path))
+    if errors:
+        error = errors[0]
+        location = ".".join(str(item) for item in error.absolute_path) or "root"
+        raise RegistryError(f"generated output manifest schema violation at {location}: {error.message}")
+
+    inventory = manifest["ownership_inventory"]
+    artifact_paths = [item["path"] for item in inventory["artifacts"]]
+    if artifact_paths != sorted(set(artifact_paths)):
+        raise RegistryError("generated output manifest artifact paths are not a canonical unique set")
+    expected_outputs = sorted([OUTPUT_MANIFEST.as_posix(), *artifact_paths])
+    if manifest["outputs"] != expected_outputs:
+        raise RegistryError("generated output manifest outputs disagree with its ownership inventory")
+
+
+_V1_MANIFEST_KEYS: Final = frozenset(
+    {
+        "format_version",
+        "generated_by",
+        "generator_version",
+        "registry_schema_version",
+        "registry_version",
+        "bucket_catalog_version",
+        "materialized_view_sha256",
+        "canonical_import_order",
+        "inputs",
+        "snapshots",
+        "upstream_ownership_transitions",
+        "upstream_compatibility_overlaps",
+        "legacy_only_upstream_attributes",
+        "outputs",
+    }
+)
+
+
+def _prior_output_ownership(root: Path) -> dict[str, Any]:
+    manifest_path = root / OUTPUT_MANIFEST
+    try:
+        opened = generated_transaction._read_regular_file_bounded(  # noqa: SLF001
+            manifest_path,
+            maximum=OUTPUT_MANIFEST_MAX_BYTES,
+            missing_ok=True,
+        )
+    except generated_transaction.TransactionError as exc:
+        raise RegistryError("generated output manifest is not a safe bounded regular file") from exc
+    if opened is None:
+        return {}
+    raw, metadata = opened
+    if stat.S_IMODE(metadata.st_mode) != OUTPUT_MANIFEST_MODE:
+        raise RegistryError("generated output manifest mode is unsafe")
+    if OUTPUT_MANIFEST_MARKER not in raw[: generated_transaction.MARKER_SCAN_BYTES]:
+        raise RegistryError("generated output manifest ownership marker is missing")
+    manifest = _decode_output_manifest(raw)
+    format_version = manifest.get("format_version")
+    if type(format_version) is not int:
+        raise RegistryError("generated output manifest format version is invalid")
+
+    prior: dict[str, Any] = {
+        OUTPUT_MANIFEST.as_posix(): generated_transaction.PriorOwnedOutput(
+            sha256=_sha256(raw),
+            marker=OUTPUT_MANIFEST_MARKER,
+            mode=OUTPUT_MANIFEST_MODE,
+        )
+    }
+    if format_version == 1:
+        if (
+            set(manifest) != _V1_MANIFEST_KEYS
+            or manifest.get("generated_by") != "scripts/generate_telemetry_registry.py"
+            or manifest.get("generator_version") != 1
+            or manifest.get("outputs") != [OUTPUT_MANIFEST.as_posix()]
+        ):
+            raise RegistryError("legacy generated output manifest is not an approved v1 bootstrap")
+        return prior
+    if format_version != 2:
+        raise RegistryError(f"unsupported generated output manifest format version: {format_version}")
+
+    _validate_v2_output_manifest(root, manifest)
+    inventory = manifest["ownership_inventory"]
+    manifest_record = inventory["manifest"]
+    if (
+        manifest_record["path"] != OUTPUT_MANIFEST.as_posix()
+        or manifest_record["mode"] != OUTPUT_MANIFEST_MODE
+        or manifest_record["marker"] != OUTPUT_MANIFEST_MARKER.decode("ascii")
+    ):
+        raise RegistryError("generated output manifest self-ownership record is invalid")
+    for record in inventory["artifacts"]:
+        marker = record["marker"].encode("ascii")
+        prior[record["path"]] = generated_transaction.PriorOwnedOutput(
+            sha256=record["sha256"],
+            marker=marker,
+            mode=record["mode"],
+        )
+    return prior
+
+
+def _transaction_outputs(root: Path, outputs: Mapping[Path, bytes]) -> dict[str, Any]:
+    manifest_raw = outputs.get(OUTPUT_MANIFEST)
+    if manifest_raw is None:
+        raise RegistryError("generated outputs omit the output manifest commit marker")
+    manifest = _decode_output_manifest(manifest_raw)
+    _validate_v2_output_manifest(root, manifest)
+    actual_paths = {path.as_posix() for path in outputs}
+    declared_paths = set(manifest["outputs"])
+    if actual_paths != declared_paths:
+        raise RegistryError(
+            "rendered output payload paths disagree with the manifest: "
+            f"missing={sorted(declared_paths - actual_paths)} extra={sorted(actual_paths - declared_paths)}"
+        )
+    inventory = manifest.get("ownership_inventory")
+    if not isinstance(inventory, dict) or not isinstance(inventory.get("artifacts"), list):
+        raise RegistryError("rendered output manifest ownership inventory is invalid")
+    records = {
+        record["path"]: record
+        for record in inventory["artifacts"]
+        if isinstance(record, dict) and isinstance(record.get("path"), str)
+    }
+    desired: dict[str, Any] = {}
+    for path, payload in outputs.items():
+        normalized = path.as_posix()
+        if path == OUTPUT_MANIFEST:
+            marker = OUTPUT_MANIFEST_MARKER
+            mode = OUTPUT_MANIFEST_MODE
+        else:
+            record = records.get(normalized)
+            if record is None or record.get("sha256") != _sha256(payload):
+                raise RegistryError(f"rendered output ownership is missing or stale: {normalized}")
+            try:
+                marker = record["marker"].encode("ascii")
+            except (AttributeError, UnicodeEncodeError) as exc:
+                raise RegistryError(f"rendered output ownership marker is invalid: {normalized}") from exc
+            mode = record.get("mode")
+        desired[normalized] = generated_transaction.RenderedOutput(payload, marker, mode)
+    return desired
+
+
+def _unmanifested_generated_paths(root: Path, declared: set[str]) -> list[str]:
+    generated_root = root / "schemas/telemetry/generated"
+    extras: list[str] = []
+    for path in generated_root.rglob("*"):
+        if not path.is_symlink() and not path.is_file():
+            continue
+        relative = path.relative_to(root).as_posix()
+        if relative not in declared:
+            extras.append(relative)
+    return sorted(extras)
 
 
 def check_outputs(root: Path, outputs: dict[Path, bytes]) -> None:
-    target_root = root / "schemas/telemetry/generated"
-    expected = {path.relative_to("schemas/telemetry/generated") for path in outputs}
-    actual = (
-        {path.relative_to(target_root) for path in target_root.rglob("*") if path.is_file()}
-        if target_root.is_dir()
-        else set()
-    )
-    missing = sorted(path.as_posix() for path in expected - actual)
-    extra = sorted(path.as_posix() for path in actual - expected)
-    stale: list[str] = []
-    for relative in sorted(expected & actual, key=lambda item: item.as_posix()):
-        expected_bytes = outputs[Path("schemas/telemetry/generated") / relative]
-        if (target_root / relative).read_bytes() != expected_bytes:
-            stale.append(relative.as_posix())
-    if missing or extra or stale:
+    desired = _transaction_outputs(root, outputs)
+    prior = _prior_output_ownership(root)
+    try:
+        generated_transaction.check_outputs(root, desired, prior)
+    except generated_transaction.TransactionError as exc:
+        raise RegistryError(f"{exc}; run scripts/generate_telemetry_registry.py --write") from exc
+    extras = _unmanifested_generated_paths(root, set(desired))
+    if extras:
         raise RegistryError(
-            f"generated output drift: missing={missing}, extra={extra}, stale={stale}; "
-            "run scripts/generate_telemetry_registry.py --write"
+            f"generated output drift: unowned={extras}; "
+            "remove unmanifested files or add a renderer and ownership record"
         )
 
 
 def write_outputs(root: Path, outputs: dict[Path, bytes]) -> None:
-    parent = root / "schemas/telemetry"
-    parent.mkdir(parents=True, exist_ok=True)
-    target = parent / "generated"
-    stage = Path(tempfile.mkdtemp(prefix=".telemetry-generated-stage-", dir=parent))
-    backup = parent / ".telemetry-generated-backup"
+    generated_root = root / "schemas/telemetry/generated"
     try:
-        _render_to_directory(outputs, stage)
-        if backup.exists():
-            raise RegistryError("stale telemetry generated-output backup exists")
-        if target.exists():
-            os.replace(target, backup)
-        try:
-            os.replace(stage, target)
-        except BaseException:
-            if backup.exists() and not target.exists():
-                os.replace(backup, target)
-            raise
-        if backup.exists():
-            shutil.rmtree(backup)
-    finally:
-        if stage.exists():
-            shutil.rmtree(stage)
+        generated_root.mkdir(parents=True, exist_ok=True)
+        desired = _transaction_outputs(root, outputs)
+        prior = _prior_output_ownership(root)
+        generated_transaction.write_outputs(root, desired, prior)
+    except generated_transaction.TransactionError as exc:
+        raise RegistryError(str(exc)) from exc
 
 
 def main(argv: list[str] | None = None) -> int:

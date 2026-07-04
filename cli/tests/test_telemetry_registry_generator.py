@@ -538,9 +538,13 @@ def _domain_sources() -> dict[str, dict[str, Any]]:
 
 def _fixture_root(tmp_path: Path) -> Path:
     root = tmp_path / "repository"
+    (root / ".git").mkdir(parents=True)
+    (root / "internal/observability").mkdir(parents=True)
     telemetry = root / "schemas/telemetry/v8"
     upstream = telemetry / "upstream"
     upstream.mkdir(parents=True)
+    schema_source = ROOT / "schemas/telemetry/v8/output-manifest.schema.json"
+    (telemetry / "output-manifest.schema.json").write_bytes(schema_source.read_bytes())
     inventory_source = ROOT / "docs/design/observability-v8/current-state-inventory.yaml"
     inventory_target = root / "docs/design/observability-v8/current-state-inventory.yaml"
     inventory_target.parent.mkdir(parents=True)
@@ -764,6 +768,21 @@ def test_write_check_is_deterministic_and_offline(tmp_path: Path) -> None:
     assert second.returncode == 0, second.stderr
     assert manifest.read_bytes() == first_bytes
     parsed = json.loads(first_bytes)
+    assert parsed["format_version"] == 2
+    assert parsed["outputs"] == ["schemas/telemetry/generated/output-manifest.json"]
+    assert parsed["ownership_inventory"] == {
+        "format_version": 1,
+        "manifest": {
+            "path": "schemas/telemetry/generated/output-manifest.json",
+            "mode": 0o644,
+            "marker": '"generated_by": "scripts/generate_telemetry_registry.py"',
+        },
+        "artifacts": [],
+    }
+    schema_input = next(
+        item for item in parsed["inputs"] if item["path"] == "schemas/telemetry/v8/output-manifest.schema.json"
+    )
+    assert schema_input["sha256"] == _sha256((root / "schemas/telemetry/v8/output-manifest.schema.json").read_bytes())
     assert len(parsed["materialized_view_sha256"]) == 64
     assert set(parsed["materialized_view_sha256"]) <= set("0123456789abcdef")
     assert parsed["canonical_import_order"] == ["genai.yaml", "security.yaml", "operations.yaml"]
@@ -795,6 +814,96 @@ def test_write_check_is_deterministic_and_offline(tmp_path: Path) -> None:
         },
     ]
     assert len(parsed["legacy_only_upstream_attributes"]) == 10
+
+
+def test_v1_manifest_bootstraps_to_v2_ownership_inventory(tmp_path: Path) -> None:
+    root = _fixture_root(tmp_path)
+    module = _load_generator_module("telemetry_registry_v1_bootstrap")
+    rendered = module.render_outputs(module.compile_registry(root))
+    manifest = json.loads(rendered[module.OUTPUT_MANIFEST])
+    manifest["format_version"] = 1
+    manifest.pop("ownership_inventory")
+    generated = root / "schemas/telemetry/generated"
+    generated.mkdir(parents=True)
+    manifest_path = generated / "output-manifest.json"
+    manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+    result = _run(root, "--write")
+
+    assert result.returncode == 0, result.stderr
+    upgraded = json.loads(manifest_path.read_bytes())
+    assert upgraded["format_version"] == 2
+    assert upgraded["ownership_inventory"]["artifacts"] == []
+    assert _run(root, "--check").returncode == 0
+
+
+def test_prior_manifest_parser_rejects_duplicate_unknown_and_disagreeing_ownership(
+    tmp_path: Path,
+) -> None:
+    root = _fixture_root(tmp_path)
+    assert _run(root, "--write").returncode == 0
+    module = _load_generator_module("telemetry_registry_prior_manifest_rejection")
+    manifest_path = root / "schemas/telemetry/generated/output-manifest.json"
+    original = manifest_path.read_bytes()
+
+    legacy = json.loads(original)
+    legacy["format_version"] = 1
+    legacy.pop("ownership_inventory")
+    legacy["unexpected"] = True
+    manifest_path.write_text(json.dumps(legacy, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    with pytest.raises(module.RegistryError, match="not an approved v1 bootstrap"):
+        module._prior_output_ownership(root)
+
+    manifest_path.write_bytes(original.replace(b"{\n", b'{\n  "format_version": 2,\n', 1))
+    with pytest.raises(module.RegistryError, match="duplicate key 'format_version'"):
+        module._prior_output_ownership(root)
+
+    manifest = json.loads(original)
+    manifest["unexpected"] = True
+    manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    with pytest.raises(module.RegistryError, match="schema violation"):
+        module._prior_output_ownership(root)
+
+    manifest = json.loads(original)
+    manifest["outputs"].append("schemas/telemetry/generated/unclaimed.json")
+    manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    with pytest.raises(module.RegistryError, match="outputs disagree"):
+        module._prior_output_ownership(root)
+
+
+def test_v2_ownership_inventory_loads_exact_future_artifact_metadata(tmp_path: Path) -> None:
+    root = _fixture_root(tmp_path)
+    assert _run(root, "--write").returncode == 0
+    module = _load_generator_module("telemetry_registry_future_artifact_ownership")
+    generated = root / "schemas/telemetry/generated"
+    artifact = generated / "future.json"
+    marker = '"x-defenseclaw-generated"'
+    payload = f"{{{marker}: true}}\n".encode()
+    artifact.write_bytes(payload)
+    manifest_path = generated / "output-manifest.json"
+    manifest = json.loads(manifest_path.read_bytes())
+    artifact_path = "schemas/telemetry/generated/future.json"
+    manifest["outputs"].append(artifact_path)
+    manifest["outputs"].sort()
+    manifest["ownership_inventory"]["artifacts"].append(
+        {
+            "path": artifact_path,
+            "sha256": _sha256(payload),
+            "mode": 0o644,
+            "marker": marker,
+        }
+    )
+    claimed_manifest = (json.dumps(manifest, ensure_ascii=False, indent=2) + "\n").encode()
+    with pytest.raises(module.RegistryError, match="payload paths disagree"):
+        module._transaction_outputs(root, {module.OUTPUT_MANIFEST: claimed_manifest})
+    manifest_path.write_bytes(claimed_manifest)
+
+    prior = module._prior_output_ownership(root)
+
+    assert set(prior) == {module.OUTPUT_MANIFEST.as_posix(), artifact_path}
+    assert prior[artifact_path].sha256 == _sha256(payload)
+    assert prior[artifact_path].mode == 0o644
+    assert prior[artifact_path].marker == marker.encode()
 
 
 def test_snapshot_tampering_fails_without_partial_output(tmp_path: Path) -> None:
@@ -2652,7 +2761,7 @@ def test_strict_yaml_rejects_invalid_utf8(tmp_path: Path) -> None:
     assert "invalid UTF-8" in result.stderr
 
 
-def test_check_detects_extra_and_stale_outputs(tmp_path: Path) -> None:
+def test_check_preserves_unowned_and_detects_stale_outputs(tmp_path: Path) -> None:
     root = _fixture_root(tmp_path)
     assert _run(root, "--write").returncode == 0
     generated = root / "schemas/telemetry/generated"
@@ -2660,13 +2769,18 @@ def test_check_detects_extra_and_stale_outputs(tmp_path: Path) -> None:
     extra.write_text("{}\n", encoding="utf-8")
     result = _run(root, "--check")
     assert result.returncode == 1
-    assert "extra=['unowned.json']" in result.stderr
+    assert "unowned=['schemas/telemetry/generated/unowned.json']" in result.stderr
+    assert extra.is_file()
+    assert _run(root, "--write").returncode == 0
+    assert extra.is_file()
+    assert _run(root, "--check").returncode == 1
     extra.unlink()
+    assert _run(root, "--check").returncode == 0
     manifest = generated / "output-manifest.json"
     manifest.write_bytes(manifest.read_bytes() + b" ")
     result = _run(root, "--check")
     assert result.returncode == 1
-    assert "stale=['output-manifest.json']" in result.stderr
+    assert "stale=schemas/telemetry/generated/output-manifest.json" in result.stderr
     assert manifest.is_file()
     assert not any(generated.parent.glob(".telemetry-generated-stage-*"))
 
@@ -2674,7 +2788,7 @@ def test_check_detects_extra_and_stale_outputs(tmp_path: Path) -> None:
     manifest.unlink()
     result = _run(root, "--check")
     assert result.returncode == 1
-    assert "missing=['output-manifest.json']" in result.stderr
+    assert "missing=schemas/telemetry/generated/output-manifest.json" in result.stderr
     assert not manifest.exists()
     assert not any(generated.parent.glob(".telemetry-generated-stage-*"))
 
@@ -4492,4 +4606,18 @@ def test_manifest_check_detects_materialized_digest_drift(tmp_path: Path) -> Non
     result = _run(root, "--check")
 
     assert result.returncode == 1
-    assert "stale=['output-manifest.json']" in result.stderr
+    assert "stale=schemas/telemetry/generated/output-manifest.json" in result.stderr
+
+
+def test_manifest_schema_change_is_provenance_pinned_input(tmp_path: Path) -> None:
+    root = _fixture_root(tmp_path)
+    assert _run(root, "--write").returncode == 0
+    schema_path = root / "schemas/telemetry/v8/output-manifest.schema.json"
+    schema = json.loads(schema_path.read_bytes())
+    schema["title"] += " changed"
+    schema_path.write_text(json.dumps(schema, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+    result = _run(root, "--check")
+
+    assert result.returncode == 1
+    assert "stale=schemas/telemetry/generated/output-manifest.json" in result.stderr
