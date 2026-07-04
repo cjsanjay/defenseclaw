@@ -787,7 +787,8 @@ Required cases:
   never implicitly stringified.
 - OTLP mapping mutation tests cover every span/resource/scope/status/event/link
   target and reject duplicate targets or a type-incompatible encoding. The exact
-  AnyValue table covers Boolean, int64, finite double, string, array, and object;
+  AnyValue table covers Boolean, int64, bounded uint32-to-int projection, finite
+  double, string, array, and object;
   null and implicit stringification fail.
 - `span.workflow.run` uses exactly
   `workflow {defenseclaw.workflow.name}`. Missing, unbounded, high-cardinality,

@@ -145,6 +145,13 @@ structural_contract:
       - {name: build_commit, type: string, required: false, field_class: identifier, sensitivity: safe, normalization: {id: digest-v1, overrides: {max_utf8_bytes: 128, pattern: '^[0-9a-f]+$'}}}
       - {name: config_digest, type: string, required: false, field_class: identifier, sensitivity: internal, normalization: {id: digest-v1, overrides: {max_utf8_bytes: 128, pattern: '^[0-9a-f]+$'}}}
   trace:
+    derivations:
+      - {id: trace-bucket-equality-v1, target_attribute: defenseclaw.bucket, source: envelope.bucket, equality: typed-json-exact, presence: when-registered}
+      - {id: trace-family-equality-v1, target_attribute: defenseclaw.span.family, source: family.id, equality: typed-json-exact, presence: when-registered}
+      - {id: trace-family-schema-version-equality-v1, target_attribute: defenseclaw.span.family_schema_version, source: family.family_schema_version, equality: typed-json-exact, presence: when-registered}
+      - {id: trace-source-equality-v1, target_attribute: defenseclaw.source, source: envelope.source, equality: typed-json-exact, presence: when-registered}
+      - {id: trace-config-generation-equality-v1, target_attribute: defenseclaw.config.generation, source: provenance.config_generation, equality: typed-json-exact, presence: when-registered}
+      - {id: trace-outcome-equality-v1, target_attribute: defenseclaw.outcome, source: envelope.outcome, equality: typed-json-exact, presence: when-registered-and-source-present}
     body:
       additional_properties: false
       fields:
@@ -211,6 +218,7 @@ structural_contract:
     any_value_mapping:
       - {canonical_type: boolean, otlp_arm: boolValue}
       - {canonical_type: int64, otlp_arm: intValue}
+      - {canonical_type: uint32, otlp_arm: intValue}
       - {canonical_type: double, otlp_arm: doubleValue}
       - {canonical_type: string, otlp_arm: stringValue}
       - {canonical_type: array, otlp_arm: arrayValue}

@@ -5,6 +5,7 @@
   "registry_schema_version": 1,
   "registry_version": 1,
   "bucket_catalog_version": 1,
+  "materialized_view_sha256": "e7bdc936a70a4ec2079998b2305c881903d02ce2e3bbbb7ad67fed696470a7d2",
   "canonical_import_order": [
     "genai.yaml",
     "security.yaml",
@@ -13,11 +14,11 @@
   "inputs": [
     {
       "path": "schemas/telemetry/v8/registry.yaml",
-      "sha256": "e00f49095435ca45d4c0d821b6bf4dc5f6b6a277160326dc4b74d63a24c58720"
+      "sha256": "2bfb329d554fdb0f2d568be4cec117c34ea1e133342796501cd8a09dc48273b1"
     },
     {
       "path": "schemas/telemetry/v8/genai.yaml",
-      "sha256": "771dd6c2818307830ddbeaa8eaa6ef779df5b02d6713f718e30aed8d884a7b96"
+      "sha256": "2ece6c6ac796de8f0953ea553691d5e8e71d978fda3e44c50c607ebcd9d089dd"
     },
     {
       "path": "schemas/telemetry/v8/security.yaml",

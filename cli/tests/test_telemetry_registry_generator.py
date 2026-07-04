@@ -11,6 +11,7 @@ import os
 import subprocess
 import sys
 import tarfile
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -290,6 +291,7 @@ def _domain_sources() -> dict[str, dict[str, Any]]:
                     "type": "span",
                     "brief": "A model chat call.",
                     "stability": "stable",
+                    "extends": ["span.core"],
                     "attributes": [
                         {
                             "ref": "gen_ai.operation.name",
@@ -365,6 +367,13 @@ def _domain_sources() -> dict[str, dict[str, Any]]:
     for attribute_id in (
         "defenseclaw.bucket",
         "defenseclaw.outcome",
+        "defenseclaw.span.family",
+        "defenseclaw.span.family_schema_version",
+        "defenseclaw.source",
+        "defenseclaw.connector.source",
+        "defenseclaw.config.generation",
+        "defenseclaw.run.id",
+        "defenseclaw.operation.id",
         "defenseclaw.agent.phase",
         "defenseclaw.agent.phase.previous",
         "defenseclaw.agent.phase.from",
@@ -386,7 +395,7 @@ def _domain_sources() -> dict[str, dict[str, Any]]:
                 "overrides": {"enum": list(_CANONICAL_AGENT_PHASES)},
             }
         domains["genai.yaml"]["attributes"].append(attribute)
-    for group_id in ("scope.core", "link.core"):
+    for group_id in ("scope.core", "link.core", "span.core"):
         domains["genai.yaml"]["groups"].append(
             copy.deepcopy(next(item for item in canonical_genai["groups"] if item["id"] == group_id))
         )
@@ -445,6 +454,7 @@ def _domain_sources() -> dict[str, dict[str, Any]]:
                 "type": "span",
                 "brief": "A generated span fixture.",
                 "stability": "development",
+                "extends": ["span.core"],
                 "span": {
                     "name_pattern": f"fixture.span.{index}",
                     "kinds": ["INTERNAL"],
@@ -453,8 +463,8 @@ def _domain_sources() -> dict[str, dict[str, Any]]:
                 "x-defenseclaw": {
                     "bucket": "diagnostic",
                     "family_schema_version": 1,
-                    "outcome_requirement": "forbidden",
-                    "allowed_outcomes": [],
+                    "outcome_requirement": "optional",
+                    "allowed_outcomes": ["completed"],
                 },
             }
         )
@@ -637,7 +647,14 @@ def _fixture_root(tmp_path: Path) -> Path:
                             "kind": "CLIENT",
                             "start_time_unix_nano": 1,
                             "end_time_unix_nano": 2,
-                            "attributes": {"gen_ai.operation.name": "chat"},
+                            "attributes": {
+                                "defenseclaw.bucket": "model.io",
+                                "defenseclaw.span.family": "span.model.chat",
+                                "defenseclaw.span.family_schema_version": 1,
+                                "defenseclaw.source": "gateway",
+                                "defenseclaw.config.generation": 1,
+                                "gen_ai.operation.name": "chat",
+                            },
                             "status": {"code": "OK"},
                             "resource": {
                                 "schema_url": "https://opentelemetry.io/schemas/1.42.0",
@@ -657,6 +674,11 @@ def _fixture_root(tmp_path: Path) -> Path:
                             "/kind": "metadata",
                             "/start_time_unix_nano": "metadata",
                             "/end_time_unix_nano": "metadata",
+                            "/attributes/defenseclaw.bucket": "metadata",
+                            "/attributes/defenseclaw.span.family": "identifier",
+                            "/attributes/defenseclaw.span.family_schema_version": "metadata",
+                            "/attributes/defenseclaw.source": "identifier",
+                            "/attributes/defenseclaw.config.generation": "metadata",
                             "/attributes/gen_ai.operation.name": "metadata",
                             "/status/code": "metadata",
                             "/resource/schema_url": "metadata",
@@ -742,6 +764,8 @@ def test_write_check_is_deterministic_and_offline(tmp_path: Path) -> None:
     assert second.returncode == 0, second.stderr
     assert manifest.read_bytes() == first_bytes
     parsed = json.loads(first_bytes)
+    assert len(parsed["materialized_view_sha256"]) == 64
+    assert set(parsed["materialized_view_sha256"]) <= set("0123456789abcdef")
     assert parsed["canonical_import_order"] == ["genai.yaml", "security.yaml", "operations.yaml"]
     assert [item["dependency_id"] for item in parsed["snapshots"]] == [
         "otel_core",
@@ -1441,6 +1465,7 @@ def test_compiler_ir_preserves_every_validated_public_contract(tmp_path: Path) -
     examples = yaml.safe_load(examples_path.read_text(encoding="utf-8"))
     invalid_record = copy.deepcopy(examples["examples"][0]["record"])
     invalid_record["bucket"] = "tool.activity"
+    invalid_record["body"]["attributes"]["defenseclaw.bucket"] = "tool.activity"
     examples["examples"].append(
         {
             "id": "fixture.invalid",
@@ -1450,7 +1475,14 @@ def test_compiler_ir_preserves_every_validated_public_contract(tmp_path: Path) -
             "base_example": "model.chat.valid",
             "mutation": {
                 "kind": "family_bucket_mismatch",
-                "changes": [{"op": "replace", "path": "/record/bucket", "value": "tool.activity"}],
+                "changes": [
+                    {"op": "replace", "path": "/record/bucket", "value": "tool.activity"},
+                    {
+                        "op": "replace",
+                        "path": "/record/body/attributes/defenseclaw.bucket",
+                        "value": "tool.activity",
+                    },
+                ],
             },
             "description": "Preserved invalid example.",
             "record": invalid_record,
@@ -1931,7 +1963,7 @@ def test_group_resolution_deduplicates_diamond_origins_and_strengthens(tmp_path:
             },
         ]
     )
-    document["groups"][0]["extends"] = ["diamond.left", "diamond.right"]
+    document["groups"][0]["extends"] = ["span.core", "diamond.left", "diamond.right"]
     _write_yaml(path, document)
     _materialize_trace_attribute(root, "defenseclaw.test.name", "fixture", "metadata")
     module = _load_generator_module("telemetry_registry_diamond_test")
@@ -2005,7 +2037,7 @@ def test_group_resolution_rejects_role_and_log_parent_ambiguity(
     if mutation == "span_body_parent":
         path = root / "schemas/telemetry/v8/genai.yaml"
         document = yaml.safe_load(path.read_text(encoding="utf-8"))
-        document["groups"][0]["extends"] = ["body.fixture"]
+        document["groups"][0]["extends"] = ["span.core", "body.fixture"]
     else:
         path = root / "schemas/telemetry/v8/operations.yaml"
         document = yaml.safe_load(path.read_text(encoding="utf-8"))
@@ -2137,7 +2169,7 @@ def test_requirement_lattice_and_conditional_clause_merge(
             }
         )
         parents.append(group_id)
-    document["groups"][0]["extends"] = parents
+    document["groups"][0]["extends"] = ["span.core", *parents]
     _write_yaml(path, document)
     if error is not None:
         result = _run(root, "--write")
@@ -2196,7 +2228,7 @@ def test_constraint_intersection_is_restrictive_and_deterministic(tmp_path: Path
             },
         ]
     )
-    document["groups"][0]["extends"] = ["constraints.left", "constraints.right"]
+    document["groups"][0]["extends"] = ["span.core", "constraints.left", "constraints.right"]
     _write_yaml(path, document)
     module = _load_generator_module("telemetry_registry_constraint_merge_test")
 
@@ -2256,7 +2288,7 @@ def test_structured_constraint_intersection_uses_lower_depth_and_property_limits
             }
         )
         parents.append(group_id)
-    document["groups"][0]["extends"] = parents
+    document["groups"][0]["extends"] = ["span.core", *parents]
     _write_yaml(path, document)
     module = _load_generator_module("telemetry_registry_structured_constraint_test")
 
@@ -2334,7 +2366,7 @@ def test_constraint_intersection_rejects_empty_or_nonrepresentable(
             }
         )
         parents.append(group_id)
-    document["groups"][0]["extends"] = parents
+    document["groups"][0]["extends"] = ["span.core", *parents]
     _write_yaml(path, document)
 
     result = _run(root, "--write")
@@ -2395,7 +2427,7 @@ def test_constraint_intersection_rejects_inconsistent_numeric_range(tmp_path: Pa
             },
         ]
     )
-    document["groups"][0]["extends"] = ["range.minimum", "range.maximum"]
+    document["groups"][0]["extends"] = ["span.core", "range.minimum", "range.maximum"]
     _write_yaml(path, document)
 
     result = _run(root, "--write")
@@ -2456,7 +2488,7 @@ def test_constraint_intersection_rejects_inconsistent_collection_bounds(
             }
         )
         parents.append(group_id)
-    document["groups"][0]["extends"] = parents
+    document["groups"][0]["extends"] = ["span.core", *parents]
     _write_yaml(path, document)
 
     result = _run(root, "--write")
@@ -2471,9 +2503,11 @@ def test_real_registry_resolves_once_with_zero_ambiguity() -> None:
     ir = module.compile_registry(ROOT)
     groups = {group.id: group for domain in ir.domains for group in domain.groups}
     positions = {group_id: index for index, group_id in enumerate(ir.group_resolution_order)}
+    materialized_order = ir.materialized_view.facts["fields"]["group_resolution_order"]
 
     assert len(ir.group_resolution_order) == len(groups) == len(ir.resolved_group_uses)
     assert len(set(ir.group_resolution_order)) == len(groups)
+    assert materialized_order == ir.group_resolution_order
     for group in groups.values():
         assert group.resolved_uses == ir.resolved_group_uses[group.id]
         assert len({use.ref for use in group.resolved_uses}) == len(group.resolved_uses)
@@ -3101,6 +3135,37 @@ def test_structural_contract_ir_is_closed_lossless_and_runtime_bound(tmp_path: P
     assert trace_fields["scope"].otlp_target is None
     assert contract.trace_relations[0].left == "start_time_unix_nano"
     assert contract.trace_relations[0].right == "end_time_unix_nano"
+    assert {
+        (
+            item.target_attribute,
+            item.source,
+            item.equality,
+            item.presence,
+        )
+        for item in contract.trace_derivations
+    } == {
+        ("defenseclaw.bucket", "envelope.bucket", "typed-json-exact", "when-registered"),
+        ("defenseclaw.span.family", "family.id", "typed-json-exact", "when-registered"),
+        (
+            "defenseclaw.span.family_schema_version",
+            "family.family_schema_version",
+            "typed-json-exact",
+            "when-registered",
+        ),
+        ("defenseclaw.source", "envelope.source", "typed-json-exact", "when-registered"),
+        (
+            "defenseclaw.config.generation",
+            "provenance.config_generation",
+            "typed-json-exact",
+            "when-registered",
+        ),
+        (
+            "defenseclaw.outcome",
+            "envelope.outcome",
+            "typed-json-exact",
+            "when-registered-and-source-present",
+        ),
+    }
     assert {field.name for field in contract.trace_body.fields}.isdisjoint(
         {"trace_id", "span_id", "name", "traceId", "spanId"}
     )
@@ -3147,9 +3212,53 @@ def test_structural_contract_ir_is_closed_lossless_and_runtime_bound(tmp_path: P
         "trace_resource.schema_url": "ResourceSpans",
         "trace_scope.schema_url": "ResourceSpans.scopeSpans[]",
     }
+    assert ("uint32", "intValue") in contract.canonical_to_otlp.any_value_mapping
     assert contract.canonical_to_otlp.any_value_mapping[-1] == ("object", "kvlistValue")
     with pytest.raises(TypeError):
         contract.limits.values["payload_depth"] = 8
+
+
+def test_family_schema_version_materializes_as_uint32_with_exact_otlp_projection() -> None:
+    module = _load_generator_module("telemetry_registry_family_schema_version_uint32")
+
+    ir = module.compile_registry(ROOT)
+    attribute = next(
+        attribute
+        for domain in ir.domains
+        for attribute in domain.attributes
+        if attribute.id == "defenseclaw.span.family_schema_version"
+    )
+    assert attribute.field_type == "uint32"
+    assert dict(attribute.normalization.effective_constraints) == {
+        "min": 1,
+        "max": 2**32 - 1,
+    }
+    assert module._attribute_type_accepts(2**32 - 1, attribute.field_type)
+    assert not module._attribute_type_accepts(2**32, attribute.field_type)
+
+    materialized_domains = ir.materialized_view.facts["fields"]["domains"]
+    materialized_genai = next(domain for domain in materialized_domains if domain["fields"]["domain"] == "genai")
+    materialized_attribute = next(
+        candidate
+        for candidate in materialized_genai["fields"]["attributes"]
+        if candidate["fields"]["id"] == "defenseclaw.span.family_schema_version"
+    )
+    assert materialized_attribute["fields"]["field_type"] == "uint32"
+    assert ("uint32", "intValue") in ir.structural_contract.canonical_to_otlp.any_value_mapping
+    assert 2**32 - 1 <= 2**63 - 1
+
+
+def test_family_schema_version_above_uint32_is_rejected_before_rendering(tmp_path: Path) -> None:
+    root = _fixture_root(tmp_path)
+    path = root / "schemas/telemetry/v8/genai.yaml"
+    document = yaml.safe_load(path.read_text(encoding="utf-8"))
+    document["groups"][0]["x-defenseclaw"]["family_schema_version"] = 2**32
+    _write_yaml(path, document)
+
+    result = _run(root, "--write")
+
+    assert result.returncode == 1
+    assert "x-defenseclaw.family_schema_version: expected integer in [1, 4294967295]" in result.stderr
 
 
 @pytest.mark.parametrize(
@@ -3947,3 +4056,440 @@ def test_normalizer_bounds_are_source_owned_not_literal_cloned(tmp_path: Path) -
 
     compiled = next(item for item in ir.normalizers if item.id == "bounded-v1")
     assert compiled.default_constraints["max_utf8_bytes"] == 4095
+
+
+def test_materialized_registry_view_is_complete_recursive_and_immutable(tmp_path: Path) -> None:
+    root = _fixture_root(tmp_path)
+    module = _load_generator_module("telemetry_registry_materialized_view")
+
+    ir = module.compile_registry(root)
+    view = ir.materialized_view
+
+    assert view.format == "defenseclaw-materialized-registry-view-v1"
+    assert len(view.typed_canonical_json_sha256) == 64
+    typed_bytes = module._canonical_json_bytes(module._typed_materialized_node(view.facts))
+    assert (
+        view.typed_canonical_json_sha256
+        == hashlib.sha256(module.MATERIALIZED_VIEW_DIGEST_DOMAIN + typed_bytes).hexdigest()
+    )
+    registry_field_names = {
+        field.name for field in module.dataclass_fields(module.RegistryIR) if field.name != "materialized_view"
+    }
+    assert set(view.facts["fields"]) == registry_field_names
+    assert view.facts["$type"] == "RegistryIR"
+    assert view.facts["fields"]["structural_contract"]["$type"] == "StructuralContractIR"
+    assert view.facts["fields"]["examples"][0]["$type"] == "ExampleIR"
+
+    observed_keys: set[str] = set()
+
+    def assert_frozen(value: Any) -> None:
+        assert not isinstance(value, (dict, list, set))
+        assert not module.is_dataclass(value)
+        if isinstance(value, Mapping):
+            observed_keys.update(value)
+            for child in value.values():
+                assert_frozen(child)
+        elif isinstance(value, tuple):
+            for child in value:
+                assert_frozen(child)
+
+    assert_frozen(view.facts)
+    assert {"field_class", "sensitivity", "introduced_in", "canonical_to_otlp"} <= observed_keys
+    with pytest.raises(TypeError):
+        view.facts["new"] = "mutable"
+    with pytest.raises(TypeError):
+        view.facts["fields"]["schema_version"] = 2
+
+    registry_values = {
+        field.name: getattr(ir, field.name)
+        for field in module.dataclass_fields(module.RegistryIR)
+        if field.name != "materialized_view"
+    }
+    reversed_values = dict(reversed(tuple(registry_values.items())))
+    rebuilt = module._build_materialized_registry_view(reversed_values)
+    assert rebuilt.facts == view.facts
+    assert rebuilt.typed_canonical_json_sha256 == view.typed_canonical_json_sha256
+
+
+def test_materialized_digest_is_typed_and_hash_seed_deterministic(tmp_path: Path) -> None:
+    root = _fixture_root(tmp_path)
+    module = _load_generator_module("telemetry_registry_materialized_digest")
+    typed_values = {
+        module._canonical_json_bytes(module._typed_materialized_node({"value": value})) for value in (b"1", "1", 1, 1.0)
+    }
+    assert len(typed_values) == 4
+    assert module._freeze_json(b"\x00\xff") == b"\x00\xff"
+    assert module._typed_materialized_node(b"\x00\xff") == ("bytes", "00ff")
+    assert module._materialize_registry_fact(b"\x00\xff") == b"\x00\xff"
+
+    observed: list[str] = []
+    for seed in ("1", "8675309"):
+        environment = dict(os.environ)
+        environment["PYTHONHASHSEED"] = seed
+        result = _run(root, "--write", environment=environment)
+        assert result.returncode == 0, result.stderr
+        manifest = json.loads((root / "schemas/telemetry/generated/output-manifest.json").read_text(encoding="utf-8"))
+        observed.append(manifest["materialized_view_sha256"])
+    assert len(set(observed)) == 1
+
+
+def test_real_registry_materialized_digest_is_hash_seed_deterministic() -> None:
+    probe = """
+import importlib.util
+import sys
+from pathlib import Path
+
+generator = Path(sys.argv[1])
+root = Path(sys.argv[2])
+spec = importlib.util.spec_from_file_location("telemetry_registry_real_seed_probe", generator)
+if spec is None or spec.loader is None:
+    raise RuntimeError("unable to load telemetry registry generator")
+module = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
+print(module.compile_registry(root).materialized_view.typed_canonical_json_sha256)
+"""
+    observed: list[str] = []
+    for seed in ("1", "8675309"):
+        environment = dict(os.environ)
+        environment["PYTHONHASHSEED"] = seed
+        result = subprocess.run(
+            [sys.executable, "-c", probe, str(GENERATOR), str(ROOT)],
+            cwd=ROOT,
+            env=environment,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert result.returncode == 0, result.stderr
+        observed.append(result.stdout.strip())
+    assert len(set(observed)) == 1
+    assert len(observed[0]) == 64
+
+
+def test_materialized_digest_preserves_ordered_registry_sequences(tmp_path: Path) -> None:
+    root = _fixture_root(tmp_path)
+    module = _load_generator_module("telemetry_registry_materialized_ordered_sequences")
+    ir = module.compile_registry(root)
+    registry_values = {
+        field.name: getattr(ir, field.name)
+        for field in module.dataclass_fields(module.RegistryIR)
+        if field.name != "materialized_view"
+    }
+    ordered_fields = (
+        "imports",
+        "input_digests",
+        "dependencies",
+        "normalizers",
+        "conditions",
+        "domains",
+        "group_resolution_order",
+        "upstream_attribute_ownership",
+    )
+
+    for field_name in ordered_fields:
+        original = registry_values[field_name]
+        assert isinstance(original, tuple) and len(original) > 1
+        reordered = dict(registry_values)
+        reordered[field_name] = tuple(reversed(original))
+        rebuilt = module._build_materialized_registry_view(reordered)
+        assert rebuilt.typed_canonical_json_sha256 != ir.materialized_view.typed_canonical_json_sha256
+
+    second_example = module.replace(ir.examples[0], id="model.chat.valid.second")
+    first_examples = dict(registry_values, examples=(ir.examples[0], second_example))
+    second_examples = dict(registry_values, examples=(second_example, ir.examples[0]))
+    assert (
+        module._build_materialized_registry_view(first_examples).typed_canonical_json_sha256
+        != module._build_materialized_registry_view(second_examples).typed_canonical_json_sha256
+    )
+
+
+def test_materialized_digest_preserves_nested_fields_uses_arms_and_changes(tmp_path: Path) -> None:
+    root = _fixture_root(tmp_path)
+    module = _load_generator_module("telemetry_registry_materialized_nested_order")
+    ir = module.compile_registry(root)
+    registry_values = {
+        field.name: getattr(ir, field.name)
+        for field in module.dataclass_fields(module.RegistryIR)
+        if field.name != "materialized_view"
+    }
+
+    envelope = ir.structural_contract.envelope
+    reordered_contract = module.replace(
+        ir.structural_contract,
+        envelope=module.replace(envelope, fields=tuple(reversed(envelope.fields))),
+    )
+    fields_values = dict(registry_values, structural_contract=reordered_contract)
+    assert (
+        module._build_materialized_registry_view(fields_values).typed_canonical_json_sha256
+        != ir.materialized_view.typed_canonical_json_sha256
+    )
+
+    reordered_contract = module.replace(
+        ir.structural_contract,
+        signal_arms=tuple(reversed(ir.structural_contract.signal_arms)),
+    )
+    arms_values = dict(registry_values, structural_contract=reordered_contract)
+    assert (
+        module._build_materialized_registry_view(arms_values).typed_canonical_json_sha256
+        != ir.materialized_view.typed_canonical_json_sha256
+    )
+
+    domain_index, domain, group_index, group = next(
+        (domain_index, domain, group_index, group)
+        for domain_index, domain in enumerate(ir.domains)
+        for group_index, group in enumerate(domain.groups)
+        if len(group.attribute_uses) > 1
+    )
+    changed_groups = list(domain.groups)
+    changed_groups[group_index] = module.replace(group, attribute_uses=tuple(reversed(group.attribute_uses)))
+    changed_domains = list(ir.domains)
+    changed_domains[domain_index] = module.replace(domain, groups=tuple(changed_groups))
+    uses_values = dict(registry_values, domains=tuple(changed_domains))
+    assert (
+        module._build_materialized_registry_view(uses_values).typed_canonical_json_sha256
+        != ir.materialized_view.typed_canonical_json_sha256
+    )
+
+    changes = (
+        module.ExampleMutationChangeIR("replace", "/record/bucket", True, "model.io"),
+        module.ExampleMutationChangeIR("remove", "/record/outcome", False, None),
+    )
+    first_example = module.replace(
+        ir.examples[0],
+        mutation=module.ExampleMutationIR("single_fault", changes),
+    )
+    second_example = module.replace(
+        first_example,
+        mutation=module.ExampleMutationIR("single_fault", tuple(reversed(changes))),
+    )
+    first_values = dict(registry_values, examples=(first_example, *ir.examples[1:]))
+    second_values = dict(registry_values, examples=(second_example, *ir.examples[1:]))
+    assert (
+        module._build_materialized_registry_view(first_values).typed_canonical_json_sha256
+        != module._build_materialized_registry_view(second_values).typed_canonical_json_sha256
+    )
+
+
+def test_materialized_digest_canonicalizes_declared_set_fields_only(tmp_path: Path) -> None:
+    root = _fixture_root(tmp_path)
+    module = _load_generator_module("telemetry_registry_materialized_declared_sets")
+    ir = module.compile_registry(root)
+    registry_values = {
+        field.name: getattr(ir, field.name)
+        for field in module.dataclass_fields(module.RegistryIR)
+        if field.name != "materialized_view"
+    }
+    normalizer_index, normalizer = next(
+        (index, item) for index, item in enumerate(ir.normalizers) if len(item.allowed_overrides) > 1
+    )
+    changed_normalizers = list(ir.normalizers)
+    changed_normalizers[normalizer_index] = module.replace(
+        normalizer,
+        allowed_overrides=tuple(reversed(normalizer.allowed_overrides)),
+    )
+    reordered = dict(registry_values, normalizers=tuple(changed_normalizers))
+    assert (
+        module._build_materialized_registry_view(reordered).typed_canonical_json_sha256
+        == ir.materialized_view.typed_canonical_json_sha256
+    )
+    changed_normalizers[normalizer_index] = module.replace(
+        normalizer,
+        allowed_overrides=normalizer.allowed_overrides[:-1],
+    )
+    membership_changed = dict(registry_values, normalizers=tuple(changed_normalizers))
+    assert (
+        module._build_materialized_registry_view(membership_changed).typed_canonical_json_sha256
+        != ir.materialized_view.typed_canonical_json_sha256
+    )
+
+    snapshot = module.SnapshotAttribute(
+        "fixture",
+        ("string", "int64"),
+        "attribute",
+        "stable",
+        "upstream",
+        "fixture#/attribute",
+        (),
+        False,
+    )
+    reversed_snapshot = module.replace(snapshot, allowed_types=tuple(reversed(snapshot.allowed_types)))
+    assert module._materialize_registry_fact(snapshot) == module._materialize_registry_fact(reversed_snapshot)
+
+
+@pytest.mark.parametrize(
+    ("mutation", "expected"),
+    [
+        (
+            lambda contract: contract["trace"]["derivations"].pop(),
+            "trace.derivations: binding inventory mismatch",
+        ),
+        (
+            lambda contract: contract["trace"]["derivations"][0].__setitem__("equality", "string-coercion"),
+            "trace.derivations: binding inventory mismatch",
+        ),
+        (
+            lambda contract: contract.__setitem__("derivations", contract["trace"].pop("derivations")),
+            "registry.structural_contract: unknown keys ['derivations']",
+        ),
+    ],
+)
+def test_trace_derivations_are_complete_exact_and_trace_scoped(
+    tmp_path: Path,
+    mutation: Any,
+    expected: str,
+) -> None:
+    root = _fixture_root(tmp_path)
+    path = root / "schemas/telemetry/v8/registry.yaml"
+    registry = yaml.safe_load(path.read_text(encoding="utf-8"))
+    mutation(registry["structural_contract"])
+    _write_yaml(path, registry)
+
+    result = _run(root, "--write")
+
+    assert result.returncode == 1
+    assert expected in result.stderr
+
+
+@pytest.mark.parametrize(
+    ("object_name", "field_name", "expected"),
+    [
+        ("envelope", "bucket", "structural contract envelope: missing field bucket"),
+        (
+            "provenance",
+            "config_generation",
+            "structural contract provenance: missing field config_generation",
+        ),
+    ],
+)
+def test_trace_derivation_source_field_lookup_fails_with_safe_registry_error(
+    tmp_path: Path,
+    object_name: str,
+    field_name: str,
+    expected: str,
+) -> None:
+    root = _fixture_root(tmp_path)
+    module = _load_generator_module(f"telemetry_registry_missing_derivation_source_{object_name}")
+    ir = module.compile_registry(root)
+    object_ir = getattr(ir.structural_contract, object_name)
+    broken_object = module.replace(
+        object_ir,
+        fields=tuple(field for field in object_ir.fields if field.name != field_name),
+    )
+    broken_contract = module.replace(ir.structural_contract, **{object_name: broken_object})
+    groups = {group.id: group for domain in ir.domains for group in domain.groups}
+    attributes = {attribute.id: attribute for domain in ir.domains for attribute in domain.attributes}
+
+    with pytest.raises(module.RegistryError, match=expected):
+        module._validate_structural_contract_bindings(
+            broken_contract,
+            ir.schema_version,
+            ir.bucket_catalog_version,
+            ir.semantic_profiles,
+            groups,
+            attributes,
+        )
+
+
+@pytest.mark.parametrize("mutation", ["unavailable", "source_type_mismatch"])
+def test_trace_derivation_target_must_be_available_and_source_typed(
+    tmp_path: Path,
+    mutation: str,
+) -> None:
+    root = _fixture_root(tmp_path)
+    path = root / "schemas/telemetry/v8/genai.yaml"
+    document = yaml.safe_load(path.read_text(encoding="utf-8"))
+    target = next(
+        attribute for attribute in document["attributes"] if attribute["id"] == "defenseclaw.span.family_schema_version"
+    )
+    if mutation == "unavailable":
+        target["projection_only"] = True
+        target["legacy_bindings"] = [
+            {
+                "source": "fixture",
+                "disposition": "generated_compatibility_alias",
+            }
+        ]
+        expected = "trace derivation trace-family-schema-version-equality-v1: target attribute is unavailable"
+    else:
+        target["type"] = "int64"
+        target["normalization"]["overrides"]["max"] = 2**63 - 1
+        expected = "trace derivation trace-family-schema-version-equality-v1: source/target type mismatch"
+    _write_yaml(path, document)
+
+    result = _run(root, "--write")
+
+    assert result.returncode == 1
+    assert expected in result.stderr
+
+
+@pytest.mark.parametrize("mutation", ["wrong_condition", "wrong_requirement"])
+def test_span_outcome_derivation_requires_exact_source_presence_semantics(
+    tmp_path: Path,
+    mutation: str,
+) -> None:
+    root = _fixture_root(tmp_path)
+    path = root / "schemas/telemetry/v8/genai.yaml"
+    document = yaml.safe_load(path.read_text(encoding="utf-8"))
+    span_core = next(group for group in document["groups"] if group["id"] == "span.core")
+    outcome = next(use for use in span_core["attributes"] if use["ref"] == "defenseclaw.outcome")
+    if mutation == "wrong_condition":
+        outcome["conditional"] = "connector-known-v1"
+    else:
+        outcome["requirement_level"] = "optional"
+        outcome.pop("conditional")
+    _write_yaml(path, document)
+
+    result = _run(root, "--write")
+
+    assert result.returncode == 1
+    assert (
+        "trace derivation target defenseclaw.outcome must resolve with exact "
+        "operation-terminal-v1 source-presence semantics"
+    ) in result.stderr
+
+
+def test_span_forbidden_outcome_cannot_retain_inherited_outcome_derivation(tmp_path: Path) -> None:
+    root = _fixture_root(tmp_path)
+    path = root / "schemas/telemetry/v8/genai.yaml"
+    document = yaml.safe_load(path.read_text(encoding="utf-8"))
+    span = next(group for group in document["groups"] if group["type"] == "span")
+    span["x-defenseclaw"]["outcome_requirement"] = "forbidden"
+    span["x-defenseclaw"]["allowed_outcomes"] = []
+    _write_yaml(path, document)
+
+    result = _run(root, "--write")
+
+    assert result.returncode == 1
+    assert ("forbidden outcome cannot resolve trace derivation target defenseclaw.outcome") in result.stderr
+
+
+def test_unexampled_span_must_resolve_every_registered_trace_derivation(tmp_path: Path) -> None:
+    root = _fixture_root(tmp_path)
+    path = root / "schemas/telemetry/v8/operations.yaml"
+    operations = yaml.safe_load(path.read_text(encoding="utf-8"))
+    span = next(item for item in operations["groups"] if item["id"] == "span.fixture.0")
+    span["extends"].remove("span.core")
+    _write_yaml(path, operations)
+
+    result = _run(root, "--write")
+
+    assert result.returncode == 1
+    assert (
+        "group span.fixture.0: trace derivation target defenseclaw.bucket must resolve as an unconditional "
+        "required attribute"
+    ) in result.stderr
+
+
+def test_manifest_check_detects_materialized_digest_drift(tmp_path: Path) -> None:
+    root = _fixture_root(tmp_path)
+    assert _run(root, "--write").returncode == 0
+    manifest_path = root / "schemas/telemetry/generated/output-manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["materialized_view_sha256"] = "0" * 64
+    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+
+    result = _run(root, "--check")
+
+    assert result.returncode == 1
+    assert "stale=['output-manifest.json']" in result.stderr

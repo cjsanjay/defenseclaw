@@ -46,7 +46,7 @@ attributes:
     notes: registered family
   introduced_in: telemetry-registry-v1
 - id: defenseclaw.span.family_schema_version
-  type: int64
+  type: uint32
   brief: Per-family schema version
   examples:
   - 1
@@ -59,7 +59,7 @@ attributes:
     id: numeric-range-v1
     overrides:
       min: 1
-      max: 9223372036854775807
+      max: 4294967295
     notes: positive integer
   introduced_in: telemetry-registry-v1
 - id: defenseclaw.source

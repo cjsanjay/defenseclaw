@@ -320,7 +320,7 @@ leaf fields owned by an enclosing wrapper rather than that default message:
 projection traverses them and places their registered children in the declared
 resource/scope wrapper contexts.
 
-Strings, Booleans, signed integers, finite doubles, arrays, and structured
+Strings, Booleans, signed integers, bounded `uint32` values, finite doubles, arrays, and structured
 non-null values use the matching OTLP `AnyValue` arm. Canonical attributes never
 stringify a typed value merely to satisfy a backend. A value that cannot be
 represented under the pinned type fails projection for that destination without

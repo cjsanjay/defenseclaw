@@ -393,6 +393,7 @@ structural_contract:
   correlation: {additional_properties: false, fields: []}
   provenance: {additional_properties: false, fields: []}
   trace:
+    derivations: [] # six authored typed equality bindings
     body: {additional_properties: false, fields: [], relations: []}
     resource: {additional_properties: false, fields: []}
     scope: {additional_properties: false, fields: []}
@@ -408,6 +409,23 @@ This is a source-shaped hierarchy excerpt: empty collections stand only for
 omitted authored entries. There are no `objects`, root `signal_arms`, or
 `otlp_representations` keys; copying those conceptual labels into the source is a
 schema error.
+
+`trace.derivations` is the sole executable authority for the six trace overlay
+equalities. It binds `defenseclaw.bucket` to `envelope.bucket`,
+`defenseclaw.span.family` to `family.id`,
+`defenseclaw.span.family_schema_version` to `family.family_schema_version`,
+`defenseclaw.source` to `envelope.source`, and
+`defenseclaw.config.generation` to `provenance.config_generation` whenever the
+target is registered. It binds `defenseclaw.outcome` to `envelope.outcome` only
+when the target is registered and the envelope source is present. Every binding
+uses exact typed-JSON equality. Missing, duplicate, misplaced, or altered bindings
+fail compilation; builders and later renderers consume this IR instead of
+hard-coding the equalities again. After inheritance resolution, every active span
+family MUST resolve the five unconditional target attributes as unconditional
+required attributes. Its outcome target MUST be absent when outcome is forbidden;
+otherwise it MUST retain the exact `operation-terminal-v1` conditional presence
+that represents a present terminal source outcome. This total-family check applies
+even when no curated example references the span.
 
 The compiler accepts no second structural-contract ID or version and no unknown
 member. `runtime_binding` is an asserted parity boundary, not a code-generation
@@ -492,7 +510,8 @@ target for each field. It covers trace/span/parent IDs, rendered name, kind,
 timestamps, status, resource/scope schema URLs, every attribute set, events, links,
 and all span/resource/scope/event/link dropped counts. Its value table maps each
 canonical scalar/array/structured type to a compatible non-null OTLP `AnyValue`
-arm without stringification: Boolean to `boolValue`, `int64` to `intValue`, finite
+arm without stringification: Boolean to `boolValue`, `int64` and bounded `uint32`
+to `intValue`, finite
 double to `doubleValue`, string to `stringValue`, array to `arrayValue`, and object
 to `kvlistValue`; canonical null has explicit `null_value_policy: reject`. The
 closed `object_contexts` map identifies exact protobuf placement for Span,
@@ -715,6 +734,20 @@ attribute skeletons, lacks the exact envelope/correlation/provenance or signal
 arms, permits unknown members, omits structural privacy, conditions, lifecycle,
 phase/code, or OTLP mapping metadata, or accepts a builder-rejected shape is not a
 complete `telemetry.schema.json` and cannot become public authority.
+
+Before any renderer runs, the compiler converts the fully validated `RegistryIR`
+into one recursively immutable `MaterializedRegistryView`. Dataclass identity and
+every field are retained, mappings are key-sorted immutable mappings, and ordered
+tuples retain their validated semantic order. Only tuple fields explicitly declared
+set-valued by exact IR type and field name, plus intrinsically unordered frozen
+sets, are canonically ordered; shape-based inference is forbidden. Immutable byte
+facts remain bytes in the view and use a deterministic hex-encoded `bytes` type tag
+for digesting, distinct from strings and numeric types. No mutable source dictionary
+or list crosses this boundary. One domain-separated typed-canonical-JSON SHA-256
+covers the complete view, including structural fields, resolved families, producer
+mappings, examples, lifecycle/privacy metadata, and OTLP placement. The current
+telemetry output manifest records this `materialized_view_sha256`; WP02-A adds no
+candidate bundle, catalog, generated Go, or public-schema output.
 
 ### 6.2 Compact catalog
 
