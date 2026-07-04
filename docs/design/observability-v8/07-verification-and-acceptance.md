@@ -908,6 +908,13 @@ Required cases:
   brand evasion, and post-override collisions fail. Registry v1 proves the
   override table is empty because there is no default collision or named prior
   released-symbol baseline; a prose reason never authorizes a rename.
+  The reviewed ROOT table also proves the fixed 22-kind/bytewise-source order,
+  exact 1,773 rows and 893/459/178/243 declaration-form totals, domain-separated
+  digest `d897fab03a91351740e122682f96cc821a66f522250ba881e3a47b65afcc5fd7`,
+  and exact content-addressed baseline `ee63f1aed1d6940f7315bc309db828095511f6d977d8137c3406e477e3803232`.
+  Missing, renamed, reordered, byte-tampered, row-tampered, digest-mismatched, or
+  count-mismatched golden state fails the acceptance test. The baseline remains
+  test-only and is never read by `compile_registry` or a renderer.
 - Every valid example has an explicit `builder_context` with occurrence,
   condition, mandatory, and inheritance facts. Deterministic fixtures prove the
   same context yields the same timestamp/record identity inputs and exact facts.

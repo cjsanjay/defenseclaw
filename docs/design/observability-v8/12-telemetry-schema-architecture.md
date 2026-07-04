@@ -1018,6 +1018,28 @@ family, event/link-pair, condition, phase, and semantic-profile inventories, the
 complete symbol table contains 1,773 rows. A count change requires a source change
 and a new reviewed baseline; a renderer cannot reinterpret these row scopes.
 
+The table order is the exact 22-kind order above, followed by bytewise ASCII
+`source_id` order within each kind. The version-1 declaration-form totals are 893
+`exported_const`, 459 `exported_type`, 178 `exported_function`, and 243
+`family_builder_method` rows. The table digest payload is compact UTF-8 JSON with
+no trailing line feed and `ensure_ascii=false`, shaped exactly as the ordered array
+`[[kind,source_id,symbol,declaration_form], ...]`. Its SHA-256 input is the ASCII
+domain prefix `DefenseClaw GoSymbolTableIR v1` followed by one NUL byte and then
+that JSON payload. Registry v1's reviewed table digest is
+`d897fab03a91351740e122682f96cc821a66f522250ba881e3a47b65afcc5fd7`.
+
+The review artifact is
+`schemas/telemetry/v8/baselines/go-symbol-table/ee63f1aed1d6940f7315bc309db828095511f6d977d8137c3406e477e3803232.json`;
+the filename is the SHA-256 of its exact bytes. It records the format/package,
+table digest, row count, kind order/counts, declaration-form counts, and every row.
+This golden is an acceptance oracle, not registry source or renderer authority:
+`compile_registry` does not read it or include it in `input_digests`. A canonical
+acceptance test compares the independently compiled ROOT table with its
+content-addressed bytes, while candidate rendering separately validates the
+materialized v1 counts and table digest before emission. Partial synthetic registry
+fixtures may compile their own collision-free tables without claiming this reviewed
+v1 baseline.
+
 For family declarations, `<Name>` omits the leading signal token from the stable
 family ID; for example, `span.model.chat` produces `SpanModelChatInput` and
 `BuildSpanModelChat`. Event and link type/constructor names include the owning

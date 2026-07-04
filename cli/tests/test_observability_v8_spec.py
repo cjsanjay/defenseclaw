@@ -254,6 +254,14 @@ def test_observability_v8_generated_builder_source_contract_is_normative() -> No
     assert "apply only to those seventeen ordered" in schemas
     assert "exactly 121" in schemas
     assert "complete symbol table contains 1,773 rows" in schemas
+    assert "The table order is the exact 22-kind order" in schemas
+    assert "893\n`exported_const`, 459 `exported_type`, 178 `exported_function`, and 243" in schemas
+    assert "`[[kind,source_id,symbol,declaration_form], ...]`" in schemas
+    assert "`DefenseClaw GoSymbolTableIR v1` followed by one NUL byte" in schemas
+    assert "`d897fab03a91351740e122682f96cc821a66f522250ba881e3a47b65afcc5fd7`" in schemas
+    assert "ee63f1aed1d6940f7315bc309db828095511f6d977d8137c3406e477e3803232.json" in schemas
+    assert "an acceptance oracle, not registry source or renderer authority" in schemas
+    assert "`compile_registry` does not read it" in schemas
     assert "compiler-owned `declaration_form`" in schemas
     assert "`exported_const`, `exported_type`, `exported_function`, and" in schemas
     assert "emits every row exactly" in schemas
@@ -272,6 +280,8 @@ def test_observability_v8_generated_builder_source_contract_is_normative() -> No
     assert "all 49 structured-member rows remain" in verification
     assert "Override fixtures cover all 22 closed `kind` tokens" in verification
     assert "a prose reason never authorizes a rename" in verification
+    assert "exact 1,773 rows and 893/459/178/243 declaration-form totals" in verification
+    assert "test-only and is never read by `compile_registry` or a renderer" in verification
     for namespace in (
         "TelemetryAttribute<Name>",
         "TelemetryFamily<Name>",
