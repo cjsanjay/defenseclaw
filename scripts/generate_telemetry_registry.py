@@ -23,9 +23,11 @@ import shutil
 import string
 import sys
 import tempfile
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Final
+from types import MappingProxyType
+from typing import Any, Final, TypeAlias
 
 import yaml
 
@@ -50,6 +52,11 @@ EXPECTED_REPOSITORIES: Final = {
     "otel_core": "https://github.com/open-telemetry/semantic-conventions",
     "otel_genai": "https://github.com/open-telemetry/semantic-conventions-genai",
     "openinference": "https://github.com/Arize-ai/openinference",
+}
+UPSTREAM_PUBLIC_OWNERS: Final = {
+    "otel_core": "otel",
+    "otel_genai": "otel_genai",
+    "openinference": "openinference_compatibility",
 }
 EXPECTED_OPENINFERENCE_SOURCES: Final = (
     "python/openinference-semantic-conventions/src/openinference/semconv/resource/__init__.py",
@@ -113,6 +120,37 @@ EXPECTED_COMPATIBILITY_LOG_IDENTITIES: Final = frozenset(
     }
 )
 EXPECTED_PRODUCER_COUNTS: Final = {"gateway_event": 14, "audit_action": 188}
+EXPECTED_OUTCOMES: Final = frozenset(
+    {
+        "allowed",
+        "applied",
+        "approved",
+        "attempted",
+        "blocked",
+        "cancelled",
+        "completed",
+        "denied",
+        "failed",
+        "no_change",
+        "partial",
+        "quarantined",
+        "redacted",
+        "rejected",
+        "released",
+        "revoked",
+        "skipped",
+        "terminated",
+        "timed_out",
+        "validated",
+    }
+)
+EXPECTED_LINK_RELATIONS: Final = frozenset(
+    {"caused_by", "correlates_with", "derived_from", "resumes"}
+)
+EXPECTED_COMPATIBILITY_PROFILES: Final = frozenset(
+    {"galileo-rich-v2", "local-observability-v1", "openinference-v1"}
+)
+EXPECTED_SPAN_KINDS: Final = frozenset({"CLIENT", "INTERNAL", "SERVER"})
 OUTPUT_MANIFEST = Path("schemas/telemetry/generated/output-manifest.json")
 
 EXPECTED_NORMALIZERS: Final = (
@@ -309,6 +347,34 @@ class RegistryError(ValueError):
     """Safe compiler error containing source paths and schema keys only."""
 
 
+FrozenJSON: TypeAlias = (
+    str
+    | int
+    | float
+    | bool
+    | None
+    | tuple["FrozenJSON", ...]
+    | Mapping[str, "FrozenJSON"]
+)
+
+
+def _freeze_json(value: Any) -> FrozenJSON:
+    if value is None or type(value) in {str, int, float, bool}:
+        return value
+    if isinstance(value, list):
+        return tuple(_freeze_json(item) for item in value)
+    if isinstance(value, dict):
+        return MappingProxyType({key: _freeze_json(item) for key, item in value.items()})
+    raise RegistryError("validated JSON value has an unsupported runtime type")
+
+
+def _freeze_mapping(value: dict[str, Any]) -> Mapping[str, FrozenJSON]:
+    frozen = _freeze_json(value)
+    if not isinstance(frozen, Mapping):
+        raise RegistryError("validated mapping did not remain a mapping")
+    return frozen
+
+
 class _StrictLoader(yaml.SafeLoader):
     pass
 
@@ -443,8 +509,23 @@ def _sha256(raw: bytes) -> str:
     return hashlib.sha256(raw).hexdigest()
 
 
+def _public_upstream_owner(dependency_id: str) -> str:
+    owner = UPSTREAM_PUBLIC_OWNERS.get(dependency_id)
+    if owner is None:
+        raise RegistryError(
+            f"upstream dependency {dependency_id}: no public attribute-owner mapping"
+        )
+    return owner
+
+
 @dataclass(frozen=True, slots=True)
 class InputDigest:
+    path: str
+    sha256: str
+
+
+@dataclass(frozen=True, slots=True)
+class SourceFileIR:
     path: str
     sha256: str
 
@@ -455,6 +536,7 @@ class SnapshotAttribute:
     allowed_types: tuple[str, ...]
     shape: str
     stability: str
+    stability_source: str
     source_pointer: str
     enum: tuple[str, ...]
     deprecated: bool
@@ -462,11 +544,15 @@ class SnapshotAttribute:
 
 @dataclass(frozen=True, slots=True)
 class SnapshotIR:
+    format_version: int
+    format: str
     dependency_id: str
     repository: str
     revision: str
     path: str
     sha256: str
+    source_archive: str
+    source_files: tuple[SourceFileIR, ...]
     attributes: tuple[SnapshotAttribute, ...]
 
 
@@ -484,20 +570,35 @@ class DependencyIR:
 class NormalizerIR:
     id: str
     kind: str
-    default_constraints: dict[str, Any]
-    allowed_overrides: frozenset[str]
+    default_constraints: Mapping[str, FrozenJSON]
+    allowed_overrides: tuple[str, ...]
+    __hash__ = None
 
 
 @dataclass(frozen=True, slots=True)
 class NormalizationIR:
     id: str
-    effective_constraints: dict[str, Any]
+    overrides: Mapping[str, FrozenJSON]
+    effective_constraints: Mapping[str, FrozenJSON]
+    notes: str | None
+    __hash__ = None
+
+
+@dataclass(frozen=True, slots=True)
+class LegacyBindingIR:
+    source: str
+    disposition: str
+    details_present: bool
+    details: FrozenJSON | None
+    __hash__ = None
 
 
 @dataclass(frozen=True, slots=True)
 class AttributeIR:
     id: str
     field_type: str
+    brief: str
+    examples: tuple[FrozenJSON, ...]
     alias_of: str | None
     owner: str
     stability: str
@@ -508,6 +609,9 @@ class AttributeIR:
     sensitivity: str
     cardinality: str
     normalization: NormalizationIR
+    introduced_in: str
+    legacy_bindings: tuple[LegacyBindingIR, ...] | None
+    __hash__ = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -517,6 +621,7 @@ class AttributeExtensionIR:
     sensitivity: str
     cardinality: str
     normalization: NormalizationIR
+    __hash__ = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -526,9 +631,19 @@ class MetricProjectionIR:
 
 
 @dataclass(frozen=True, slots=True)
+class DerivedSpanmetricsIR:
+    pipeline: str
+    dimensions_cache_size: int
+    resource_metrics_cache_size: int
+    series_expiration: str
+
+
+@dataclass(frozen=True, slots=True)
 class MetricCompatibilityProfileIR:
     id: str
-    high_cardinality_families: dict[str, frozenset[str]]
+    high_cardinality_families: Mapping[str, tuple[str, ...]]
+    derived_spanmetrics: DerivedSpanmetricsIR
+    __hash__ = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -542,30 +657,53 @@ class MetricInventoryIR:
 @dataclass(frozen=True, slots=True)
 class AttributeUseIR:
     ref: str
+    role: str
     requirement_level: str
     conditional: str | None
-    constraints: dict[str, Any]
+    constraints: Mapping[str, FrozenJSON]
+    __hash__ = None
+
+
+@dataclass(frozen=True, slots=True)
+class ProducerCompatibilityIR:
+    introduced_in: str | None
+    legacy_event_prefix: str | None
+    disposition: str | None
+    removal_version: str | None
 
 
 @dataclass(frozen=True, slots=True)
 class GroupIR:
     id: str
     type: str
+    brief: str
+    stability: str
     extends: tuple[str, ...]
     attribute_uses: tuple[AttributeUseIR, ...]
     attribute_refs: tuple[str, ...]
-    event_refs: tuple[str, ...]
+    event_refs: tuple[str, ...] | None
     event_name: str | None
     bucket: str | None
     span_name_pattern: str | None
+    span_kinds: tuple[str, ...] | None
+    span_status_rule: str | None
     instrument_name: str | None
     instrument_type: str | None
     metric_value_type: str | None
     metric_unit: str | None
+    metric_description: str | None
     metric_temporality: str | None
     metric_boundaries: tuple[int | float, ...] | None
     empty_labels_reason: str | None
     metric_projections: tuple[MetricProjectionIR, ...]
+    family_schema_version: int | None
+    allowed_outcomes: tuple[str, ...] | None
+    link_relations: tuple[str, ...] | None
+    mandatory_floor: tuple[str, ...] | None
+    route_selector: bool | None
+    compatibility_profiles: tuple[str, ...] | None
+    legacy_bindings: tuple[LegacyBindingIR, ...] | None
+    __hash__ = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -580,9 +718,21 @@ class ProducerIdentityIR:
 class ProducerMappingIR:
     producer: str
     key: str
+    source: str
     event_name_policy: str
+    severity_policy: str
+    mandatory_rules: tuple[str, ...] | None
+    companion_rules: tuple[str, ...] | None
+    compatibility: ProducerCompatibilityIR | None
     default_identity: ProducerIdentityIR | None
+    context_identity_set_id: str | None
     allowed_context_identities: tuple[ProducerIdentityIR, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class ProducerIdentitySetIR:
+    id: str
+    identities: tuple[ProducerIdentityIR, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -592,21 +742,59 @@ class DomainIR:
     attributes: tuple[AttributeIR, ...]
     attribute_extensions: tuple[AttributeExtensionIR, ...]
     groups: tuple[GroupIR, ...]
+    producer_identity_sets: tuple[ProducerIdentitySetIR, ...]
     producer_mappings: tuple[ProducerMappingIR, ...]
+    __hash__ = None
+
+
+@dataclass(frozen=True, slots=True)
+class ExampleIR:
+    id: str
+    valid: bool
+    signal: str
+    description: str
+    family: str | None
+    record: Mapping[str, FrozenJSON]
+    expected_error: str | None
+    field_classes: Mapping[str, str]
+    __hash__ = None
+
+
+@dataclass(frozen=True, slots=True)
+class SemanticProfileIR:
+    id: str
+    trace_schema_version: str
+    gen_ai_semconv_profile: str
+    openinference_profile: str
+    galileo_compatibility_profile: str
+
+
+@dataclass(frozen=True, slots=True)
+class UpstreamAttributeOwnershipIR:
+    ref: str
+    owner: str
 
 
 @dataclass(frozen=True, slots=True)
 class RegistryIR:
+    registry_path: str
     schema_version: int
     registry_version: int
     bucket_catalog_version: int
     imports: tuple[str, ...]
+    dependency_lock_path: str
+    examples_path: str
     input_digests: tuple[InputDigest, ...]
     dependencies: tuple[DependencyIR, ...]
+    semantic_profiles: tuple[SemanticProfileIR, ...]
     normalizers: tuple[NormalizerIR, ...]
+    metric_cardinality_limit: int
     metric_compatibility_profile: MetricCompatibilityProfileIR
     domains: tuple[DomainIR, ...]
+    examples: tuple[ExampleIR, ...]
+    upstream_attribute_ownership: tuple[UpstreamAttributeOwnershipIR, ...]
     legacy_only_upstream_attributes: tuple[str, ...]
+    __hash__ = None
 
 
 def _parse_snapshot(
@@ -670,13 +858,16 @@ def _parse_snapshot(
     if not isinstance(source_files, list) or not source_files:
         raise RegistryError(f"{snapshot_relative}.source_files: expected nonempty sequence")
     source_paths: list[str] = []
+    parsed_source_files: list[SourceFileIR] = []
     for index, item in enumerate(source_files):
         item_path = f"{snapshot_relative}.source_files[{index}]"
         if not isinstance(item, dict):
             raise RegistryError(f"{item_path}: expected object")
         _exact_keys(item, {"path", "sha256"}, set(), item_path)
-        source_paths.append(_string(item["path"], f"{item_path}.path"))
-        _string(item["sha256"], f"{item_path}.sha256", pattern=_SHA256)
+        source_path = _string(item["path"], f"{item_path}.path")
+        source_digest = _string(item["sha256"], f"{item_path}.sha256", pattern=_SHA256)
+        source_paths.append(source_path)
+        parsed_source_files.append(SourceFileIR(source_path, source_digest))
     if source_paths != sorted(set(source_paths)):
         raise RegistryError(f"{snapshot_relative}.source_files: paths must be sorted and unique")
     if dependency_id == "openinference" and tuple(source_paths) != EXPECTED_OPENINFERENCE_SOURCES:
@@ -749,6 +940,7 @@ def _parse_snapshot(
                 allowed_types=allowed_types,
                 shape=shape,
                 stability=stability,
+                stability_source=stability_source,
                 source_pointer=pointer,
                 enum=enum,
                 deprecated=item["deprecated"],
@@ -779,11 +971,15 @@ def _parse_snapshot(
                     f"{snapshot_relative}.attributes: OpenInference source pointer policy mismatch"
                 )
     return SnapshotIR(
+        format_version=document["format_version"],
+        format=document["format"],
         dependency_id=dependency_id,
         repository=repository,
         revision=revision,
         path=snapshot_relative,
         sha256=actual_digest,
+        source_archive=archive,
+        source_files=tuple(parsed_source_files),
         attributes=tuple(attributes),
     )
 
@@ -1032,7 +1228,14 @@ def _parse_normalizer_catalog(value: Any, path: str) -> tuple[NormalizerIR, ...]
         overrides = _string_list(item["allowed_overrides"], f"{item_path}.allowed_overrides")
         if not set(overrides).issubset(_CONSTRAINT_KEYS):
             raise RegistryError(f"{item_path}.allowed_overrides: unknown constraint")
-        parsed.append(NormalizerIR(normalizer_id, kind, defaults, frozenset(overrides)))
+        parsed.append(
+            NormalizerIR(
+                normalizer_id,
+                kind,
+                _freeze_mapping(defaults),
+                overrides,
+            )
+        )
     if value != list(EXPECTED_NORMALIZERS):
         raise RegistryError(f"{path}: catalog differs from the canonical v1 contract")
     return tuple(parsed)
@@ -1113,15 +1316,21 @@ def _parse_normalization(
     if catalog is None:
         raise RegistryError(f"{path}.id: unknown normalizer")
     overrides = _validate_constraint_map(value.get("overrides", {}), f"{path}.overrides")
-    disallowed = overrides.keys() - catalog.allowed_overrides
+    disallowed = overrides.keys() - set(catalog.allowed_overrides)
     if disallowed:
         raise RegistryError(f"{path}.overrides: disallowed keys {sorted(disallowed)}")
+    notes = None
     if "notes" in value:
-        _string(value["notes"], f"{path}.notes")
+        notes = _string(value["notes"], f"{path}.notes")
     effective = dict(catalog.default_constraints)
     effective.update(overrides)
     _validate_constraint_map(effective, f"{path}.effective_constraints")
-    normalization = NormalizationIR(normalizer_id, effective)
+    normalization = NormalizationIR(
+        normalizer_id,
+        _freeze_mapping(overrides),
+        _freeze_mapping(effective),
+        notes,
+    )
     if field_types is not None:
         _validate_normalization_compatibility(normalization, field_types, shape, path)
     return normalization
@@ -1159,11 +1368,12 @@ def _parse_attribute_definition(
     if value["type"] not in _FIELD_TYPE:
         raise RegistryError(f"{path}.type: unsupported field type")
     field_type = value["type"]
-    _string(value["brief"], f"{path}.brief")
+    brief = _string(value["brief"], f"{path}.brief")
     if not isinstance(value["examples"], list):
         raise RegistryError(f"{path}.examples: expected sequence")
     for index, example in enumerate(value["examples"]):
         _validate_json_compatible(example, f"{path}.examples[{index}]")
+    examples = tuple(_freeze_json(example) for example in value["examples"])
     for key, allowed in (
         ("stability", _STABILITY),
         ("owner", _OWNER),
@@ -1179,7 +1389,7 @@ def _parse_attribute_definition(
         normalizers,
         field_types=(field_type,),
     )
-    _string(value["introduced_in"], f"{path}.introduced_in", pattern=_ID)
+    introduced_in = _string(value["introduced_in"], f"{path}.introduced_in", pattern=_ID)
     deprecated_in = None
     removed_in = None
     if "deprecated_in" in value:
@@ -1192,13 +1402,18 @@ def _parse_attribute_definition(
     projection_only = value.get("projection_only", False)
     if type(projection_only) is not bool:
         raise RegistryError(f"{path}.projection_only: expected boolean")
-    if "legacy_bindings" in value:
+    legacy_bindings = (
         _parse_legacy_bindings(value["legacy_bindings"], f"{path}.legacy_bindings")
+        if "legacy_bindings" in value
+        else None
+    )
     if projection_only and "legacy_bindings" not in value:
         raise RegistryError(f"{path}.legacy_bindings: required for projection-only aliases")
     return AttributeIR(
         attribute_id,
         field_type,
+        brief,
+        examples,
         alias,
         value["owner"],
         value["stability"],
@@ -1209,6 +1424,8 @@ def _parse_attribute_definition(
         value["sensitivity"],
         value["cardinality"],
         normalization,
+        introduced_in,
+        legacy_bindings,
     )
 
 
@@ -1247,7 +1464,11 @@ def _parse_attribute_extension(
     )
 
 
-def _parse_attribute_uses(value: Any, path: str) -> tuple[AttributeUseIR, ...]:
+def _parse_attribute_uses(
+    value: Any,
+    path: str,
+    role: str,
+) -> tuple[AttributeUseIR, ...]:
     if value is None:
         return ()
     if not isinstance(value, list):
@@ -1273,24 +1494,38 @@ def _parse_attribute_uses(value: Any, path: str) -> tuple[AttributeUseIR, ...]:
                 item["constraints"],
                 f"{item_path}.constraints",
             )
-        result.append(AttributeUseIR(reference, requirement_level, conditional, constraints))
+        result.append(
+            AttributeUseIR(
+                reference,
+                role,
+                requirement_level,
+                conditional,
+                _freeze_mapping(constraints),
+            )
+        )
     if len(result) != len({item.ref for item in result}):
         raise RegistryError(f"{path}: duplicate attribute reference")
     return tuple(result)
 
 
-def _parse_legacy_bindings(value: Any, path: str) -> None:
+def _parse_legacy_bindings(value: Any, path: str) -> tuple[LegacyBindingIR, ...]:
     if not isinstance(value, list):
         raise RegistryError(f"{path}: expected sequence")
+    result: list[LegacyBindingIR] = []
     for index, item in enumerate(value):
         item_path = f"{path}[{index}]"
         if not isinstance(item, dict):
             raise RegistryError(f"{item_path}: expected mapping")
         _exact_keys(item, {"source", "disposition"}, {"details"}, item_path)
-        _string(item["source"], f"{item_path}.source")
-        _string(item["disposition"], f"{item_path}.disposition", pattern=_ID)
+        source = _string(item["source"], f"{item_path}.source")
+        disposition = _string(item["disposition"], f"{item_path}.disposition", pattern=_ID)
+        details_present = "details" in item
+        details = None
         if "details" in item:
             _validate_json_compatible(item["details"], f"{item_path}.details")
+            details = _freeze_json(item["details"])
+        result.append(LegacyBindingIR(source, disposition, details_present, details))
+    return tuple(result)
 
 
 def _parse_metric_projections(value: Any, path: str) -> tuple[MetricProjectionIR, ...]:
@@ -1348,14 +1583,25 @@ def _parse_group(value: Any, path: str) -> GroupIR:
     group_type = _string(value["type"], f"{path}.type")
     if group_type not in _GROUP_TYPE:
         raise RegistryError(f"{path}.type: unsupported group type")
-    _string(value["brief"], f"{path}.brief")
-    if value["stability"] not in _STABILITY:
+    brief = _string(value["brief"], f"{path}.brief")
+    stability = value["stability"]
+    if stability not in _STABILITY:
         raise RegistryError(f"{path}.stability: unsupported stability")
     extends = _string_list(value.get("extends", []), f"{path}.extends")
-    attribute_uses = _parse_attribute_uses(value.get("attributes"), f"{path}.attributes")
-    attribute_uses += _parse_attribute_uses(value.get("body_fields"), f"{path}.body_fields")
+    attribute_uses = _parse_attribute_uses(
+        value.get("attributes"),
+        f"{path}.attributes",
+        "attributes",
+    )
+    attribute_uses += _parse_attribute_uses(
+        value.get("body_fields"),
+        f"{path}.body_fields",
+        "body_fields",
+    )
     attribute_refs = tuple(item.ref for item in attribute_uses)
     span_name_pattern: str | None = None
+    span_kinds: tuple[str, ...] | None = None
+    span_status_rule: str | None = None
     if "span" in value:
         if group_type != "span" or not isinstance(value["span"], dict):
             raise RegistryError(f"{path}.span: allowed only on span groups")
@@ -1364,8 +1610,14 @@ def _parse_group(value: Any, path: str) -> GroupIR:
             value["span"]["name_pattern"],
             f"{path}.span.name_pattern",
         )
-        _string_list(value["span"]["kinds"], f"{path}.span.kinds", allow_empty=False)
-        _string(value["span"]["status_rule"], f"{path}.span.status_rule")
+        span_kinds = _string_list(
+            value["span"]["kinds"],
+            f"{path}.span.kinds",
+            allow_empty=False,
+        )
+        if not set(span_kinds).issubset(EXPECTED_SPAN_KINDS):
+            raise RegistryError(f"{path}.span.kinds: unsupported OTel span kind")
+        span_status_rule = _string(value["span"]["status_rule"], f"{path}.span.status_rule")
     elif group_type == "span":
         raise RegistryError(f"{path}.span: required for span groups")
     event_name: str | None = None
@@ -1380,6 +1632,7 @@ def _parse_group(value: Any, path: str) -> GroupIR:
     instrument_type: str | None = None
     metric_value_type: str | None = None
     metric_unit: str | None = None
+    metric_description: str | None = None
     metric_temporality: str | None = None
     metric_boundaries: tuple[int | float, ...] | None = None
     empty_labels_reason: str | None = None
@@ -1399,6 +1652,7 @@ def _parse_group(value: Any, path: str) -> GroupIR:
         instrument_type = value["metric"]["instrument_type"]
         metric_value_type = value["metric"]["value_type"]
         metric_unit = value["metric"]["unit"]
+        metric_description = value["metric"]["description"]
         metric_temporality = value["metric"]["temporality"]
         if instrument_type not in _METRIC_INSTRUMENT_TYPES:
             raise RegistryError(f"{path}.metric.instrument_type: unsupported value")
@@ -1437,8 +1691,15 @@ def _parse_group(value: Any, path: str) -> GroupIR:
             metric_boundaries = tuple(parsed_boundaries)
     elif group_type == "metric":
         raise RegistryError(f"{path}.metric: required for metric groups")
-    event_refs: tuple[str, ...] = ()
+    event_refs: tuple[str, ...] | None = None
     bucket: str | None = None
+    family_schema_version: int | None = None
+    allowed_outcomes: tuple[str, ...] | None = None
+    link_relations: tuple[str, ...] | None = None
+    mandatory_floor: tuple[str, ...] | None = None
+    route_selector: bool | None = None
+    compatibility_profiles: tuple[str, ...] | None = None
+    legacy_bindings: tuple[LegacyBindingIR, ...] | None = None
     if "x-defenseclaw" in value:
         extension = value["x-defenseclaw"]
         if not isinstance(extension, dict):
@@ -1464,12 +1725,33 @@ def _parse_group(value: Any, path: str) -> GroupIR:
             if bucket not in EXPECTED_BUCKETS:
                 raise RegistryError(f"{path}.x-defenseclaw.bucket: unknown catalog-v1 bucket")
         if "family_schema_version" in extension:
-            _integer(extension["family_schema_version"], f"{path}.x-defenseclaw.family_schema_version")
+            family_schema_version = _integer(
+                extension["family_schema_version"],
+                f"{path}.x-defenseclaw.family_schema_version",
+            )
         for key in ("allowed_outcomes", "events", "link_relations", "compatibility_profiles"):
             if key in extension:
                 values = _string_list(extension[key], f"{path}.x-defenseclaw.{key}")
-                if key == "events":
+                if key == "allowed_outcomes":
+                    if not set(values).issubset(EXPECTED_OUTCOMES):
+                        raise RegistryError(
+                            f"{path}.x-defenseclaw.allowed_outcomes: unknown outcome"
+                        )
+                    allowed_outcomes = values
+                elif key == "events":
                     event_refs = values
+                elif key == "link_relations":
+                    if not set(values).issubset(EXPECTED_LINK_RELATIONS):
+                        raise RegistryError(
+                            f"{path}.x-defenseclaw.link_relations: unknown relation"
+                        )
+                    link_relations = values
+                else:
+                    if not set(values).issubset(EXPECTED_COMPATIBILITY_PROFILES):
+                        raise RegistryError(
+                            f"{path}.x-defenseclaw.compatibility_profiles: unknown profile"
+                        )
+                    compatibility_profiles = values
         if "mandatory_floor" in extension:
             mandatory_floor = _string_list(
                 extension["mandatory_floor"],
@@ -1479,8 +1761,13 @@ def _parse_group(value: Any, path: str) -> GroupIR:
                 raise RegistryError(f"{path}.x-defenseclaw.mandatory_floor: unknown rule")
         if "route_selector" in extension and type(extension["route_selector"]) is not bool:
             raise RegistryError(f"{path}.x-defenseclaw.route_selector: expected boolean")
+        if "route_selector" in extension:
+            route_selector = extension["route_selector"]
         if "legacy_bindings" in extension:
-            _parse_legacy_bindings(extension["legacy_bindings"], f"{path}.x-defenseclaw.legacy_bindings")
+            legacy_bindings = _parse_legacy_bindings(
+                extension["legacy_bindings"],
+                f"{path}.x-defenseclaw.legacy_bindings",
+            )
     if group_type in _SIGNAL_BY_GROUP_TYPE:
         if bucket is None:
             raise RegistryError(f"{path}.x-defenseclaw.bucket: required for signal families")
@@ -1489,6 +1776,8 @@ def _parse_group(value: Any, path: str) -> GroupIR:
     return GroupIR(
         group_id,
         group_type,
+        brief,
+        stability,
         extends,
         attribute_uses,
         attribute_refs,
@@ -1496,14 +1785,24 @@ def _parse_group(value: Any, path: str) -> GroupIR:
         event_name,
         bucket,
         span_name_pattern,
+        span_kinds,
+        span_status_rule,
         instrument_name,
         instrument_type,
         metric_value_type,
         metric_unit,
+        metric_description,
         metric_temporality,
         metric_boundaries,
         empty_labels_reason,
         metric_projections,
+        family_schema_version,
+        allowed_outcomes,
+        link_relations,
+        mandatory_floor,
+        route_selector,
+        compatibility_profiles,
+        legacy_bindings,
     )
 
 
@@ -1537,17 +1836,18 @@ def _parse_producer_identity(value: Any, path: str) -> ProducerIdentityIR:
 def _parse_producer_identity_sets(
     value: Any,
     path: str,
-) -> dict[str, tuple[ProducerIdentityIR, ...]]:
+) -> tuple[ProducerIdentitySetIR, ...]:
     if not isinstance(value, list):
         raise RegistryError(f"{path}: expected sequence")
-    result: dict[str, tuple[ProducerIdentityIR, ...]] = {}
+    result: list[ProducerIdentitySetIR] = []
+    seen_ids: set[str] = set()
     for index, item in enumerate(value):
         item_path = f"{path}[{index}]"
         if not isinstance(item, dict):
             raise RegistryError(f"{item_path}: expected mapping")
         _exact_keys(item, {"id", "identities"}, set(), item_path)
         set_id = _string(item["id"], f"{item_path}.id", pattern=_ID)
-        if set_id in result:
+        if set_id in seen_ids:
             raise RegistryError(f"{item_path}.id: duplicate producer identity set")
         identities = item["identities"]
         if not isinstance(identities, list) or not identities:
@@ -1559,8 +1859,9 @@ def _parse_producer_identity_sets(
         keys = [(identity.event_name, identity.bucket) for identity in parsed]
         if len(keys) != len(set(keys)):
             raise RegistryError(f"{item_path}.identities: duplicate identity")
-        result[set_id] = parsed
-    return result
+        seen_ids.add(set_id)
+        result.append(ProducerIdentitySetIR(set_id, parsed))
+    return tuple(result)
 
 
 def _parse_producer_mappings(
@@ -1597,7 +1898,7 @@ def _parse_producer_mappings(
         if identity in seen:
             raise RegistryError(f"{item_path}: duplicate producer mapping")
         seen.add(identity)
-        _string(item["source"], f"{item_path}.source", pattern=_ID)
+        source = _string(item["source"], f"{item_path}.source", pattern=_ID)
         policy = _string(item["event_name_policy"], f"{item_path}.event_name_policy", pattern=_ID)
         if policy not in {"fixed", "context_optional", "context_required"}:
             raise RegistryError(f"{item_path}.event_name_policy: unsupported policy")
@@ -1630,12 +1931,18 @@ def _parse_producer_mappings(
         severity_policy = _string(item["severity_policy"], f"{item_path}.severity_policy", pattern=_ID)
         if severity_policy not in _SEVERITY_POLICIES:
             raise RegistryError(f"{item_path}.severity_policy: unknown policy")
+        parsed_rules: dict[str, tuple[str, ...] | None] = {
+            "mandatory_rules": None,
+            "companion_rules": None,
+        }
         for key_name in ("mandatory_rules", "companion_rules"):
             if key_name in item:
                 rules = _string_list(item[key_name], f"{item_path}.{key_name}")
                 allowed = _MANDATORY_RULES if key_name == "mandatory_rules" else _COMPANION_RULES
                 if not set(rules).issubset(allowed):
                     raise RegistryError(f"{item_path}.{key_name}: unknown rule")
+                parsed_rules[key_name] = rules
+        parsed_compatibility = None
         if "compatibility" in item:
             compatibility = item["compatibility"]
             if not isinstance(compatibility, dict):
@@ -1648,12 +1955,24 @@ def _parse_producer_mappings(
             )
             for name, raw in compatibility.items():
                 _string(raw, f"{item_path}.compatibility.{name}", pattern=_ID)
+            parsed_compatibility = ProducerCompatibilityIR(
+                compatibility.get("introduced_in"),
+                compatibility.get("legacy_event_prefix"),
+                compatibility.get("disposition"),
+                compatibility.get("removal_version"),
+            )
         mappings.append(
             ProducerMappingIR(
                 producer,
                 key,
+                source,
                 policy,
+                severity_policy,
+                parsed_rules["mandatory_rules"],
+                parsed_rules["companion_rules"],
+                parsed_compatibility,
                 parsed_default,
+                context_set_id,
                 parsed_contexts,
             )
         )
@@ -1720,9 +2039,10 @@ def _parse_domain(
         document["producer_identity_sets"],
         f"{normalized}.producer_identity_sets",
     )
+    identity_sets_by_id = {item.id: item.identities for item in identity_sets}
     producer_mappings = _parse_producer_mappings(
         document["producer_mappings"],
-        identity_sets,
+        identity_sets_by_id,
         f"{normalized}.producer_mappings",
     )
     for label, values in (
@@ -1739,6 +2059,7 @@ def _parse_domain(
         attributes,
         attribute_extensions,
         groups,
+        identity_sets,
         producer_mappings,
     ), InputDigest(normalized, _sha256(raw))
 
@@ -1762,7 +2083,7 @@ def _validate_example_field_classes(
     groups: dict[str, GroupIR],
     local_attributes: dict[str, AttributeIR],
     upstream_extensions: dict[str, AttributeExtensionIR],
-) -> None:
+) -> Mapping[str, str]:
     if not isinstance(record, dict):
         raise RegistryError(f"{path}: expected mapping")
     field_classes = record.get("field_classes")
@@ -1822,6 +2143,7 @@ def _validate_example_field_classes(
             f"{path}.field_classes: coverage mismatch "
             f"missing={missing} extra={extra} mismatched={mismatched}"
         )
+    return MappingProxyType(dict(observed))
 
 
 def _parse_examples(
@@ -1831,7 +2153,7 @@ def _parse_examples(
     groups: dict[str, GroupIR],
     local_attributes: dict[str, AttributeIR],
     upstream_extensions: dict[str, AttributeExtensionIR],
-) -> InputDigest:
+) -> tuple[tuple[ExampleIR, ...], InputDigest]:
     path, normalized = _safe_relative(
         root,
         f"schemas/telemetry/v8/{relative}",
@@ -1846,6 +2168,7 @@ def _parse_examples(
     if not isinstance(examples, list):
         raise RegistryError(f"{normalized}.examples: expected sequence")
     seen: set[str] = set()
+    parsed_examples: list[ExampleIR] = []
     for index, item in enumerate(examples):
         item_path = f"{normalized}.examples[{index}]"
         if not isinstance(item, dict):
@@ -1872,19 +2195,28 @@ def _parse_examples(
                 raise RegistryError(f"{item_path}.family: unknown family")
             if group_signals[family] != signal:
                 raise RegistryError(f"{item_path}.signal: family belongs to another signal")
-        _string(item["description"], f"{item_path}.description")
+        description = _string(item["description"], f"{item_path}.description")
         if item["valid"]:
             if family is None or "record" not in item or "expected_error" in item:
                 raise RegistryError(f"{item_path}: valid example requires family and record only")
         elif "expected_error" not in item or "record" not in item:
             raise RegistryError(f"{item_path}: invalid example requires record and expected_error")
+        expected_error = None
         if "expected_error" in item:
-            _string(item["expected_error"], f"{item_path}.expected_error", pattern=_ID)
+            expected_error = _string(
+                item["expected_error"],
+                f"{item_path}.expected_error",
+                pattern=_ID,
+            )
         if "record" in item:
             _validate_json_compatible(item["record"], f"{item_path}.record")
+        # Invalid examples are negative test vectors. Their raw record is
+        # preserved, but any embedded field_classes map is deliberately not
+        # promoted into authoritative compiler metadata.
+        field_classes: Mapping[str, str] = MappingProxyType({})
         if item["valid"]:
             assert family is not None
-            _validate_example_field_classes(
+            field_classes = _validate_example_field_classes(
                 item["record"],
                 signal,
                 family,
@@ -1893,21 +2225,37 @@ def _parse_examples(
                 local_attributes,
                 upstream_extensions,
             )
+        frozen_record = _freeze_json(item["record"])
+        if not isinstance(frozen_record, Mapping):
+            raise RegistryError(f"{item_path}.record: expected mapping")
+        parsed_examples.append(
+            ExampleIR(
+                example_id,
+                item["valid"],
+                signal,
+                description,
+                family,
+                frozen_record,
+                expected_error,
+                field_classes,
+            )
+        )
     raw, _ = _read_utf8(path)
-    return InputDigest(normalized, _sha256(raw))
+    return tuple(parsed_examples), InputDigest(normalized, _sha256(raw))
 
 
 def _parse_metric_settings(
     defaults: Any,
     profiles: Any,
-) -> MetricCompatibilityProfileIR:
+) -> tuple[int, MetricCompatibilityProfileIR]:
     if not isinstance(defaults, dict):
         raise RegistryError("registry.metric_defaults: expected mapping")
     _exact_keys(defaults, {"cardinality_limit"}, set(), "registry.metric_defaults")
-    if (
-        _integer(defaults["cardinality_limit"], "registry.metric_defaults.cardinality_limit")
-        != EXPECTED_METRIC_CARDINALITY_LIMIT
-    ):
+    cardinality_limit = _integer(
+        defaults["cardinality_limit"],
+        "registry.metric_defaults.cardinality_limit",
+    )
+    if cardinality_limit != EXPECTED_METRIC_CARDINALITY_LIMIT:
         raise RegistryError("registry.metric_defaults.cardinality_limit: expected 2048")
     if not isinstance(profiles, list) or len(profiles) != 1 or not isinstance(profiles[0], dict):
         raise RegistryError("registry.metric_compatibility_profiles: expected one profile")
@@ -1925,14 +2273,14 @@ def _parse_metric_settings(
         raise RegistryError(
             "registry.metric_compatibility_profiles[0].high_cardinality_families: expected sequence"
         )
-    observed: dict[str, frozenset[str]] = {}
+    observed: dict[str, tuple[str, ...]] = {}
     for index, item in enumerate(families):
         item_path = f"registry.metric_compatibility_profiles[0].high_cardinality_families[{index}]"
         if not isinstance(item, dict):
             raise RegistryError(f"{item_path}: expected mapping")
         _exact_keys(item, {"family", "labels"}, set(), item_path)
         family = _string(item["family"], f"{item_path}.family", pattern=_ID)
-        labels = frozenset(_string_list(item["labels"], f"{item_path}.labels", allow_empty=False))
+        labels = _string_list(item["labels"], f"{item_path}.labels", allow_empty=False)
         if family in observed:
             raise RegistryError(f"{item_path}.family: duplicate family")
         observed[family] = labels
@@ -1963,7 +2311,19 @@ def _parse_metric_settings(
             "registry.metric_compatibility_profiles[0].derived_spanmetrics: "
             "must preserve the pinned Collector limits"
         )
-    return MetricCompatibilityProfileIR("local-observability-v1", observed)
+    return (
+        cardinality_limit,
+        MetricCompatibilityProfileIR(
+            "local-observability-v1",
+            MappingProxyType(dict(observed)),
+            DerivedSpanmetricsIR(
+                spanmetrics["pipeline"],
+                spanmetrics["dimensions_cache_size"],
+                spanmetrics["resource_metrics_cache_size"],
+                spanmetrics["series_expiration"],
+            ),
+        ),
+    )
 
 
 def compile_registry(root: Path) -> RegistryIR:
@@ -2002,7 +2362,7 @@ def compile_registry(root: Path) -> RegistryIR:
     producer_inventory, metric_inventory, inventory_digest = _parse_producer_inventory(root)
     normalizers = _parse_normalizer_catalog(registry["normalizers"], "registry.normalizers")
     normalizers_by_id = {item.id: item for item in normalizers}
-    metric_compatibility_profile = _parse_metric_settings(
+    metric_cardinality_limit, metric_compatibility_profile = _parse_metric_settings(
         registry["metric_defaults"],
         registry["metric_compatibility_profiles"],
     )
@@ -2031,6 +2391,15 @@ def compile_registry(root: Path) -> RegistryIR:
         raise RegistryError("registry.semantic_profiles[0].gen_ai_semconv_profile: lock mismatch")
     if profile["openinference_profile"] != dependency_by_id["openinference"].profile_id:
         raise RegistryError("registry.semantic_profiles[0].openinference_profile: lock mismatch")
+    semantic_profiles = (
+        SemanticProfileIR(
+            profile["id"],
+            profile["trace_schema_version"],
+            profile["gen_ai_semconv_profile"],
+            profile["openinference_profile"],
+            profile["galileo_compatibility_profile"],
+        ),
+    )
     domains: list[DomainIR] = []
     domain_digests: list[InputDigest] = []
     for relative, expected_domain in zip(imports, EXPECTED_DOMAINS, strict=True):
@@ -2103,11 +2472,7 @@ def compile_registry(root: Path) -> RegistryIR:
                     )
                 core_genai_overlaps += 1
             upstream_attributes[attribute.id] = (dependency.id, attribute)
-            attribute_owners[attribute.id] = (
-                "openinference_compatibility"
-                if dependency.id == "openinference"
-                else dependency.id
-            )
+            attribute_owners[attribute.id] = _public_upstream_owner(dependency.id)
     if core_genai_overlaps != 60 or core_genai_deprecated_overlaps != 58:
         raise RegistryError("upstream GenAI ownership overlap inventory changed")
     if openinference_core_overlaps != {"session.id", "user.id"}:
@@ -2131,6 +2496,10 @@ def compile_registry(root: Path) -> RegistryIR:
         ):
             del upstream_attributes[attribute_id]
             del attribute_owners[attribute_id]
+    upstream_attribute_ownership = tuple(
+        UpstreamAttributeOwnershipIR(reference, attribute_owners[reference])
+        for reference in sorted(upstream_attributes)
+    )
     local_attributes: dict[str, AttributeIR] = {}
     for domain in domains:
         for attribute in domain.attributes:
@@ -2220,7 +2589,7 @@ def compile_registry(root: Path) -> RegistryIR:
                     raise RegistryError(
                         f"group {group.id}: projection-only alias cannot be a canonical field"
                     )
-            for event in group.event_refs:
+            for event in group.event_refs or ():
                 if event.startswith("event."):
                     raise RegistryError(
                         f"group {group.id}: events must use public names without event. prefix"
@@ -2299,7 +2668,7 @@ def compile_registry(root: Path) -> RegistryIR:
     examples_relative = _string(registry["examples"], "registry.examples")
     if examples_relative != "examples.yaml":
         raise RegistryError("registry.examples: expected examples.yaml")
-    examples_digest = _parse_examples(
+    examples, examples_digest = _parse_examples(
         root,
         examples_relative,
         group_signals,
@@ -2317,15 +2686,22 @@ def compile_registry(root: Path) -> RegistryIR:
         examples_digest,
     )
     return RegistryIR(
+        registry_path="schemas/telemetry/v8/registry.yaml",
         schema_version=schema_version,
         registry_version=registry_version,
         bucket_catalog_version=bucket_catalog_version,
         imports=imports,
+        dependency_lock_path=lock_relative,
+        examples_path=examples_relative,
         input_digests=tuple(input_digests),
         dependencies=dependencies,
+        semantic_profiles=semantic_profiles,
         normalizers=normalizers,
+        metric_cardinality_limit=metric_cardinality_limit,
         metric_compatibility_profile=metric_compatibility_profile,
         domains=tuple(domains),
+        examples=examples,
+        upstream_attribute_ownership=upstream_attribute_ownership,
         legacy_only_upstream_attributes=tuple(sorted(legacy_core_genai)),
     )
 
@@ -2594,13 +2970,17 @@ def _validate_metric_attribute_safety(
                     )
         if high_labels:
             profile_exceptions[group.instrument_name] = labels
-    if profile_exceptions != compatibility_profile.high_cardinality_families:
-        missing = sorted(profile_exceptions.keys() - compatibility_profile.high_cardinality_families.keys())
-        extra = sorted(compatibility_profile.high_cardinality_families.keys() - profile_exceptions.keys())
+    configured_exceptions = {
+        family: frozenset(labels)
+        for family, labels in compatibility_profile.high_cardinality_families.items()
+    }
+    if profile_exceptions != configured_exceptions:
+        missing = sorted(profile_exceptions.keys() - configured_exceptions.keys())
+        extra = sorted(configured_exceptions.keys() - profile_exceptions.keys())
         mismatched = sorted(
             family
-            for family in profile_exceptions.keys() & compatibility_profile.high_cardinality_families.keys()
-            if profile_exceptions[family] != compatibility_profile.high_cardinality_families[family]
+            for family in profile_exceptions.keys() & configured_exceptions.keys()
+            if profile_exceptions[family] != configured_exceptions[family]
         )
         raise RegistryError(
             "metric compatibility profile: high-cardinality coverage mismatch "

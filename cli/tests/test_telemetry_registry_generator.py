@@ -237,7 +237,7 @@ def _domain_sources() -> dict[str, dict[str, Any]]:
                     ],
                     "span": {
                         "name_pattern": "chat {gen_ai.operation.name}",
-                        "kinds": ["client"],
+                        "kinds": ["CLIENT"],
                         "status_rule": "technical_error_only",
                     },
                     "x-defenseclaw": {
@@ -340,7 +340,7 @@ def _domain_sources() -> dict[str, dict[str, Any]]:
                 "stability": "development",
                 "span": {
                     "name_pattern": f"fixture.span.{index}",
-                    "kinds": ["internal"],
+                    "kinds": ["INTERNAL"],
                     "status_rule": "technical_error_only",
                 },
                 "x-defenseclaw": {
@@ -526,6 +526,15 @@ def _run(root: Path, mode: str, *, environment: dict[str, str] | None = None) ->
         timeout=60,
         env=environment,
     )
+
+
+def _load_generator_module(name: str):
+    spec = importlib.util.spec_from_file_location(name, GENERATOR)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
 
 
 def _mutate_snapshot(root: Path, dependency_id: str, mutate: Any) -> None:
@@ -1106,11 +1115,7 @@ def test_per_use_constraints_are_preserved_in_compiler_ir(tmp_path: Path) -> Non
     constraints = {"enum": ["chat"], "max_utf8_bytes": 64, "pattern": "^chat$"}
     document["groups"][0]["attributes"][0]["constraints"] = constraints
     _write_yaml(path, document)
-    spec = importlib.util.spec_from_file_location("telemetry_registry_generator_test", GENERATOR)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
+    module = _load_generator_module("telemetry_registry_generator_test")
 
     ir = module.compile_registry(root)
     group = next(
@@ -1120,7 +1125,359 @@ def test_per_use_constraints_are_preserved_in_compiler_ir(tmp_path: Path) -> Non
         if group.id == "span.model.chat"
     )
 
-    assert group.attribute_uses[0].constraints == constraints
+    assert dict(group.attribute_uses[0].constraints) == {
+        "enum": ("chat",),
+        "max_utf8_bytes": 64,
+        "pattern": "^chat$",
+    }
+
+
+def test_compiler_ir_preserves_every_validated_public_contract(tmp_path: Path) -> None:
+    root = _fixture_root(tmp_path)
+    genai_path = root / "schemas/telemetry/v8/genai.yaml"
+    genai = yaml.safe_load(genai_path.read_text(encoding="utf-8"))
+    attribute = genai["attributes"][0]
+    attribute.update(
+        {
+            "brief": "Preserved attribute brief.",
+            "examples": ["fixture", {"nested": ["value", 7]}],
+            "introduced_in": "telemetry-registry-v1",
+            "normalization": {
+                "id": "bounded-v1",
+                "overrides": {"max_utf8_bytes": 128},
+                "notes": "Preserved normalization note.",
+            },
+            "legacy_bindings": [
+                {
+                    "source": "fixture.explicit-null",
+                    "disposition": "preserved",
+                    "details": None,
+                },
+                {"source": "fixture.absent", "disposition": "preserved"},
+            ],
+        }
+    )
+    genai["attribute_extensions"][0]["normalization"]["notes"] = (
+        "Preserved extension normalization note."
+    )
+    span = genai["groups"][0]
+    span["brief"] = "Preserved span brief."
+    span["attributes"][0].update(
+        {
+            "requirement_level": "conditional",
+            "conditional": "when a chat operation is emitted",
+            "constraints": {
+                "enum": ["chat"],
+                "max_utf8_bytes": 64,
+                "pattern": "^chat$",
+            },
+        }
+    )
+    span["body_fields"] = [
+        {
+            "ref": "defenseclaw.test.name",
+            "requirement_level": "optional",
+            "constraints": {"max_utf8_bytes": 64},
+        }
+    ]
+    span["x-defenseclaw"].update(
+        {
+            "allowed_outcomes": ["completed", "failed"],
+            "link_relations": ["caused_by"],
+            "mandatory_floor": ["always"],
+            "route_selector": False,
+            "compatibility_profiles": ["local-observability-v1"],
+            "legacy_bindings": [
+                {
+                    "source": "fixture.span",
+                    "disposition": "preserved",
+                    "details": {"nested": ["stable"]},
+                }
+            ],
+        }
+    )
+    _write_yaml(genai_path, genai)
+
+    operations_path = root / "schemas/telemetry/v8/operations.yaml"
+    operations = yaml.safe_load(operations_path.read_text(encoding="utf-8"))
+    metric = next(
+        group
+        for group in operations["groups"]
+        if group.get("metric", {}).get("instrument_name")
+        == "defenseclaw.activity.diff_entries"
+    )
+    metric["metric"]["description"] = "Preserved metric description."
+    metric["metric"]["boundaries"] = [1, 2, 4]
+    mapping = operations["producer_mappings"][0]
+    identity = copy.deepcopy(mapping["default_identity"])
+    mapping["event_name_policy"] = "context_optional"
+    mapping["allowed_context_identity_set"] = "fixture-contexts"
+    mapping["mandatory_rules"] = ["always"]
+    mapping["companion_rules"] = ["enforcement_when_enforced"]
+    mapping["compatibility"] = {
+        "introduced_in": "telemetry-registry-v1",
+        "legacy_event_prefix": "legacy.audit",
+        "disposition": "translate_to_v8",
+        "removal_version": "telemetry-registry-v2",
+    }
+    operations["producer_identity_sets"] = [
+        {"id": "fixture-contexts", "identities": [identity]}
+    ]
+    _write_yaml(operations_path, operations)
+
+    examples_path = root / "schemas/telemetry/v8/examples.yaml"
+    examples = yaml.safe_load(examples_path.read_text(encoding="utf-8"))
+    examples["examples"].append(
+        {
+            "id": "fixture.invalid",
+            "valid": False,
+            "signal": "logs",
+            "description": "Preserved invalid example.",
+            "record": {
+                "event_name": "invalid.fixture",
+                "field_classes": {"/event_name": "metadata"},
+            },
+            "expected_error": "fixture_expected_error",
+        }
+    )
+    _write_yaml(examples_path, examples)
+
+    module = _load_generator_module("telemetry_registry_full_ir_test")
+    ir = module.compile_registry(root)
+    domains = {domain.domain: domain for domain in ir.domains}
+    genai_ir = domains["genai"]
+    operations_ir = domains["operations"]
+    attribute_ir = next(item for item in genai_ir.attributes if item.id == "defenseclaw.test.name")
+    span_ir = next(group for group in genai_ir.groups if group.id == "span.model.chat")
+    log_ir = next(group for group in operations_ir.groups if group.id == "diagnostic.message")
+    metric_ir = next(
+        group
+        for group in operations_ir.groups
+        if group.instrument_name == "defenseclaw.activity.diff_entries"
+    )
+    mapping_ir = operations_ir.producer_mappings[0]
+
+    assert ir.registry_path == "schemas/telemetry/v8/registry.yaml"
+    assert ir.dependency_lock_path == "schemas/telemetry/v8/semconv.lock.yaml"
+    assert ir.examples_path == "examples.yaml"
+    assert ir.metric_cardinality_limit == 2048
+    assert ir.semantic_profiles[0].trace_schema_version == "defenseclaw-trace-v1"
+    assert ir.metric_compatibility_profile.derived_spanmetrics.pipeline == "spanmetrics/agent360"
+    assert ir.metric_compatibility_profile.derived_spanmetrics.dimensions_cache_size == 10000
+    assert ir.normalizers[1].allowed_overrides[:2] == (
+        "max_utf8_bytes",
+        "max_item_utf8_bytes",
+    )
+
+    core = next(dependency for dependency in ir.dependencies if dependency.id == "otel_core")
+    assert core.snapshot.source_archive.endswith(f"/{core.revision}.tar.gz")
+    assert core.snapshot.format_version == 1
+    assert core.snapshot.format == "defenseclaw-normalized-semconv-v1"
+    assert core.snapshot.source_files[0].path == "model/registry.yaml"
+    assert len(core.snapshot.source_files[0].sha256) == 64
+    assert core.snapshot.attributes[0].stability_source == "upstream"
+    ownership = {item.ref: item.owner for item in ir.upstream_attribute_ownership}
+    assert ownership["service.name"] == "otel"
+    assert ownership["gen_ai.operation.name"] == "otel_genai"
+    assert ownership["openinference.project.name"] == "openinference_compatibility"
+
+    assert attribute_ir.brief == "Preserved attribute brief."
+    assert attribute_ir.examples[1]["nested"] == ("value", 7)
+    assert attribute_ir.introduced_in == "telemetry-registry-v1"
+    assert dict(attribute_ir.normalization.overrides) == {"max_utf8_bytes": 128}
+    assert attribute_ir.normalization.notes == "Preserved normalization note."
+    assert attribute_ir.legacy_bindings is not None
+    assert attribute_ir.legacy_bindings[0].details_present is True
+    assert attribute_ir.legacy_bindings[0].details is None
+    assert attribute_ir.legacy_bindings[1].details_present is False
+    assert genai_ir.attribute_extensions[0].normalization.notes == (
+        "Preserved extension normalization note."
+    )
+
+    assert span_ir.brief == "Preserved span brief."
+    assert span_ir.stability == "stable"
+    assert span_ir.span_kinds == ("CLIENT",)
+    assert span_ir.span_status_rule == "technical_error_only"
+    assert span_ir.attribute_uses[0].role == "attributes"
+    assert span_ir.attribute_uses[0].requirement_level == "conditional"
+    assert span_ir.attribute_uses[0].conditional == "when a chat operation is emitted"
+    assert span_ir.attribute_uses[1].role == "body_fields"
+    assert span_ir.allowed_outcomes == ("completed", "failed")
+    assert span_ir.event_refs == ("guardrail.decision",)
+    assert span_ir.link_relations == ("caused_by",)
+    assert span_ir.mandatory_floor == ("always",)
+    assert span_ir.route_selector is False
+    assert span_ir.compatibility_profiles == ("local-observability-v1",)
+    assert span_ir.family_schema_version == 1
+    assert span_ir.bucket == "model.io"
+    assert span_ir.legacy_bindings is not None
+    assert span_ir.legacy_bindings[0].details["nested"] == ("stable",)
+    assert log_ir.event_name == "diagnostic.message"
+    assert log_ir.brief == "A diagnostic message."
+    assert log_ir.stability == "stable"
+
+    assert metric_ir.instrument_type == "histogram"
+    assert metric_ir.metric_description == "Preserved metric description."
+    assert metric_ir.metric_boundaries == (1, 2, 4)
+    assert metric_ir.family_schema_version == 1
+    assert metric_ir.bucket == "diagnostic"
+    assert mapping_ir.source == "gateway"
+    assert mapping_ir.severity_policy == "canonical_or_info"
+    assert mapping_ir.mandatory_rules == ("always",)
+    assert mapping_ir.companion_rules == ("enforcement_when_enforced",)
+    assert mapping_ir.context_identity_set_id == "fixture-contexts"
+    assert mapping_ir.compatibility is not None
+    assert mapping_ir.compatibility.removal_version == "telemetry-registry-v2"
+    assert operations_ir.producer_identity_sets[0].id == "fixture-contexts"
+    assert mapping_ir.default_identity == operations_ir.producer_identity_sets[0].identities[0]
+
+    assert len(ir.examples) == 2
+    assert ir.examples[0].valid is True
+    assert ir.examples[0].field_classes["/body/attributes/gen_ai.operation.name"] == "metadata"
+    assert ir.examples[1].valid is False
+    assert ir.examples[1].expected_error == "fixture_expected_error"
+    assert ir.examples[1].record["event_name"] == "invalid.fixture"
+    assert ir.examples[1].record["field_classes"]["/event_name"] == "metadata"
+    assert dict(ir.examples[1].field_classes) == {}
+
+    with pytest.raises(TypeError):
+        attribute_ir.normalization.overrides["max_utf8_bytes"] = 1024
+    with pytest.raises(TypeError):
+        span_ir.attribute_uses[0].constraints["max_utf8_bytes"] = 1024
+    with pytest.raises(TypeError):
+        ir.normalizers[1].default_constraints["max_utf8_bytes"] = 1024
+    with pytest.raises(TypeError):
+        ir.metric_compatibility_profile.high_cardinality_families["mutated"] = ()
+    with pytest.raises(TypeError):
+        ir.examples[0].field_classes["/mutated"] = "metadata"
+    assert span_ir.legacy_bindings is not None
+    assert span_ir.legacy_bindings[0].details is not None
+    with pytest.raises(TypeError):
+        span_ir.legacy_bindings[0].details["nested"] = ()
+    with pytest.raises(TypeError):
+        ir.examples[0].record["mutated"] = True
+
+
+def test_mapping_bearing_ir_classes_are_explicitly_equality_only() -> None:
+    module = _load_generator_module("telemetry_registry_hash_contract_test")
+    equality_only = (
+        module.NormalizerIR,
+        module.NormalizationIR,
+        module.LegacyBindingIR,
+        module.AttributeIR,
+        module.AttributeExtensionIR,
+        module.MetricCompatibilityProfileIR,
+        module.AttributeUseIR,
+        module.GroupIR,
+        module.DomainIR,
+        module.ExampleIR,
+        module.RegistryIR,
+    )
+
+    assert all(cls.__hash__ is None for cls in equality_only)
+
+
+def test_unknown_upstream_owner_mapping_fails_with_registry_error() -> None:
+    module = _load_generator_module("telemetry_registry_owner_error_test")
+
+    with pytest.raises(module.RegistryError, match="no public attribute-owner mapping"):
+        module._public_upstream_owner("unknown_dependency")
+
+
+@pytest.mark.parametrize(
+    "surface",
+    [
+        "attribute",
+        "normalization",
+        "attribute_extension",
+        "attribute_use",
+        "span",
+        "metric",
+        "x_defenseclaw",
+        "producer_mapping",
+        "producer_identity",
+        "compatibility",
+        "example",
+    ],
+)
+def test_compiler_ir_source_surfaces_reject_unknown_keys(
+    tmp_path: Path,
+    surface: str,
+) -> None:
+    root = _fixture_root(tmp_path)
+    if surface in {
+        "attribute",
+        "normalization",
+        "attribute_extension",
+        "attribute_use",
+        "span",
+    }:
+        path = root / "schemas/telemetry/v8/genai.yaml"
+        document = yaml.safe_load(path.read_text(encoding="utf-8"))
+        target = {
+            "attribute": document["attributes"][0],
+            "normalization": document["attributes"][0]["normalization"],
+            "attribute_extension": document["attribute_extensions"][0],
+            "attribute_use": document["groups"][0]["attributes"][0],
+            "span": document["groups"][0]["span"],
+        }[surface]
+    elif surface in {"metric", "x_defenseclaw", "producer_mapping", "producer_identity", "compatibility"}:
+        path = root / "schemas/telemetry/v8/operations.yaml"
+        document = yaml.safe_load(path.read_text(encoding="utf-8"))
+        metric = next(group for group in document["groups"] if group["type"] == "metric")
+        mapping = document["producer_mappings"][0]
+        if surface == "compatibility":
+            mapping["compatibility"] = {"unexpected": "value"}
+            target = None
+        else:
+            target = {
+                "metric": metric["metric"],
+                "x_defenseclaw": metric["x-defenseclaw"],
+                "producer_mapping": mapping,
+                "producer_identity": mapping["default_identity"],
+            }[surface]
+    else:
+        path = root / "schemas/telemetry/v8/examples.yaml"
+        document = yaml.safe_load(path.read_text(encoding="utf-8"))
+        target = document["examples"][0]
+    if target is not None:
+        target["unexpected"] = "value"
+    _write_yaml(path, document)
+
+    result = _run(root, "--write")
+
+    assert result.returncode == 1
+    assert "unknown keys ['unexpected']" in result.stderr
+
+
+@pytest.mark.parametrize(
+    ("surface", "value", "expected"),
+    [
+        ("allowed_outcomes", ["invented"], "unknown outcome"),
+        ("link_relations", ["parent_of"], "unknown relation"),
+        ("compatibility_profiles", ["unknown-v1"], "unknown profile"),
+        ("span_kinds", ["client"], "unsupported OTel span kind"),
+    ],
+)
+def test_group_runtime_vocabularies_are_closed(
+    tmp_path: Path,
+    surface: str,
+    value: list[str],
+    expected: str,
+) -> None:
+    root = _fixture_root(tmp_path)
+    path = root / "schemas/telemetry/v8/genai.yaml"
+    document = yaml.safe_load(path.read_text(encoding="utf-8"))
+    if surface == "span_kinds":
+        document["groups"][0]["span"]["kinds"] = value
+    else:
+        document["groups"][0]["x-defenseclaw"][surface] = value
+    _write_yaml(path, document)
+
+    result = _run(root, "--write")
+
+    assert result.returncode == 1
+    assert expected in result.stderr
 
 
 def test_span_name_placeholder_rejects_high_cardinality_attribute(tmp_path: Path) -> None:
