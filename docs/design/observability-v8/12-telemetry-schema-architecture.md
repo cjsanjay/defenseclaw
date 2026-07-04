@@ -548,6 +548,26 @@ or wheel byte drift, and any compatibility view whose dynamic leaves lack an exa
 field-class derivation. Candidate bundle/catalog artifacts may land before this
 metadata; no existing public path changes authority until the complete parity gate.
 
+The baseline is read from one full pre-cutover Git commit, never from the worktree.
+Its lossless JSON canonicalizer rejects duplicate keys, invalid UTF-8, lone
+surrogates, non-finite values, unsupported nested-ID/anchor/dynamic/recursive
+reference semantics, and excessive nesting while retaining every numeric token
+lexeme (`0.0`, `-0`, large integers, and exponent spelling). Each resource digest
+is domain-separated by algorithm version, path, dialect, `$id`, and complete
+canonical document. The baseline records commit/tree/blob provenance, source and
+canonical digests, all twenty-one documents, and exact offline reference closure.
+Refresh is permitted only in the same pre-cutover epoch; future evolution starts a
+new explicitly acknowledged epoch rather than snapshotting generated output.
+
+Every generated JSON public view carries the exact top-level custom keyword
+`x-defenseclaw-generated` with a closed object containing generator ID, registry
+version, public-view ID, and baseline epoch. That keyword is a typed declared
+extension/patch in `public_views`, not an unreviewed annotation. The generated
+output manifest also lists every public output path. Baseline tooling rejects a
+source commit when either marker says any of the twenty-one source files already
+has generated authority. Marker omission, disagreement, or an output-manifest
+claim without the per-file marker fails the eventual cutover gate.
+
 ## 7. Standard Base Plus DefenseClaw Overlay
 
 ### 7.1 Agent/model/tool/retrieval

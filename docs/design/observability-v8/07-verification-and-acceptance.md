@@ -43,13 +43,14 @@ Tests must validate outputs, not merely that functions returned no error.
 | Trace sampling invariants | Explicit collection-before-construction, unsampled-route, durable-log, parent-coherence, safe-decision-debug, and targeted-canary tests in section 9.2 |
 | Simplified telemetry schemas | One logical registry with a small focused authoring set generates deterministic bundle/catalog/docs/constants/fixtures/projections; every current field has a migration disposition |
 | Deterministic registry inheritance | DAG, diamond, body-role transposition, non-weakening requiredness, conditional-clause, restrictive-constraint-intersection, and zero-unresolved-family tests; every generated consumer uses the same materialized resolved-use contract |
+| Public-schema baseline integrity | Full-commit/tree/blob/source/canonical digest tests; exact 21-path identity/dialect/reference inventory; lossless numeric lexemes; strict JSON/depth/ref rejection; typed field/open-object coverage; generated-marker recursion rejection; pre-cutover refresh and explicit new-epoch tests |
 | Agent lifecycle and dashboard compatibility | PR #403 root/subagent lifecycle, execution, phase, operation, decision, real-time completion, and missing-data goldens plus PR #412 metric/label/bucket/cadence, UID, query, live inventory, and source/packaged dashboard checks |
 | Push network safety | HTTP JSONL, OTLP, and Splunk tests cover every prohibited address class, guarded dialing/DNS rebinding, disabled redirects, failure isolation, and narrowly bounded private/CGNAT opt-ins |
 | Bounded destination delivery | Every queue-backed destination resolves count and byte defaults, drops the newest attempted enqueue when either limit is full, bounds encoded push batches by count and bytes, and remains isolated under saturation |
 | Splunk projection-only compatibility | Every HEC alias is equal to a value in that destination's already-redacted projection or absent; raw/canonical/producer/other-destination fallback is impossible |
 
 Decision-level coverage for `D-001` through `D-022`, `S-001` through `S-012`, and
-`P-001` through `P-067` is normative in `13-decision-traceability.md`; this matrix is
+`P-001` through `P-068` is normative in `13-decision-traceability.md`; this matrix is
 the requirement-level summary rather than a competing decision index.
 
 ## 3. Taxonomy Tests
@@ -738,6 +739,13 @@ Required cases:
   intersection, body-role crossings, log parent cardinality, and cycles. The real
   registry has zero unresolved family uses, and generated Go, Python, schema,
   catalog, redaction, and fixture outputs consume the same materialized tuple.
+- Public-view baseline fixtures cover all twenty-one paths and both exact dialects;
+  commit/tree/blob/source and domain-separated canonical digests; numeric lexeme,
+  object-key, array-order, Unicode, line-ending, and trailing-newline stability;
+  duplicate/lone-surrogate/nonfinite/depth failures; local and three-resource
+  offline reference closure; unsupported nested/dynamic/recursive semantics;
+  atomic rollback; same-epoch refresh; explicit new epoch; and rejection when a
+  per-file marker or generated manifest identifies the source as generated.
 - The closed normalizer catalog, defaults, overrides, and type applicability are
   tested in Go and Python from shared fixtures. Missing numeric bounds, removed
   effective bounds, invalid item/depth/property/UTF-8 limits, nonportable regexes,

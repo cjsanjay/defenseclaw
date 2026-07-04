@@ -37,7 +37,7 @@ def test_observability_v8_spec_is_complete_and_traceable() -> None:
     result = _run()
 
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "D=22 S=12 P=67 total=101" in result.stdout
+    assert "D=22 S=12 P=68 total=102" in result.stdout
 
 
 def test_observability_v8_redaction_contract_locks_machine_boundaries() -> None:
@@ -52,7 +52,7 @@ def test_observability_v8_redaction_contract_locks_machine_boundaries() -> None:
     assert "unicode-age-13.0.json" in redaction
     assert "projection_context_mismatch" in redaction
     assert "one shared success/error fixture" in redaction
-    assert "`P-001` through `P-067`" in verification
+    assert "`P-001` through `P-068`" in verification
     assert "| P-038 | 04 §7.6 | 07 §6.3 |" in traceability
 
 
