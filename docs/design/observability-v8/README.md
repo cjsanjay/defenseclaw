@@ -11,8 +11,8 @@ phase-specific implementation and verification progress.
 - Repository baseline: DefenseClaw configuration v7
 - Repository location: `docs/design/observability-v8/`
 - Execution ledger: [`../../../spec.md`](../../../spec.md)
-- Decision registry: 22 locked product decisions, 12 semantic decisions, and 68
-  ambiguity-removal decisions (102 total)
+- Decision registry: 22 locked product decisions, 12 semantic decisions, and 69
+  ambiguity-removal decisions (103 total)
 
 ## Purpose
 
@@ -181,6 +181,11 @@ The terms **MUST**, **MUST NOT**, **REQUIRED**, **SHOULD**, **SHOULD NOT**, and
     already-redacted and schema-validated projection for that Splunk destination;
     they can never recover producer, canonical, pre-redaction, or another
     destination's data.
+47. One typed `registry.yaml` structural contract owns the canonical envelope,
+    signal payload arms, trace/resource/scope/event/link shapes, raw metric
+    observation, field classification, stable conditions, phase/code bijection,
+    group lifecycle, and canonical-to-OTLP mappings. Generated APIs reuse the
+    existing immutable `internal/observability` record substrate.
 
 ## Review Method
 

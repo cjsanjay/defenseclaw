@@ -74,8 +74,20 @@ _CANONICAL_OUTCOME_ORDER = (
     "timed_out",
     "validated",
 )
-_REAL_FAMILY_OUTCOME_CONTRACT_DIGEST = (
-    "8cd00e119000c51f734d9948fa0df8cd06a0b91ceea5d7d210c33fe8ae79f078"
+_REAL_FAMILY_OUTCOME_CONTRACT_DIGEST = "8cd00e119000c51f734d9948fa0df8cd06a0b91ceea5d7d210c33fe8ae79f078"
+_CANONICAL_AGENT_PHASES = (
+    "session",
+    "planning",
+    "model",
+    "tool",
+    "approval",
+    "waiting",
+    "responding",
+    "maintenance",
+    "completed",
+    "failed",
+    "interrupted",
+    "observed",
 )
 
 
@@ -103,6 +115,14 @@ def _outcome_contract_digest(
 
 
 def _write_yaml(path: Path, value: Any) -> None:
+    if isinstance(value, dict) and isinstance(value.get("groups"), list):
+        for group in value["groups"]:
+            if isinstance(group, dict):
+                group.setdefault("introduced_in", "telemetry-registry-v1")
+    _write_yaml_raw(path, value)
+
+
+def _write_yaml_raw(path: Path, value: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(yaml.safe_dump(value, sort_keys=False), encoding="utf-8")
 
@@ -122,26 +142,25 @@ def _snapshot(
     active_shared = {"aws.bedrock.guardrail.id", "aws.bedrock.knowledge_base.id"}
     legacy_core = {f"gen_ai.legacy.{index:03d}" for index in range(10)}
     if dependency_id == "otel_core":
-        identifiers = deprecated_shared | active_shared | legacy_core | {
-            "service.name",
-            "session.id",
-            "user.id",
-        }
-        identifiers |= {
-            f"core.attribute.{index:04d}" for index in range(923 - len(identifiers))
-        }
+        identifiers = (
+            deprecated_shared
+            | active_shared
+            | legacy_core
+            | {
+                "service.name",
+                "session.id",
+                "user.id",
+            }
+        )
+        identifiers |= {f"core.attribute.{index:04d}" for index in range(923 - len(identifiers))}
     elif dependency_id == "otel_genai":
         identifiers = deprecated_shared | active_shared | {attribute}
-        identifiers |= {
-            f"gen_ai.current.{index:03d}" for index in range(70 - len(identifiers))
-        }
+        identifiers |= {f"gen_ai.current.{index:03d}" for index in range(70 - len(identifiers))}
     else:
         identifiers = set()
     attributes = []
     for index, identifier in enumerate(sorted(identifiers)):
-        deprecated = dependency_id == "otel_core" and identifier in (
-            deprecated_shared | legacy_core
-        )
+        deprecated = dependency_id == "otel_core" and identifier in (deprecated_shared | legacy_core)
         allowed_types = [
             "int64"
             if dependency_id == "otel_genai" and identifier == "gen_ai.request.top_k"
@@ -188,9 +207,7 @@ def _snapshot(
             "session.id",
             "user.id",
         }
-        identifiers |= {
-            f"openinference.attribute.{index:03d}" for index in range(93 - len(identifiers))
-        }
+        identifiers |= {f"openinference.attribute.{index:03d}" for index in range(93 - len(identifiers))}
         attributes = [
             {
                 "id": identifier,
@@ -207,9 +224,7 @@ def _snapshot(
                 "enum": [],
                 "deprecated": False,
             }
-            for index, identifier in enumerate(
-                sorted(identifiers)
-            )
+            for index, identifier in enumerate(sorted(identifiers))
         ]
     value = {
         "format_version": 1,
@@ -340,24 +355,41 @@ def _domain_sources() -> dict[str, dict[str, Any]]:
                         "outcome_requirement": "forbidden",
                         "allowed_outcomes": [],
                     },
-                }
+                },
             ],
             "producer_identity_sets": [],
             "producer_mappings": [],
         },
     }
-    canonical_genai = yaml.safe_load(
-        (ROOT / "schemas/telemetry/v8/genai.yaml").read_text(encoding="utf-8")
-    )
-    domains["genai.yaml"]["attributes"].append(
-        copy.deepcopy(
-            next(
-                attribute
-                for attribute in canonical_genai["attributes"]
-                if attribute["id"] == "defenseclaw.outcome"
-            )
+    canonical_genai = yaml.safe_load((ROOT / "schemas/telemetry/v8/genai.yaml").read_text(encoding="utf-8"))
+    for attribute_id in (
+        "defenseclaw.bucket",
+        "defenseclaw.outcome",
+        "defenseclaw.agent.phase",
+        "defenseclaw.agent.phase.previous",
+        "defenseclaw.agent.phase.from",
+        "defenseclaw.agent.phase.to",
+        "defenseclaw.agent.phase.code",
+        "defenseclaw.trace.schema_version",
+        "defenseclaw.semantic_profile",
+        "defenseclaw.link.relation",
+    ):
+        attribute = copy.deepcopy(next(item for item in canonical_genai["attributes"] if item["id"] == attribute_id))
+        if attribute_id in {
+            "defenseclaw.agent.phase",
+            "defenseclaw.agent.phase.previous",
+            "defenseclaw.agent.phase.from",
+            "defenseclaw.agent.phase.to",
+        }:
+            attribute["normalization"] = {
+                "id": "enum-v1",
+                "overrides": {"enum": list(_CANONICAL_AGENT_PHASES)},
+            }
+        domains["genai.yaml"]["attributes"].append(attribute)
+    for group_id in ("scope.core", "link.core"):
+        domains["genai.yaml"]["groups"].append(
+            copy.deepcopy(next(item for item in canonical_genai["groups"] if item["id"] == group_id))
         )
-    )
     operations = domains["operations.yaml"]
     for index in range(74):
         operations["groups"].append(
@@ -427,18 +459,11 @@ def _domain_sources() -> dict[str, dict[str, Any]]:
             }
         )
     inventory = yaml.safe_load(
-        (ROOT / "docs/design/observability-v8/current-state-inventory.yaml").read_text(
-            encoding="utf-8"
-        )
+        (ROOT / "docs/design/observability-v8/current-state-inventory.yaml").read_text(encoding="utf-8")
     )
-    registry = yaml.safe_load(
-        (ROOT / "schemas/telemetry/v8/registry.yaml").read_text(encoding="utf-8")
-    )
+    registry = yaml.safe_load((ROOT / "schemas/telemetry/v8/registry.yaml").read_text(encoding="utf-8"))
     exception_families = {
-        item["family"]
-        for item in registry["metric_compatibility_profiles"][0][
-            "high_cardinality_families"
-        ]
+        item["family"] for item in registry["metric_compatibility_profiles"][0]["high_cardinality_families"]
     }
     metric_items = inventory["classes"]["emitted_metrics"]["items"]
     for instrument_name, contract in metric_items.items():
@@ -465,9 +490,7 @@ def _domain_sources() -> dict[str, dict[str, Any]]:
             },
         }
         if high_cardinality:
-            group["attributes"] = [
-                {"ref": "defenseclaw.test.high", "requirement_level": "required"}
-            ]
+            group["attributes"] = [{"ref": "defenseclaw.test.high", "requirement_level": "required"}]
         operations["groups"].append(group)
     for producer, section, source in (
         ("gateway_event", "gateway_event_types", "gateway"),
@@ -488,6 +511,18 @@ def _domain_sources() -> dict[str, dict[str, Any]]:
                     "severity_policy": "canonical_or_info",
                 }
             )
+    operations["groups"].insert(
+        0,
+        {
+            "id": "resource.core",
+            "type": "resource",
+            "brief": "A fixture resource contract.",
+            "stability": "stable",
+        },
+    )
+    for domain in domains.values():
+        for group in domain["groups"]:
+            group["introduced_in"] = "telemetry-registry-v1"
     return domains
 
 
@@ -500,14 +535,9 @@ def _fixture_root(tmp_path: Path) -> Path:
     inventory_target = root / "docs/design/observability-v8/current-state-inventory.yaml"
     inventory_target.parent.mkdir(parents=True)
     inventory = yaml.safe_load(inventory_source.read_text(encoding="utf-8"))
-    registry_source = yaml.safe_load(
-        (ROOT / "schemas/telemetry/v8/registry.yaml").read_text(encoding="utf-8")
-    )
+    registry_source = yaml.safe_load((ROOT / "schemas/telemetry/v8/registry.yaml").read_text(encoding="utf-8"))
     exception_families = {
-        item["family"]
-        for item in registry_source["metric_compatibility_profiles"][0][
-            "high_cardinality_families"
-        ]
+        item["family"] for item in registry_source["metric_compatibility_profiles"][0]["high_cardinality_families"]
     }
     for instrument_name, contract in inventory["classes"]["emitted_metrics"]["items"].items():
         high_cardinality = instrument_name in exception_families
@@ -563,6 +593,9 @@ def _fixture_root(tmp_path: Path) -> Path:
                 }
             ],
             "normalizers": registry_source["normalizers"],
+            "conditions": registry_source["conditions"],
+            "value_catalogs": registry_source["value_catalogs"],
+            "structural_contract": registry_source["structural_contract"],
             "metric_defaults": registry_source["metric_defaults"],
             "metric_compatibility_profiles": metric_profile,
         },
@@ -581,9 +614,58 @@ def _fixture_root(tmp_path: Path) -> Path:
                     "family": "span.model.chat",
                     "description": "Small valid model trace.",
                     "record": {
-                        "body": {"attributes": {"gen_ai.operation.name": "chat"}},
+                        "schema_version": 1,
+                        "bucket_catalog_version": 1,
+                        "timestamp": "2026-07-03T12:00:00Z",
+                        "record_id": "fixture-record-1",
+                        "bucket": "model.io",
+                        "signal": "traces",
+                        "event_name": "span.model.chat",
+                        "span_name": "chat chat",
+                        "source": "gateway",
+                        "correlation": {
+                            "trace_id": "0123456789abcdef0123456789abcdef",
+                            "span_id": "0123456789abcdef",
+                        },
+                        "provenance": {
+                            "producer": "defenseclaw",
+                            "binary_version": "8.0.0",
+                            "registry_schema_version": 1,
+                            "config_generation": 1,
+                        },
+                        "body": {
+                            "kind": "CLIENT",
+                            "start_time_unix_nano": 1,
+                            "end_time_unix_nano": 2,
+                            "attributes": {"gen_ai.operation.name": "chat"},
+                            "status": {"code": "OK"},
+                            "resource": {
+                                "schema_url": "https://opentelemetry.io/schemas/1.42.0",
+                                "attributes": {},
+                            },
+                            "scope": {
+                                "name": "defenseclaw.telemetry",
+                                "version": "8.0.0",
+                                "schema_url": "https://defenseclaw.io/schemas/telemetry/v8",
+                                "attributes": {
+                                    "defenseclaw.trace.schema_version": "defenseclaw-trace-v1",
+                                    "defenseclaw.semantic_profile": "defenseclaw-genai-rich-v1",
+                                },
+                            },
+                        },
                         "field_classes": {
-                            "/body/attributes/gen_ai.operation.name": "metadata"
+                            "/kind": "metadata",
+                            "/start_time_unix_nano": "metadata",
+                            "/end_time_unix_nano": "metadata",
+                            "/attributes/gen_ai.operation.name": "metadata",
+                            "/status/code": "metadata",
+                            "/resource/schema_url": "metadata",
+                            "/resource/attributes": "metadata",
+                            "/scope/name": "metadata",
+                            "/scope/version": "metadata",
+                            "/scope/schema_url": "metadata",
+                            "/scope/attributes/defenseclaw.trace.schema_version": "metadata",
+                            "/scope/attributes/defenseclaw.semantic_profile": "metadata",
                         },
                     },
                 }
@@ -591,6 +673,16 @@ def _fixture_root(tmp_path: Path) -> Path:
         },
     )
     return root
+
+
+def _materialize_trace_attribute(root: Path, attribute: str, value: Any, field_class: str) -> None:
+    """Keep the checked example valid when a test makes a trace attribute required."""
+    examples_path = root / "schemas/telemetry/v8/examples.yaml"
+    examples = yaml.safe_load(examples_path.read_text(encoding="utf-8"))
+    record = examples["examples"][0]["record"]
+    record["body"]["attributes"][attribute] = value
+    record["field_classes"][f"/attributes/{attribute}"] = field_class
+    _write_yaml(examples_path, examples)
 
 
 def _run(root: Path, mode: str, *, environment: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
@@ -700,9 +792,7 @@ def test_active_core_genai_overlap_must_be_identical(tmp_path: Path) -> None:
     root = _fixture_root(tmp_path)
 
     def mutate(snapshot: dict[str, Any]) -> None:
-        target = next(
-            item for item in snapshot["attributes"] if item["id"] == "aws.bedrock.guardrail.id"
-        )
+        target = next(item for item in snapshot["attributes"] if item["id"] == "aws.bedrock.guardrail.id")
         target["allowed_types"] = ["int64"]
 
     _mutate_snapshot(root, "otel_genai", mutate)
@@ -716,11 +806,7 @@ def test_unreviewed_core_genai_type_migration_is_rejected(tmp_path: Path) -> Non
     root = _fixture_root(tmp_path)
 
     def mutate(snapshot: dict[str, Any]) -> None:
-        target = next(
-            item
-            for item in snapshot["attributes"]
-            if item["id"] == "gen_ai.shared.deprecated.000"
-        )
+        target = next(item for item in snapshot["attributes"] if item["id"] == "gen_ai.shared.deprecated.000")
         target["allowed_types"] = ["int64"]
 
     _mutate_snapshot(root, "otel_genai", mutate)
@@ -745,11 +831,7 @@ def test_only_reviewed_openinference_core_overlaps_are_accepted(tmp_path: Path) 
     root = _fixture_root(tmp_path / "unexpected")
 
     def unexpected(snapshot: dict[str, Any]) -> None:
-        target = next(
-            item
-            for item in snapshot["attributes"]
-            if item["id"] == "openinference.attribute.000"
-        )
+        target = next(item for item in snapshot["attributes"] if item["id"] == "openinference.attribute.000")
         target["id"] = "service.name"
 
     _mutate_snapshot(root, "openinference", unexpected)
@@ -879,19 +961,14 @@ def test_metric_labels_reject_high_cardinality_or_sensitive_classes(
     metric_group = next(
         group
         for group in operations["groups"]
-        if group.get("metric", {}).get("instrument_name")
-        == "defenseclaw.activity.diff_entries"
+        if group.get("metric", {}).get("instrument_name") == "defenseclaw.activity.diff_entries"
     )
-    metric_group["attributes"] = [
-        {"ref": "defenseclaw.test.name", "requirement_level": "required"}
-    ]
+    metric_group["attributes"] = [{"ref": "defenseclaw.test.name", "requirement_level": "required"}]
     metric_group["metric"].pop("empty_labels_reason")
     _write_yaml(operations_path, operations)
     inventory_path = root / "docs/design/observability-v8/current-state-inventory.yaml"
     inventory = yaml.safe_load(inventory_path.read_text(encoding="utf-8"))
-    contract = inventory["classes"]["emitted_metrics"]["items"][
-        "defenseclaw.activity.diff_entries"
-    ]
+    contract = inventory["classes"]["emitted_metrics"]["items"]["defenseclaw.activity.diff_entries"]
     contract["labels"] = ["defenseclaw.test.name"]
     contract.pop("empty_labels_reason")
     _write_yaml(inventory_path, inventory)
@@ -907,7 +984,13 @@ def test_non_upstream_genai_name_requires_projection_alias_lifecycle(tmp_path: P
     path = root / "schemas/telemetry/v8/genai.yaml"
     document = yaml.safe_load(path.read_text(encoding="utf-8"))
     alias = copy.deepcopy(document["attributes"][0])
-    alias.update({"id": "gen_ai.test.legacy", "stability": "deprecated"})
+    alias.update(
+        {
+            "id": "gen_ai.test.legacy",
+            "stability": "deprecated",
+            "deprecated_in": "telemetry-registry-v1",
+        }
+    )
     document["attributes"].append(alias)
     _write_yaml(path, document)
     result = _run(root, "--write")
@@ -920,9 +1003,7 @@ def test_non_upstream_genai_name_requires_projection_alias_lifecycle(tmp_path: P
             "alias_of": "defenseclaw.test.name",
             "deprecated_in": "telemetry-registry-v1",
             "removed_in": "telemetry-registry-v2",
-            "legacy_bindings": [
-                {"source": "fixture", "disposition": "compatibility_alias"}
-            ],
+            "legacy_bindings": [{"source": "fixture", "disposition": "compatibility_alias"}],
         }
     )
     document["attributes"][-1] = alias
@@ -944,7 +1025,7 @@ def test_span_events_use_public_names_not_internal_group_ids(tmp_path: Path) -> 
     assert "public names without event. prefix" in result.stderr
 
 
-def test_invalid_top_level_example_may_omit_family(tmp_path: Path) -> None:
+def test_invalid_top_level_example_requires_derived_mutation(tmp_path: Path) -> None:
     root = _fixture_root(tmp_path)
     path = root / "schemas/telemetry/v8/examples.yaml"
     document = yaml.safe_load(path.read_text(encoding="utf-8"))
@@ -962,7 +1043,82 @@ def test_invalid_top_level_example_may_omit_family(tmp_path: Path) -> None:
 
     result = _run(root, "--write")
 
-    assert result.returncode == 0, result.stderr
+    assert result.returncode == 1
+    assert "base_example, and mutation" in result.stderr
+
+
+@pytest.mark.parametrize(
+    ("mutation", "expected"),
+    [
+        (
+            lambda invalid: invalid["mutation"]["changes"][0].__setitem__("op", "remove"),
+            "value: required for add/replace and forbidden for remove",
+        ),
+        (
+            lambda invalid: invalid["mutation"]["changes"][0].pop("value"),
+            "value: required for add/replace and forbidden for remove",
+        ),
+        (
+            lambda invalid: invalid["mutation"]["changes"][0].__setitem__("path", "record/event_name"),
+            "must be an RFC6901 pointer",
+        ),
+        (
+            lambda invalid: invalid["mutation"]["changes"][0].__setitem__("path", "/description"),
+            "root must be signal, family, or record",
+        ),
+        (
+            lambda invalid: invalid["mutation"]["changes"][0].__setitem__("path", "/record/event_name~2invalid"),
+            "invalid RFC6901 escape",
+        ),
+        (
+            lambda invalid: invalid["record"].__setitem__("event_name", "another.invalid.name"),
+            "derived vector does not equal checked-in invalid example",
+        ),
+        (
+            lambda invalid: invalid.__setitem__("base_example", "not.an.earlier.valid.example"),
+            "must reference an earlier valid example",
+        ),
+    ],
+)
+def test_invalid_example_mutation_grammar_is_mechanical_and_exact(
+    tmp_path: Path,
+    mutation: Any,
+    expected: str,
+) -> None:
+    root = _fixture_root(tmp_path)
+    path = root / "schemas/telemetry/v8/examples.yaml"
+    document = yaml.safe_load(path.read_text(encoding="utf-8"))
+    valid = document["examples"][0]
+    invalid_record = copy.deepcopy(valid["record"])
+    invalid_record["event_name"] = "invalid.event.name"
+    invalid = {
+        "id": "model.chat.invalid.event-name",
+        "valid": False,
+        "signal": "traces",
+        "family": "span.model.chat",
+        "description": "A mechanically derived invalid event-name vector.",
+        "record": invalid_record,
+        "expected_error": "family_event_name_mismatch",
+        "base_example": valid["id"],
+        "mutation": {
+            "kind": "family_event_name_mismatch",
+            "changes": [
+                {
+                    "op": "replace",
+                    "path": "/record/event_name",
+                    "value": "invalid.event.name",
+                }
+            ],
+        },
+    }
+    mutation(invalid)
+    document["examples"].append(invalid)
+    _write_yaml(path, document)
+
+    result = _run(root, "--write")
+
+    assert result.returncode == 1
+    assert expected in result.stderr
 
 
 def test_direct_upstream_bytes_type_compiles_losslessly(tmp_path: Path) -> None:
@@ -994,19 +1150,14 @@ def test_metric_string_label_rejects_disallowed_normalizer(tmp_path: Path) -> No
     metric_group = next(
         group
         for group in operations["groups"]
-        if group.get("metric", {}).get("instrument_name")
-        == "defenseclaw.activity.diff_entries"
+        if group.get("metric", {}).get("instrument_name") == "defenseclaw.activity.diff_entries"
     )
-    metric_group["attributes"] = [
-        {"ref": "defenseclaw.test.name", "requirement_level": "required"}
-    ]
+    metric_group["attributes"] = [{"ref": "defenseclaw.test.name", "requirement_level": "required"}]
     metric_group["metric"].pop("empty_labels_reason")
     _write_yaml(operations_path, operations)
     inventory_path = root / "docs/design/observability-v8/current-state-inventory.yaml"
     inventory = yaml.safe_load(inventory_path.read_text(encoding="utf-8"))
-    contract = inventory["classes"]["emitted_metrics"]["items"][
-        "defenseclaw.activity.diff_entries"
-    ]
+    contract = inventory["classes"]["emitted_metrics"]["items"]["defenseclaw.activity.diff_entries"]
     contract["labels"] = ["defenseclaw.test.name"]
     contract.pop("empty_labels_reason")
     _write_yaml(inventory_path, inventory)
@@ -1063,8 +1214,7 @@ def test_metric_type_and_unit_match_current_inventory(
     metric_group = next(
         group
         for group in document["groups"]
-        if group.get("metric", {}).get("instrument_name")
-        == "defenseclaw.activity.diff_entries"
+        if group.get("metric", {}).get("instrument_name") == "defenseclaw.activity.diff_entries"
     )
     metric_group["metric"][field] = value
     _write_yaml(path, document)
@@ -1095,11 +1245,7 @@ def test_metric_boundaries_are_histogram_only_finite_and_ascending(
         path = root / f"schemas/telemetry/v8/{domain_name}.yaml"
         document = yaml.safe_load(path.read_text(encoding="utf-8"))
         target = next(
-            (
-                group
-                for group in document["groups"]
-                if group.get("metric", {}).get("instrument_name") == instrument
-            ),
+            (group for group in document["groups"] if group.get("metric", {}).get("instrument_name") == instrument),
             None,
         )
         if target is not None:
@@ -1151,9 +1297,7 @@ def test_numeric_and_boolean_arrays_require_explicit_max_items(
     assert "arrays require an explicit max_items bound" in result.stderr
 
     document = yaml.safe_load(path.read_text(encoding="utf-8"))
-    document["attributes"][-1]["normalization"].setdefault("overrides", {})[
-        "max_items"
-    ] = 16
+    document["attributes"][-1]["normalization"].setdefault("overrides", {})["max_items"] = 16
     _write_yaml(path, document)
     result = _run(root, "--write")
     assert result.returncode == 0, result.stderr
@@ -1195,12 +1339,7 @@ def test_per_use_constraints_are_preserved_in_compiler_ir(tmp_path: Path) -> Non
     module = _load_generator_module("telemetry_registry_generator_test")
 
     ir = module.compile_registry(root)
-    group = next(
-        group
-        for domain in ir.domains
-        for group in domain.groups
-        if group.id == "span.model.chat"
-    )
+    group = next(group for domain in ir.domains for group in domain.groups if group.id == "span.model.chat")
 
     assert dict(group.attribute_uses[0].constraints) == {
         "enum": ("chat",),
@@ -1217,7 +1356,7 @@ def test_compiler_ir_preserves_every_validated_public_contract(tmp_path: Path) -
     attribute.update(
         {
             "brief": "Preserved attribute brief.",
-            "examples": ["fixture", {"nested": ["value", 7]}],
+            "examples": ["fixture", "value"],
             "introduced_in": "telemetry-registry-v1",
             "normalization": {
                 "id": "bounded-v1",
@@ -1234,15 +1373,13 @@ def test_compiler_ir_preserves_every_validated_public_contract(tmp_path: Path) -
             ],
         }
     )
-    genai["attribute_extensions"][0]["normalization"]["notes"] = (
-        "Preserved extension normalization note."
-    )
+    genai["attribute_extensions"][0]["normalization"]["notes"] = "Preserved extension normalization note."
     span = genai["groups"][0]
     span["brief"] = "Preserved span brief."
     span["attributes"][0].update(
         {
             "requirement_level": "conditional",
-            "conditional": "when a chat operation is emitted",
+            "conditional": "operation-terminal-v1",
             "constraints": {
                 "enum": ["chat"],
                 "max_utf8_bytes": 64,
@@ -1281,8 +1418,7 @@ def test_compiler_ir_preserves_every_validated_public_contract(tmp_path: Path) -
     metric = next(
         group
         for group in operations["groups"]
-        if group.get("metric", {}).get("instrument_name")
-        == "defenseclaw.activity.diff_entries"
+        if group.get("metric", {}).get("instrument_name") == "defenseclaw.activity.diff_entries"
     )
     metric["metric"]["description"] = "Preserved metric description."
     metric["metric"]["boundaries"] = [1, 2, 4]
@@ -1298,24 +1434,27 @@ def test_compiler_ir_preserves_every_validated_public_contract(tmp_path: Path) -
         "disposition": "translate_to_v8",
         "removal_version": "telemetry-registry-v2",
     }
-    operations["producer_identity_sets"] = [
-        {"id": "fixture-contexts", "identities": [identity]}
-    ]
+    operations["producer_identity_sets"] = [{"id": "fixture-contexts", "identities": [identity]}]
     _write_yaml(operations_path, operations)
 
     examples_path = root / "schemas/telemetry/v8/examples.yaml"
     examples = yaml.safe_load(examples_path.read_text(encoding="utf-8"))
+    invalid_record = copy.deepcopy(examples["examples"][0]["record"])
+    invalid_record["bucket"] = "tool.activity"
     examples["examples"].append(
         {
             "id": "fixture.invalid",
             "valid": False,
-            "signal": "logs",
-            "description": "Preserved invalid example.",
-            "record": {
-                "event_name": "invalid.fixture",
-                "field_classes": {"/event_name": "metadata"},
+            "signal": "traces",
+            "family": "span.model.chat",
+            "base_example": "model.chat.valid",
+            "mutation": {
+                "kind": "family_bucket_mismatch",
+                "changes": [{"op": "replace", "path": "/record/bucket", "value": "tool.activity"}],
             },
-            "expected_error": "fixture_expected_error",
+            "description": "Preserved invalid example.",
+            "record": invalid_record,
+            "expected_error": "family_bucket_mismatch",
         }
     )
     _write_yaml(examples_path, examples)
@@ -1330,9 +1469,7 @@ def test_compiler_ir_preserves_every_validated_public_contract(tmp_path: Path) -
     body_ir = next(group for group in operations_ir.groups if group.id == "body.fixture")
     log_ir = next(group for group in operations_ir.groups if group.id == "diagnostic.message")
     metric_ir = next(
-        group
-        for group in operations_ir.groups
-        if group.instrument_name == "defenseclaw.activity.diff_entries"
+        group for group in operations_ir.groups if group.instrument_name == "defenseclaw.activity.diff_entries"
     )
     mapping_ir = operations_ir.producer_mappings[0]
 
@@ -1361,7 +1498,7 @@ def test_compiler_ir_preserves_every_validated_public_contract(tmp_path: Path) -
     assert ownership["openinference.project.name"] == "openinference_compatibility"
 
     assert attribute_ir.brief == "Preserved attribute brief."
-    assert attribute_ir.examples[1]["nested"] == ("value", 7)
+    assert attribute_ir.examples[1] == "value"
     assert attribute_ir.introduced_in == "telemetry-registry-v1"
     assert dict(attribute_ir.normalization.overrides) == {"max_utf8_bytes": 128}
     assert attribute_ir.normalization.notes == "Preserved normalization note."
@@ -1369,9 +1506,7 @@ def test_compiler_ir_preserves_every_validated_public_contract(tmp_path: Path) -
     assert attribute_ir.legacy_bindings[0].details_present is True
     assert attribute_ir.legacy_bindings[0].details is None
     assert attribute_ir.legacy_bindings[1].details_present is False
-    assert genai_ir.attribute_extensions[0].normalization.notes == (
-        "Preserved extension normalization note."
-    )
+    assert genai_ir.attribute_extensions[0].normalization.notes == ("Preserved extension normalization note.")
 
     assert span_ir.brief == "Preserved span brief."
     assert span_ir.stability == "stable"
@@ -1379,7 +1514,7 @@ def test_compiler_ir_preserves_every_validated_public_contract(tmp_path: Path) -
     assert span_ir.span_status_rule == "technical_error_only"
     assert span_ir.attribute_uses[0].role == "attributes"
     assert span_ir.attribute_uses[0].requirement_level == "conditional"
-    assert span_ir.attribute_uses[0].conditional == "when a chat operation is emitted"
+    assert span_ir.attribute_uses[0].conditional == "operation-terminal-v1"
     assert body_ir.attribute_uses[0].role == "body_fields"
     assert body_ir.resolved_uses[0].role == "body_fields"
     assert span_ir.allowed_outcomes == ("completed", "failed")
@@ -1418,11 +1553,13 @@ def test_compiler_ir_preserves_every_validated_public_contract(tmp_path: Path) -
 
     assert len(ir.examples) == 2
     assert ir.examples[0].valid is True
-    assert ir.examples[0].field_classes["/body/attributes/gen_ai.operation.name"] == "metadata"
+    assert ir.examples[0].field_classes["/attributes/gen_ai.operation.name"] == "metadata"
     assert ir.examples[1].valid is False
-    assert ir.examples[1].expected_error == "fixture_expected_error"
-    assert ir.examples[1].record["event_name"] == "invalid.fixture"
-    assert ir.examples[1].record["field_classes"]["/event_name"] == "metadata"
+    assert ir.examples[1].expected_error == "family_bucket_mismatch"
+    assert ir.examples[1].base_example == "model.chat.valid"
+    assert ir.examples[1].mutation is not None
+    assert ir.examples[1].mutation.changes[0].path == "/record/bucket"
+    assert ir.examples[1].record["bucket"] == "tool.activity"
     assert dict(ir.examples[1].field_classes) == {}
 
     with pytest.raises(TypeError):
@@ -1619,11 +1756,9 @@ def test_log_span_outcome_contract_is_exact(
     path = root / "schemas/telemetry/v8/genai.yaml"
     document = yaml.safe_load(path.read_text(encoding="utf-8"))
     extension = document["groups"][0]["x-defenseclaw"]
-    vocabulary = next(
-        attribute
-        for attribute in document["attributes"]
-        if attribute["id"] == "defenseclaw.outcome"
-    )["normalization"]["overrides"]["enum"]
+    vocabulary = next(attribute for attribute in document["attributes"] if attribute["id"] == "defenseclaw.outcome")[
+        "normalization"
+    ]["overrides"]["enum"]
     if mutation == "missing_requirement":
         extension.pop("outcome_requirement")
     elif mutation == "missing_allowed":
@@ -1665,11 +1800,7 @@ def test_allowed_outcome_order_is_derived_from_canonical_source(tmp_path: Path) 
     root = _fixture_root(tmp_path)
     path = root / "schemas/telemetry/v8/genai.yaml"
     document = yaml.safe_load(path.read_text(encoding="utf-8"))
-    outcome = next(
-        attribute
-        for attribute in document["attributes"]
-        if attribute["id"] == "defenseclaw.outcome"
-    )
+    outcome = next(attribute for attribute in document["attributes"] if attribute["id"] == "defenseclaw.outcome")
     vocabulary = outcome["normalization"]["overrides"]["enum"]
     vocabulary.remove("completed")
     vocabulary.insert(0, "completed")
@@ -1678,6 +1809,13 @@ def test_allowed_outcome_order_is_derived_from_canonical_source(tmp_path: Path) 
         "allowed",
     ]
     _write_yaml(path, document)
+    registry_path = root / "schemas/telemetry/v8/registry.yaml"
+    registry = yaml.safe_load(registry_path.read_text(encoding="utf-8"))
+    structural_outcome = next(
+        field for field in registry["structural_contract"]["envelope"]["fields"] if field["name"] == "outcome"
+    )
+    structural_outcome["normalization"]["overrides"]["enum"] = list(vocabulary)
+    _write_yaml(registry_path, registry)
 
     result = _run(root, "--write")
 
@@ -1687,18 +1825,9 @@ def test_allowed_outcome_order_is_derived_from_canonical_source(tmp_path: Path) 
 def test_real_family_outcome_contract_matrix_is_exact() -> None:
     module = _load_generator_module("telemetry_registry_real_outcome_contract_test")
     ir = module.compile_registry(ROOT)
-    attributes = {
-        attribute.id: attribute for domain in ir.domains for attribute in domain.attributes
-    }
-    outcome_order = attributes[
-        "defenseclaw.outcome"
-    ].normalization.effective_constraints["enum"]
-    families = [
-        group
-        for domain in ir.domains
-        for group in domain.groups
-        if group.type in {"log", "span"}
-    ]
+    attributes = {attribute.id: attribute for domain in ir.domains for attribute in domain.attributes}
+    outcome_order = attributes["defenseclaw.outcome"].normalization.effective_constraints["enum"]
+    families = [group for domain in ir.domains for group in domain.groups if group.type in {"log", "span"}]
 
     assert outcome_order == _CANONICAL_OUTCOME_ORDER
     assert sum(group.type == "log" for group in families) == 87
@@ -1707,16 +1836,11 @@ def test_real_family_outcome_contract_matrix_is_exact() -> None:
     assert all(group.outcome_requirement is not None for group in families)
     assert all(group.allowed_outcomes is not None for group in families)
 
-    contracts = [
-        (group.id, group.outcome_requirement, group.allowed_outcomes)
-        for group in families
-    ]
+    contracts = [(group.id, group.outcome_requirement, group.allowed_outcomes) for group in families]
     matrix = _grouped_outcome_contract_matrix(contracts)
     family_counts = {
         requirement: sum(
-            len(family_ids)
-            for matrix_requirement, _, family_ids in matrix
-            if matrix_requirement == requirement
+            len(family_ids) for matrix_requirement, _, family_ids in matrix if matrix_requirement == requirement
         )
         for requirement in {item[0] for item in matrix}
     }
@@ -1735,12 +1859,8 @@ def test_real_family_outcome_contract_digest_detects_single_family_drift() -> No
         for group in domain.groups
         if group.type in {"log", "span"}
     ]
-    required_index = next(
-        index for index, (_, requirement, _) in enumerate(contracts) if requirement == "required"
-    )
-    multi_outcome_index = next(
-        index for index, (_, _, outcomes) in enumerate(contracts) if len(outcomes) > 1
-    )
+    required_index = next(index for index, (_, requirement, _) in enumerate(contracts) if requirement == "required")
+    multi_outcome_index = next(index for index, (_, _, outcomes) in enumerate(contracts) if len(outcomes) > 1)
 
     broadened = list(contracts)
     family_id, requirement, _ = broadened[required_index]
@@ -1813,12 +1933,11 @@ def test_group_resolution_deduplicates_diamond_origins_and_strengthens(tmp_path:
     )
     document["groups"][0]["extends"] = ["diamond.left", "diamond.right"]
     _write_yaml(path, document)
+    _materialize_trace_attribute(root, "defenseclaw.test.name", "fixture", "metadata")
     module = _load_generator_module("telemetry_registry_diamond_test")
 
     ir = module.compile_registry(root)
-    span = next(
-        group for domain in ir.domains for group in domain.groups if group.id == "span.model.chat"
-    )
+    span = next(group for domain in ir.domains for group in domain.groups if group.id == "span.model.chat")
     use = next(item for item in span.resolved_uses if item.ref == "defenseclaw.test.name")
 
     assert use.role == "attributes"
@@ -1847,22 +1966,16 @@ def test_body_group_transposes_direct_and_inherited_uses_for_logs(tmp_path: Path
             "type": "attribute_group",
             "brief": "Body source.",
             "stability": "development",
-            "attributes": [
-                {"ref": "defenseclaw.test.name", "requirement_level": "optional"}
-            ],
+            "attributes": [{"ref": "defenseclaw.test.name", "requirement_level": "optional"}],
         }
     )
     body["extends"] = ["body.source"]
-    body["body_fields"] = [
-        {"ref": "defenseclaw.test.name", "requirement_level": "required"}
-    ]
+    body["body_fields"] = [{"ref": "defenseclaw.test.name", "requirement_level": "required"}]
     _write_yaml(path, document)
     module = _load_generator_module("telemetry_registry_body_transpose_test")
 
     ir = module.compile_registry(root)
-    log = next(
-        group for domain in ir.domains for group in domain.groups if group.id == "diagnostic.message"
-    )
+    log = next(group for domain in ir.domains for group in domain.groups if group.id == "diagnostic.message")
     use = next(item for item in log.resolved_uses if item.ref == "defenseclaw.test.name")
 
     assert use.role == "body_fields"
@@ -1904,9 +2017,7 @@ def test_group_resolution_rejects_role_and_log_parent_ambiguity(
                     "type": "attribute_group",
                     "brief": "Invalid role.",
                     "stability": "development",
-                    "body_fields": [
-                        {"ref": "defenseclaw.test.name", "requirement_level": "optional"}
-                    ],
+                    "body_fields": [{"ref": "defenseclaw.test.name", "requirement_level": "optional"}],
                 }
             )
         elif mutation == "log_no_parent":
@@ -1973,9 +2084,27 @@ def test_group_resolution_rejects_cycles_even_when_unreferenced(tmp_path: Path) 
     ("requirements", "conditionals", "expected_level", "expected_conditional", "error"),
     [
         (("optional", "recommended"), (None, None), "recommended", None, None),
-        (("conditional", "conditional"), ("same", "same"), "conditional", "same", None),
-        (("conditional", "conditional", "required"), ("left", "right", None), "required", None, None),
-        (("conditional", "conditional"), ("left", "right"), None, None, "conflicting dominant conditional"),
+        (
+            ("conditional", "conditional"),
+            ("connector-known-v1", "connector-known-v1"),
+            "conditional",
+            "connector-known-v1",
+            None,
+        ),
+        (
+            ("conditional", "conditional", "required"),
+            ("connector-known-v1", "operation-terminal-v1", None),
+            "required",
+            None,
+            None,
+        ),
+        (
+            ("conditional", "conditional"),
+            ("connector-known-v1", "operation-terminal-v1"),
+            None,
+            None,
+            "conflicting dominant conditional",
+        ),
     ],
 )
 def test_requirement_lattice_and_conditional_clause_merge(
@@ -1990,9 +2119,7 @@ def test_requirement_lattice_and_conditional_clause_merge(
     path = root / "schemas/telemetry/v8/genai.yaml"
     document = yaml.safe_load(path.read_text(encoding="utf-8"))
     parents: list[str] = []
-    for index, (requirement, conditional) in enumerate(
-        zip(requirements, conditionals, strict=True)
-    ):
+    for index, (requirement, conditional) in enumerate(zip(requirements, conditionals, strict=True)):
         group_id = f"lattice.{index}"
         use: dict[str, Any] = {
             "ref": "defenseclaw.test.name",
@@ -2017,11 +2144,11 @@ def test_requirement_lattice_and_conditional_clause_merge(
         assert result.returncode == 1
         assert error in result.stderr
         return
+    if expected_level == "required":
+        _materialize_trace_attribute(root, "defenseclaw.test.name", "fixture", "metadata")
     module = _load_generator_module(f"telemetry_registry_lattice_{len(requirements)}")
     ir = module.compile_registry(root)
-    span = next(
-        group for domain in ir.domains for group in domain.groups if group.id == "span.model.chat"
-    )
+    span = next(group for domain in ir.domains for group in domain.groups if group.id == "span.model.chat")
     use = next(item for item in span.resolved_uses if item.ref == "defenseclaw.test.name")
     assert use.requirement_level == expected_level
     assert use.conditional == expected_conditional
@@ -2074,9 +2201,7 @@ def test_constraint_intersection_is_restrictive_and_deterministic(tmp_path: Path
     module = _load_generator_module("telemetry_registry_constraint_merge_test")
 
     ir = module.compile_registry(root)
-    span = next(
-        group for domain in ir.domains for group in domain.groups if group.id == "span.model.chat"
-    )
+    span = next(group for domain in ir.domains for group in domain.groups if group.id == "span.model.chat")
     use = next(item for item in span.resolved_uses if item.ref == "defenseclaw.test.name")
 
     assert dict(use.constraints) == {
@@ -2136,9 +2261,7 @@ def test_structured_constraint_intersection_uses_lower_depth_and_property_limits
     module = _load_generator_module("telemetry_registry_structured_constraint_test")
 
     ir = module.compile_registry(root)
-    span = next(
-        group for domain in ir.domains for group in domain.groups if group.id == "span.model.chat"
-    )
+    span = next(group for domain in ir.domains for group in domain.groups if group.id == "span.model.chat")
     use = next(item for item in span.resolved_uses if item.ref == "defenseclaw.test.object")
 
     assert dict(use.constraints) == {"max_depth": 4, "max_properties": 60}
@@ -2387,15 +2510,13 @@ def test_valid_example_field_class_map_is_complete_and_exact(tmp_path: Path) -> 
 
     assert result.returncode == 1
     assert "field_classes: coverage mismatch" in result.stderr
-    assert "/body/attributes/gen_ai.operation.name" in result.stderr
+    assert "/attributes/gen_ai.operation.name" in result.stderr
 
 
 def test_real_registry_has_exact_authoritative_family_counts() -> None:
     groups: list[dict[str, Any]] = []
     for domain in ("genai", "security", "operations"):
-        document = yaml.safe_load(
-            (ROOT / f"schemas/telemetry/v8/{domain}.yaml").read_text(encoding="utf-8")
-        )
+        document = yaml.safe_load((ROOT / f"schemas/telemetry/v8/{domain}.yaml").read_text(encoding="utf-8"))
         groups.extend(document["groups"])
 
     assert sum(group["type"] == "span" for group in groups) == 25
@@ -2410,9 +2531,7 @@ def test_named_producer_identity_set_resolves_to_explicit_contexts(tmp_path: Pat
     identity = mapping.pop("default_identity")
     mapping["event_name_policy"] = "context_required"
     mapping["allowed_context_identity_set"] = "diagnostic-context"
-    document["producer_identity_sets"] = [
-        {"id": "diagnostic-context", "identities": [identity]}
-    ]
+    document["producer_identity_sets"] = [{"id": "diagnostic-context", "identities": [identity]}]
     _write_yaml(path, document)
 
     result = _run(root, "--write")
@@ -2444,9 +2563,7 @@ def test_named_producer_identity_sets_reject_ambiguous_shapes(
     if mode == "duplicate":
         identities.append(dict(identity))
     if mode != "unknown":
-        document["producer_identity_sets"] = [
-            {"id": "diagnostic-context", "identities": identities}
-        ]
+        document["producer_identity_sets"] = [{"id": "diagnostic-context", "identities": identities}]
     if mode == "unknown":
         mapping.pop("default_identity")
         mapping["event_name_policy"] = "context_required"
@@ -2529,7 +2646,10 @@ def test_check_detects_extra_and_stale_outputs(tmp_path: Path) -> None:
 
 
 def _upstream_archive(path: Path, *, malformed_yaml: bool = False) -> None:
-    source = b"attributes:\n  - key: [unterminated\n" if malformed_yaml else b"""\
+    source = (
+        b"attributes:\n  - key: [unterminated\n"
+        if malformed_yaml
+        else b"""\
 file_format: definition/2
 attributes:
   - key: gen_ai.test.attribute
@@ -2545,6 +2665,7 @@ attributes:
     brief: Opaque bytes value.
     stability: development
 """
+    )
     with tarfile.open(path, "w:gz") as archive:
         info = tarfile.TarInfo("semantic-conventions-genai/model/gen-ai/registry.yaml")
         info.size = len(source)
@@ -2616,10 +2737,10 @@ def _openinference_archive(
         table_rows.append(f"| `{identifier}` | {type_name} | `value` | Fixture. |")
     table_rows.extend(["", "## Next Section", ""])
     specification = "\n".join(table_rows).encode()
-    foreign = b'''\
+    foreign = b"""\
 class InstrumentationAliases:
     FOREIGN = "gen_ai.operation.name"
-'''
+"""
     files = {
         "openinference/python/openinference-semantic-conventions/src/openinference/semconv/resource/__init__.py": resource,
         "openinference/python/openinference-semantic-conventions/src/openinference/semconv/trace/__init__.py": trace,
@@ -2712,9 +2833,7 @@ def test_checked_in_otel_any_values_preserve_any_value_shape() -> None:
         "otel-genai-b028dceecdad117461a785c3af35315e7184e813.normalized.json": "gen_ai.input.messages",
     }
     for filename, identifier in expected.items():
-        snapshot = json.loads(
-            (ROOT / "schemas/telemetry/v8/upstream" / filename).read_bytes()
-        )
+        snapshot = json.loads((ROOT / "schemas/telemetry/v8/upstream" / filename).read_bytes())
         attribute = next(item for item in snapshot["attributes"] if item["id"] == identifier)
         assert attribute["allowed_types"] == []
         assert attribute["shape"] == "any_value"
@@ -2723,9 +2842,7 @@ def test_checked_in_otel_any_values_preserve_any_value_shape() -> None:
 def test_checked_in_upstream_privacy_extensions_are_explicit() -> None:
     extensions: dict[str, dict[str, Any]] = {}
     for domain in ("genai", "security", "operations"):
-        document = yaml.safe_load(
-            (ROOT / f"schemas/telemetry/v8/{domain}.yaml").read_text(encoding="utf-8")
-        )
+        document = yaml.safe_load((ROOT / f"schemas/telemetry/v8/{domain}.yaml").read_text(encoding="utf-8"))
         for extension in document["attribute_extensions"]:
             assert extension["ref"] not in extensions
             extensions[extension["ref"]] = extension
@@ -2892,9 +3009,7 @@ def test_openinference_archive_member_order_does_not_change_snapshot(tmp_path: P
             timeout=60,
         )
         assert result.returncode == 0, result.stderr
-        snapshots.append(
-            (root / "schemas/telemetry/v8/upstream/openinference.normalized.json").read_bytes()
-        )
+        snapshots.append((root / "schemas/telemetry/v8/upstream/openinference.normalized.json").read_bytes())
 
     assert snapshots[0] == snapshots[1]
 
@@ -2934,3 +3049,901 @@ def test_updater_validation_failure_preserves_all_existing_bytes(tmp_path: Path)
 
     assert result.returncode == 1
     assert {path: path.read_bytes() for path in before} == before
+
+
+def test_structural_contract_ir_is_closed_lossless_and_runtime_bound(tmp_path: Path) -> None:
+    root = _fixture_root(tmp_path)
+    module = _load_generator_module("telemetry_registry_structural_contract")
+
+    ir = module.compile_registry(root)
+
+    contract = ir.structural_contract
+    assert contract.id == "defenseclaw.canonical-record"
+    assert contract.version == 1
+    assert contract.additional_properties is False
+    assert contract.runtime_binding.record == "internal/observability.Record"
+    assert contract.runtime_binding.schema_derived_constructor == ("internal/observability.newSchemaDerivedRecord")
+    assert contract.runtime_binding.schema_derived_log_constructor == (
+        "internal/observability.newSchemaDerivedLogRecord"
+    )
+    assert dict(contract.limits.values) == {
+        "record_id_utf8_bytes": 512,
+        "correlation_id_utf8_bytes": 512,
+        "span_name_utf8_bytes": 512,
+        "binary_version_utf8_bytes": 256,
+        "provenance_hex_ascii_bytes": 128,
+        "stable_token_ascii_bytes": 128,
+        "payload_depth": 32,
+        "payload_members": 8192,
+        "payload_encoded_bytes": 1048576,
+        "record_encoded_bytes": 4194304,
+    }
+    assert tuple(field.name for field in contract.trace_body.fields) == (
+        "kind",
+        "start_time_unix_nano",
+        "end_time_unix_nano",
+        "parent_span_id",
+        "status",
+        "resource",
+        "scope",
+        "attributes",
+        "dropped_attributes_count",
+        "events",
+        "dropped_events_count",
+        "links",
+        "dropped_links_count",
+    )
+    trace_fields = {field.name: field for field in contract.trace_body.fields}
+    assert trace_fields["start_time_unix_nano"].field_type == "uint64"
+    assert trace_fields["start_time_unix_nano"].otlp_target == "startTimeUnixNano"
+    assert trace_fields["attributes"].semantic_ref == "registry.family_attributes"
+    assert trace_fields["resource"].otlp_target is None
+    assert trace_fields["scope"].otlp_target is None
+    assert contract.trace_relations[0].left == "start_time_unix_nano"
+    assert contract.trace_relations[0].right == "end_time_unix_nano"
+    assert {field.name for field in contract.trace_body.fields}.isdisjoint(
+        {"trace_id", "span_id", "name", "traceId", "spanId"}
+    )
+    assert tuple(field.name for field in contract.metric_instrument_data.fields) == (
+        "value",
+        "attributes",
+    )
+    assert contract.metric_instrument_data.fields[0].field_type == "metric_number"
+    assert contract.metric_instrument_data.fields[0].semantic_ref == "registry.metric_value"
+    assert [(arm.signal, arm.payload_field) for arm in contract.signal_arms] == [
+        ("logs", "body"),
+        ("traces", "body"),
+        ("metrics", "instrument_data"),
+    ]
+    assert tuple(condition.id for condition in ir.conditions) == (
+        "connector-known-v1",
+        "operation-terminal-v1",
+        "technical-failure-v1",
+        "guardrail-terminal-decision-available-v1",
+        "security-severity-available-v1",
+        "judge-output-parse-failed-v1",
+        "admin-principal-known-v1",
+    )
+    assert all(condition.enforcement.kind == "builder_fact" for condition in ir.conditions)
+    assert {condition.false_requirement for condition in ir.conditions} == {"forbidden", "optional"}
+    phase_catalog = ir.value_catalogs[0]
+    assert phase_catalog.id == "agent-phase-v1"
+    assert phase_catalog.kind == "string-int64-bijection"
+    assert phase_catalog.value_attributes == (
+        "defenseclaw.agent.phase",
+        "defenseclaw.agent.phase.previous",
+        "defenseclaw.agent.phase.from",
+        "defenseclaw.agent.phase.to",
+    )
+    assert phase_catalog.paired_value_attribute == "defenseclaw.agent.phase"
+    assert tuple((entry.value, entry.code) for entry in phase_catalog.entries) == tuple(
+        (phase, index) for index, phase in enumerate(_CANONICAL_AGENT_PHASES, 1)
+    )
+    assert phase_catalog.compatibility.code == 0
+    assert phase_catalog.compatibility.value == "unknown"
+    assert phase_catalog.compatibility.canonical_emittable is False
+    assert dict(contract.canonical_to_otlp.object_contexts)["trace_link"].endswith("links[]")
+    assert dict(contract.canonical_to_otlp.field_context_overrides) == {
+        "trace_resource.schema_url": "ResourceSpans",
+        "trace_scope.schema_url": "ResourceSpans.scopeSpans[]",
+    }
+    assert contract.canonical_to_otlp.any_value_mapping[-1] == ("object", "kvlistValue")
+    with pytest.raises(TypeError):
+        contract.limits.values["payload_depth"] = 8
+
+
+@pytest.mark.parametrize(
+    ("mutation", "expected"),
+    [
+        (
+            lambda registry: registry["structural_contract"]["trace"]["body"]["fields"][1].__setitem__(
+                "name", "startTimeUnixNano"
+            ),
+            "canonical structural names must be snake_case",
+        ),
+        (
+            lambda registry: registry["structural_contract"]["correlation"]["fields"][4]["otlp"].__setitem__(
+                "target", "wrongTraceId"
+            ),
+            "typed OTLP mapping mismatch",
+        ),
+    ],
+)
+def test_structural_contract_drift_fails_closed(
+    tmp_path: Path,
+    mutation: Any,
+    expected: str,
+) -> None:
+    root = _fixture_root(tmp_path)
+    path = root / "schemas/telemetry/v8/registry.yaml"
+    registry = yaml.safe_load(path.read_text(encoding="utf-8"))
+    mutation(registry)
+    _write_yaml(path, registry)
+
+    result = _run(root, "--write")
+
+    assert result.returncode == 1
+    assert expected in result.stderr
+
+
+@pytest.mark.parametrize(
+    ("mutation", "expected"),
+    [
+        (
+            lambda contract: contract["canonical_to_otlp"]["field_context_overrides"].__setitem__(
+                "trace_resource.schema_url", "ResourceSpans.resource"
+            ),
+            "field_context_overrides: differs from OTLP field placement",
+        ),
+        (
+            lambda contract: contract["canonical_to_otlp"]["span_kind_mapping"][4].__setitem__("otlp", 4),
+            "span_kind_mapping: differs from OTLP v1",
+        ),
+        (
+            lambda contract: contract["canonical_to_otlp"]["any_value_mapping"][0].__setitem__(
+                "otlp_arm", "stringValue"
+            ),
+            "any_value_mapping: differs from OTLP AnyValue v1",
+        ),
+    ],
+)
+def test_otlp_protocol_representation_is_closed(
+    tmp_path: Path,
+    mutation: Any,
+    expected: str,
+) -> None:
+    root = _fixture_root(tmp_path)
+    path = root / "schemas/telemetry/v8/registry.yaml"
+    registry = yaml.safe_load(path.read_text(encoding="utf-8"))
+    mutation(registry["structural_contract"])
+    _write_yaml(path, registry)
+
+    result = _run(root, "--write")
+
+    assert result.returncode == 1
+    assert expected in result.stderr
+
+
+@pytest.mark.parametrize(
+    ("field_path", "mutation", "expected"),
+    [
+        (
+            ("envelope", "outcome"),
+            lambda field: field.__setitem__("field_class", "identifier"),
+            "semantic attribute mismatch",
+        ),
+        (
+            ("correlation", "trace_id"),
+            lambda field: field["normalization"]["overrides"].__setitem__("max_utf8_bytes", 31),
+            "semantic-format mismatch",
+        ),
+    ],
+)
+def test_structural_semantic_bindings_reject_local_drift(
+    tmp_path: Path,
+    field_path: tuple[str, str],
+    mutation: Any,
+    expected: str,
+) -> None:
+    root = _fixture_root(tmp_path)
+    path = root / "schemas/telemetry/v8/registry.yaml"
+    registry = yaml.safe_load(path.read_text(encoding="utf-8"))
+    object_name, field_name = field_path
+    fields = registry["structural_contract"][object_name]["fields"]
+    mutation(next(field for field in fields if field["name"] == field_name))
+    _write_yaml(path, registry)
+
+    result = _run(root, "--write")
+
+    assert result.returncode == 1
+    assert expected in result.stderr
+
+
+def test_runtime_limits_are_source_owned_not_mirrored_in_compiler(tmp_path: Path) -> None:
+    root = _fixture_root(tmp_path)
+    path = root / "schemas/telemetry/v8/registry.yaml"
+    registry = yaml.safe_load(path.read_text(encoding="utf-8"))
+    registry["structural_contract"]["limits"]["payload_depth"] = 31
+    _write_yaml(path, registry)
+    module = _load_generator_module("telemetry_registry_source_owned_limits")
+
+    ir = module.compile_registry(root)
+
+    assert ir.structural_contract.limits.values["payload_depth"] == 31
+
+
+def test_conditional_use_requires_registered_stable_condition_id(tmp_path: Path) -> None:
+    root = _fixture_root(tmp_path)
+    path = root / "schemas/telemetry/v8/genai.yaml"
+    domain = yaml.safe_load(path.read_text(encoding="utf-8"))
+    domain["groups"][0]["attributes"][0].update({"requirement_level": "conditional", "conditional": "connector known"})
+    _write_yaml(path, domain)
+
+    result = _run(root, "--write")
+
+    assert result.returncode == 1
+    assert "unknown condition ID" in result.stderr
+
+
+@pytest.mark.parametrize(
+    ("mutation", "expected"),
+    [
+        (
+            lambda conditions: conditions[1]["enforcement"].__setitem__("fact", conditions[0]["enforcement"]["fact"]),
+            "duplicate builder fact",
+        ),
+        (
+            lambda conditions: conditions[0].__setitem__("false_requirement", "required"),
+            "false_requirement: unsupported value",
+        ),
+    ],
+)
+def test_condition_builder_facts_and_false_semantics_are_closed(
+    tmp_path: Path,
+    mutation: Any,
+    expected: str,
+) -> None:
+    root = _fixture_root(tmp_path)
+    path = root / "schemas/telemetry/v8/registry.yaml"
+    registry = yaml.safe_load(path.read_text(encoding="utf-8"))
+    mutation(registry["conditions"])
+    _write_yaml(path, registry)
+
+    result = _run(root, "--write")
+
+    assert result.returncode == 1
+    assert expected in result.stderr
+
+
+def test_signal_family_requires_explicit_lifecycle(tmp_path: Path) -> None:
+    root = _fixture_root(tmp_path)
+    path = root / "schemas/telemetry/v8/genai.yaml"
+    domain = yaml.safe_load(path.read_text(encoding="utf-8"))
+    domain["groups"][0].pop("introduced_in")
+    _write_yaml_raw(path, domain)
+
+    result = _run(root, "--write")
+
+    assert result.returncode == 1
+    assert "introduced_in: required for every group" in result.stderr
+
+
+@pytest.mark.parametrize(
+    "attribute_id",
+    [
+        "defenseclaw.agent.phase",
+        "defenseclaw.agent.phase.previous",
+        "defenseclaw.agent.phase.from",
+        "defenseclaw.agent.phase.to",
+    ],
+)
+def test_phase_value_catalog_binds_every_value_attribute_enum(
+    tmp_path: Path,
+    attribute_id: str,
+) -> None:
+    root = _fixture_root(tmp_path)
+    path = root / "schemas/telemetry/v8/genai.yaml"
+    domain = yaml.safe_load(path.read_text(encoding="utf-8"))
+    phase = next(item for item in domain["attributes"] if item["id"] == attribute_id)
+    phase["normalization"]["overrides"]["enum"].append("invented")
+    _write_yaml(path, domain)
+
+    result = _run(root, "--write")
+
+    assert result.returncode == 1
+    assert "must use the exact catalog enum" in result.stderr
+
+
+def test_phase_value_catalog_binds_code_range(tmp_path: Path) -> None:
+    root = _fixture_root(tmp_path)
+    path = root / "schemas/telemetry/v8/genai.yaml"
+    domain = yaml.safe_load(path.read_text(encoding="utf-8"))
+    phase_code = next(item for item in domain["attributes"] if item["id"] == "defenseclaw.agent.phase.code")
+    phase_code["normalization"]["overrides"]["min"] = 0
+    _write_yaml(path, domain)
+
+    result = _run(root, "--write")
+
+    assert result.returncode == 1
+    assert "code attribute must use the exact catalog range" in result.stderr
+
+
+def test_removed_group_cannot_remain_route_selectable(tmp_path: Path) -> None:
+    root = _fixture_root(tmp_path)
+    path = root / "schemas/telemetry/v8/genai.yaml"
+    domain = yaml.safe_load(path.read_text(encoding="utf-8"))
+    group = domain["groups"][0]
+    group.update(
+        {
+            "stability": "deprecated",
+            "deprecated_in": "telemetry-registry-v1",
+            "removed_in": "telemetry-registry-v2",
+        }
+    )
+    _write_yaml(path, domain)
+    registry_path = root / "schemas/telemetry/v8/registry.yaml"
+    registry = yaml.safe_load(registry_path.read_text(encoding="utf-8"))
+    registry["registry_version"] = 2
+    _write_yaml(registry_path, registry)
+
+    result = _run(root, "--write")
+
+    assert result.returncode == 1
+    assert "removed group cannot remain route-selectable" in result.stderr
+
+
+@pytest.mark.parametrize(
+    ("value", "constraints"),
+    [
+        ({"outer": {"inner": "value"}}, {"max_depth": 0}),
+        ({"outer": {"inner": "value"}}, {"max_properties": 1}),
+        ({"outer": [1, 2]}, {"max_items": 2}),
+        ({"outer": "four"}, {"max_item_utf8_bytes": 3}),
+        ({"outer": "value"}, {"max_utf8_bytes": 8}),
+        ({"outer": float("nan")}, {}),
+    ],
+)
+def test_recursive_normalization_rejects_every_structured_bound(
+    value: Any,
+    constraints: dict[str, Any],
+) -> None:
+    module = _load_generator_module("telemetry_registry_recursive_normalization")
+
+    assert module._constraints_accept(value, constraints) is False
+
+
+# Produced by internal/observability.NewValue (marshalMinimalJSON) and kept here
+# as cross-language byte-accounting goldens for the registry compiler.
+_GO_CANONICAL_JSON_GOLDENS = (
+    ("float-1e-6", {"n": 1e-6}, '{"n":1e-6}'),
+    ("float-1e-7", {"n": 1e-7}, '{"n":1e-7}'),
+    ("float-1e20", {"n": 1e20}, '{"n":1e20}'),
+    ("float-1e21", {"n": 1e21}, '{"n":1e21}'),
+    ("negative-zero", {"n": -0.0}, '{"n":0}'),
+    ("int-million", {"n": 1_000_000}, '{"n":1e6}'),
+    ("int-max", {"n": 2**63 - 1}, '{"n":9223372036854775807}'),
+    ("html-line-separators", {"text": "<>&\u2028\u2029"}, '{"text":"<>&\u2028\u2029"}'),
+    (
+        "nested-key-and-string-escapes",
+        {
+            "z/key": ["line\n", 'quote"', "slash\\"],
+            "a~key": {"control": "\b\f\r\t\u0001"},
+        },
+        '{"a~key":{"control":"\\b\\f\\r\\t\\u0001"},"z/key":["line\\n","quote\\"","slash\\\\"]}',
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    ("name", "value", "expected"),
+    _GO_CANONICAL_JSON_GOLDENS,
+    ids=[item[0] for item in _GO_CANONICAL_JSON_GOLDENS],
+)
+def test_structured_byte_budget_matches_go_canonical_json_at_n_and_n_plus_one(
+    name: str,
+    value: Any,
+    expected: str,
+) -> None:
+    del name
+    module = _load_generator_module("telemetry_registry_go_canonical_json")
+    expected_bytes = expected.encode("utf-8")
+
+    assert module._canonical_json_bytes(value) == expected_bytes
+    assert module._constraints_accept(value, {"max_utf8_bytes": len(expected_bytes)}) is True
+    assert module._constraints_accept(value, {"max_utf8_bytes": len(expected_bytes) - 1}) is False
+
+
+def test_array_types_validate_every_item_and_finite_numbers() -> None:
+    module = _load_generator_module("telemetry_registry_array_item_types")
+
+    assert module._attribute_type_accepts(["one", "two"], "string[]") is True
+    assert module._attribute_type_accepts(["one", 2], "string[]") is False
+    assert module._attribute_type_accepts([1, 2**63], "int64[]") is False
+    assert module._attribute_type_accepts([1.0, float("inf")], "double[]") is False
+
+
+@pytest.mark.parametrize("owner", ["local", "upstream"])
+def test_materialized_examples_enforce_declared_dynamic_attribute_types(
+    tmp_path: Path,
+    owner: str,
+) -> None:
+    root = _fixture_root(tmp_path)
+    path = root / "schemas/telemetry/v8/genai.yaml"
+    domain = yaml.safe_load(path.read_text(encoding="utf-8"))
+    group = domain["groups"][0]
+    examples_path = root / "schemas/telemetry/v8/examples.yaml"
+    examples = yaml.safe_load(examples_path.read_text(encoding="utf-8"))
+    record = examples["examples"][0]["record"]
+    if owner == "local":
+        attribute = next(item for item in domain["attributes"] if item["id"] == "defenseclaw.test.name")
+        attribute["type"] = "string[]"
+        attribute["examples"] = [["fixture"]]
+        attribute["normalization"] = {
+            "id": "bounded-v1",
+            "overrides": {"max_utf8_bytes": 128, "max_item_utf8_bytes": 64, "max_items": 4},
+        }
+        reference = "defenseclaw.test.name"
+        value = ["valid", 7]
+    else:
+        reference = "gen_ai.current.000"
+        domain["attribute_extensions"].append(
+            {
+                "ref": reference,
+                "field_class": "metadata",
+                "sensitivity": "safe",
+                "cardinality": "low",
+                "normalization": {"id": "bounded-v1", "overrides": {"max_utf8_bytes": 128}},
+            }
+        )
+        value = 7
+    group["attributes"].append({"ref": reference, "requirement_level": "required"})
+    record["body"]["attributes"][reference] = value
+    for pointer in _load_generator_module("telemetry_registry_type_pointer")._json_leaf_pointers(
+        value,
+        f"/attributes/{reference}",
+    ):
+        record["field_classes"][pointer] = "metadata"
+    _write_yaml(path, domain)
+    _write_yaml(examples_path, examples)
+
+    result = _run(root, "--write")
+
+    assert result.returncode == 1
+    assert "dynamic_attribute_value_invalid" in result.stderr
+
+
+@pytest.mark.parametrize(
+    ("mutation", "expected"),
+    [
+        (
+            lambda attribute: attribute.__setitem__("examples", [7]),
+            "value does not match declared attribute type",
+        ),
+        (
+            lambda attribute: attribute.__setitem__("examples", [None]),
+            "value does not match declared attribute type",
+        ),
+        (
+            lambda attribute: attribute.update(
+                {
+                    "examples": ["12345"],
+                    "normalization": {
+                        "id": "bounded-v1",
+                        "overrides": {"max_utf8_bytes": 4},
+                    },
+                }
+            ),
+            "value violates declared normalization",
+        ),
+        (
+            lambda attribute: attribute.update(
+                {
+                    "type": "string[]",
+                    "examples": [["valid", 7]],
+                    "normalization": {
+                        "id": "bounded-v1",
+                        "overrides": {
+                            "max_utf8_bytes": 128,
+                            "max_item_utf8_bytes": 64,
+                            "max_items": 4,
+                        },
+                    },
+                }
+            ),
+            "value does not match declared attribute type",
+        ),
+        (
+            lambda attribute: attribute.update(
+                {
+                    "type": "object",
+                    "examples": [{"nested": {"deeper": {}}}],
+                    "normalization": {
+                        "id": "structured-content-v1",
+                        "overrides": {
+                            "max_utf8_bytes": 128,
+                            "max_item_utf8_bytes": 64,
+                            "max_items": 4,
+                            "max_depth": 1,
+                            "max_properties": 4,
+                        },
+                    },
+                }
+            ),
+            "value violates declared normalization",
+        ),
+    ],
+)
+def test_local_attribute_examples_are_executable_typed_metadata(
+    tmp_path: Path,
+    mutation: Any,
+    expected: str,
+) -> None:
+    root = _fixture_root(tmp_path)
+    path = root / "schemas/telemetry/v8/genai.yaml"
+    domain = yaml.safe_load(path.read_text(encoding="utf-8"))
+    attribute = next(item for item in domain["attributes"] if item["id"] == "defenseclaw.test.name")
+    mutation(attribute)
+    _write_yaml(path, domain)
+
+    result = _run(root, "--write")
+
+    assert result.returncode == 1
+    assert expected in result.stderr
+
+
+def test_field_class_derivation_matches_go_leaf_and_rfc6901_rules(tmp_path: Path) -> None:
+    module = _load_generator_module("telemetry_registry_recursive_field_classes")
+    value = {"a/b": {"~x": [None, "value"]}, "empty": {}}
+    assert module._json_leaf_pointers(value) == (
+        "/a~1b/~0x/0",
+        "/a~1b/~0x/1",
+        "/empty",
+    )
+
+    root = _fixture_root(tmp_path)
+    domain_path = root / "schemas/telemetry/v8/genai.yaml"
+    domain = yaml.safe_load(domain_path.read_text(encoding="utf-8"))
+    attribute = next(item for item in domain["attributes"] if item["id"] == "defenseclaw.test.name")
+    attribute["type"] = "object"
+    attribute["examples"] = [{}]
+    attribute["normalization"] = {
+        "id": "structured-content-v1",
+        "overrides": {
+            "max_utf8_bytes": 1024,
+            "max_item_utf8_bytes": 64,
+            "max_items": 16,
+            "max_depth": 4,
+            "max_properties": 8,
+        },
+    }
+    domain["groups"][0]["attributes"].append({"ref": "defenseclaw.test.name", "requirement_level": "required"})
+    _write_yaml(domain_path, domain)
+    examples_path = root / "schemas/telemetry/v8/examples.yaml"
+    examples = yaml.safe_load(examples_path.read_text(encoding="utf-8"))
+    record = examples["examples"][0]["record"]
+    record["body"]["attributes"]["defenseclaw.test.name"] = value
+    prefix = "/attributes/defenseclaw.test.name"
+    for pointer in module._json_leaf_pointers(value, prefix):
+        record["field_classes"][pointer] = "metadata"
+    _write_yaml(examples_path, examples)
+
+    accepted = _run(root, "--write")
+    assert accepted.returncode == 0, accepted.stderr
+
+    examples = yaml.safe_load(examples_path.read_text(encoding="utf-8"))
+    classes = examples["examples"][0]["record"]["field_classes"]
+    for pointer in tuple(classes):
+        if pointer.startswith(prefix):
+            classes.pop(pointer)
+    classes[prefix] = "metadata"
+    _write_yaml(examples_path, examples)
+    rejected = _run(root, "--write")
+    assert rejected.returncode == 1
+    assert "coverage mismatch" in rejected.stderr
+
+
+def test_every_pseudo_semantic_ref_is_required_exactly_once(tmp_path: Path) -> None:
+    root = _fixture_root(tmp_path)
+    path = root / "schemas/telemetry/v8/registry.yaml"
+    registry = yaml.safe_load(path.read_text(encoding="utf-8"))
+    event_name = next(
+        field for field in registry["structural_contract"]["envelope"]["fields"] if field["name"] == "event_name"
+    )
+    event_name.pop("semantic_ref")
+    _write_yaml(path, registry)
+
+    result = _run(root, "--write")
+
+    assert result.returncode == 1
+    assert "missing pseudo semantic_ref" in result.stderr
+
+
+def test_invalid_mutation_projection_uses_typed_json_equality(tmp_path: Path) -> None:
+    root = _fixture_root(tmp_path)
+    path = root / "schemas/telemetry/v8/examples.yaml"
+    document = yaml.safe_load(path.read_text(encoding="utf-8"))
+    valid = document["examples"][0]
+    invalid_record = copy.deepcopy(valid["record"])
+    invalid_record["body"]["start_time_unix_nano"] = 1.0
+    document["examples"].append(
+        {
+            "id": "model.chat.typed-projection.invalid",
+            "valid": False,
+            "signal": "traces",
+            "family": "span.model.chat",
+            "description": "Integer and double JSON values are not projection-equal.",
+            "record": invalid_record,
+            "expected_error": "structural_field_value_invalid",
+            "base_example": valid["id"],
+            "mutation": {
+                "kind": "structural_field_value_invalid",
+                "changes": [
+                    {
+                        "op": "replace",
+                        "path": "/record/body/start_time_unix_nano",
+                        "value": 1,
+                    }
+                ],
+            },
+        }
+    )
+    _write_yaml(path, document)
+
+    result = _run(root, "--write")
+
+    assert result.returncode == 1
+    assert "derived vector does not equal" in result.stderr
+
+
+def test_invalid_example_must_have_exactly_one_stable_error(tmp_path: Path) -> None:
+    root = _fixture_root(tmp_path)
+    path = root / "schemas/telemetry/v8/examples.yaml"
+    document = yaml.safe_load(path.read_text(encoding="utf-8"))
+    valid = document["examples"][0]
+    invalid_record = copy.deepcopy(valid["record"])
+    invalid_record["bucket"] = "diagnostic"
+    invalid_record["event_name"] = "invalid.event.name"
+    invalid_record["field_classes"]["/kind"] = "content"
+    document["examples"].append(
+        {
+            "id": "model.chat.two-errors.invalid",
+            "valid": False,
+            "signal": "traces",
+            "family": "span.model.chat",
+            "description": "Two independent errors cannot masquerade as one negative vector.",
+            "record": invalid_record,
+            "expected_error": "family_event_name_mismatch",
+            "base_example": valid["id"],
+            "mutation": {
+                "kind": "family_event_name_mismatch",
+                "changes": [
+                    {"op": "replace", "path": "/record/bucket", "value": "diagnostic"},
+                    {
+                        "op": "replace",
+                        "path": "/record/event_name",
+                        "value": "invalid.event.name",
+                    },
+                    {
+                        "op": "replace",
+                        "path": "/record/field_classes/~1kind",
+                        "value": "content",
+                    },
+                ],
+            },
+        }
+    )
+    _write_yaml(path, document)
+
+    result = _run(root, "--write")
+
+    assert result.returncode == 1
+    assert "expected only 'family_event_name_mismatch'" in result.stderr
+    assert "family_bucket_mismatch" in result.stderr
+    assert "field_class_classification_mismatch" in result.stderr
+
+
+def test_signal_root_mutation_is_replayed_as_part_of_the_typed_vector(tmp_path: Path) -> None:
+    root = _fixture_root(tmp_path)
+    path = root / "schemas/telemetry/v8/examples.yaml"
+    document = yaml.safe_load(path.read_text(encoding="utf-8"))
+    valid = document["examples"][0]
+    log_record = {
+        "schema_version": 1,
+        "bucket_catalog_version": 1,
+        "timestamp": "2026-07-03T12:00:00Z",
+        "record_id": "fixture-log-invalid-signal",
+        "bucket": "diagnostic",
+        "signal": "traces",
+        "event_name": "diagnostic.message",
+        "source": "gateway",
+        "correlation": {},
+        "provenance": {
+            "producer": "defenseclaw",
+            "binary_version": "8.0.0",
+            "registry_schema_version": 1,
+            "config_generation": 1,
+        },
+        "body": {},
+        "mandatory": False,
+        "field_classes": {"": "metadata"},
+    }
+    document["examples"].append(
+        {
+            "id": "diagnostic.signal-root.invalid",
+            "valid": False,
+            "signal": "logs",
+            "family": "diagnostic.message",
+            "description": "The vector signal discriminator is replayed, not ignored.",
+            "record": log_record,
+            "expected_error": "example_signal_mismatch",
+            "base_example": valid["id"],
+            "mutation": {
+                "kind": "example_signal_mismatch",
+                "changes": [
+                    {"op": "replace", "path": "/signal", "value": "logs"},
+                    {"op": "replace", "path": "/family", "value": "diagnostic.message"},
+                    {"op": "replace", "path": "/record", "value": copy.deepcopy(log_record)},
+                ],
+            },
+        }
+    )
+    _write_yaml(path, document)
+
+    result = _run(root, "--write")
+
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize(
+    ("mutation", "expected"),
+    [
+        (lambda group: group.__setitem__("introduced_in", "v1"), "expected telemetry-registry-vN"),
+        (
+            lambda group: group.update(
+                {
+                    "stability": "deprecated",
+                    "deprecated_in": "telemetry-registry-v1",
+                    "removed_in": "telemetry-registry-v1",
+                }
+            ),
+            "removed_in: must follow deprecated_in",
+        ),
+    ],
+)
+def test_lifecycle_versions_are_semantic_and_strictly_ordered(
+    tmp_path: Path,
+    mutation: Any,
+    expected: str,
+) -> None:
+    root = _fixture_root(tmp_path)
+    path = root / "schemas/telemetry/v8/genai.yaml"
+    domain = yaml.safe_load(path.read_text(encoding="utf-8"))
+    mutation(domain["groups"][0])
+    _write_yaml(path, domain)
+
+    result = _run(root, "--write")
+
+    assert result.returncode == 1
+    assert expected in result.stderr
+
+
+def test_future_removal_remains_active_until_its_registry_version(tmp_path: Path) -> None:
+    root = _fixture_root(tmp_path)
+    path = root / "schemas/telemetry/v8/genai.yaml"
+    domain = yaml.safe_load(path.read_text(encoding="utf-8"))
+    domain["groups"][0].update(
+        {
+            "stability": "deprecated",
+            "deprecated_in": "telemetry-registry-v1",
+            "removed_in": "telemetry-registry-v2",
+        }
+    )
+    _write_yaml(path, domain)
+
+    result = _run(root, "--write")
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_removed_non_signal_group_without_route_selector_is_historical_only(tmp_path: Path) -> None:
+    root = _fixture_root(tmp_path)
+    path = root / "schemas/telemetry/v8/genai.yaml"
+    domain = yaml.safe_load(path.read_text(encoding="utf-8"))
+    domain["groups"].append(
+        {
+            "id": "historical.attributes",
+            "type": "attribute_group",
+            "brief": "A removed non-signal group.",
+            "stability": "deprecated",
+            "introduced_in": "telemetry-registry-v1",
+            "deprecated_in": "telemetry-registry-v1",
+            "removed_in": "telemetry-registry-v2",
+            "attributes": [],
+        }
+    )
+    _write_yaml(path, domain)
+    registry_path = root / "schemas/telemetry/v8/registry.yaml"
+    registry = yaml.safe_load(registry_path.read_text(encoding="utf-8"))
+    registry["registry_version"] = 2
+    _write_yaml(registry_path, registry)
+    module = _load_generator_module("telemetry_registry_historical_non_signal")
+
+    ir = module.compile_registry(root)
+
+    assert all(
+        group.id != "historical.attributes" for compiled_domain in ir.domains for group in compiled_domain.groups
+    )
+
+
+def test_active_group_cannot_reference_removed_attribute(tmp_path: Path) -> None:
+    root = _fixture_root(tmp_path)
+    path = root / "schemas/telemetry/v8/genai.yaml"
+    domain = yaml.safe_load(path.read_text(encoding="utf-8"))
+    attribute = next(item for item in domain["attributes"] if item["id"] == "defenseclaw.test.name")
+    attribute.update(
+        {
+            "stability": "deprecated",
+            "deprecated_in": "telemetry-registry-v1",
+            "removed_in": "telemetry-registry-v2",
+        }
+    )
+    domain["groups"][0]["attributes"].append({"ref": "defenseclaw.test.name", "requirement_level": "optional"})
+    _write_yaml(path, domain)
+    registry_path = root / "schemas/telemetry/v8/registry.yaml"
+    registry = yaml.safe_load(registry_path.read_text(encoding="utf-8"))
+    registry["registry_version"] = 2
+    _write_yaml(registry_path, registry)
+
+    result = _run(root, "--write")
+
+    assert result.returncode == 1
+    assert "unknown attribute reference" in result.stderr
+
+
+def test_removed_family_cannot_be_used_by_current_examples(tmp_path: Path) -> None:
+    root = _fixture_root(tmp_path)
+    domain_path = root / "schemas/telemetry/v8/genai.yaml"
+    domain = yaml.safe_load(domain_path.read_text(encoding="utf-8"))
+    retired = copy.deepcopy(domain["groups"][0])
+    retired.update(
+        {
+            "id": "span.retired.fixture",
+            "stability": "deprecated",
+            "deprecated_in": "telemetry-registry-v1",
+            "removed_in": "telemetry-registry-v2",
+        }
+    )
+    retired["x-defenseclaw"]["route_selector"] = False
+    domain["groups"].append(retired)
+    _write_yaml(domain_path, domain)
+    registry_path = root / "schemas/telemetry/v8/registry.yaml"
+    registry = yaml.safe_load(registry_path.read_text(encoding="utf-8"))
+    registry["registry_version"] = 2
+    _write_yaml(registry_path, registry)
+    examples_path = root / "schemas/telemetry/v8/examples.yaml"
+    examples = yaml.safe_load(examples_path.read_text(encoding="utf-8"))
+    retired_example = copy.deepcopy(examples["examples"][0])
+    retired_example["id"] = "retired.family.current.invalid"
+    retired_example["family"] = "span.retired.fixture"
+    examples["examples"].append(retired_example)
+    _write_yaml(examples_path, examples)
+
+    result = _run(root, "--write")
+
+    assert result.returncode == 1
+    assert "family: unknown family" in result.stderr
+
+
+def test_normalizer_bounds_are_source_owned_not_literal_cloned(tmp_path: Path) -> None:
+    root = _fixture_root(tmp_path)
+    path = root / "schemas/telemetry/v8/registry.yaml"
+    registry = yaml.safe_load(path.read_text(encoding="utf-8"))
+    bounded = next(item for item in registry["normalizers"] if item["id"] == "bounded-v1")
+    bounded["default_constraints"]["max_utf8_bytes"] = 4095
+    _write_yaml(path, registry)
+    module = _load_generator_module("telemetry_registry_source_owned_normalizer")
+
+    ir = module.compile_registry(root)
+
+    compiled = next(item for item in ir.normalizers if item.id == "bounded-v1")
+    assert compiled.default_constraints["max_utf8_bytes"] == 4095

@@ -229,7 +229,11 @@ func TestCompileObservabilityV8TransportDefaultsAndPresetExpansion(t *testing.T)
 		}) {
 		t.Fatalf("galileo preset expansion = %+v", galileo)
 	}
-	if got := plan.Snapshot().TracePolicy.SemanticProfileLock; got != observabilityV8SemanticProfileLock {
+	wantSemanticProfileLock, err := resolveObservabilityV8SemanticLock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := plan.Snapshot().TracePolicy.SemanticProfileLock; got != wantSemanticProfileLock {
 		t.Fatalf("semantic profile lock = %+v", got)
 	}
 }

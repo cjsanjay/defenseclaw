@@ -159,6 +159,9 @@ func selectContract(envelope projectedEnvelope, attributes map[string]any) (shap
 		}
 		return contract(ShapeRetriever, family, dbOperation, "RETRIEVER", internalOrClient), ReasonEligible, nil
 	case "span.workflow.run":
+		if _, present := canonicalWorkflowName(attributes); !present {
+			return shapeContract{}, ReasonSchemaMissingRequired, []string{"defenseclaw.workflow.name"}
+		}
 		kind, present := stringAttribute(attributes, "openinference.span.kind")
 		if present && kind != "CHAIN" {
 			return shapeContract{}, ReasonUnsupportedShape, nil
@@ -186,7 +189,7 @@ func prepareRequiredProjection(
 	} else if _, allowed := contract.allowedKinds[kind]; !allowed {
 		missing = append(missing, "body.kind")
 	}
-	if !validSpanName(contract, envelope.SpanName) {
+	if !validSpanName(contract, envelope.SpanName, attributes) {
 		missing = append(missing, "span_name")
 	}
 
@@ -251,7 +254,7 @@ func prepareRequiredProjection(
 	return missing
 }
 
-func validSpanName(contract shapeContract, name string) bool {
+func validSpanName(contract shapeContract, name string, attributes map[string]any) bool {
 	if !utf8.ValidString(name) || len(name) == 0 || len(name) > 512 || strings.ContainsAny(name, "\r\n\x00") {
 		return false
 	}
@@ -267,7 +270,8 @@ func validSpanName(contract shapeContract, name string) bool {
 	case ShapeRetriever:
 		return strings.HasPrefix(name, "retrieve ") && strings.TrimSpace(strings.TrimPrefix(name, "retrieve ")) != ""
 	case ShapeWorkflow:
-		return strings.HasPrefix(name, "workflow ") && strings.TrimSpace(strings.TrimPrefix(name, "workflow ")) != ""
+		workflowName, ok := canonicalWorkflowName(attributes)
+		return ok && name == "workflow "+workflowName
 	default:
 		return false
 	}
@@ -446,6 +450,7 @@ func allowedAttribute(key string) bool {
 		"defenseclaw.agent.phase", "defenseclaw.agent.phase.previous",
 		"defenseclaw.agent.phase.code", "defenseclaw.agent.sequence",
 		"defenseclaw.agent.depth", "defenseclaw.agent.stream.mode",
+		"defenseclaw.workflow.name",
 		"defenseclaw.agent.lifecycle.transition", "defenseclaw.agent.reported_cost.present",
 		"defenseclaw.agent.reported_cost.usd", "defenseclaw.session.root.id",
 		"defenseclaw.session.parent.id", "defenseclaw.session.source",
@@ -491,7 +496,7 @@ func requiredAttributeKeys(contract shapeContract) []string {
 	case ShapeRetriever:
 		return append(common, "db.operation.name")
 	case ShapeWorkflow:
-		return common
+		return append(common, "defenseclaw.workflow.name")
 	default:
 		return nil
 	}
@@ -797,6 +802,30 @@ func stringAttribute(attributes map[string]any, key string) (string, bool) {
 func boolAttribute(attributes map[string]any, key string) (bool, bool) {
 	value, ok := attributes[key].(bool)
 	return value, ok
+}
+
+func canonicalWorkflowName(attributes map[string]any) (string, bool) {
+	value, ok := attributes["defenseclaw.workflow.name"].(string)
+	if !ok || len(value) == 0 || len(value) > 128 {
+		return "", false
+	}
+	for index := range len(value) {
+		character := value[index]
+		if index == 0 {
+			if character < 'a' || character > 'z' {
+				if character < '0' || character > '9' {
+					return "", false
+				}
+			}
+			continue
+		}
+		if (character < 'a' || character > 'z') &&
+			(character < '0' || character > '9') &&
+			character != '_' && character != '.' && character != '-' {
+			return "", false
+		}
+	}
+	return value, true
 }
 
 func boundedString(value any, maximum int) (string, bool) {

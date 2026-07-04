@@ -13,6 +13,237 @@ semantic_profiles:
     gen_ai_semconv_profile: otel-genai-b028dceecdad117461a785c3af35315e7184e813
     openinference_profile: openinference-semantic-conventions-v0.1.30
     galileo_compatibility_profile: galileo-rich-v2
+conditions:
+  - id: connector-known-v1
+    description: The producer or adapter has a canonical connector identity.
+    enforcement: {kind: builder_fact, fact: connector_known}
+    false_requirement: forbidden
+  - id: operation-terminal-v1
+    description: The bounded operation has reached a terminal state.
+    enforcement: {kind: builder_fact, fact: operation_terminal}
+    false_requirement: optional
+  - id: technical-failure-v1
+    description: The operation ended because of a technical failure.
+    enforcement: {kind: builder_fact, fact: technical_failure}
+    false_requirement: optional
+  - id: guardrail-terminal-decision-available-v1
+    description: The guardrail producer supplied a terminal domain decision.
+    enforcement: {kind: builder_fact, fact: guardrail_terminal_decision_available}
+    false_requirement: forbidden
+  - id: security-severity-available-v1
+    description: The producer supplied or the adapter canonically normalized security severity.
+    enforcement: {kind: builder_fact, fact: security_severity_available}
+    false_requirement: forbidden
+  - id: judge-output-parse-failed-v1
+    description: The judge output could not be parsed into the registered result shape.
+    enforcement: {kind: builder_fact, fact: judge_output_parse_failed}
+    false_requirement: forbidden
+  - id: admin-principal-known-v1
+    description: The authenticated administrative principal is known.
+    enforcement: {kind: builder_fact, fact: admin_principal_known}
+    false_requirement: forbidden
+value_catalogs:
+  - id: agent-phase-v1
+    kind: string-int64-bijection
+    value_attributes: [defenseclaw.agent.phase, defenseclaw.agent.phase.previous, defenseclaw.agent.phase.from, defenseclaw.agent.phase.to]
+    paired_value_attribute: defenseclaw.agent.phase
+    code_attribute: defenseclaw.agent.phase.code
+    entries:
+      - {value: session, code: 1}
+      - {value: planning, code: 2}
+      - {value: model, code: 3}
+      - {value: tool, code: 4}
+      - {value: approval, code: 5}
+      - {value: waiting, code: 6}
+      - {value: responding, code: 7}
+      - {value: maintenance, code: 8}
+      - {value: completed, code: 9}
+      - {value: failed, code: 10}
+      - {value: interrupted, code: 11}
+      - {value: observed, code: 12}
+    compatibility: {value: unknown, code: 0, canonical_emittable: false}
+structural_contract:
+  id: defenseclaw.canonical-record
+  version: 1
+  additional_properties: false
+  runtime_binding:
+    record: internal/observability.Record
+    input: internal/observability.RecordInput
+    value: internal/observability.Value
+    schema_derived_constructor: internal/observability.newSchemaDerivedRecord
+    schema_derived_log_constructor: internal/observability.newSchemaDerivedLogRecord
+  limits:
+    record_id_utf8_bytes: 512
+    correlation_id_utf8_bytes: 512
+    span_name_utf8_bytes: 512
+    binary_version_utf8_bytes: 256
+    provenance_hex_ascii_bytes: 128
+    stable_token_ascii_bytes: 128
+    payload_depth: 32
+    payload_members: 8192
+    payload_encoded_bytes: 1048576
+    record_encoded_bytes: 4194304
+  envelope:
+    additional_properties: false
+    fields:
+      - {name: schema_version, type: uint32, required: true, const: 1, field_class: metadata, sensitivity: safe, normalization: {id: numeric-range-v1, overrides: {min: 1, max: 1}}}
+      - {name: bucket_catalog_version, type: uint32, required: true, const: 1, field_class: metadata, sensitivity: safe, normalization: {id: numeric-range-v1, overrides: {min: 1, max: 1}}}
+      - {name: timestamp, type: timestamp, required: true, field_class: metadata, sensitivity: safe, normalization: {id: bounded-v1, overrides: {max_utf8_bytes: 30, pattern: '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]{1,9})?Z$'}}}
+      - {name: observed_at, type: timestamp, required: false, field_class: metadata, sensitivity: safe, normalization: {id: bounded-v1, overrides: {max_utf8_bytes: 30, pattern: '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]{1,9})?Z$'}}}
+      - {name: record_id, type: string, required: true, field_class: identifier, sensitivity: internal, normalization: {id: identifier-v1, overrides: {max_utf8_bytes: 512}}}
+      - {name: bucket, type: string, required: true, enum: [agent.lifecycle, ai.discovery, asset.lifecycle, asset.scan, compliance.activity, diagnostic, enforcement.action, guardrail.evaluation, model.io, network.egress, platform.health, security.finding, telemetry.ingest, tool.activity], field_class: metadata, sensitivity: safe, normalization: {id: enum-v1, overrides: {enum: [agent.lifecycle, ai.discovery, asset.lifecycle, asset.scan, compliance.activity, diagnostic, enforcement.action, guardrail.evaluation, model.io, network.egress, platform.health, security.finding, telemetry.ingest, tool.activity]}}}
+      - {name: signal, type: string, required: true, enum: [logs, traces, metrics], field_class: metadata, sensitivity: safe, normalization: {id: enum-v1, overrides: {enum: [logs, traces, metrics]}}}
+      - {name: event_name, type: string, required: true, semantic_ref: registry.event_or_instrument, field_class: identifier, sensitivity: safe, normalization: {id: identifier-v1, overrides: {max_utf8_bytes: 128}}}
+      - {name: span_name, type: string, required: false, field_class: metadata, sensitivity: internal, normalization: {id: bounded-v1, overrides: {max_utf8_bytes: 512}}, otlp: {target: name, encoding: direct}}
+      - {name: severity, type: string, required: false, enum: [INFO, LOW, MEDIUM, HIGH, CRITICAL], field_class: metadata, sensitivity: safe, normalization: {id: enum-v1, overrides: {enum: [INFO, LOW, MEDIUM, HIGH, CRITICAL]}}}
+      - {name: log_level, type: string, required: false, enum: [TRACE, DEBUG, INFO, WARN, ERROR, FATAL], field_class: metadata, sensitivity: safe, normalization: {id: enum-v1, overrides: {enum: [TRACE, DEBUG, INFO, WARN, ERROR, FATAL]}}}
+      - {name: source, type: string, required: true, field_class: identifier, sensitivity: safe, normalization: {id: identifier-v1, overrides: {max_utf8_bytes: 128, pattern: '^[a-z0-9][a-z0-9_.-]{0,127}$'}}}
+      - {name: connector, type: string, required: false, field_class: identifier, sensitivity: internal, normalization: {id: identifier-v1, overrides: {max_utf8_bytes: 128, pattern: '^[a-z0-9][a-z0-9_.-]{0,127}$'}}}
+      - {name: action, type: string, required: false, field_class: metadata, sensitivity: safe, normalization: {id: bounded-v1, overrides: {max_utf8_bytes: 128, pattern: '^[a-z0-9][a-z0-9_.-]{0,127}$'}}}
+      - {name: phase, type: string, required: false, field_class: metadata, sensitivity: safe, normalization: {id: bounded-v1, overrides: {max_utf8_bytes: 128, pattern: '^[a-z0-9][a-z0-9_.-]{0,127}$'}}}
+      - {name: outcome, type: string, required: false, semantic_ref: defenseclaw.outcome, field_class: metadata, sensitivity: safe, normalization: {id: enum-v1, overrides: {enum: [allowed, applied, approved, attempted, blocked, cancelled, completed, denied, failed, no_change, partial, quarantined, redacted, rejected, released, revoked, skipped, terminated, timed_out, validated]}}}
+      - {name: mandatory, type: boolean, required: false, field_class: metadata, sensitivity: safe, normalization: {id: identity-v1}}
+      - {name: correlation, type: object, required: true, object_ref: correlation, field_class: metadata, sensitivity: internal, normalization: {id: structured-content-v1, overrides: {max_utf8_bytes: 16384, max_item_utf8_bytes: 512, max_items: 20, max_depth: 1, max_properties: 20}}}
+      - {name: provenance, type: object, required: true, object_ref: provenance, field_class: metadata, sensitivity: internal, normalization: {id: structured-content-v1, overrides: {max_utf8_bytes: 4096, max_item_utf8_bytes: 256, max_items: 6, max_depth: 1, max_properties: 6}}}
+      - {name: body, type: canonical_json, required: false, semantic_ref: registry.family_payload, field_class: metadata, sensitivity: critical, normalization: {id: structured-content-v1, overrides: {max_utf8_bytes: 1048576, max_item_utf8_bytes: 65536, max_items: 8192, max_depth: 32, max_properties: 8192}}}
+      - {name: instrument_data, type: object, required: false, object_ref: metric_instrument_data, field_class: metadata, sensitivity: internal, normalization: {id: structured-content-v1, overrides: {max_utf8_bytes: 1048576, max_item_utf8_bytes: 65536, max_items: 8192, max_depth: 32, max_properties: 8192}}}
+      - {name: field_classes, type: field_class_map, required: true, semantic_ref: payload.rfc6901_field_classes, field_class: metadata, sensitivity: internal, normalization: {id: structured-content-v1, overrides: {max_utf8_bytes: 1048576, max_item_utf8_bytes: 4096, max_items: 8192, max_depth: 1, max_properties: 8192}}}
+    signal_arms:
+      - {signal: logs, payload_field: body, required_fields: [mandatory], forbidden_fields: [span_name, instrument_data], required_correlation_fields: []}
+      - {signal: traces, payload_field: body, required_fields: [span_name], forbidden_fields: [mandatory, instrument_data], required_correlation_fields: [trace_id, span_id]}
+      - {signal: metrics, payload_field: instrument_data, required_fields: [], forbidden_fields: [body, span_name, mandatory, severity, log_level, outcome], required_correlation_fields: []}
+  correlation:
+    additional_properties: false
+    fields:
+      - {name: run_id, type: string, required: false, field_class: identifier, sensitivity: internal, normalization: {id: identifier-v1, overrides: {max_utf8_bytes: 512}}}
+      - {name: request_id, type: string, required: false, field_class: identifier, sensitivity: internal, normalization: {id: identifier-v1, overrides: {max_utf8_bytes: 512}}}
+      - {name: session_id, type: string, required: false, field_class: identifier, sensitivity: sensitive, normalization: {id: identifier-v1, overrides: {max_utf8_bytes: 512}}}
+      - {name: turn_id, type: string, required: false, field_class: identifier, sensitivity: internal, normalization: {id: identifier-v1, overrides: {max_utf8_bytes: 512}}}
+      - {name: trace_id, type: string, required: false, semantic_format: otel-trace-id-v1, field_class: identifier, sensitivity: internal, normalization: {id: digest-v1, overrides: {max_utf8_bytes: 32, pattern: '^[0-9a-f]{32}$'}}, otlp: {target: traceId, encoding: hex}}
+      - {name: span_id, type: string, required: false, semantic_format: otel-span-id-v1, field_class: identifier, sensitivity: internal, normalization: {id: digest-v1, overrides: {max_utf8_bytes: 16, pattern: '^[0-9a-f]{16}$'}}, otlp: {target: spanId, encoding: hex}}
+      - {name: agent_id, type: string, required: false, field_class: identifier, sensitivity: sensitive, normalization: {id: identifier-v1, overrides: {max_utf8_bytes: 512}}}
+      - {name: agent_instance_id, type: string, required: false, field_class: identifier, sensitivity: sensitive, normalization: {id: identifier-v1, overrides: {max_utf8_bytes: 512}}}
+      - {name: policy_id, type: string, required: false, field_class: identifier, sensitivity: internal, normalization: {id: identifier-v1, overrides: {max_utf8_bytes: 512}}}
+      - {name: policy_version, type: string, required: false, field_class: identifier, sensitivity: internal, normalization: {id: identifier-v1, overrides: {max_utf8_bytes: 512}}}
+      - {name: evaluation_id, type: string, required: false, field_class: identifier, sensitivity: internal, normalization: {id: identifier-v1, overrides: {max_utf8_bytes: 512}}}
+      - {name: scan_id, type: string, required: false, field_class: identifier, sensitivity: internal, normalization: {id: identifier-v1, overrides: {max_utf8_bytes: 512}}}
+      - {name: finding_occurrence_id, type: string, required: false, field_class: identifier, sensitivity: internal, normalization: {id: identifier-v1, overrides: {max_utf8_bytes: 512}}}
+      - {name: enforcement_action_id, type: string, required: false, field_class: identifier, sensitivity: internal, normalization: {id: identifier-v1, overrides: {max_utf8_bytes: 512}}}
+      - {name: model_request_id, type: string, required: false, field_class: identifier, sensitivity: internal, normalization: {id: identifier-v1, overrides: {max_utf8_bytes: 512}}}
+      - {name: model_response_id, type: string, required: false, field_class: identifier, sensitivity: internal, normalization: {id: identifier-v1, overrides: {max_utf8_bytes: 512}}}
+      - {name: tool_invocation_id, type: string, required: false, field_class: identifier, sensitivity: internal, normalization: {id: identifier-v1, overrides: {max_utf8_bytes: 512}}}
+      - {name: destination_id, type: string, required: false, field_class: identifier, sensitivity: internal, normalization: {id: identifier-v1, overrides: {max_utf8_bytes: 512}}}
+      - {name: connector_id, type: string, required: false, field_class: identifier, sensitivity: internal, normalization: {id: identifier-v1, overrides: {max_utf8_bytes: 512}}}
+      - {name: sidecar_instance_id, type: string, required: false, field_class: identifier, sensitivity: internal, normalization: {id: identifier-v1, overrides: {max_utf8_bytes: 512}}}
+  provenance:
+    additional_properties: false
+    fields:
+      - {name: producer, type: string, required: true, field_class: identifier, sensitivity: safe, normalization: {id: identifier-v1, overrides: {max_utf8_bytes: 64, pattern: '^[a-z][a-z0-9_.-]{0,63}$'}}}
+      - {name: binary_version, type: string, required: true, field_class: metadata, sensitivity: safe, normalization: {id: bounded-v1, overrides: {max_utf8_bytes: 256}}}
+      - {name: registry_schema_version, type: uint32, required: true, field_class: metadata, sensitivity: safe, normalization: {id: numeric-range-v1, overrides: {min: 1, max: 4294967295}}}
+      - {name: config_generation, type: int64, required: true, field_class: metadata, sensitivity: safe, normalization: {id: numeric-range-v1, overrides: {min: 0, max: 9223372036854775807}}}
+      - {name: build_commit, type: string, required: false, field_class: identifier, sensitivity: safe, normalization: {id: digest-v1, overrides: {max_utf8_bytes: 128, pattern: '^[0-9a-f]+$'}}}
+      - {name: config_digest, type: string, required: false, field_class: identifier, sensitivity: internal, normalization: {id: digest-v1, overrides: {max_utf8_bytes: 128, pattern: '^[0-9a-f]+$'}}}
+  trace:
+    body:
+      additional_properties: false
+      fields:
+        - {name: kind, type: string, required: true, enum: [INTERNAL, SERVER, CLIENT, PRODUCER, CONSUMER], field_class: metadata, sensitivity: safe, normalization: {id: enum-v1, overrides: {enum: [INTERNAL, SERVER, CLIENT, PRODUCER, CONSUMER]}}, otlp: {target: kind, encoding: enum_number}}
+        - {name: start_time_unix_nano, type: uint64, required: true, field_class: metadata, sensitivity: safe, normalization: {id: numeric-range-v1, overrides: {min: 1, max: 18446744073709551615}}, otlp: {target: startTimeUnixNano, encoding: uint64_string}}
+        - {name: end_time_unix_nano, type: uint64, required: true, field_class: metadata, sensitivity: safe, normalization: {id: numeric-range-v1, overrides: {min: 1, max: 18446744073709551615}}, otlp: {target: endTimeUnixNano, encoding: uint64_string}}
+        - {name: parent_span_id, type: string, required: false, semantic_format: otel-span-id-v1, field_class: identifier, sensitivity: internal, normalization: {id: digest-v1, overrides: {max_utf8_bytes: 16, pattern: '^[0-9a-f]{16}$'}}, otlp: {target: parentSpanId, encoding: hex}}
+        - {name: status, type: object, required: true, object_ref: trace_status, field_class: metadata, sensitivity: sensitive, normalization: {id: structured-content-v1, overrides: {max_utf8_bytes: 65536, max_item_utf8_bytes: 65536, max_items: 2, max_depth: 1, max_properties: 2}}, otlp: {target: status, encoding: message}}
+        - {name: resource, type: object, required: true, object_ref: trace_resource, field_class: metadata, sensitivity: sensitive, normalization: {id: structured-content-v1, overrides: {max_utf8_bytes: 65536, max_item_utf8_bytes: 4096, max_items: 256, max_depth: 2, max_properties: 256}}}
+        - {name: scope, type: object, required: true, object_ref: trace_scope, field_class: metadata, sensitivity: internal, normalization: {id: structured-content-v1, overrides: {max_utf8_bytes: 65536, max_item_utf8_bytes: 4096, max_items: 256, max_depth: 2, max_properties: 256}}}
+        - {name: attributes, type: canonical_json, required: true, semantic_ref: registry.family_attributes, field_class: metadata, sensitivity: critical, normalization: {id: structured-content-v1, overrides: {max_utf8_bytes: 1048576, max_item_utf8_bytes: 65536, max_items: 256, max_depth: 8, max_properties: 256}}, otlp: {target: attributes, encoding: key_value_array}}
+        - {name: dropped_attributes_count, type: uint32, required: false, field_class: metadata, sensitivity: safe, normalization: {id: numeric-range-v1, overrides: {min: 0, max: 4294967295}}, otlp: {target: droppedAttributesCount, encoding: direct}}
+        - {name: events, type: array, required: false, item_ref: trace_event, field_class: metadata, sensitivity: critical, normalization: {id: structured-content-v1, overrides: {max_utf8_bytes: 1048576, max_item_utf8_bytes: 65536, max_items: 128, max_depth: 10, max_properties: 8192}}, otlp: {target: events, encoding: message}}
+        - {name: dropped_events_count, type: uint32, required: false, field_class: metadata, sensitivity: safe, normalization: {id: numeric-range-v1, overrides: {min: 0, max: 4294967295}}, otlp: {target: droppedEventsCount, encoding: direct}}
+        - {name: links, type: array, required: false, item_ref: trace_link, field_class: metadata, sensitivity: sensitive, normalization: {id: structured-content-v1, overrides: {max_utf8_bytes: 1048576, max_item_utf8_bytes: 65536, max_items: 64, max_depth: 10, max_properties: 4096}}, otlp: {target: links, encoding: message}}
+        - {name: dropped_links_count, type: uint32, required: false, field_class: metadata, sensitivity: safe, normalization: {id: numeric-range-v1, overrides: {min: 0, max: 4294967295}}, otlp: {target: droppedLinksCount, encoding: direct}}
+      relations:
+        - {id: trace-time-order-v1, kind: less_than_or_equal, left: start_time_unix_nano, right: end_time_unix_nano}
+    resource:
+      additional_properties: false
+      fields:
+        - {name: schema_url, type: string, required: true, field_class: metadata, sensitivity: safe, normalization: {id: url-v1, overrides: {max_utf8_bytes: 512}}, otlp: {target: schemaUrl, encoding: direct}}
+        - {name: attributes, type: canonical_json, required: true, semantic_ref: resource.core, field_class: metadata, sensitivity: sensitive, normalization: {id: structured-content-v1, overrides: {max_utf8_bytes: 65536, max_item_utf8_bytes: 4096, max_items: 256, max_depth: 1, max_properties: 256}}, otlp: {target: attributes, encoding: key_value_array}}
+        - {name: dropped_attributes_count, type: uint32, required: false, field_class: metadata, sensitivity: safe, normalization: {id: numeric-range-v1, overrides: {min: 0, max: 4294967295}}, otlp: {target: droppedAttributesCount, encoding: direct}}
+    scope:
+      additional_properties: false
+      fields:
+        - {name: name, type: string, required: true, const: defenseclaw.telemetry, field_class: metadata, sensitivity: safe, normalization: {id: enum-v1, overrides: {enum: [defenseclaw.telemetry]}}, otlp: {target: name, encoding: direct}}
+        - {name: version, type: string, required: true, field_class: metadata, sensitivity: safe, normalization: {id: bounded-v1, overrides: {max_utf8_bytes: 256}}, otlp: {target: version, encoding: direct}}
+        - {name: schema_url, type: string, required: true, field_class: metadata, sensitivity: safe, normalization: {id: url-v1, overrides: {max_utf8_bytes: 512}}, otlp: {target: schemaUrl, encoding: direct}}
+        - {name: attributes, type: canonical_json, required: true, semantic_ref: scope.core, field_class: metadata, sensitivity: internal, normalization: {id: structured-content-v1, overrides: {max_utf8_bytes: 16384, max_item_utf8_bytes: 4096, max_items: 16, max_depth: 1, max_properties: 16}}, otlp: {target: attributes, encoding: key_value_array}}
+        - {name: dropped_attributes_count, type: uint32, required: false, field_class: metadata, sensitivity: safe, normalization: {id: numeric-range-v1, overrides: {min: 0, max: 4294967295}}, otlp: {target: droppedAttributesCount, encoding: direct}}
+    status:
+      additional_properties: false
+      fields:
+        - {name: code, type: string, required: true, enum: [UNSET, OK, ERROR], field_class: metadata, sensitivity: safe, normalization: {id: enum-v1, overrides: {enum: [UNSET, OK, ERROR]}}, otlp: {target: code, encoding: enum_number}}
+        - {name: description, type: string, required: false, field_class: error, sensitivity: sensitive, normalization: {id: redacted-content-v1, overrides: {max_utf8_bytes: 65536, max_item_utf8_bytes: 65536, max_items: 1, max_depth: 1, max_properties: 1}}, otlp: {target: message, encoding: direct}}
+    events:
+      additional_properties: false
+      fields:
+        - {name: name, type: string, required: true, semantic_ref: registry.span_event, field_class: identifier, sensitivity: safe, normalization: {id: identifier-v1, overrides: {max_utf8_bytes: 128}}, otlp: {target: name, encoding: direct}}
+        - {name: time_unix_nano, type: uint64, required: true, field_class: metadata, sensitivity: safe, normalization: {id: numeric-range-v1, overrides: {min: 1, max: 18446744073709551615}}, otlp: {target: timeUnixNano, encoding: uint64_string}}
+        - {name: attributes, type: canonical_json, required: true, semantic_ref: registry.span_event_attributes, field_class: metadata, sensitivity: critical, normalization: {id: structured-content-v1, overrides: {max_utf8_bytes: 262144, max_item_utf8_bytes: 65536, max_items: 64, max_depth: 8, max_properties: 64}}, otlp: {target: attributes, encoding: key_value_array}}
+        - {name: dropped_attributes_count, type: uint32, required: false, field_class: metadata, sensitivity: safe, normalization: {id: numeric-range-v1, overrides: {min: 0, max: 4294967295}}, otlp: {target: droppedAttributesCount, encoding: direct}}
+    links:
+      additional_properties: false
+      fields:
+        - {name: trace_id, type: string, required: true, semantic_format: otel-trace-id-v1, field_class: identifier, sensitivity: internal, normalization: {id: digest-v1, overrides: {max_utf8_bytes: 32, pattern: '^[0-9a-f]{32}$'}}, otlp: {target: traceId, encoding: hex}}
+        - {name: span_id, type: string, required: true, semantic_format: otel-span-id-v1, field_class: identifier, sensitivity: internal, normalization: {id: digest-v1, overrides: {max_utf8_bytes: 16, pattern: '^[0-9a-f]{16}$'}}, otlp: {target: spanId, encoding: hex}}
+        - {name: trace_state, type: string, required: false, field_class: metadata, sensitivity: internal, normalization: {id: bounded-v1, overrides: {max_utf8_bytes: 512}}, otlp: {target: traceState, encoding: direct}}
+        - {name: attributes, type: canonical_json, required: true, semantic_ref: link.core, field_class: metadata, sensitivity: sensitive, normalization: {id: structured-content-v1, overrides: {max_utf8_bytes: 262144, max_item_utf8_bytes: 65536, max_items: 64, max_depth: 8, max_properties: 64}}, otlp: {target: attributes, encoding: key_value_array}}
+        - {name: dropped_attributes_count, type: uint32, required: false, field_class: metadata, sensitivity: safe, normalization: {id: numeric-range-v1, overrides: {min: 0, max: 4294967295}}, otlp: {target: droppedAttributesCount, encoding: direct}}
+  metric:
+    instrument_data:
+      additional_properties: false
+      fields:
+        - {name: value, type: metric_number, required: true, semantic_ref: registry.metric_value, field_class: metadata, sensitivity: safe, normalization: {id: numeric-range-v1, overrides: {min: -1.7976931348623157e+308, max: 1.7976931348623157e+308}}}
+        - {name: attributes, type: canonical_json, required: true, semantic_ref: registry.metric_labels, field_class: metadata, sensitivity: internal, normalization: {id: structured-content-v1, overrides: {max_utf8_bytes: 262144, max_item_utf8_bytes: 65536, max_items: 256, max_depth: 8, max_properties: 256}}}
+  canonical_to_otlp:
+    id: defenseclaw-otlp-v1
+    json_mapping: opentelemetry_proto_json_v1
+    attribute_encoding: key_value_array
+    any_value_encoding: typed_union
+    any_value_mapping:
+      - {canonical_type: boolean, otlp_arm: boolValue}
+      - {canonical_type: int64, otlp_arm: intValue}
+      - {canonical_type: double, otlp_arm: doubleValue}
+      - {canonical_type: string, otlp_arm: stringValue}
+      - {canonical_type: array, otlp_arm: arrayValue}
+      - {canonical_type: object, otlp_arm: kvlistValue}
+    null_value_policy: reject
+    object_contexts:
+      envelope: ResourceSpans.scopeSpans[].spans[]
+      correlation: ResourceSpans.scopeSpans[].spans[]
+      trace_body: ResourceSpans.scopeSpans[].spans[]
+      trace_resource: ResourceSpans.resource
+      trace_scope: ResourceSpans.scopeSpans[].scope
+      trace_status: ResourceSpans.scopeSpans[].spans[].status
+      trace_event: ResourceSpans.scopeSpans[].spans[].events[]
+      trace_link: ResourceSpans.scopeSpans[].spans[].links[]
+    field_context_overrides:
+      trace_resource.schema_url: ResourceSpans
+      trace_scope.schema_url: ResourceSpans.scopeSpans[]
+    timestamp_encoding: decimal_unix_nano_string
+    id_encoding: lowercase_hex
+    span_kind_mapping:
+      - {canonical: INTERNAL, otlp: 1}
+      - {canonical: SERVER, otlp: 2}
+      - {canonical: CLIENT, otlp: 3}
+      - {canonical: PRODUCER, otlp: 4}
+      - {canonical: CONSUMER, otlp: 5}
+    status_code_mapping:
+      - {canonical: UNSET, otlp: 0}
+      - {canonical: OK, otlp: 1}
+      - {canonical: ERROR, otlp: 2}
+    signals:
+      - {signal: logs, mode: projected_record_json_string, request_root: resourceLogs}
+      - {signal: traces, mode: direct_span, request_root: resourceSpans}
+      - {signal: metrics, mode: sdk_aggregation_required, request_root: resourceMetrics}
 normalizers:
   - id: identity-v1
     kind: identity

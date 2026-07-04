@@ -107,6 +107,60 @@ attributes:
       max: 9223372036854775807
     notes: nonnegative integer
   introduced_in: telemetry-registry-v1
+- id: defenseclaw.trace.schema_version
+  type: string
+  brief: Canonical DefenseClaw trace schema version
+  examples:
+  - defenseclaw-trace-v1
+  stability: stable
+  owner: defenseclaw
+  field_class: metadata
+  sensitivity: safe
+  cardinality: low
+  normalization:
+    id: enum-v1
+    overrides:
+      enum:
+      - defenseclaw-trace-v1
+    notes: closed trace schema version bound by the semantic profile
+  introduced_in: telemetry-registry-v1
+- id: defenseclaw.semantic_profile
+  type: string
+  brief: Canonical DefenseClaw semantic profile
+  examples:
+  - defenseclaw-genai-rich-v1
+  stability: stable
+  owner: defenseclaw
+  field_class: metadata
+  sensitivity: safe
+  cardinality: low
+  normalization:
+    id: enum-v1
+    overrides:
+      enum:
+      - defenseclaw-genai-rich-v1
+    notes: closed semantic profile selected by the registry
+  introduced_in: telemetry-registry-v1
+- id: defenseclaw.link.relation
+  type: string
+  brief: Canonical relation carried by a trace link
+  examples:
+  - caused_by
+  stability: stable
+  owner: defenseclaw
+  field_class: metadata
+  sensitivity: safe
+  cardinality: low
+  normalization:
+    id: enum-v1
+    overrides:
+      enum:
+      - caused_by
+      - resumes
+      - derived_from
+      - correlates_with
+    notes: closed relation vocabulary shared by registered span families
+  introduced_in: telemetry-registry-v1
 - id: defenseclaw.outcome
   type: string
   brief: Canonical observed outcome
@@ -414,8 +468,22 @@ attributes:
   sensitivity: safe
   cardinality: low
   normalization:
-    id: bounded-v1
-    notes: closed phase enum
+    id: enum-v1
+    overrides:
+      enum:
+      - session
+      - planning
+      - model
+      - tool
+      - approval
+      - waiting
+      - responding
+      - maintenance
+      - completed
+      - failed
+      - interrupted
+      - observed
+    notes: closed phase value bound to agent-phase-v1
   introduced_in: telemetry-registry-v1
 - id: defenseclaw.agent.phase.previous
   type: string
@@ -428,8 +496,22 @@ attributes:
   sensitivity: safe
   cardinality: low
   normalization:
-    id: bounded-v1
-    notes: closed phase enum
+    id: enum-v1
+    overrides:
+      enum:
+      - session
+      - planning
+      - model
+      - tool
+      - approval
+      - waiting
+      - responding
+      - maintenance
+      - completed
+      - failed
+      - interrupted
+      - observed
+    notes: closed phase value bound to agent-phase-v1
   introduced_in: telemetry-registry-v1
 - id: defenseclaw.agent.phase.code
   type: int64
@@ -1252,6 +1334,9 @@ attributes:
   cardinality: bounded
   normalization:
     id: identifier-v1
+    overrides:
+      max_utf8_bytes: 128
+      pattern: ^[a-z0-9][a-z0-9_.-]{0,127}$
     notes: typed and bounded
   introduced_in: telemetry-registry-v1
 - id: scanner
@@ -1333,7 +1418,7 @@ attributes:
   type: boolean
   brief: Bounded compatibility metric label dangerous.
   examples:
-  - example
+  - true
   stability: stable
   owner: defenseclaw
   field_class: metadata
@@ -1347,7 +1432,7 @@ attributes:
   type: int64
   brief: Bounded compatibility metric label exit_code.
   examples:
-  - example
+  - 0
   stability: stable
   owner: defenseclaw
   field_class: metadata
@@ -1379,7 +1464,7 @@ attributes:
   type: boolean
   brief: Bounded compatibility metric label auto.
   examples:
-  - example
+  - false
   stability: stable
   owner: defenseclaw
   field_class: metadata
@@ -1482,7 +1567,7 @@ attributes:
   type: boolean
   brief: Bounded compatibility metric label would_block.
   examples:
-  - example
+  - true
   stability: stable
   owner: defenseclaw
   field_class: metadata
@@ -1686,21 +1771,35 @@ attributes:
   introduced_in: telemetry-registry-v1
 - id: defenseclaw.agent.phase.from
   type: string
-  brief: Previous bounded agent phase
+  brief: Previous canonical agent phase
   examples:
-  - started
+  - planning
   stability: stable
   owner: defenseclaw
   field_class: metadata
   sensitivity: safe
   cardinality: low
   normalization:
-    id: bounded-v1
-    notes: registered agent phase
+    id: enum-v1
+    overrides:
+      enum:
+      - session
+      - planning
+      - model
+      - tool
+      - approval
+      - waiting
+      - responding
+      - maintenance
+      - completed
+      - failed
+      - interrupted
+      - observed
+    notes: closed phase value bound to agent-phase-v1
   introduced_in: telemetry-registry-v1
 - id: defenseclaw.agent.phase.to
   type: string
-  brief: Resulting bounded agent phase
+  brief: Resulting canonical agent phase
   examples:
   - completed
   stability: stable
@@ -1709,14 +1808,51 @@ attributes:
   sensitivity: safe
   cardinality: low
   normalization:
-    id: bounded-v1
-    notes: registered agent phase
+    id: enum-v1
+    overrides:
+      enum:
+      - session
+      - planning
+      - model
+      - tool
+      - approval
+      - waiting
+      - responding
+      - maintenance
+      - completed
+      - failed
+      - interrupted
+      - observed
+    notes: closed phase value bound to agent-phase-v1
   introduced_in: telemetry-registry-v1
 groups:
+- id: scope.core
+  type: attribute_group
+  brief: Canonical DefenseClaw instrumentation-scope semantic identity.
+  stability: stable
+  introduced_in: telemetry-registry-v1
+  extends: []
+  attributes:
+  - ref: defenseclaw.trace.schema_version
+    requirement_level: required
+  - ref: defenseclaw.semantic_profile
+    requirement_level: required
+  body_fields: []
+- id: link.core
+  type: attribute_group
+  brief: Canonical typed relation carried by every trace link.
+  stability: stable
+  introduced_in: telemetry-registry-v1
+  extends: []
+  attributes:
+  - ref: defenseclaw.link.relation
+    requirement_level: required
+  body_fields: []
 - id: span.core
   type: attribute_group
   brief: Universal DefenseClaw span identity and outcome.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.bucket
@@ -1729,7 +1865,7 @@ groups:
     requirement_level: required
   - ref: defenseclaw.connector.source
     requirement_level: conditional
-    conditional: connector known
+    conditional: connector-known-v1
   - ref: defenseclaw.config.generation
     requirement_level: required
   - ref: defenseclaw.run.id
@@ -1738,12 +1874,13 @@ groups:
     requirement_level: recommended
   - ref: defenseclaw.outcome
     requirement_level: conditional
-    conditional: operation terminal
+    conditional: operation-terminal-v1
   body_fields: []
 - id: correlation.request
   type: attribute_group
   brief: Request and turn correlation.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.request.id
@@ -1759,6 +1896,7 @@ groups:
   type: attribute_group
   brief: 'PR #403 agent, session, lifecycle, execution, phase and ordering correlation.'
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: gen_ai.conversation.id
@@ -1814,6 +1952,7 @@ groups:
   type: attribute_group
   brief: Required lifecycle observation and immutable phase mapping.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - correlation.agent
   attributes:
@@ -1873,10 +2012,22 @@ groups:
           '11': interrupted
           '12': observed
         code_zero: unknown/unrecognized only
+        intentional_corrections:
+        - source: PR #403 Galileo projection fixture
+          invalid_fixture:
+            phase: model
+            previous_phase: turn
+            code: 4
+          corrected_fixture:
+            phase: model
+            previous_phase: planning
+            code: 3
+          reason: The fixture contradicted the immutable phase catalog; it was not a compatibility alias.
 - id: compatibility.local_observability.agent360
   type: attribute_group
   brief: 'PR #412 Agent360 spanmetrics dimensions, buckets, names, and cadence.'
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: gen_ai.operation.name
@@ -1956,6 +2107,7 @@ groups:
   type: attribute_group
   brief: Projected input and honest availability state.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: gen_ai.input.messages
@@ -1986,6 +2138,7 @@ groups:
   type: attribute_group
   brief: Projected output and honest availability state.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: gen_ai.output.messages
@@ -2016,16 +2169,18 @@ groups:
   type: attribute_group
   brief: Stable OTel error contract.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: error.type
     requirement_level: conditional
-    conditional: technical failure
+    conditional: technical-failure-v1
   body_fields: []
 - id: genai.agent
   type: attribute_group
   brief: Pinned OTel GenAI agent fields.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: gen_ai.operation.name
@@ -2045,6 +2200,7 @@ groups:
   type: attribute_group
   brief: Pinned model request, response, usage and missing-data fields.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: gen_ai.operation.name
@@ -2098,6 +2254,7 @@ groups:
   type: attribute_group
   brief: Pinned tool operation/call fields and safe execution metadata.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: gen_ai.operation.name
@@ -2133,6 +2290,7 @@ groups:
   type: attribute_group
   brief: Retrieval semantics and safe result metadata.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: db.operation.name
@@ -2156,6 +2314,7 @@ groups:
   type: body_group
   brief: Agent lifecycle durable-log body.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - lifecycle.agent
   attributes: []
@@ -2172,6 +2331,7 @@ groups:
   type: body_group
   brief: Model I/O body with honest reported flags.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - correlation.request
   - correlation.agent
@@ -2190,6 +2350,7 @@ groups:
   type: body_group
   brief: Tool activity body with projected arguments and result.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - correlation.request
   - correlation.agent
@@ -2204,6 +2365,7 @@ groups:
   type: span_event
   brief: Bounded model.stream.first_token milestone.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.model.first_token_ms
@@ -2217,6 +2379,7 @@ groups:
   type: span_event
   brief: Bounded model.retry milestone.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.model.attempt
@@ -2232,6 +2395,7 @@ groups:
   type: span_event
   brief: Bounded content.redacted milestone.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.bucket
@@ -2243,6 +2407,7 @@ groups:
   type: span_event
   brief: Bounded content.truncated milestone.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.bucket
@@ -2254,6 +2419,7 @@ groups:
   type: span
   brief: Canonical span.agent.invoke bounded operation.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - span.core
   - correlation.request
@@ -2308,6 +2474,7 @@ groups:
   type: span
   brief: Canonical span.workflow.run bounded operation.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - span.core
   - correlation.request
@@ -2315,10 +2482,12 @@ groups:
   - content.input
   - content.output
   - error.core
-  attributes: []
+  attributes:
+  - ref: defenseclaw.workflow.name
+    requirement_level: required
   body_fields: []
   span:
-    name_pattern: workflow.run
+    name_pattern: workflow {defenseclaw.workflow.name}
     kinds:
     - INTERNAL
     status_rule: OTel status represents technical outcome; policy decisions remain typed domain fields.
@@ -2353,13 +2522,21 @@ groups:
     - local-observability-v1
     legacy_bindings:
     - source: 'PR #403 and current telemetry schemas'
-      disposition: preserved
+      disposition: preserved_with_required_typed_derivation
       details:
         missing_data: never fabricate absent values
+        workflow_name:
+          canonical_source: defenseclaw.workflow.name
+          normalization: identifier-v1 with max_utf8_bytes 128 and pattern ^[a-z0-9][a-z0-9_.-]{0,127}$
+          producer_requirement: explicitly supplied before projection
+          rendered_span_name: workflow {defenseclaw.workflow.name}
+          missing_or_invalid: reject projection
+          reverse_parse_rendered_name: forbidden
 - id: span.model.chat
   type: span
   brief: Canonical span.model.chat bounded operation.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - span.core
   - correlation.request
@@ -2413,6 +2590,7 @@ groups:
   type: span
   brief: Canonical span.model.embeddings bounded operation.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - span.core
   - correlation.request
@@ -2463,6 +2641,7 @@ groups:
   type: span
   brief: Canonical span.tool.execute bounded operation.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - span.core
   - correlation.request
@@ -2519,6 +2698,7 @@ groups:
   type: span
   brief: Canonical span.retrieval.search bounded operation.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - span.core
   - correlation.request
@@ -2571,6 +2751,7 @@ groups:
   type: log
   brief: Canonical model.call.failed log identity.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - body.model.io
   attributes: []
@@ -2597,6 +2778,7 @@ groups:
   type: log
   brief: Canonical model.request log identity.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - body.model.io
   attributes: []
@@ -2620,6 +2802,7 @@ groups:
   type: log
   brief: Canonical model.response log identity.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - body.model.io
   attributes: []
@@ -2643,6 +2826,7 @@ groups:
   type: log
   brief: Canonical model.stream.completed log identity.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - body.model.io
   attributes: []
@@ -2666,6 +2850,7 @@ groups:
   type: log
   brief: Canonical tool.invocation.blocked log identity.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - body.tool.activity
   attributes: []
@@ -2689,6 +2874,7 @@ groups:
   type: log
   brief: Canonical tool.invocation.completed log identity.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - body.tool.activity
   attributes: []
@@ -2712,6 +2898,7 @@ groups:
   type: log
   brief: Canonical tool.invocation.failed log identity.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - body.tool.activity
   attributes: []
@@ -2738,6 +2925,7 @@ groups:
   type: log
   brief: Canonical tool.invocation.requested log identity.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - body.tool.activity
   attributes: []
@@ -2761,6 +2949,7 @@ groups:
   type: log
   brief: Canonical tool.invocation.started log identity.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - body.tool.activity
   attributes: []
@@ -2784,6 +2973,7 @@ groups:
   type: log
   brief: Canonical compact_end log identity.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - body.agent.lifecycle
   attributes: []
@@ -2811,6 +3001,7 @@ groups:
   type: log
   brief: Canonical compact_start log identity.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - body.agent.lifecycle
   attributes: []
@@ -2834,6 +3025,7 @@ groups:
   type: log
   brief: Canonical event log identity.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - body.agent.lifecycle
   attributes: []
@@ -2856,6 +3048,7 @@ groups:
   type: log
   brief: Canonical session_end log identity.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - body.agent.lifecycle
   attributes: []
@@ -2882,6 +3075,7 @@ groups:
   type: log
   brief: Canonical session_start log identity.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - body.agent.lifecycle
   attributes: []
@@ -2905,6 +3099,7 @@ groups:
   type: log
   brief: Canonical subagent_start log identity.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - body.agent.lifecycle
   attributes: []
@@ -2928,6 +3123,7 @@ groups:
   type: log
   brief: Canonical subagent_stop log identity.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - body.agent.lifecycle
   attributes: []
@@ -2954,6 +3150,7 @@ groups:
   type: log
   brief: Canonical tool_end log identity.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - body.tool.activity
   attributes: []
@@ -2985,6 +3182,7 @@ groups:
   type: log
   brief: Canonical tool_start log identity.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - body.tool.activity
   attributes: []
@@ -3008,6 +3206,7 @@ groups:
   type: log
   brief: Canonical turn_end log identity.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - body.agent.lifecycle
   attributes: []
@@ -3034,6 +3233,7 @@ groups:
   type: log
   brief: Canonical turn_start log identity.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - body.agent.lifecycle
   attributes: []
@@ -3057,6 +3257,7 @@ groups:
   type: metric
   brief: Wall-clock duration of the CLI local agent discovery scan.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.metric.cache_hit
@@ -3101,6 +3302,7 @@ groups:
   type: metric
   brief: Version probe or discovery errors by connector and bounded reason.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.connector.source
@@ -3140,6 +3342,7 @@ groups:
   type: metric
   brief: Latest discovered installed state for each connector (1 installed, 0 not installed).
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.connector.source
@@ -3175,6 +3378,7 @@ groups:
   type: metric
   brief: On-demand local agent discovery reports accepted by the sidecar, by source/cache/result.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.metric.cache_hit
@@ -3218,6 +3422,7 @@ groups:
   type: metric
   brief: Per-connector install signals reported by agent discovery.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.connector.source
@@ -3269,6 +3474,7 @@ groups:
   type: metric
   brief: Unix seconds when an agent lifecycle transition was last observed.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.connector.source
@@ -3322,6 +3528,7 @@ groups:
   type: metric
   brief: Agent lifecycle transitions by stable identity, execution, event, and state.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.connector.source
@@ -3385,6 +3592,7 @@ groups:
   type: metric
   brief: Current execution phase encoded as a stable integer for state timelines.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.connector.source
@@ -3430,6 +3638,7 @@ groups:
   type: metric
   brief: Directed execution phase transitions by stable agent identity and execution.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.connector.source
@@ -3477,6 +3686,7 @@ groups:
   type: metric
   brief: Latest upstream-reported cumulative agent cost in USD; absent when the connector does not report cost.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.connector.source
@@ -3526,6 +3736,7 @@ groups:
   type: metric
   brief: Connector-reported input and output tokens attributed to an agent tree.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.connector.source
@@ -3579,6 +3790,7 @@ groups:
   type: metric
   brief: Codex notify events received via the notify-bridge shim, labelled by type/status
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.metric.result
@@ -3617,6 +3829,7 @@ groups:
   type: metric
   brief: Codex notify payloads that failed to parse
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.metric.type
@@ -3647,6 +3860,7 @@ groups:
   type: metric
   brief: Connector hook invocations observed by the gateway.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.connector.source
@@ -3689,6 +3903,7 @@ groups:
   type: metric
   brief: Connector hook handler latency.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.connector.source
@@ -3745,6 +3960,7 @@ groups:
   type: metric
   brief: Connector hook outcomes labelled by action, severity, and would_block.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.metric.action
@@ -3791,6 +4007,7 @@ groups:
   type: metric
   brief: Token usage attributable to connector hook invocations. Split by kind=prompt|completion|total.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.connector.source
@@ -3829,6 +4046,7 @@ groups:
   type: metric
   brief: Count of hook invocations routed through the unified hook collector, by connector.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.connector.source
@@ -3859,6 +4077,7 @@ groups:
   type: metric
   brief: Inbound HTTP headers forwarded from the agent to the upstream LLM provider (path=chat-completions|passthrough, result=ok|rejected_invalid|rejected_overflow)
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.metric.path
@@ -3893,6 +4112,7 @@ groups:
   type: metric
   brief: LiteLLM bridge call latency (Python subprocess)
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: gen_ai.request.model
@@ -3926,6 +4146,7 @@ groups:
   type: metric
   brief: OpenShell subprocess exits by command and exit code
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.metric.command
@@ -3960,6 +4181,7 @@ groups:
   type: metric
   brief: Bytes sent on an SSE/stream before close
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: http.route
@@ -3993,6 +4215,7 @@ groups:
   type: metric
   brief: Wall-clock duration of an SSE/stream from open to close
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: http.route
@@ -4026,6 +4249,7 @@ groups:
   type: metric
   brief: SSE/stream lifecycle transitions (open/close) per route/outcome
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: http.route
@@ -4062,6 +4286,7 @@ groups:
   type: metric
   brief: Total tool calls observed
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.metric.dangerous
@@ -4098,6 +4323,7 @@ groups:
   type: metric
   brief: Tool call duration distribution
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: gen_ai.tool.name
@@ -4131,6 +4357,7 @@ groups:
   type: metric
   brief: Tool calls that returned non-zero exit codes
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.tool.exit_code
@@ -4163,6 +4390,7 @@ groups:
   type: metric
   brief: GenAI operation duration.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: gen_ai.agent.id
@@ -4211,6 +4439,7 @@ groups:
   type: metric
   brief: Number of input and output tokens used.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: gen_ai.agent.id

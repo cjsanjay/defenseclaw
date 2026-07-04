@@ -50,7 +50,7 @@ Tests must validate outputs, not merely that functions returned no error.
 | Splunk projection-only compatibility | Every HEC alias is equal to a value in that destination's already-redacted projection or absent; raw/canonical/producer/other-destination fallback is impossible |
 
 Decision-level coverage for `D-001` through `D-022`, `S-001` through `S-012`, and
-`P-001` through `P-068` is normative in `13-decision-traceability.md`; this matrix is
+`P-001` through `P-069` is normative in `13-decision-traceability.md`; this matrix is
 the requirement-level summary rather than a competing decision index.
 
 ## 3. Taxonomy Tests
@@ -161,7 +161,8 @@ a parallel hand-authored P2 registry:
   unknown/conflicting/unresolved entries, exact non-inherited leaf coverage, and
   rejection when any dynamic field remains unclassified. Tests prove ordinary
   callers cannot assert schema derivation. P5 generated-builder tests prove complete
-  schema derivation with an empty explicit map and reject explicit/schema conflicts.
+  schema derivation, materialize concrete payload-rooted pointers for every leaf,
+  and reject explicit/schema conflicts and envelope-prefixed pointers.
 - Producer-builder tests prove structural JSON property names come only from the
   owned schema vocabulary. Dynamic map keys, labels, tool-argument names, and
   provider-controlled names are encoded as classified string values; P5 generated
@@ -178,6 +179,21 @@ a parallel hand-authored P2 registry:
   constructor. P2 contains no hand-authored detailed trace/metric family builders;
   P5-WP02 generated family builders terminate at the same constructor and own
   family required/conditional fields and lower bounds.
+- Structural-contract parity tests load the one registered contract and compare its
+  runtime binding, versions, limits, stable-token/provenance patterns, outcome and
+  field-class vocabularies, correlation keys, and signal arms with the existing Go
+  record implementation. Missing/duplicate contracts and any mismatch fail before
+  output generation.
+- The generated envelope and builder accept exactly the same complete records.
+  Table tests cover log bodies, snake_case trace bodies, and the minimal metric
+  `{value, attributes}` observation, and reject repeated metric instrument metadata,
+  forbidden signal-envelope state, unknown members, and both/neither payload arms.
+- Generic-record tests independently reject metric severity, log level, and
+  envelope outcome before serialization. The log-only schema-derived constructor
+  accepts only a non-nil private generated-family contract whose exact registered
+  log identity matches the record and whose mandatory state was catalog-derived;
+  it accepts no raw mandatory boolean, and a trace or metric cannot acquire
+  mandatory/floor authority through it.
 
 ## 4. Configuration Tests
 
@@ -625,6 +641,9 @@ Required cases:
 - Span attributes, events, links, status descriptions, exceptions, content aliases,
   and vendor wrappers are independently redacted per destination.
 - Trace/span IDs remain stable across projections.
+- Canonical traces keep IDs in envelope correlation and the rendered name in
+  `span_name`; `traceId`, `spanId`, `name`, and other camelCase OTLP-JSON copies in
+  `body` are rejected.
 - One OTLP destination failure does not stop another.
 - Golden trace trees cover bounded agent turns, model streaming/retry, tools,
   approvals, guardrail phases/judges/findings/enforcement, retrieval/workflows,
@@ -636,6 +655,9 @@ Required cases:
   distinguishes absent, preserved, redacted, truncated, and failed-closed values.
 - Attribute/event/link/byte overflow follows deterministic priority and preserves
   required identity/outcome.
+- Span, event, link, resource, and scope dropped-attribute/event/link counts survive
+  canonical construction, independent redaction, general OTLP, and Galileo
+  projection at their exact protobuf levels.
 - Galileo retains current agent/LLM/tool eligibility and validates new
   retriever/workflow and judge-chat shapes without affecting general OTLP
   destinations.
@@ -739,6 +761,40 @@ Required cases:
   intersection, body-role crossings, log parent cardinality, and cycles. The real
   registry has zero unresolved family uses, and generated Go, Python, schema,
   catalog, redaction, and fixture outputs consume the same materialized tuple.
+- Conditional uses accept only the seven registered stable IDs. Each catalog entry
+  is `builder_fact`; true/false builder fixtures enforce its required/forbidden or
+  optional behavior, and the generated public schema exposes the enforcement
+  annotation without pretending the conditioned field proves its own predicate.
+  Unknown IDs, prose clauses, duplicate facts, a false forbidden-field emission,
+  and a true missing field fail.
+- Every `semantic_ref` resolves to one registered attribute/group or one closed
+  compiler-owned dynamic-family contract. Type, normalization, field class, and
+  sensitivity mismatches fail; unknown pseudo-references and hardcoded scope/link
+  field lists outside the materialized registry fail drift checks.
+- `agent-phase-v1` derives the exact four phase enums and code range `1..12`.
+  Fixtures accept every registered pair, reject every mismatched pair and code
+  zero, prove zero is reserved/non-emittable, and fail on reorder, rename,
+  renumber, removal, duplicate, or a non-append-only addition.
+- Every group declares `introduced_in`; deprecated/removed fixtures enforce the
+  ordered lifecycle. A semantic-diff fixture changes a
+  reusable parent and proves every affected resolved family requires the correct
+  family-schema-version change; group inheritance cannot bypass versioning.
+- Trace-structure fixtures cover exact IDs, outer identity/name ownership,
+  snake_case body fields, start/end ordering, family kind/name/equality rules,
+  status, resource, canonical scope, events, links, and span/resource/scope/event/
+  link dropped counts at zero, maximum, and one-over. OTLP protobuf goldens prove
+  schema URLs and every dropped count reach the correct level and typed values are
+  never implicitly stringified.
+- OTLP mapping mutation tests cover every span/resource/scope/status/event/link
+  target and reject duplicate targets or a type-incompatible encoding. The exact
+  AnyValue table covers Boolean, int64, finite double, string, array, and object;
+  null and implicit stringification fail.
+- `span.workflow.run` uses exactly
+  `workflow {defenseclaw.workflow.name}`. Missing, unbounded, high-cardinality,
+  sensitive, and content-like workflow names fail before span construction, while
+  Galileo and general OTLP projections retain the same rendered name. Galileo
+  tests also reject a missing typed attribute and an attribute/rendered-name
+  mismatch; no projector reverse parses or fabricates the attribute.
 - Public-view baseline fixtures cover all twenty-one paths and both exact dialects;
   commit/tree/blob/source and domain-separated canonical digests; numeric lexeme,
   object-key, array-order, Unicode, line-ending, and trailing-newline stability;
@@ -754,6 +810,12 @@ Required cases:
   for all payload leaves. Missing, stale, extra, or wrong pointers fail; stable
   error codes remain metadata while dynamic error text follows the configured
   error-class transform.
+- Each curated valid record passes the real generated builder and complete candidate
+  bundle. Each invalid record names one valid `base_example` plus exactly one typed
+  mutation. The compiler applies its ordered RFC 6901 changes to the base
+  `{signal,family?,record}` vector and requires exact equality before proving that
+  builder and bundle both fail with the declared stable code; a second missing
+  field or other competing defect fails the example corpus itself.
 - Generated JSON Schema bundle, compact catalog, Markdown reference, Go/Python
   constants/builders, field-class maps, fixtures, and Galileo/OpenInference
   projections are deterministic and checked for drift.
@@ -778,6 +840,10 @@ Required cases:
   diff and cannot enter through an ordinary dependency update.
 - The public bundle resolves all `$ref` values and generated standalone views are
   equivalent to their bundle definitions.
+- Candidate-bundle acceptance rejects an attribute-only skeleton or any bundle
+  missing the exact envelope/correlation/provenance union, structural privacy,
+  stable conditions, phase/code and group lifecycle metadata, typed OTLP mappings,
+  complete examples, or a family shape accepted differently by its builder.
 - Every existing public telemetry-schema compatibility view retains its exact
   `$id`, resolves its local `$ref` values without network access, validates the
   migration fixtures, and is byte-identical to any gateway/CLI mirror or embedded
@@ -813,7 +879,9 @@ Required cases:
   edges and typed links.
 - Lifecycle events/states, depth, session source/resume, monotonically increasing
   per-execution sequence, and the immutable phase-code map `1..12` pass golden
-  schema plus real-producer tests.
+  schema plus real-producer tests. The invalid PR #403 fixture
+  `model`/`turn`/`4` is explicitly corrected to `model`/`planning`/`3` and is not
+  retained as an alias.
 - A long-running session exports completed turn, model, tool, approval, decision,
   and transition work before any `Stop`/session-end hook. Duplicate/out-of-order
   completion does not duplicate spans, logs, or metric counts.

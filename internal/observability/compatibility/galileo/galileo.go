@@ -21,10 +21,11 @@ package galileo
 import (
 	"errors"
 
+	"github.com/defenseclaw/defenseclaw/internal/observability"
 	"github.com/defenseclaw/defenseclaw/internal/observability/redaction"
 )
 
-const ProfileID = "galileo-rich-v2"
+const ProfileID = observability.RuntimeGalileoCompatibilityProfile
 
 // Shape is the closed set of span shapes accepted by galileo-rich-v2.
 type Shape string

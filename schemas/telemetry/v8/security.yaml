@@ -930,6 +930,7 @@ groups:
   type: attribute_group
   brief: Evaluation, finding, scan, policy, enforcement and approval correlation.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.evaluation.id
@@ -951,6 +952,7 @@ groups:
   type: attribute_group
   brief: Guardrail phase, evidence, decision, severity and enforcement summary.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - correlation.security
   attributes:
@@ -1007,6 +1009,7 @@ groups:
   type: attribute_group
   brief: Requested/effective action and state transition.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - correlation.security
   attributes:
@@ -1027,6 +1030,7 @@ groups:
   type: attribute_group
   brief: Authoritative finding occurrence, evidence provenance and workflow status.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - correlation.security
   attributes:
@@ -1053,6 +1057,7 @@ groups:
   type: attribute_group
   brief: Approval resolution and route-projected command context.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - correlation.security
   attributes:
@@ -1077,6 +1082,7 @@ groups:
   type: body_group
   brief: Guardrail evaluation durable body across start, terminal decision, and technical failure stages.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - correlation.agent
   - correlation.security
@@ -1087,14 +1093,15 @@ groups:
     requirement_level: required
   - ref: defenseclaw.guardrail.decision
     requirement_level: conditional
-    conditional: terminal decision is available
+    conditional: guardrail-terminal-decision-available-v1
   - ref: defenseclaw.security.severity
     requirement_level: conditional
-    conditional: producer supplies or adapter canonically normalizes security severity
+    conditional: security-severity-available-v1
 - id: body.guardrail.judge
   type: body_group
   brief: Distinct gateway JudgePayload result; model-call details remain on span.guardrail.judge.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - correlation.agent
   - correlation.security
@@ -1110,11 +1117,12 @@ groups:
     requirement_level: required
   - ref: defenseclaw.judge.parse_error
     requirement_level: conditional
-    conditional: judge output parse failed
+    conditional: judge-output-parse-failed-v1
 - id: body.approval.resolved
   type: body_group
   brief: Approval resolution compliance body with optional linked enforcement correlation.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - correlation.agent
   - correlation.security
@@ -1129,6 +1137,7 @@ groups:
   type: body_group
   brief: Authoritative security finding body.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - correlation.security
   - security.finding
@@ -1146,6 +1155,7 @@ groups:
   type: body_group
   brief: Enforcement attempt and outcome body.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - correlation.security
   - security.enforcement
@@ -1159,6 +1169,7 @@ groups:
   type: body_group
   brief: Asset scan process and result body.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - correlation.security
   attributes: []
@@ -1173,6 +1184,7 @@ groups:
   type: body_group
   brief: Network egress attempt/result body using stable HTTP/RPC fields.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - correlation.security
   attributes: []
@@ -1189,6 +1201,7 @@ groups:
   type: span_event
   brief: Bounded tool.flagged milestone; full durable record remains authoritative.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.finding.rule_id
@@ -1204,6 +1217,7 @@ groups:
   type: span_event
   brief: Bounded approval.requested milestone; full durable record remains authoritative.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.approval.id
@@ -1217,6 +1231,7 @@ groups:
   type: span_event
   brief: Bounded approval.resolved milestone; full durable record remains authoritative.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.approval.id
@@ -1232,6 +1247,7 @@ groups:
   type: span_event
   brief: Bounded guardrail.decision milestone; full durable record remains authoritative.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.evaluation.id
@@ -1253,6 +1269,7 @@ groups:
   type: span_event
   brief: Bounded hook.decision milestone; full durable record remains authoritative.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.evaluation.id
@@ -1274,6 +1291,7 @@ groups:
   type: span_event
   brief: Bounded security.finding.observed milestone; full durable record remains authoritative.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.finding.id
@@ -1293,6 +1311,7 @@ groups:
   type: span_event
   brief: Bounded enforcement.requested milestone; full durable record remains authoritative.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.enforcement.id
@@ -1308,6 +1327,7 @@ groups:
   type: span_event
   brief: Bounded enforcement.applied milestone; full durable record remains authoritative.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.enforcement.id
@@ -1321,6 +1341,7 @@ groups:
   type: span_event
   brief: Bounded enforcement.failed milestone; full durable record remains authoritative.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.enforcement.id
@@ -1334,6 +1355,7 @@ groups:
   type: span
   brief: Canonical span.guardrail.apply bounded operation.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - span.core
   - correlation.request
@@ -1387,6 +1409,7 @@ groups:
   type: span
   brief: Canonical span.guardrail.phase bounded operation.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - span.core
   - correlation.security
@@ -1437,6 +1460,7 @@ groups:
   type: span
   brief: Canonical span.guardrail.judge bounded operation.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - span.core
   - correlation.agent
@@ -1487,6 +1511,7 @@ groups:
   type: span
   brief: Canonical span.enforcement.apply bounded operation.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - span.core
   - correlation.security
@@ -1540,6 +1565,7 @@ groups:
   type: span
   brief: Canonical span.approval.resolve bounded operation.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - span.core
   - correlation.agent
@@ -1584,6 +1610,7 @@ groups:
   type: span
   brief: Canonical span.finding.enrich bounded operation.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - span.core
   - correlation.security
@@ -1628,6 +1655,7 @@ groups:
   type: log
   brief: Canonical approval.resolved log identity.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - body.approval.resolved
   attributes: []
@@ -1655,6 +1683,7 @@ groups:
   type: log
   brief: Canonical egress.allowed log identity.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - body.network.egress
   attributes: []
@@ -1678,6 +1707,7 @@ groups:
   type: log
   brief: Canonical egress.blocked log identity.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - body.network.egress
   attributes: []
@@ -1702,6 +1732,7 @@ groups:
   type: log
   brief: Canonical egress.completed log identity.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - body.network.egress
   attributes: []
@@ -1725,6 +1756,7 @@ groups:
   type: log
   brief: Canonical egress.failed log identity.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - body.network.egress
   attributes: []
@@ -1750,6 +1782,7 @@ groups:
   type: log
   brief: Canonical egress.requested log identity.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - body.network.egress
   attributes: []
@@ -1773,6 +1806,7 @@ groups:
   type: log
   brief: Canonical enforcement.access.revoked log identity.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - body.enforcement.action
   attributes: []
@@ -1797,6 +1831,7 @@ groups:
   type: log
   brief: Canonical enforcement.block.applied log identity.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - body.enforcement.action
   attributes: []
@@ -1821,6 +1856,7 @@ groups:
   type: log
   brief: Canonical enforcement.block.failed log identity.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - body.enforcement.action
   attributes: []
@@ -1848,6 +1884,7 @@ groups:
   type: log
   brief: Canonical enforcement.block.requested log identity.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - body.enforcement.action
   attributes: []
@@ -1872,6 +1909,7 @@ groups:
   type: log
   brief: Canonical enforcement.quarantine.applied log identity.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - body.enforcement.action
   attributes: []
@@ -1896,6 +1934,7 @@ groups:
   type: log
   brief: Canonical enforcement.redaction.applied log identity.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - body.enforcement.action
   attributes: []
@@ -1920,6 +1959,7 @@ groups:
   type: log
   brief: Canonical enforcement.release.applied log identity.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - body.enforcement.action
   attributes: []
@@ -1944,6 +1984,7 @@ groups:
   type: log
   brief: Canonical finding.correlated log identity.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - body.security.finding
   attributes: []
@@ -1966,6 +2007,7 @@ groups:
   type: log
   brief: Canonical finding.observed log identity.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - body.security.finding
   attributes: []
@@ -1988,6 +2030,7 @@ groups:
   type: log
   brief: Canonical guardrail.evaluation.completed log identity.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - body.guardrail.evaluation
   attributes: []
@@ -2021,6 +2064,7 @@ groups:
   type: log
   brief: Canonical guardrail.evaluation.failed log identity.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - body.guardrail.evaluation
   attributes: []
@@ -2046,6 +2090,7 @@ groups:
   type: log
   brief: Canonical guardrail.evaluation.started log identity.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - body.guardrail.evaluation
   attributes: []
@@ -2069,6 +2114,7 @@ groups:
   type: log
   brief: Canonical scan.cancelled log identity.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - body.asset.scan
   attributes: []
@@ -2092,6 +2138,7 @@ groups:
   type: log
   brief: Canonical scan.completed log identity.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - body.asset.scan
   attributes: []
@@ -2117,6 +2164,7 @@ groups:
   type: log
   brief: Canonical scan.failed log identity.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - body.asset.scan
   attributes: []
@@ -2141,6 +2189,7 @@ groups:
   type: log
   brief: Canonical scan.phase.completed log identity.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - body.asset.scan
   attributes: []
@@ -2166,6 +2215,7 @@ groups:
   type: log
   brief: Canonical scan.started log identity.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - body.asset.scan
   attributes: []
@@ -2189,6 +2239,7 @@ groups:
   type: log
   brief: Canonical guardrail.judge.completed log identity.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - body.guardrail.judge
   attributes: []
@@ -2213,6 +2264,7 @@ groups:
   type: log
   brief: Canonical hook_decision log identity.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - body.guardrail.evaluation
   attributes: []
@@ -2242,6 +2294,7 @@ groups:
   type: metric
   brief: Admission gate decisions
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.metric.decision
@@ -2280,6 +2333,7 @@ groups:
   type: metric
   brief: Total runtime alerts emitted
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.metric.alert.severity
@@ -2322,6 +2376,7 @@ groups:
   type: metric
   brief: Exec approval requests processed
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.metric.auto
@@ -2360,6 +2415,7 @@ groups:
   type: metric
   brief: Cisco AI Defense inspect errors by code
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.metric.code
@@ -2390,6 +2446,7 @@ groups:
   type: metric
   brief: Cisco AI Defense HTTP inspect round-trip latency
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.outcome
@@ -2421,6 +2478,7 @@ groups:
   type: metric
   brief: Egress requests classified by Layer 1 shape detection (branch=known|shape|passthrough)
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.metric.branch
@@ -2459,6 +2517,7 @@ groups:
   type: metric
   brief: LLM judge errors (provider, parse, or empty response)
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.judge.kind
@@ -2493,6 +2552,7 @@ groups:
   type: metric
   brief: LLM judge invocations by kind/action
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.judge.action
@@ -2531,6 +2591,7 @@ groups:
   type: metric
   brief: LLM judge invocation latency
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.judge.kind
@@ -2562,6 +2623,7 @@ groups:
   type: metric
   brief: Guardrail verdicts emitted per stage/action/severity
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.destination.app
@@ -2608,6 +2670,7 @@ groups:
   type: metric
   brief: Verdict cache hits by scanner/verdict/TTL bucket
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.metric.cache
@@ -2650,6 +2713,7 @@ groups:
   type: metric
   brief: Verdict cache misses by scanner/verdict/TTL bucket
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.metric.cache
@@ -2692,6 +2756,7 @@ groups:
   type: metric
   brief: Total guardrail evaluations performed
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.guardrail.effective_action
@@ -2730,6 +2795,7 @@ groups:
   type: metric
   brief: LLM judge invocation latency (cache miss path includes model round-trip)
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: gen_ai.request.model
@@ -2763,6 +2829,7 @@ groups:
   type: metric
   brief: Guardrail evaluation latency distribution
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.connector.source
@@ -2798,6 +2865,7 @@ groups:
   type: metric
   brief: Tool/message inspect evaluations
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.metric.action
@@ -2840,6 +2908,7 @@ groups:
   type: metric
   brief: Tool/message inspect latency distribution
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.connector.source
@@ -2875,6 +2944,7 @@ groups:
   type: metric
   brief: Total OPA policy evaluations per domain
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.metric.policy.domain
@@ -2909,6 +2979,7 @@ groups:
   type: metric
   brief: OPA policy evaluation latency distribution
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.metric.policy.domain
@@ -2940,6 +3011,7 @@ groups:
   type: metric
   brief: Filesystem quarantine and restore operations
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.metric.quarantine.op
@@ -2974,6 +3046,7 @@ groups:
   type: metric
   brief: Total number of scans completed
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.scan.scanner
@@ -3012,6 +3085,7 @@ groups:
   type: metric
   brief: Scan duration distribution
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.scan.scanner
@@ -3047,6 +3121,7 @@ groups:
   type: metric
   brief: Scanner invocations that failed (crash, timeout, not found)
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.metric.error_type
@@ -3085,6 +3160,7 @@ groups:
   type: metric
   brief: Total findings across all scans
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.connector.source
@@ -3127,6 +3203,7 @@ groups:
   type: metric
   brief: Findings grouped by scanner + rule_id + severity
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.connector.source
@@ -3169,6 +3246,7 @@ groups:
   type: metric
   brief: Current open finding count
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.security.severity
@@ -3203,6 +3281,7 @@ groups:
   type: metric
   brief: Pending scanner jobs queued ahead of execution
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.scan.scanner
@@ -3233,6 +3312,7 @@ groups:
   type: metric
   brief: Webhook circuit breaker open/close transitions
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.webhook.circuit.state
@@ -3267,6 +3347,7 @@ groups:
   type: metric
   brief: Webhook dispatches suppressed by per-endpoint cooldown
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.metric.webhook.kind
@@ -3297,6 +3378,7 @@ groups:
   type: metric
   brief: Webhook dispatches attempted by webhook kind
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.outcome
@@ -3331,6 +3413,7 @@ groups:
   type: metric
   brief: Webhook dispatch failures by webhook kind + reason
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.outcome
@@ -3365,6 +3448,7 @@ groups:
   type: metric
   brief: Webhook dispatch latency distribution
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: http.response.status_code

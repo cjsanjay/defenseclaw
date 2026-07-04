@@ -200,6 +200,39 @@ func newSchemaDerivedRecord(input RecordInput) (Record, error) {
 	return newRecord(input, true, false)
 }
 
+// schemaDerivedLogFamilyContract is implemented by generated, registry-backed
+// family descriptors. It binds construction to one exact identity and carries
+// the mandatory decision already derived from that family's catalog rules.
+// Keeping the interface private prevents ordinary producers from substituting a
+// boolean mandatory claim at the constructor boundary.
+type schemaDerivedLogFamilyContract interface {
+	schemaDerivedLogIdentity() EventIdentity
+	schemaDerivedLogMandatory() bool
+}
+
+// newSchemaDerivedLogRecord is reserved for generated, registry-backed P5 log
+// family builders. Identity and mandatory state come from the private family
+// contract rather than caller-controlled RecordInput fields or booleans.
+func newSchemaDerivedLogRecord(
+	input RecordInput,
+	contract schemaDerivedLogFamilyContract,
+) (Record, error) {
+	if nilInterface(contract) {
+		return Record{}, fmt.Errorf("schema-derived log record requires a family contract")
+	}
+	identity := contract.schemaDerivedLogIdentity()
+	if identity.Signal != SignalLogs {
+		return Record{}, fmt.Errorf("schema-derived log record requires the logs signal")
+	}
+	if !IsRegisteredEventIdentity(identity) {
+		return Record{}, fmt.Errorf("schema-derived log family identity is not registered")
+	}
+	if input.Identity != identity {
+		return Record{}, fmt.Errorf("schema-derived log record identity does not match its family contract")
+	}
+	return newRecord(input, true, contract.schemaDerivedLogMandatory())
+}
+
 func newClassifiedLogRecord(input RecordInput, mandatory, floorOnly bool) (Record, error) {
 	return newRecordWithFloor(input, false, mandatory, floorOnly)
 }
@@ -332,6 +365,15 @@ func validateSignalFields(input RecordInput, mandatory bool) error {
 		}
 		if input.Body != nil || input.InstrumentData == nil {
 			return fmt.Errorf("metric record requires exactly the instrument_data payload arm")
+		}
+		if input.Severity != nil {
+			return fmt.Errorf("metric record must not have severity")
+		}
+		if input.LogLevel != "" {
+			return fmt.Errorf("metric record must not have a log level")
+		}
+		if input.Outcome != "" {
+			return fmt.Errorf("metric record must not have an outcome")
 		}
 		if mandatory {
 			return fmt.Errorf("mandatory is defined only for log records")

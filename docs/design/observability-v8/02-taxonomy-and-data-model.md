@@ -608,6 +608,14 @@ ordinary path. P5 generated family floor builders may replace that placeholder w
 additional reviewed safe fields, but can never admit ordinary content/evidence/
 credential bodies to the floor path.
 
+Pointers never include the envelope arm name. For example, a log body field
+`{"message":"hello"}` is classified by `/message`, a trace attribute is
+classified by `/attributes/defenseclaw.source`, and a metric label is classified
+by `/attributes/defenseclaw.connector.source`. `/body/message` and
+`/instrument_data/attributes/...` are invalid because neither `body` nor
+`instrument_data` is inside the selected payload root. Generated builders expand
+array positions to concrete RFC 6901 indices before constructing the record.
+
 P2 owns the immutable generic record constructor, deterministic serializer,
 registered bucket/signal/event identity validation, canonical outcome validation,
 and the current classified-log adapter needed to move representative producers onto
@@ -616,7 +624,48 @@ not infer a family-specific body or instrument shape. P5-WP02 remains the sole o
 of generated log/trace/metric family builders, their detailed required/conditional
 fields, applicable outcome subsets, lower family bounds, generated field-class
 maps, and family-schema validation. Generated builders MUST terminate at this same
-generic P2 constructor.
+generic P2 constructor. The unexported schema-derived log constructor is the only
+generated path that may pass catalog-derived `mandatory=true`; it accepts a private
+generated-family contract carrying the exact log identity and derived mandatory
+decision rather than a caller-supplied boolean, rejects a nil/non-log/mismatched
+contract, and does not expose floor authority to ordinary callers.
+
+### 3.6 Typed structural registry contract
+
+The detailed shape above and every signal-specific payload shape are authored once
+in `schemas/telemetry/v8/registry.yaml` under the typed `structural_contract`
+defined by `12-telemetry-schema-architecture.md` §5.2.2. The manifest contract is
+bound to the existing Go `Record`, `RecordInput`, and `Value` types and their
+constants. It MUST NOT create a second canonical envelope or serializer.
+
+The signal union is exact:
+
+| Signal | Required payload/state | Forbidden payload/state |
+|---|---|---|
+| `logs` | `body`, Boolean `mandatory` | `instrument_data`, `span_name` |
+| `traces` | `body`, `span_name` | `instrument_data`, `mandatory` |
+| `metrics` | `instrument_data` | `body`, `span_name`, `mandatory`, `severity`, `log_level`, envelope `outcome` |
+
+The generic immutable constructor enforces the signal-arm prohibitions as well as
+the generated family builders, so direct in-package construction cannot serialize
+a metric severity, log level, or envelope outcome that the registry forbids.
+
+A log body is the exact object resolved from its one registered body group. A trace
+body is the exact structural span object in `11-trace-and-span-contract.md` §5.4
+plus the family’s resolved attributes, events, and link relations. A metric
+`instrument_data` object is exactly `{value, attributes}`: the family identity,
+instrument kind, value type, unit, description, temporality, and histogram
+boundaries come from the registered metric family and are not copied into every
+sample. `value` is a finite `int64` or `double` matching the family value type, and
+`attributes` is its exact canonical label object, possibly empty. SDK aggregation,
+not the raw observation, constructs OTLP sum, gauge, or histogram data points.
+
+Every structural object uses `additionalProperties: false`. Family builders reject
+unknown payload members, a metric label absent from the resolved label schema,
+duplicate instrument metadata inside `instrument_data`, and any envelope field
+forbidden by the selected signal arm. The generated top-level public bundle uses
+the same discriminated union; it cannot accept a shape that the generated builder
+would reject.
 
 ## 4. Severity
 

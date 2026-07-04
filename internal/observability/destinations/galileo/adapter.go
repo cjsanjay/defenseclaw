@@ -50,8 +50,8 @@ const (
 	canaryDestination  = "defenseclaw.telemetry.canary.destination"
 	// P5 registry generation replaces these narrow local pins with generated
 	// constants from the immutable semantic-profile tuple.
-	traceSchemaProfileID = "defenseclaw-trace-v1"
-	semanticProfileID    = "defenseclaw-genai-rich-v1"
+	traceSchemaProfileID = observability.RuntimeTraceSchemaVersion
+	semanticProfileID    = observability.RuntimeSemanticProfileID
 )
 
 type ErrorCode string

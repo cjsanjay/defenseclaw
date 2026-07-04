@@ -79,6 +79,43 @@ func validRecordInput() RecordInput {
 	}
 }
 
+func validMetricRecordInput() RecordInput {
+	input := validRecordInput()
+	input.Identity = EventIdentity{
+		Bucket: BucketDiagnostic,
+		Signal: SignalMetrics,
+		Name:   "defenseclaw.activity.total",
+	}
+	input.Severity = nil
+	input.LogLevel = ""
+	input.Outcome = ""
+	input.Body = nil
+	input.InstrumentData = map[string]any{
+		"value": 2,
+		"attributes": map[string]any{
+			"kind": "diagnostic",
+		},
+	}
+	input.FieldClasses = map[string]FieldClass{
+		"/value":           FieldClassMetadata,
+		"/attributes/kind": FieldClassMetadata,
+	}
+	return input
+}
+
+type testSchemaDerivedLogFamilyContract struct {
+	identity  EventIdentity
+	mandatory bool
+}
+
+func (contract *testSchemaDerivedLogFamilyContract) schemaDerivedLogIdentity() EventIdentity {
+	return contract.identity
+}
+
+func (contract *testSchemaDerivedLogFamilyContract) schemaDerivedLogMandatory() bool {
+	return contract.mandatory
+}
+
 func TestRecordEnvelopeAndDeterministicJSON(t *testing.T) {
 	record, err := NewRecord(validRecordInput())
 	if err != nil {
@@ -254,6 +291,7 @@ func TestRecordPayloadArmsBySignal(t *testing.T) {
 				input.Body = nil
 				input.Severity = nil
 				input.LogLevel = ""
+				input.Outcome = ""
 			},
 			wantInstrumentData: true,
 		},
@@ -315,12 +353,88 @@ func TestRecordInputHasNoCallerControlledMandatorySurface(t *testing.T) {
 		t.Fatal("generic record input exposes caller-controlled mandatory state")
 	}
 
-	input := validRecordInput()
-	input.Identity = EventIdentity{Bucket: BucketDiagnostic, Signal: SignalMetrics, Name: "defenseclaw.activity.total"}
-	input.InstrumentData = input.Body
-	input.Body = nil
-	if _, err := newRecord(input, false, true); err == nil {
-		t.Fatal("internal constructor allowed mandatory metric record")
+	input := validMetricRecordInput()
+	if _, err := newRecord(input, false, true); err == nil ||
+		!strings.Contains(err.Error(), "mandatory is defined only for log records") {
+		t.Fatalf("mandatory metric error = %v", err)
+	}
+}
+
+func TestMetricRecordRejectsLogOnlyEnvelopeState(t *testing.T) {
+	tests := []struct {
+		name    string
+		mutate  func(*RecordInput)
+		message string
+	}{
+		{
+			name: "severity",
+			mutate: func(input *RecordInput) {
+				severity := SeverityHigh
+				input.Severity = &severity
+			},
+			message: "metric record must not have severity",
+		},
+		{
+			name:    "log level",
+			mutate:  func(input *RecordInput) { input.LogLevel = LogLevelWarn },
+			message: "metric record must not have a log level",
+		},
+		{
+			name:    "outcome",
+			mutate:  func(input *RecordInput) { input.Outcome = OutcomeCompleted },
+			message: "metric record must not have an outcome",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			input := validMetricRecordInput()
+			test.mutate(&input)
+			if _, err := NewRecord(input); err == nil || !strings.Contains(err.Error(), test.message) {
+				t.Fatalf("metric forbidden-field error = %v, want %q", err, test.message)
+			}
+		})
+	}
+}
+
+func TestMetricRecordAllowsConnectorActionAndPhase(t *testing.T) {
+	input := validMetricRecordInput()
+	input.Connector = "codex"
+	input.Action = "diagnostic.emit"
+	input.Phase = "completed"
+	record, err := NewRecord(input)
+	if err != nil {
+		t.Fatalf("valid metric metadata rejected: %v", err)
+	}
+	if record.Connector() != input.Connector || record.Action() != input.Action || record.Phase() != input.Phase {
+		t.Fatalf("metric metadata = %q/%q/%q", record.Connector(), record.Action(), record.Phase())
+	}
+	encoded, err := record.Bytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wire map[string]any
+	if err := json.Unmarshal(encoded, &wire); err != nil {
+		t.Fatal(err)
+	}
+	for key, want := range map[string]string{
+		"connector": input.Connector,
+		"action":    input.Action,
+		"phase":     input.Phase,
+	} {
+		if got := wire[key]; got != want {
+			t.Fatalf("wire %s = %#v, want %q", key, got, want)
+		}
+	}
+	for _, forbidden := range []string{"severity", "log_level", "outcome", "mandatory", "body"} {
+		if _, exists := wire[forbidden]; exists {
+			t.Fatalf("metric wire contains forbidden %s: %#v", forbidden, wire)
+		}
+	}
+	if got := wire["field_classes"]; !reflect.DeepEqual(got, map[string]any{
+		"/attributes/kind": "metadata",
+		"/value":           "metadata",
+	}) {
+		t.Fatalf("metric field classes = %#v", got)
 	}
 }
 
@@ -423,6 +537,155 @@ func TestRecordSchemaDerivedFieldClassTrustBoundary(t *testing.T) {
 	}
 	if !record.SchemaDerivedFieldClasses() || len(record.FieldClasses()) != 0 {
 		t.Fatalf("schema-derived state not preserved")
+	}
+}
+
+func TestRecordSchemaDerivedLogMandatoryBoundary(t *testing.T) {
+	input := validRecordInput()
+	input.Identity = EventIdentity{
+		Bucket: BucketComplianceActivity,
+		Signal: SignalLogs,
+		Name:   "approval.resolved",
+	}
+	input.Outcome = OutcomeApproved
+	input.FieldClasses = nil
+	contract := &testSchemaDerivedLogFamilyContract{identity: input.Identity, mandatory: true}
+	record, err := newSchemaDerivedLogRecord(input, contract)
+	if err != nil {
+		t.Fatalf("schema-derived mandatory log rejected: %v", err)
+	}
+	if !record.Mandatory() || !record.SchemaDerivedFieldClasses() || record.IsFloorOnly() {
+		t.Fatalf(
+			"schema-derived log flags mandatory=%t derived=%t floor_only=%t",
+			record.Mandatory(),
+			record.SchemaDerivedFieldClasses(),
+			record.IsFloorOnly(),
+		)
+	}
+	if len(record.FieldClasses()) != 0 {
+		t.Fatalf("schema-derived field classes = %#v", record.FieldClasses())
+	}
+	encoded, err := record.Bytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wire map[string]any
+	if err := json.Unmarshal(encoded, &wire); err != nil {
+		t.Fatal(err)
+	}
+	if wire["mandatory"] != true {
+		t.Fatalf("mandatory wire state = %#v", wire["mandatory"])
+	}
+	if got := wire["field_classes"]; !reflect.DeepEqual(got, map[string]any{}) {
+		t.Fatalf("schema-derived wire field classes = %#v", got)
+	}
+	if _, exists := wire["body"]; !exists {
+		t.Fatalf("schema-derived log body missing: %#v", wire)
+	}
+	contract.mandatory = false
+	nonMandatory, err := newSchemaDerivedLogRecord(input, contract)
+	if err != nil {
+		t.Fatalf("schema-derived non-mandatory log rejected: %v", err)
+	}
+	if nonMandatory.Mandatory() || !nonMandatory.SchemaDerivedFieldClasses() || nonMandatory.IsFloorOnly() {
+		t.Fatalf("schema-derived non-mandatory flags changed: %#v", nonMandatory.data)
+	}
+}
+
+func TestRecordSchemaDerivedLogRejectsInvalidFamilyContracts(t *testing.T) {
+	logInput := validRecordInput()
+	logInput.Identity = EventIdentity{
+		Bucket: BucketComplianceActivity,
+		Signal: SignalLogs,
+		Name:   "approval.resolved",
+	}
+	unregisteredInput := logInput
+	unregisteredInput.Identity.Name = "plausible.but.unregistered"
+	tests := []struct {
+		name     string
+		input    RecordInput
+		contract schemaDerivedLogFamilyContract
+		message  string
+	}{
+		{
+			name:  "trace contract",
+			input: logInput,
+			contract: &testSchemaDerivedLogFamilyContract{
+				identity: EventIdentity{
+					Bucket: BucketAgentLifecycle,
+					Signal: SignalTraces,
+					Name:   "span.workflow.run",
+				},
+			},
+			message: "requires the logs signal",
+		},
+		{
+			name:     "nil contract",
+			input:    logInput,
+			contract: nil,
+			message:  "requires a family contract",
+		},
+		{
+			name:     "typed nil contract",
+			input:    logInput,
+			contract: (*testSchemaDerivedLogFamilyContract)(nil),
+			message:  "requires a family contract",
+		},
+		{
+			name:  "identity mismatch",
+			input: logInput,
+			contract: &testSchemaDerivedLogFamilyContract{identity: EventIdentity{
+				Bucket: BucketComplianceActivity,
+				Signal: SignalLogs,
+				Name:   "authentication.failed",
+			}},
+			message: "identity does not match its family contract",
+		},
+		{
+			name:  "unregistered identity",
+			input: unregisteredInput,
+			contract: &testSchemaDerivedLogFamilyContract{
+				identity: unregisteredInput.Identity,
+			},
+			message: "family identity is not registered",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if _, err := newSchemaDerivedLogRecord(test.input, test.contract); err == nil ||
+				!strings.Contains(err.Error(), test.message) {
+				t.Fatalf("schema-derived log signal error = %v", err)
+			}
+		})
+	}
+}
+
+func TestRecordExistingConstructionPathsRetainMandatoryAndSchemaTrust(t *testing.T) {
+	input := validRecordInput()
+	ordinary, err := NewRecord(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ordinary.Mandatory() || ordinary.SchemaDerivedFieldClasses() || ordinary.IsFloorOnly() {
+		t.Fatalf("ordinary flags changed: %#v", ordinary.data)
+	}
+
+	input.FieldClasses = nil
+	schemaDerived, err := newSchemaDerivedRecord(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if schemaDerived.Mandatory() || !schemaDerived.SchemaDerivedFieldClasses() || schemaDerived.IsFloorOnly() {
+		t.Fatalf("generic schema-derived flags changed: %#v", schemaDerived.data)
+	}
+
+	input = validRecordInput()
+	classified, err := newClassifiedLogRecord(input, true, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !classified.Mandatory() || classified.SchemaDerivedFieldClasses() || classified.IsFloorOnly() {
+		t.Fatalf("classified log flags changed: %#v", classified.data)
 	}
 }
 

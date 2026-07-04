@@ -14,6 +14,7 @@ manifest. Later P5 work extends the renderer set without adding another compiler
 from __future__ import annotations
 
 import argparse
+import copy
 import hashlib
 import json
 import math
@@ -23,7 +24,7 @@ import shutil
 import string
 import sys
 import tempfile
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, replace
 from pathlib import Path
 from types import MappingProxyType
@@ -120,119 +121,157 @@ EXPECTED_COMPATIBILITY_LOG_IDENTITIES: Final = frozenset(
     }
 )
 EXPECTED_PRODUCER_COUNTS: Final = {"gateway_event": 14, "audit_action": 188}
-EXPECTED_LINK_RELATIONS: Final = frozenset(
-    {"caused_by", "correlates_with", "derived_from", "resumes"}
-)
-EXPECTED_COMPATIBILITY_PROFILES: Final = frozenset(
-    {"galileo-rich-v2", "local-observability-v1", "openinference-v1"}
-)
-EXPECTED_SPAN_KINDS: Final = frozenset({"CLIENT", "INTERNAL", "SERVER"})
+EXPECTED_LINK_RELATIONS: Final = frozenset({"caused_by", "correlates_with", "derived_from", "resumes"})
+EXPECTED_COMPATIBILITY_PROFILES: Final = frozenset({"galileo-rich-v2", "local-observability-v1", "openinference-v1"})
+EXPECTED_SPAN_KINDS: Final = frozenset({"CLIENT", "CONSUMER", "INTERNAL", "PRODUCER", "SERVER"})
 OUTPUT_MANIFEST = Path("schemas/telemetry/generated/output-manifest.json")
 
-EXPECTED_NORMALIZERS: Final = (
-    {
-        "id": "identity-v1",
-        "kind": "identity",
-        "default_constraints": {},
-        "allowed_overrides": ["min_items", "max_items"],
-    },
-    {
-        "id": "bounded-v1",
-        "kind": "bounded",
-        "default_constraints": {
-            "max_utf8_bytes": 4096,
-            "max_item_utf8_bytes": 4096,
-            "max_items": 256,
-        },
-        "allowed_overrides": [
-            "max_utf8_bytes",
-            "max_item_utf8_bytes",
-            "min_items",
-            "max_items",
-            "pattern",
-        ],
-    },
-    {
-        "id": "enum-v1",
-        "kind": "enum",
-        "default_constraints": {"max_utf8_bytes": 256},
-        "allowed_overrides": ["enum", "max_utf8_bytes"],
-    },
-    {
-        "id": "identifier-v1",
-        "kind": "identifier",
-        "default_constraints": {
-            "max_utf8_bytes": 256,
-            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
-        },
-        "allowed_overrides": ["max_utf8_bytes", "pattern"],
-    },
-    {
-        "id": "numeric-range-v1",
-        "kind": "numeric_range",
-        "default_constraints": {},
-        "allowed_overrides": ["min", "max", "min_items", "max_items"],
-    },
-    {
-        "id": "structured-content-v1",
-        "kind": "structured_content",
-        "default_constraints": {
-            "max_utf8_bytes": 65536,
-            "max_item_utf8_bytes": 4096,
-            "max_items": 256,
-            "max_depth": 8,
-            "max_properties": 256,
-        },
-        "allowed_overrides": [
-            "max_utf8_bytes",
-            "max_item_utf8_bytes",
-            "min_items",
-            "max_items",
-            "max_depth",
-            "max_properties",
-        ],
-    },
-    {
-        "id": "redacted-content-v1",
-        "kind": "redacted_content",
-        "default_constraints": {
-            "max_utf8_bytes": 65536,
-            "max_item_utf8_bytes": 4096,
-            "max_items": 256,
-            "max_depth": 8,
-            "max_properties": 256,
-        },
-        "allowed_overrides": [
-            "max_utf8_bytes",
-            "max_item_utf8_bytes",
-            "min_items",
-            "max_items",
-            "max_depth",
-            "max_properties",
-        ],
-    },
-    {
-        "id": "path-v1",
-        "kind": "path",
-        "default_constraints": {"max_utf8_bytes": 4096},
-        "allowed_overrides": ["max_utf8_bytes"],
-    },
-    {
-        "id": "url-v1",
-        "kind": "url",
-        "default_constraints": {"max_utf8_bytes": 8192},
-        "allowed_overrides": ["max_utf8_bytes"],
-    },
-    {
-        "id": "digest-v1",
-        "kind": "digest",
-        "default_constraints": {
-            "max_utf8_bytes": 256,
-            "pattern": "^[A-Za-z0-9][A-Za-z0-9:+._/-]*$",
-        },
-        "allowed_overrides": ["max_utf8_bytes", "pattern"],
-    },
+EXPECTED_STRUCTURAL_CONTRACT_ID: Final = "defenseclaw.canonical-record"
+EXPECTED_OTLP_REPRESENTATION_ID: Final = "defenseclaw-otlp-v1"
+STRUCTURAL_RUNTIME_BINDING_KEYS: Final = (
+    "record",
+    "input",
+    "value",
+    "schema_derived_constructor",
+    "schema_derived_log_constructor",
 )
+STRUCTURAL_LIMIT_KEYS: Final = (
+    "record_id_utf8_bytes",
+    "correlation_id_utf8_bytes",
+    "span_name_utf8_bytes",
+    "binary_version_utf8_bytes",
+    "provenance_hex_ascii_bytes",
+    "stable_token_ascii_bytes",
+    "payload_depth",
+    "payload_members",
+    "payload_encoded_bytes",
+    "record_encoded_bytes",
+)
+_STRUCTURAL_FIELD_TYPE: Final = frozenset(
+    {
+        "boolean",
+        "int64",
+        "uint32",
+        "uint64",
+        "double",
+        "string",
+        "timestamp",
+        "object",
+        "array",
+        "canonical_json",
+        "field_class_map",
+        "metric_number",
+    }
+)
+STRUCTURAL_SEMANTIC_FORMATS: Final = frozenset({"otel-trace-id-v1", "otel-span-id-v1"})
+PSEUDO_SEMANTIC_REF_PLACEMENTS: Final = {
+    "payload.rfc6901_field_classes": ("envelope", "field_classes"),
+    "registry.event_or_instrument": ("envelope", "event_name"),
+    "registry.family_attributes": ("trace_body", "attributes"),
+    "registry.family_payload": ("envelope", "body"),
+    "registry.metric_labels": ("metric_instrument_data", "attributes"),
+    "registry.metric_value": ("metric_instrument_data", "value"),
+    "registry.span_event": ("trace_event", "name"),
+    "registry.span_event_attributes": ("trace_event", "attributes"),
+}
+PSEUDO_SEMANTIC_REFS: Final = frozenset(PSEUDO_SEMANTIC_REF_PLACEMENTS)
+OTLP_ANY_VALUE_MAPPING: Final = (
+    ("boolean", "boolValue"),
+    ("int64", "intValue"),
+    ("double", "doubleValue"),
+    ("string", "stringValue"),
+    ("array", "arrayValue"),
+    ("object", "kvlistValue"),
+)
+OTLP_SPAN_KIND_MAPPING: Final = (
+    ("INTERNAL", 1),
+    ("SERVER", 2),
+    ("CLIENT", 3),
+    ("PRODUCER", 4),
+    ("CONSUMER", 5),
+)
+OTLP_STATUS_CODE_MAPPING: Final = (("UNSET", 0), ("OK", 1), ("ERROR", 2))
+OTLP_OBJECT_CONTEXTS: Final = {
+    "envelope": "ResourceSpans.scopeSpans[].spans[]",
+    "correlation": "ResourceSpans.scopeSpans[].spans[]",
+    "trace_body": "ResourceSpans.scopeSpans[].spans[]",
+    "trace_resource": "ResourceSpans.resource",
+    "trace_scope": "ResourceSpans.scopeSpans[].scope",
+    "trace_status": "ResourceSpans.scopeSpans[].spans[].status",
+    "trace_event": "ResourceSpans.scopeSpans[].spans[].events[]",
+    "trace_link": "ResourceSpans.scopeSpans[].spans[].links[]",
+}
+OTLP_FIELD_CONTEXT_OVERRIDES: Final = {
+    "trace_resource.schema_url": "ResourceSpans",
+    "trace_scope.schema_url": "ResourceSpans.scopeSpans[]",
+}
+OTLP_FIELD_MAPPINGS: Final = {
+    "envelope": {"span_name": ("name", "direct")},
+    "correlation": {
+        "trace_id": ("traceId", "hex"),
+        "span_id": ("spanId", "hex"),
+    },
+    "trace_body": {
+        "kind": ("kind", "enum_number"),
+        "start_time_unix_nano": ("startTimeUnixNano", "uint64_string"),
+        "end_time_unix_nano": ("endTimeUnixNano", "uint64_string"),
+        "parent_span_id": ("parentSpanId", "hex"),
+        "status": ("status", "message"),
+        "attributes": ("attributes", "key_value_array"),
+        "dropped_attributes_count": ("droppedAttributesCount", "direct"),
+        "events": ("events", "message"),
+        "dropped_events_count": ("droppedEventsCount", "direct"),
+        "links": ("links", "message"),
+        "dropped_links_count": ("droppedLinksCount", "direct"),
+    },
+    "trace_resource": {
+        "schema_url": ("schemaUrl", "direct"),
+        "attributes": ("attributes", "key_value_array"),
+        "dropped_attributes_count": ("droppedAttributesCount", "direct"),
+    },
+    "trace_scope": {
+        "name": ("name", "direct"),
+        "version": ("version", "direct"),
+        "schema_url": ("schemaUrl", "direct"),
+        "attributes": ("attributes", "key_value_array"),
+        "dropped_attributes_count": ("droppedAttributesCount", "direct"),
+    },
+    "trace_status": {"code": ("code", "enum_number"), "description": ("message", "direct")},
+    "trace_event": {
+        "name": ("name", "direct"),
+        "time_unix_nano": ("timeUnixNano", "uint64_string"),
+        "attributes": ("attributes", "key_value_array"),
+        "dropped_attributes_count": ("droppedAttributesCount", "direct"),
+    },
+    "trace_link": {
+        "trace_id": ("traceId", "hex"),
+        "span_id": ("spanId", "hex"),
+        "trace_state": ("traceState", "direct"),
+        "attributes": ("attributes", "key_value_array"),
+        "dropped_attributes_count": ("droppedAttributesCount", "direct"),
+    },
+    "metric_instrument_data": {},
+    "provenance": {},
+}
+
+NORMALIZER_KIND_CONTRACTS: Final = {
+    "identity-v1": ("identity", frozenset()),
+    "bounded-v1": ("bounded", frozenset({"max_utf8_bytes", "max_item_utf8_bytes", "max_items"})),
+    "enum-v1": ("enum", frozenset({"max_utf8_bytes"})),
+    "identifier-v1": ("identifier", frozenset({"max_utf8_bytes", "pattern"})),
+    "numeric-range-v1": ("numeric_range", frozenset()),
+    "structured-content-v1": (
+        "structured_content",
+        frozenset({"max_utf8_bytes", "max_item_utf8_bytes", "max_items", "max_depth", "max_properties"}),
+    ),
+    "redacted-content-v1": (
+        "redacted_content",
+        frozenset({"max_utf8_bytes", "max_item_utf8_bytes", "max_items", "max_depth", "max_properties"}),
+    ),
+    "path-v1": ("path", frozenset({"max_utf8_bytes"})),
+    "url-v1": ("url", frozenset({"max_utf8_bytes"})),
+    "digest-v1": ("digest", frozenset({"max_utf8_bytes", "pattern"})),
+}
 EXPECTED_METRIC_CARDINALITY_LIMIT: Final = 2048
 EXPECTED_METRIC_PROFILE_LIMITS: Final = {
     "dimensions_cache_size": 10000,
@@ -260,9 +299,7 @@ _FIELD_TYPE = frozenset(
 )
 _STABILITY = frozenset({"development", "stable", "deprecated"})
 _OWNER = frozenset({"otel", "otel_genai", "openinference_compatibility", "defenseclaw"})
-_FIELD_CLASS = frozenset(
-    {"metadata", "identifier", "content", "reason", "evidence", "error", "path", "credential"}
-)
+_FIELD_CLASS = frozenset({"metadata", "identifier", "content", "reason", "evidence", "error", "path", "credential"})
 _SENSITIVITY = frozenset({"safe", "internal", "sensitive", "critical"})
 _CARDINALITY = frozenset({"low", "bounded", "high"})
 _METRIC_INSTRUMENT_TYPES = frozenset({"counter", "gauge", "histogram", "updowncounter"})
@@ -282,9 +319,7 @@ _CONSTRAINT_KEYS = frozenset(
         "max_properties",
     }
 )
-_GROUP_TYPE = frozenset(
-    {"attribute_group", "body_group", "resource", "span_event", "log", "span", "metric"}
-)
+_GROUP_TYPE = frozenset({"attribute_group", "body_group", "resource", "span_event", "log", "span", "metric"})
 _SIGNAL_BY_GROUP_TYPE = {"log": "logs", "span": "traces", "metric": "metrics"}
 _MANDATORY_RULES = frozenset(
     {
@@ -323,15 +358,7 @@ class RegistryError(ValueError):
     """Safe compiler error containing source paths and schema keys only."""
 
 
-FrozenJSON: TypeAlias = (
-    str
-    | int
-    | float
-    | bool
-    | None
-    | tuple["FrozenJSON", ...]
-    | Mapping[str, "FrozenJSON"]
-)
+FrozenJSON: TypeAlias = str | int | float | bool | None | tuple["FrozenJSON", ...] | Mapping[str, "FrozenJSON"]
 
 
 def _freeze_json(value: Any) -> FrozenJSON:
@@ -349,6 +376,25 @@ def _freeze_mapping(value: dict[str, Any]) -> Mapping[str, FrozenJSON]:
     if not isinstance(frozen, Mapping):
         raise RegistryError("validated mapping did not remain a mapping")
     return frozen
+
+
+def _typed_json_equal(left: Any, right: Any) -> bool:
+    """Compare JSON values without Python's bool/int or int/float coercion."""
+    if isinstance(left, Mapping) or isinstance(right, Mapping):
+        if not isinstance(left, Mapping) or not isinstance(right, Mapping):
+            return False
+        return left.keys() == right.keys() and all(_typed_json_equal(left[key], right[key]) for key in left)
+    if isinstance(left, (list, tuple)) or isinstance(right, (list, tuple)):
+        if not isinstance(left, (list, tuple)) or not isinstance(right, (list, tuple)):
+            return False
+        return len(left) == len(right) and all(
+            _typed_json_equal(left_item, right_item) for left_item, right_item in zip(left, right, strict=True)
+        )
+    return type(left) is type(right) and left == right
+
+
+def _typed_json_contains(values: Iterable[Any], candidate: Any) -> bool:
+    return any(_typed_json_equal(value, candidate) for value in values)
 
 
 class _StrictLoader(yaml.SafeLoader):
@@ -488,9 +534,7 @@ def _sha256(raw: bytes) -> str:
 def _public_upstream_owner(dependency_id: str) -> str:
     owner = UPSTREAM_PUBLIC_OWNERS.get(dependency_id)
     if owner is None:
-        raise RegistryError(
-            f"upstream dependency {dependency_id}: no public attribute-owner mapping"
-        )
+        raise RegistryError(f"upstream dependency {dependency_id}: no public attribute-owner mapping")
     return owner
 
 
@@ -662,6 +706,152 @@ class ResolvedAttributeUseIR:
 
 
 @dataclass(frozen=True, slots=True)
+class ConditionEnforcementIR:
+    kind: str
+    fact: str
+
+
+@dataclass(frozen=True, slots=True)
+class ConditionIR:
+    id: str
+    description: str
+    enforcement: ConditionEnforcementIR
+    false_requirement: str
+
+
+@dataclass(frozen=True, slots=True)
+class ValueCatalogEntryIR:
+    value: str
+    code: int
+
+
+@dataclass(frozen=True, slots=True)
+class ValueCatalogCompatibilityIR:
+    value: str
+    code: int
+    canonical_emittable: bool
+
+
+@dataclass(frozen=True, slots=True)
+class ValueCatalogIR:
+    id: str
+    kind: str
+    value_attributes: tuple[str, ...]
+    paired_value_attribute: str
+    code_attribute: str
+    entries: tuple[ValueCatalogEntryIR, ...]
+    compatibility: ValueCatalogCompatibilityIR
+
+
+@dataclass(frozen=True, slots=True)
+class StructuralFieldIR:
+    name: str
+    field_type: str
+    required: bool
+    const_present: bool
+    const: FrozenJSON | None
+    enum: tuple[FrozenJSON, ...]
+    object_ref: str | None
+    item_ref: str | None
+    semantic_ref: str | None
+    semantic_format: str | None
+    field_class: str | None
+    sensitivity: str | None
+    normalization: NormalizationIR | None
+    otlp_target: str | None
+    otlp_encoding: str | None
+    __hash__ = None
+
+
+@dataclass(frozen=True, slots=True)
+class StructuralObjectIR:
+    id: str
+    additional_properties: bool
+    fields: tuple[StructuralFieldIR, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class SignalArmIR:
+    signal: str
+    payload_field: str
+    required_fields: tuple[str, ...]
+    forbidden_fields: tuple[str, ...]
+    required_correlation_fields: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class StructuralRelationIR:
+    id: str
+    kind: str
+    left: str
+    right: str
+
+
+@dataclass(frozen=True, slots=True)
+class OTLPSignalRepresentationIR:
+    signal: str
+    mode: str
+    request_root: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class CanonicalOTLPRepresentationIR:
+    id: str
+    json_mapping: str
+    attribute_encoding: str
+    any_value_encoding: str
+    any_value_mapping: tuple[tuple[str, str], ...]
+    null_value_policy: str
+    object_contexts: Mapping[str, str]
+    # Preserved for the next candidate-renderer slice; this manifest-only slice
+    # validates placement but deliberately does not render OTLP protobuf JSON.
+    field_context_overrides: Mapping[str, str]
+    timestamp_encoding: str
+    id_encoding: str
+    span_kind_mapping: tuple[tuple[str, int], ...]
+    status_code_mapping: tuple[tuple[str, int], ...]
+    signals: tuple[OTLPSignalRepresentationIR, ...]
+    __hash__ = None
+
+
+@dataclass(frozen=True, slots=True)
+class StructuralRuntimeBindingIR:
+    record: str
+    input: str
+    value: str
+    schema_derived_constructor: str
+    schema_derived_log_constructor: str
+
+
+@dataclass(frozen=True, slots=True)
+class StructuralLimitsIR:
+    values: Mapping[str, int]
+    __hash__ = None
+
+
+@dataclass(frozen=True, slots=True)
+class StructuralContractIR:
+    id: str
+    version: int
+    additional_properties: bool
+    runtime_binding: StructuralRuntimeBindingIR
+    limits: StructuralLimitsIR
+    envelope: StructuralObjectIR
+    correlation: StructuralObjectIR
+    provenance: StructuralObjectIR
+    signal_arms: tuple[SignalArmIR, ...]
+    trace_body: StructuralObjectIR
+    trace_relations: tuple[StructuralRelationIR, ...]
+    trace_resource: StructuralObjectIR
+    trace_scope: StructuralObjectIR
+    trace_status: StructuralObjectIR
+    trace_event: StructuralObjectIR
+    trace_link: StructuralObjectIR
+    metric_instrument_data: StructuralObjectIR
+    canonical_to_otlp: CanonicalOTLPRepresentationIR
+
+
+@dataclass(frozen=True, slots=True)
 class ProducerCompatibilityIR:
     introduced_in: str | None
     legacy_event_prefix: str | None
@@ -702,6 +892,9 @@ class GroupIR:
     route_selector: bool | None
     compatibility_profiles: tuple[str, ...] | None
     legacy_bindings: tuple[LegacyBindingIR, ...] | None
+    introduced_in: str | None
+    deprecated_in: str | None
+    removed_in: str | None
     __hash__ = None
 
 
@@ -756,6 +949,24 @@ class ExampleIR:
     record: Mapping[str, FrozenJSON]
     expected_error: str | None
     field_classes: Mapping[str, str]
+    base_example: str | None
+    mutation: ExampleMutationIR | None
+    __hash__ = None
+
+
+@dataclass(frozen=True, slots=True)
+class ExampleMutationChangeIR:
+    op: str
+    path: str
+    value_present: bool
+    value: FrozenJSON | None
+    __hash__ = None
+
+
+@dataclass(frozen=True, slots=True)
+class ExampleMutationIR:
+    kind: str
+    changes: tuple[ExampleMutationChangeIR, ...]
     __hash__ = None
 
 
@@ -787,6 +998,9 @@ class RegistryIR:
     dependencies: tuple[DependencyIR, ...]
     semantic_profiles: tuple[SemanticProfileIR, ...]
     normalizers: tuple[NormalizerIR, ...]
+    conditions: tuple[ConditionIR, ...]
+    value_catalogs: tuple[ValueCatalogIR, ...]
+    structural_contract: StructuralContractIR
     metric_cardinality_limit: int
     metric_compatibility_profile: MetricCompatibilityProfileIR
     domains: tuple[DomainIR, ...]
@@ -923,9 +1137,7 @@ def _parse_snapshot(
         if stability not in _STABILITY:
             raise RegistryError(f"{item_path}.stability: unsupported stability")
         stability_source = _string(item["stability_source"], f"{item_path}.stability_source")
-        expected_stability_source = (
-            "released_package_policy" if dependency_id == "openinference" else "upstream"
-        )
+        expected_stability_source = "released_package_policy" if dependency_id == "openinference" else "upstream"
         if stability_source != expected_stability_source:
             raise RegistryError(f"{item_path}.stability_source: unexpected provenance policy")
         pointer = _string(item["source_pointer"], f"{item_path}.source_pointer")
@@ -968,9 +1180,7 @@ def _parse_snapshot(
                 else "spec/semantic_conventions.md"
             )
             if not attribute.source_pointer.startswith(expected_source + "#"):
-                raise RegistryError(
-                    f"{snapshot_relative}.attributes: OpenInference source pointer policy mismatch"
-                )
+                raise RegistryError(f"{snapshot_relative}.attributes: OpenInference source pointer policy mismatch")
     return SnapshotIR(
         format_version=document["format_version"],
         format=document["format"],
@@ -1058,8 +1268,7 @@ def _parse_producer_inventory(
             raise RegistryError(f"{normalized}.classes.{section_name}.items: duplicate producer key")
         if len(values) != EXPECTED_PRODUCER_COUNTS[producer]:
             raise RegistryError(
-                f"{normalized}.classes.{section_name}.items: expected "
-                f"{EXPECTED_PRODUCER_COUNTS[producer]} entries"
+                f"{normalized}.classes.{section_name}.items: expected {EXPECTED_PRODUCER_COUNTS[producer]} entries"
             )
         result[producer] = frozenset(values)
     metrics_section = classes.get("emitted_metrics")
@@ -1090,9 +1299,7 @@ def _parse_producer_inventory(
             )
         )
         if not dropped.issubset(labels):
-            raise RegistryError(
-                f"{item_path}.dropped_by_current_global_v8_gate: expected a subset of labels"
-            )
+            raise RegistryError(f"{item_path}.dropped_by_current_global_v8_gate: expected a subset of labels")
         empty_reason = None
         if "empty_labels_reason" in item:
             empty_reason = _string(item["empty_labels_reason"], f"{item_path}.empty_labels_reason")
@@ -1106,10 +1313,7 @@ def _parse_producer_inventory(
             empty_reason,
         )
     if len(metric_inventory) != EXPECTED_METRIC_FAMILIES:
-        raise RegistryError(
-            f"{normalized}.classes.emitted_metrics.items: expected "
-            f"{EXPECTED_METRIC_FAMILIES} entries"
-        )
+        raise RegistryError(f"{normalized}.classes.emitted_metrics.items: expected {EXPECTED_METRIC_FAMILIES} entries")
     raw, _ = _read_utf8(path)
     return result, metric_inventory, InputDigest(normalized, _sha256(raw))
 
@@ -1133,7 +1337,8 @@ def _validate_json_compatible(value: Any, path: str, *, depth: int = 0) -> None:
         if len(value) > 256:
             raise RegistryError(f"{path}: object exceeds maximum size")
         for key, item in value.items():
-            _string(key, f"{path}.key")
+            if not isinstance(key, str) or len(key.encode("utf-8")) > 4096:
+                raise RegistryError(f"{path}.key: expected a bounded string")
             _validate_json_compatible(item, f"{path}.{key}", depth=depth + 1)
         return
     raise RegistryError(f"{path}: unsupported compatibility-details value")
@@ -1167,9 +1372,7 @@ def _validate_constraint_map(value: Any, path: str) -> dict[str, Any]:
             normalized: list[str | bool | int | float] = []
             seen: set[tuple[type[Any], Any]] = set()
             for index, entry in enumerate(item):
-                if type(entry) not in {str, bool, int, float} or (
-                    type(entry) is float and not math.isfinite(entry)
-                ):
+                if type(entry) not in {str, bool, int, float} or (type(entry) is float and not math.isfinite(entry)):
                     raise RegistryError(f"{item_path}[{index}]: expected finite JSON scalar")
                 marker = (type(entry), entry)
                 if marker in seen:
@@ -1190,18 +1393,12 @@ def _validate_constraint_map(value: Any, path: str) -> dict[str, Any]:
             minimum = 0 if key == "min_items" else 1
             result[key] = _integer(item, item_path, minimum=minimum)
         else:
-            if type(item) not in {int, float} or (
-                type(item) is float and not math.isfinite(item)
-            ):
+            if type(item) not in {int, float} or (type(item) is float and not math.isfinite(item)):
                 raise RegistryError(f"{item_path}: expected finite number")
             result[key] = item
     if "min" in result and "max" in result and result["min"] > result["max"]:
         raise RegistryError(f"{path}: min exceeds max")
-    if (
-        "min_items" in result
-        and "max_items" in result
-        and result["min_items"] > result["max_items"]
-    ):
+    if "min_items" in result and "max_items" in result and result["min_items"] > result["max_items"]:
         raise RegistryError(f"{path}: min_items exceeds max_items")
     return result
 
@@ -1237,8 +1434,19 @@ def _parse_normalizer_catalog(value: Any, path: str) -> tuple[NormalizerIR, ...]
                 overrides,
             )
         )
-    if value != list(EXPECTED_NORMALIZERS):
-        raise RegistryError(f"{path}: catalog differs from the canonical v1 contract")
+    by_id = {item.id: item for item in parsed}
+    if len(by_id) != len(parsed):
+        raise RegistryError(f"{path}: duplicate normalizer ID")
+    if set(by_id) != set(NORMALIZER_KIND_CONTRACTS):
+        raise RegistryError(f"{path}: normalizer kind inventory mismatch")
+    for normalizer_id, (expected_kind, required_defaults) in NORMALIZER_KIND_CONTRACTS.items():
+        normalizer = by_id[normalizer_id]
+        if normalizer.kind != expected_kind:
+            raise RegistryError(f"{path}: {normalizer_id} kind mismatch")
+        if not required_defaults.issubset(normalizer.default_constraints):
+            raise RegistryError(f"{path}: {normalizer_id} lacks mandatory default bounds")
+        if not set(normalizer.default_constraints).issubset(normalizer.allowed_overrides):
+            raise RegistryError(f"{path}: {normalizer_id} defaults must remain overrideable")
     return tuple(parsed)
 
 
@@ -1262,26 +1470,21 @@ def _validate_normalization_compatibility(
         compatible = bool(types) and types.issubset(numeric)
     elif kind in {"structured_content", "redacted_content"}:
         compatible = shape in {"any_value", "indexed_prefix", "object_prefix"} or (
-            bool(types)
-            and types.issubset({"string", "string[]", "bytes", "object", "array"})
+            bool(types) and types.issubset({"string", "string[]", "bytes", "object", "array"})
         )
     elif kind in {"path", "url", "digest"}:
         compatible = types == {"string"}
     else:
         compatible = False
     if not compatible:
-        raise RegistryError(
-            f"{path}.id: {normalization.id} is incompatible with types={sorted(types)} shape={shape}"
-        )
+        raise RegistryError(f"{path}.id: {normalization.id} is incompatible with types={sorted(types)} shape={shape}")
     effective = normalization.effective_constraints
     if kind == "enum" and "enum" not in effective:
         raise RegistryError(f"{path}.overrides.enum: required for enum-v1")
     if kind == "numeric_range":
         if not {"min", "max"}.issubset(effective):
             raise RegistryError(f"{path}.overrides: numeric-range-v1 requires min and max")
-        if types & {"int64", "int64[]"} and any(
-            type(effective[key]) is not int for key in ("min", "max")
-        ):
+        if types & {"int64", "int64[]"} and any(type(effective[key]) is not int for key in ("min", "max")):
             raise RegistryError(f"{path}.overrides: int64 bounds must be exact integers")
     if kind in {"structured_content", "redacted_content"}:
         required = {
@@ -1293,9 +1496,7 @@ def _validate_normalization_compatibility(
         }
         if not required.issubset(effective):
             raise RegistryError(f"{path}: structured normalizer lacks mandatory bounds")
-    if types & {"string[]"} and (
-        "max_items" not in effective or "max_item_utf8_bytes" not in effective
-    ):
+    if types & {"string[]"} and ("max_items" not in effective or "max_item_utf8_bytes" not in effective):
         raise RegistryError(f"{path}: string arrays require item-count and per-item byte bounds")
     if types & {"boolean[]", "int64[]", "double[]"} and "max_items" not in effective:
         raise RegistryError(f"{path}: arrays require an explicit max_items bound")
@@ -1335,6 +1536,704 @@ def _parse_normalization(
     if field_types is not None:
         _validate_normalization_compatibility(normalization, field_types, shape, path)
     return normalization
+
+
+def _parse_conditions(value: Any, path: str) -> tuple[ConditionIR, ...]:
+    if not isinstance(value, list) or not value:
+        raise RegistryError(f"{path}: expected nonempty sequence")
+    result: list[ConditionIR] = []
+    seen_ids: set[str] = set()
+    seen_facts: set[str] = set()
+    for index, item in enumerate(value):
+        item_path = f"{path}[{index}]"
+        if not isinstance(item, dict):
+            raise RegistryError(f"{item_path}: expected mapping")
+        _exact_keys(item, {"id", "description", "enforcement", "false_requirement"}, set(), item_path)
+        condition_id = _string(item["id"], f"{item_path}.id", pattern=_ID)
+        if condition_id in seen_ids:
+            raise RegistryError(f"{path}: duplicate condition ID")
+        description = _string(item["description"], f"{item_path}.description")
+        enforcement = item["enforcement"]
+        if not isinstance(enforcement, dict):
+            raise RegistryError(f"{item_path}.enforcement: expected mapping")
+        _exact_keys(enforcement, {"kind", "fact"}, set(), f"{item_path}.enforcement")
+        kind = _string(enforcement["kind"], f"{item_path}.enforcement.kind", pattern=_ID)
+        if kind != "builder_fact":
+            raise RegistryError(f"{item_path}.enforcement.kind: unsupported value")
+        fact = _string(enforcement["fact"], f"{item_path}.enforcement.fact", pattern=_ID)
+        if fact in seen_facts:
+            raise RegistryError(f"{path}: duplicate builder fact")
+        false_requirement = _string(
+            item["false_requirement"],
+            f"{item_path}.false_requirement",
+            pattern=_ID,
+        )
+        if false_requirement not in {"forbidden", "optional"}:
+            raise RegistryError(f"{item_path}.false_requirement: unsupported value")
+        result.append(
+            ConditionIR(
+                condition_id,
+                description,
+                ConditionEnforcementIR(kind, fact),
+                false_requirement,
+            )
+        )
+        seen_ids.add(condition_id)
+        seen_facts.add(fact)
+    return tuple(result)
+
+
+def _parse_value_catalogs(value: Any, path: str) -> tuple[ValueCatalogIR, ...]:
+    if not isinstance(value, list) or not value:
+        raise RegistryError(f"{path}: expected nonempty sequence")
+    catalogs: list[ValueCatalogIR] = []
+    seen_catalogs: set[str] = set()
+    for catalog_index, item in enumerate(value):
+        item_path = f"{path}[{catalog_index}]"
+        if not isinstance(item, dict):
+            raise RegistryError(f"{item_path}: expected mapping")
+        _exact_keys(
+            item,
+            {
+                "id",
+                "kind",
+                "value_attributes",
+                "paired_value_attribute",
+                "code_attribute",
+                "entries",
+                "compatibility",
+            },
+            set(),
+            item_path,
+        )
+        catalog_id = _string(item["id"], f"{item_path}.id", pattern=_ID)
+        if catalog_id in seen_catalogs:
+            raise RegistryError(f"{path}: duplicate value catalog ID")
+        kind = _string(item["kind"], f"{item_path}.kind", pattern=_ID)
+        if kind != "string-int64-bijection":
+            raise RegistryError(f"{item_path}.kind: unsupported value catalog kind")
+        value_attributes = _string_list(
+            item["value_attributes"],
+            f"{item_path}.value_attributes",
+            allow_empty=False,
+        )
+        paired_value_attribute = _string(
+            item["paired_value_attribute"],
+            f"{item_path}.paired_value_attribute",
+            pattern=_ID,
+        )
+        if paired_value_attribute not in value_attributes:
+            raise RegistryError(f"{item_path}.paired_value_attribute: must name a value attribute")
+        code_attribute = _string(item["code_attribute"], f"{item_path}.code_attribute", pattern=_ID)
+        if code_attribute in value_attributes:
+            raise RegistryError(f"{item_path}.code_attribute: must differ from value attributes")
+        entries_raw = item["entries"]
+        if not isinstance(entries_raw, list) or not entries_raw:
+            raise RegistryError(f"{item_path}.entries: expected nonempty sequence")
+        entries: list[ValueCatalogEntryIR] = []
+        seen_values: set[str] = set()
+        seen_codes: set[int] = set()
+        for index, entry in enumerate(entries_raw):
+            entry_path = f"{item_path}.entries[{index}]"
+            if not isinstance(entry, dict):
+                raise RegistryError(f"{entry_path}: expected mapping")
+            _exact_keys(entry, {"value", "code"}, set(), entry_path)
+            entry_value = _string(entry["value"], f"{entry_path}.value", pattern=_ID)
+            entry_code = _integer(entry["code"], f"{entry_path}.code")
+            if entry_value in seen_values or entry_code in seen_codes:
+                raise RegistryError(f"{item_path}.entries: values and codes must be bijective")
+            if entry_code != index + 1:
+                raise RegistryError(f"{entry_path}.code: codes must be contiguous positive integers")
+            entries.append(ValueCatalogEntryIR(entry_value, entry_code))
+            seen_values.add(entry_value)
+            seen_codes.add(entry_code)
+        compatibility = item["compatibility"]
+        if not isinstance(compatibility, dict):
+            raise RegistryError(f"{item_path}.compatibility: expected mapping")
+        _exact_keys(
+            compatibility,
+            {"value", "code", "canonical_emittable"},
+            set(),
+            f"{item_path}.compatibility",
+        )
+        compatibility_value = _string(
+            compatibility["value"],
+            f"{item_path}.compatibility.value",
+            pattern=_ID,
+        )
+        compatibility_code = _integer(
+            compatibility["code"],
+            f"{item_path}.compatibility.code",
+            minimum=0,
+        )
+        if compatibility_code != 0 or compatibility_value in seen_values:
+            raise RegistryError(f"{item_path}.compatibility: code zero must reserve a noncanonical value")
+        if compatibility["canonical_emittable"] is not False:
+            raise RegistryError(f"{item_path}.compatibility.canonical_emittable: must be false")
+        catalogs.append(
+            ValueCatalogIR(
+                catalog_id,
+                kind,
+                value_attributes,
+                paired_value_attribute,
+                code_attribute,
+                tuple(entries),
+                ValueCatalogCompatibilityIR(compatibility_value, compatibility_code, False),
+            )
+        )
+        seen_catalogs.add(catalog_id)
+    return tuple(catalogs)
+
+
+def _parse_structural_field(
+    value: Any,
+    path: str,
+    normalizers: dict[str, NormalizerIR],
+) -> StructuralFieldIR:
+    if not isinstance(value, dict):
+        raise RegistryError(f"{path}: expected mapping")
+    _exact_keys(
+        value,
+        {"name", "type", "required"},
+        {
+            "const",
+            "enum",
+            "object_ref",
+            "item_ref",
+            "semantic_ref",
+            "semantic_format",
+            "field_class",
+            "sensitivity",
+            "normalization",
+            "otlp",
+        },
+        path,
+    )
+    name = _string(value["name"], f"{path}.name")
+    field_type = _string(value["type"], f"{path}.type")
+    if field_type not in _STRUCTURAL_FIELD_TYPE:
+        raise RegistryError(f"{path}.type: unsupported structural field type")
+    if type(value["required"]) is not bool:
+        raise RegistryError(f"{path}.required: expected boolean")
+    const_present = "const" in value
+    const = None
+    if const_present:
+        _validate_json_compatible(value["const"], f"{path}.const")
+        const = _freeze_json(value["const"])
+    enum: tuple[FrozenJSON, ...] = ()
+    if "enum" in value:
+        if not isinstance(value["enum"], list) or not value["enum"]:
+            raise RegistryError(f"{path}.enum: expected nonempty sequence")
+        for index, item in enumerate(value["enum"]):
+            _validate_json_compatible(item, f"{path}.enum[{index}]")
+        enum = tuple(_freeze_json(item) for item in value["enum"])
+        if len(enum) != len(set(enum)):
+            raise RegistryError(f"{path}.enum: duplicate value")
+    if const_present and enum:
+        raise RegistryError(f"{path}: const and enum are mutually exclusive")
+
+    def value_matches_type(item: FrozenJSON) -> bool:
+        if field_type in {"string", "timestamp"}:
+            return isinstance(item, str)
+        if field_type == "boolean":
+            return type(item) is bool
+        if field_type == "int64":
+            return type(item) is int and -(2**63) <= item <= 2**63 - 1
+        if field_type == "uint32":
+            return type(item) is int and 0 <= item <= 2**32 - 1
+        if field_type == "uint64":
+            return type(item) is int and 0 <= item <= 2**64 - 1
+        if field_type in {"double", "metric_number"}:
+            return type(item) in {int, float} and (type(item) is int or math.isfinite(item))
+        if field_type in {"object", "canonical_json", "field_class_map"}:
+            return isinstance(item, Mapping)
+        if field_type == "array":
+            return isinstance(item, tuple)
+        return False
+
+    if const_present and not value_matches_type(const):
+        raise RegistryError(f"{path}.const: value does not match structural field type")
+    if any(not value_matches_type(item) for item in enum):
+        raise RegistryError(f"{path}.enum: value does not match structural field type")
+
+    def optional_ref(key: str) -> str | None:
+        if key not in value:
+            return None
+        return _string(value[key], f"{path}.{key}", pattern=_ID)
+
+    object_ref = optional_ref("object_ref")
+    item_ref = optional_ref("item_ref")
+    semantic_ref = optional_ref("semantic_ref")
+    semantic_format = optional_ref("semantic_format")
+    if semantic_format is not None:
+        if semantic_format not in STRUCTURAL_SEMANTIC_FORMATS:
+            raise RegistryError(f"{path}.semantic_format: unsupported value")
+        if field_type != "string":
+            raise RegistryError(f"{path}.semantic_format: allowed only on string fields")
+    if (field_type == "object") != (object_ref is not None):
+        raise RegistryError(f"{path}.object_ref: required exactly for object fields")
+    if (field_type == "array") != (item_ref is not None):
+        raise RegistryError(f"{path}.item_ref: required exactly for array fields")
+    if field_type in {"canonical_json", "field_class_map"} and (object_ref is not None or item_ref is not None):
+        raise RegistryError(f"{path}: dynamic payload fields cannot reference structural objects")
+    if "field_class" not in value or value["field_class"] not in _FIELD_CLASS:
+        raise RegistryError(f"{path}.field_class: required canonical field class")
+    field_class = value["field_class"]
+    if "sensitivity" not in value or value["sensitivity"] not in _SENSITIVITY:
+        raise RegistryError(f"{path}.sensitivity: required canonical sensitivity")
+    sensitivity = value["sensitivity"]
+    if "normalization" not in value:
+        raise RegistryError(f"{path}.normalization: required for structural fields")
+    compatibility_types = {
+        "uint32": ("int64",),
+        "uint64": ("int64",),
+        "timestamp": ("string",),
+        "canonical_json": ("object",),
+        "field_class_map": ("object",),
+        # metric_number is a tagged family-resolved int64|double union. Its
+        # structural bound is the finite double superset; family validation
+        # below preserves exact int64 semantics where selected.
+        "metric_number": ("double",),
+    }.get(field_type, (field_type,))
+    normalization = _parse_normalization(
+        value["normalization"],
+        f"{path}.normalization",
+        normalizers,
+        field_types=compatibility_types,
+    )
+    effective_enum = normalization.effective_constraints.get("enum")
+    if enum and effective_enum != enum:
+        raise RegistryError(f"{path}: field enum and normalization enum must match")
+    if const_present:
+        if effective_enum is not None and effective_enum != (const,):
+            raise RegistryError(f"{path}: const and normalization enum must match")
+        minimum = normalization.effective_constraints.get("min")
+        maximum = normalization.effective_constraints.get("max")
+        if (minimum is not None and const < minimum) or (maximum is not None and const > maximum):
+            raise RegistryError(f"{path}: const lies outside normalization range")
+    otlp_target = None
+    otlp_encoding = None
+    if "otlp" in value:
+        otlp = value["otlp"]
+        if not isinstance(otlp, dict):
+            raise RegistryError(f"{path}.otlp: expected mapping")
+        _exact_keys(otlp, {"target", "encoding"}, set(), f"{path}.otlp")
+        otlp_target = _string(otlp["target"], f"{path}.otlp.target")
+        otlp_encoding = _string(otlp["encoding"], f"{path}.otlp.encoding", pattern=_ID)
+        if otlp_encoding not in {
+            "direct",
+            "hex",
+            "uint64_string",
+            "enum_number",
+            "key_value_array",
+            "message",
+        }:
+            raise RegistryError(f"{path}.otlp.encoding: unsupported value")
+    return StructuralFieldIR(
+        name,
+        field_type,
+        value["required"],
+        const_present,
+        const,
+        enum,
+        object_ref,
+        item_ref,
+        semantic_ref,
+        semantic_format,
+        field_class,
+        sensitivity,
+        normalization,
+        otlp_target,
+        otlp_encoding,
+    )
+
+
+def _parse_structural_object(
+    value: Any,
+    path: str,
+    object_id: str,
+    normalizers: dict[str, NormalizerIR],
+) -> StructuralObjectIR:
+    if not isinstance(value, dict):
+        raise RegistryError(f"{path}: expected mapping")
+    _exact_keys(value, {"additional_properties", "fields"}, set(), path)
+    if value["additional_properties"] is not False:
+        raise RegistryError(f"{path}.additional_properties: must be false")
+    raw_fields = value["fields"]
+    if not isinstance(raw_fields, list) or not raw_fields:
+        raise RegistryError(f"{path}.fields: expected nonempty sequence")
+    fields = tuple(
+        _parse_structural_field(item, f"{path}.fields[{index}]", normalizers) for index, item in enumerate(raw_fields)
+    )
+    field_ids = tuple(item.name for item in fields)
+    if len(field_ids) != len(set(field_ids)):
+        raise RegistryError(f"{path}.fields: duplicate structural field")
+    if any(re.fullmatch(r"[a-z][a-z0-9_]*", field.name) is None for field in fields):
+        raise RegistryError(f"{path}.fields: canonical structural names must be snake_case")
+    return StructuralObjectIR(object_id, False, fields)
+
+
+def _parse_otlp_representation(value: Any, path: str) -> CanonicalOTLPRepresentationIR:
+    if not isinstance(value, dict):
+        raise RegistryError(f"{path}: expected mapping")
+    _exact_keys(
+        value,
+        {
+            "id",
+            "json_mapping",
+            "attribute_encoding",
+            "any_value_encoding",
+            "any_value_mapping",
+            "null_value_policy",
+            "object_contexts",
+            "field_context_overrides",
+            "timestamp_encoding",
+            "id_encoding",
+            "span_kind_mapping",
+            "status_code_mapping",
+            "signals",
+        },
+        set(),
+        path,
+    )
+    representation_id = _string(value["id"], f"{path}.id", pattern=_ID)
+    if representation_id != EXPECTED_OTLP_REPRESENTATION_ID:
+        raise RegistryError(f"{path}.id: unexpected representation")
+    expected_scalars = {
+        "json_mapping": "opentelemetry_proto_json_v1",
+        "attribute_encoding": "key_value_array",
+        "any_value_encoding": "typed_union",
+        "timestamp_encoding": "decimal_unix_nano_string",
+        "id_encoding": "lowercase_hex",
+    }
+    for key, expected in expected_scalars.items():
+        if value[key] != expected:
+            raise RegistryError(f"{path}.{key}: unexpected representation setting")
+    any_value_raw = value["any_value_mapping"]
+    if not isinstance(any_value_raw, list):
+        raise RegistryError(f"{path}.any_value_mapping: expected sequence")
+    any_value_mapping: list[tuple[str, str]] = []
+    for index, item in enumerate(any_value_raw):
+        item_path = f"{path}.any_value_mapping[{index}]"
+        if not isinstance(item, dict):
+            raise RegistryError(f"{item_path}: expected mapping")
+        _exact_keys(item, {"canonical_type", "otlp_arm"}, set(), item_path)
+        any_value_mapping.append(
+            (
+                _string(item["canonical_type"], f"{item_path}.canonical_type", pattern=_ID),
+                _string(item["otlp_arm"], f"{item_path}.otlp_arm"),
+            )
+        )
+    if tuple(any_value_mapping) != OTLP_ANY_VALUE_MAPPING:
+        raise RegistryError(f"{path}.any_value_mapping: differs from OTLP AnyValue v1")
+    if value["null_value_policy"] != "reject":
+        raise RegistryError(f"{path}.null_value_policy: OTLP v1 requires reject")
+    object_contexts = value["object_contexts"]
+    if not isinstance(object_contexts, dict) or object_contexts != OTLP_OBJECT_CONTEXTS:
+        raise RegistryError(f"{path}.object_contexts: differs from OTLP trace object placement")
+    field_context_overrides = value["field_context_overrides"]
+    if not isinstance(field_context_overrides, dict) or field_context_overrides != OTLP_FIELD_CONTEXT_OVERRIDES:
+        raise RegistryError(f"{path}.field_context_overrides: differs from OTLP field placement")
+
+    def parse_mapping(
+        raw: Any, mapping_path: str, expected: tuple[tuple[str, int], ...]
+    ) -> tuple[tuple[str, int], ...]:
+        if not isinstance(raw, list):
+            raise RegistryError(f"{mapping_path}: expected sequence")
+        parsed: list[tuple[str, int]] = []
+        for index, item in enumerate(raw):
+            item_path = f"{mapping_path}[{index}]"
+            if not isinstance(item, dict):
+                raise RegistryError(f"{item_path}: expected mapping")
+            _exact_keys(item, {"canonical", "otlp"}, set(), item_path)
+            parsed.append(
+                (
+                    _string(item["canonical"], f"{item_path}.canonical", pattern=_ID),
+                    _integer(item["otlp"], f"{item_path}.otlp", minimum=0),
+                )
+            )
+        if tuple(parsed) != expected:
+            raise RegistryError(f"{mapping_path}: differs from OTLP v1")
+        return tuple(parsed)
+
+    span_kinds = parse_mapping(
+        value["span_kind_mapping"],
+        f"{path}.span_kind_mapping",
+        OTLP_SPAN_KIND_MAPPING,
+    )
+    status_codes = parse_mapping(
+        value["status_code_mapping"],
+        f"{path}.status_code_mapping",
+        OTLP_STATUS_CODE_MAPPING,
+    )
+    signals_raw = value["signals"]
+    if not isinstance(signals_raw, list):
+        raise RegistryError(f"{path}.signals: expected sequence")
+    signals: list[OTLPSignalRepresentationIR] = []
+    for index, item in enumerate(signals_raw):
+        item_path = f"{path}.signals[{index}]"
+        if not isinstance(item, dict):
+            raise RegistryError(f"{item_path}: expected mapping")
+        _exact_keys(item, {"signal", "mode"}, {"request_root"}, item_path)
+        signal = _string(item["signal"], f"{item_path}.signal")
+        mode = _string(item["mode"], f"{item_path}.mode", pattern=_ID)
+        request_root = None
+        if "request_root" in item:
+            request_root = _string(item["request_root"], f"{item_path}.request_root")
+        signals.append(OTLPSignalRepresentationIR(signal, mode, request_root))
+    expected_signals = (
+        ("logs", "projected_record_json_string", "resourceLogs"),
+        ("traces", "direct_span", "resourceSpans"),
+        ("metrics", "sdk_aggregation_required", "resourceMetrics"),
+    )
+    if tuple((item.signal, item.mode, item.request_root) for item in signals) != expected_signals:
+        raise RegistryError(f"{path}.signals: differs from the canonical OTLP representation")
+    return CanonicalOTLPRepresentationIR(
+        representation_id,
+        expected_scalars["json_mapping"],
+        expected_scalars["attribute_encoding"],
+        expected_scalars["any_value_encoding"],
+        tuple(any_value_mapping),
+        "reject",
+        MappingProxyType(dict(object_contexts)),
+        MappingProxyType(dict(field_context_overrides)),
+        expected_scalars["timestamp_encoding"],
+        expected_scalars["id_encoding"],
+        span_kinds,
+        status_codes,
+        tuple(signals),
+    )
+
+
+def _parse_structural_contract(
+    value: Any,
+    path: str,
+    normalizers: dict[str, NormalizerIR],
+) -> StructuralContractIR:
+    if not isinstance(value, dict):
+        raise RegistryError(f"{path}: expected mapping")
+    _exact_keys(
+        value,
+        {
+            "id",
+            "version",
+            "additional_properties",
+            "runtime_binding",
+            "limits",
+            "envelope",
+            "correlation",
+            "provenance",
+            "trace",
+            "metric",
+            "canonical_to_otlp",
+        },
+        set(),
+        path,
+    )
+    contract_id = _string(value["id"], f"{path}.id", pattern=_ID)
+    if contract_id != EXPECTED_STRUCTURAL_CONTRACT_ID:
+        raise RegistryError(f"{path}.id: unexpected contract")
+    version = _integer(value["version"], f"{path}.version")
+    if version != 1:
+        raise RegistryError(f"{path}.version: unsupported version")
+    if value["additional_properties"] is not False:
+        raise RegistryError(f"{path}.additional_properties: must be false")
+    runtime_binding = value["runtime_binding"]
+    if not isinstance(runtime_binding, dict):
+        raise RegistryError(f"{path}.runtime_binding: expected mapping")
+    _exact_keys(
+        runtime_binding,
+        set(STRUCTURAL_RUNTIME_BINDING_KEYS),
+        set(),
+        f"{path}.runtime_binding",
+    )
+    for key in STRUCTURAL_RUNTIME_BINDING_KEYS:
+        _string(runtime_binding[key], f"{path}.runtime_binding.{key}", pattern=_ID)
+    runtime_binding_ir = StructuralRuntimeBindingIR(
+        runtime_binding["record"],
+        runtime_binding["input"],
+        runtime_binding["value"],
+        runtime_binding["schema_derived_constructor"],
+        runtime_binding["schema_derived_log_constructor"],
+    )
+    limits = value["limits"]
+    if not isinstance(limits, dict):
+        raise RegistryError(f"{path}.limits: expected mapping")
+    _exact_keys(limits, set(STRUCTURAL_LIMIT_KEYS), set(), f"{path}.limits")
+    for key in STRUCTURAL_LIMIT_KEYS:
+        _integer(limits[key], f"{path}.limits.{key}")
+    if limits["record_encoded_bytes"] < limits["payload_encoded_bytes"]:
+        raise RegistryError(f"{path}.limits: record bound must contain one payload")
+    limits_ir = StructuralLimitsIR(MappingProxyType(dict(limits)))
+    envelope_raw = value["envelope"]
+    if not isinstance(envelope_raw, dict):
+        raise RegistryError(f"{path}.envelope: expected mapping")
+    _exact_keys(
+        envelope_raw,
+        {"additional_properties", "fields", "signal_arms"},
+        set(),
+        f"{path}.envelope",
+    )
+    envelope = _parse_structural_object(
+        {
+            "additional_properties": envelope_raw["additional_properties"],
+            "fields": envelope_raw["fields"],
+        },
+        f"{path}.envelope",
+        "envelope",
+        normalizers,
+    )
+    envelope_fields = frozenset(field.name for field in envelope.fields)
+    arms_raw = envelope_raw["signal_arms"]
+    if not isinstance(arms_raw, list):
+        raise RegistryError(f"{path}.envelope.signal_arms: expected sequence")
+    arms: list[SignalArmIR] = []
+    for index, item in enumerate(arms_raw):
+        item_path = f"{path}.envelope.signal_arms[{index}]"
+        if not isinstance(item, dict):
+            raise RegistryError(f"{item_path}: expected mapping")
+        _exact_keys(
+            item,
+            {
+                "signal",
+                "payload_field",
+                "required_fields",
+                "forbidden_fields",
+                "required_correlation_fields",
+            },
+            set(),
+            item_path,
+        )
+        signal = _string(item["signal"], f"{item_path}.signal")
+        payload_field = _string(item["payload_field"], f"{item_path}.payload_field")
+        required = _string_list(item["required_fields"], f"{item_path}.required_fields")
+        forbidden = _string_list(item["forbidden_fields"], f"{item_path}.forbidden_fields")
+        required_correlation = _string_list(
+            item["required_correlation_fields"],
+            f"{item_path}.required_correlation_fields",
+        )
+        if not ({payload_field, *required, *forbidden} <= envelope_fields):
+            raise RegistryError(f"{item_path}: references an unknown envelope field")
+        if set(required) & set(forbidden) or payload_field in forbidden:
+            raise RegistryError(f"{item_path}: contradictory field policy")
+        arms.append(SignalArmIR(signal, payload_field, required, forbidden, required_correlation))
+    if tuple(item.signal for item in arms) != ("logs", "traces", "metrics"):
+        raise RegistryError(f"{path}.envelope.signal_arms: expected canonical signal order")
+    correlation = _parse_structural_object(value["correlation"], f"{path}.correlation", "correlation", normalizers)
+    provenance = _parse_structural_object(value["provenance"], f"{path}.provenance", "provenance", normalizers)
+    trace = value["trace"]
+    if not isinstance(trace, dict):
+        raise RegistryError(f"{path}.trace: expected mapping")
+    _exact_keys(trace, {"body", "resource", "scope", "status", "events", "links"}, set(), f"{path}.trace")
+    trace_body_raw = trace["body"]
+    if not isinstance(trace_body_raw, dict):
+        raise RegistryError(f"{path}.trace.body: expected mapping")
+    _exact_keys(trace_body_raw, {"additional_properties", "fields", "relations"}, set(), f"{path}.trace.body")
+    trace_body = _parse_structural_object(
+        {
+            "additional_properties": trace_body_raw["additional_properties"],
+            "fields": trace_body_raw["fields"],
+        },
+        f"{path}.trace.body",
+        "trace_body",
+        normalizers,
+    )
+    relations_raw = trace_body_raw["relations"]
+    if not isinstance(relations_raw, list) or not relations_raw:
+        raise RegistryError(f"{path}.trace.body.relations: expected nonempty sequence")
+    relations: list[StructuralRelationIR] = []
+    relation_ids: set[str] = set()
+    trace_body_fields = {field.name: field for field in trace_body.fields}
+    for index, relation in enumerate(relations_raw):
+        relation_path = f"{path}.trace.body.relations[{index}]"
+        if not isinstance(relation, dict):
+            raise RegistryError(f"{relation_path}: expected mapping")
+        _exact_keys(relation, {"id", "kind", "left", "right"}, set(), relation_path)
+        relation_id = _string(relation["id"], f"{relation_path}.id", pattern=_ID)
+        if relation_id in relation_ids:
+            raise RegistryError(f"{path}.trace.body.relations: duplicate relation ID")
+        kind = _string(relation["kind"], f"{relation_path}.kind", pattern=_ID)
+        if kind != "less_than_or_equal":
+            raise RegistryError(f"{relation_path}.kind: unsupported structural relation")
+        left = _string(relation["left"], f"{relation_path}.left")
+        right = _string(relation["right"], f"{relation_path}.right")
+        for side, field_name in (("left", left), ("right", right)):
+            field = trace_body_fields.get(field_name)
+            if field is None or field.field_type not in {"int64", "uint32", "uint64", "double", "metric_number"}:
+                raise RegistryError(f"{relation_path}.{side}: expected numeric trace-body field")
+        relations.append(StructuralRelationIR(relation_id, kind, left, right))
+        relation_ids.add(relation_id)
+    if not any(
+        relation.kind == "less_than_or_equal"
+        and relation.left == "start_time_unix_nano"
+        and relation.right == "end_time_unix_nano"
+        for relation in relations
+    ):
+        raise RegistryError(f"{path}.trace.body.relations: missing trace time-order relation")
+    resource = _parse_structural_object(trace["resource"], f"{path}.trace.resource", "trace_resource", normalizers)
+    scope = _parse_structural_object(trace["scope"], f"{path}.trace.scope", "trace_scope", normalizers)
+    status = _parse_structural_object(trace["status"], f"{path}.trace.status", "trace_status", normalizers)
+    event = _parse_structural_object(trace["events"], f"{path}.trace.events", "trace_event", normalizers)
+    link = _parse_structural_object(trace["links"], f"{path}.trace.links", "trace_link", normalizers)
+    metric = value["metric"]
+    if not isinstance(metric, dict):
+        raise RegistryError(f"{path}.metric: expected mapping")
+    _exact_keys(metric, {"instrument_data"}, set(), f"{path}.metric")
+    instrument = _parse_structural_object(
+        metric["instrument_data"],
+        f"{path}.metric.instrument_data",
+        "metric_instrument_data",
+        normalizers,
+    )
+    structural_objects = {
+        "correlation": correlation,
+        "provenance": provenance,
+        "trace_body": trace_body,
+        "trace_resource": resource,
+        "trace_scope": scope,
+        "trace_status": status,
+        "trace_event": event,
+        "trace_link": link,
+        "metric_instrument_data": instrument,
+    }
+    for object_ir in (envelope, *structural_objects.values()):
+        for field in object_ir.fields:
+            if field.object_ref is not None and field.object_ref not in structural_objects:
+                raise RegistryError(f"{path}.{object_ir.id}.{field.name}.object_ref: unknown structural object")
+            if field.item_ref is not None and field.item_ref not in structural_objects:
+                raise RegistryError(f"{path}.{object_ir.id}.{field.name}.item_ref: unknown structural object")
+    for object_ir in (envelope, *structural_objects.values()):
+        expected_mappings = OTLP_FIELD_MAPPINGS[object_ir.id]
+        observed_targets: set[str] = set()
+        for field in object_ir.fields:
+            expected_mapping = expected_mappings.get(field.name)
+            observed_mapping = None if field.otlp_target is None else (field.otlp_target, field.otlp_encoding)
+            if observed_mapping != expected_mapping:
+                raise RegistryError(f"{path}.{object_ir.id}.{field.name}.otlp: typed OTLP mapping mismatch")
+            if field.otlp_target is not None:
+                if field.otlp_target in observed_targets:
+                    raise RegistryError(f"{path}.{object_ir.id}: duplicate OTLP target")
+                observed_targets.add(field.otlp_target)
+    return StructuralContractIR(
+        contract_id,
+        version,
+        False,
+        runtime_binding_ir,
+        limits_ir,
+        envelope,
+        correlation,
+        provenance,
+        tuple(arms),
+        trace_body,
+        tuple(relations),
+        resource,
+        scope,
+        status,
+        event,
+        link,
+        instrument,
+        _parse_otlp_representation(value["canonical_to_otlp"], f"{path}.canonical_to_otlp"),
+    )
 
 
 def _parse_attribute_definition(
@@ -1390,6 +2289,11 @@ def _parse_attribute_definition(
         normalizers,
         field_types=(field_type,),
     )
+    for index, example in enumerate(value["examples"]):
+        if not _attribute_type_accepts(example, field_type):
+            raise RegistryError(f"{path}.examples[{index}]: value does not match declared attribute type")
+        if not _normalization_accepts(example, normalization):
+            raise RegistryError(f"{path}.examples[{index}]: value violates declared normalization")
     introduced_in = _string(value["introduced_in"], f"{path}.introduced_in", pattern=_ID)
     deprecated_in = None
     removed_in = None
@@ -1486,13 +2390,9 @@ def _parse_attribute_uses(
             raise RegistryError(f"{item_path}.requirement_level: unsupported value")
         if requirement_level == "conditional":
             if "conditional" not in item:
-                raise RegistryError(
-                    f"{item_path}.conditional: required for conditional fields"
-                )
+                raise RegistryError(f"{item_path}.conditional: required for conditional fields")
         elif "conditional" in item:
-            raise RegistryError(
-                f"{item_path}.conditional: allowed only for conditional fields"
-            )
+            raise RegistryError(f"{item_path}.conditional: allowed only for conditional fields")
         conditional = None
         if "conditional" in item:
             conditional = _string(item["conditional"], f"{item_path}.conditional")
@@ -1584,7 +2484,18 @@ def _parse_group(value: Any, path: str) -> GroupIR:
     _exact_keys(
         value,
         {"id", "type", "brief", "stability"},
-        {"extends", "attributes", "body_fields", "span", "log", "metric", "x-defenseclaw"},
+        {
+            "extends",
+            "attributes",
+            "body_fields",
+            "span",
+            "log",
+            "metric",
+            "x-defenseclaw",
+            "introduced_in",
+            "deprecated_in",
+            "removed_in",
+        },
         path,
     )
     group_id = _string(value["id"], f"{path}.id", pattern=_ID)
@@ -1687,14 +2598,10 @@ def _parse_group(value: Any, path: str) -> GroupIR:
             parsed_boundaries: list[int | float] = []
             for boundary_index, boundary in enumerate(boundaries):
                 boundary_path = f"{path}.metric.boundaries[{boundary_index}]"
-                if type(boundary) not in {int, float} or (
-                    type(boundary) is float and not math.isfinite(boundary)
-                ):
+                if type(boundary) not in {int, float} or (type(boundary) is float and not math.isfinite(boundary)):
                     raise RegistryError(f"{boundary_path}: expected finite number")
                 if parsed_boundaries and boundary <= parsed_boundaries[-1]:
-                    raise RegistryError(
-                        f"{path}.metric.boundaries: values must be strictly ascending"
-                    )
+                    raise RegistryError(f"{path}.metric.boundaries: values must be strictly ascending")
                 parsed_boundaries.append(boundary)
             metric_boundaries = tuple(parsed_boundaries)
     elif group_type == "metric":
@@ -1745,9 +2652,7 @@ def _parse_group(value: Any, path: str) -> GroupIR:
                 f"{path}.x-defenseclaw.outcome_requirement",
             )
             if outcome_requirement not in {"required", "optional", "forbidden"}:
-                raise RegistryError(
-                    f"{path}.x-defenseclaw.outcome_requirement: unsupported value"
-                )
+                raise RegistryError(f"{path}.x-defenseclaw.outcome_requirement: unsupported value")
         for key in ("allowed_outcomes", "events", "link_relations", "compatibility_profiles"):
             if key in extension:
                 values = _string_list(extension[key], f"{path}.x-defenseclaw.{key}")
@@ -1757,15 +2662,11 @@ def _parse_group(value: Any, path: str) -> GroupIR:
                     event_refs = values
                 elif key == "link_relations":
                     if not set(values).issubset(EXPECTED_LINK_RELATIONS):
-                        raise RegistryError(
-                            f"{path}.x-defenseclaw.link_relations: unknown relation"
-                        )
+                        raise RegistryError(f"{path}.x-defenseclaw.link_relations: unknown relation")
                     link_relations = values
                 else:
                     if not set(values).issubset(EXPECTED_COMPATIBILITY_PROFILES):
-                        raise RegistryError(
-                            f"{path}.x-defenseclaw.compatibility_profiles: unknown profile"
-                        )
+                        raise RegistryError(f"{path}.x-defenseclaw.compatibility_profiles: unknown profile")
                     compatibility_profiles = values
         if "mandatory_floor" in extension:
             mandatory_floor = _string_list(
@@ -1788,6 +2689,23 @@ def _parse_group(value: Any, path: str) -> GroupIR:
             raise RegistryError(f"{path}.x-defenseclaw.bucket: required for signal families")
         if not isinstance(value.get("x-defenseclaw"), dict) or "family_schema_version" not in value["x-defenseclaw"]:
             raise RegistryError(f"{path}.x-defenseclaw.family_schema_version: required for signal families")
+    if "introduced_in" not in value:
+        raise RegistryError(f"{path}.introduced_in: required for every group")
+    introduced_in = None
+    deprecated_in = None
+    removed_in = None
+    if "introduced_in" in value:
+        introduced_in = _string(value["introduced_in"], f"{path}.introduced_in", pattern=_ID)
+    if "deprecated_in" in value:
+        deprecated_in = _string(value["deprecated_in"], f"{path}.deprecated_in", pattern=_ID)
+    if "removed_in" in value:
+        removed_in = _string(value["removed_in"], f"{path}.removed_in", pattern=_ID)
+    if removed_in is not None and deprecated_in is None:
+        raise RegistryError(f"{path}.deprecated_in: required when removed_in is present")
+    if stability == "deprecated" and deprecated_in is None:
+        raise RegistryError(f"{path}.deprecated_in: required for deprecated groups")
+    if deprecated_in is not None and stability != "deprecated":
+        raise RegistryError(f"{path}.stability: must be deprecated when deprecated_in is present")
     return GroupIR(
         group_id,
         group_type,
@@ -1820,6 +2738,9 @@ def _parse_group(value: Any, path: str) -> GroupIR:
         route_selector,
         compatibility_profiles,
         legacy_bindings,
+        introduced_in,
+        deprecated_in,
+        removed_in,
     )
 
 
@@ -1924,9 +2845,7 @@ def _parse_producer_mappings(
         if policy in {"fixed", "context_optional"} and default is None:
             raise RegistryError(f"{item_path}.default_identity: required for {policy} policy")
         parsed_default = (
-            _parse_producer_identity(default, f"{item_path}.default_identity")
-            if default is not None
-            else None
+            _parse_producer_identity(default, f"{item_path}.default_identity") if default is not None else None
         )
         if policy == "context_required" and default is not None:
             raise RegistryError(f"{item_path}.default_identity: not allowed for context_required policy")
@@ -2089,6 +3008,772 @@ def _rfc6901_token(value: str) -> str:
     return value.replace("~", "~0").replace("/", "~1")
 
 
+def _json_leaf_pointers(value: Any, pointer: str = "") -> tuple[str, ...]:
+    """Return the exact leaf set used by Go record field-class validation."""
+    if isinstance(value, Mapping):
+        if not value:
+            return (pointer,)
+        return tuple(
+            child_pointer
+            for key, child in value.items()
+            for child_pointer in _json_leaf_pointers(
+                child,
+                pointer + "/" + _rfc6901_token(key),
+            )
+        )
+    if isinstance(value, (list, tuple)):
+        if not value:
+            return (pointer,)
+        return tuple(
+            child_pointer
+            for index, child in enumerate(value)
+            for child_pointer in _json_leaf_pointers(child, pointer + f"/{index}")
+        )
+    return (pointer,)
+
+
+def _field_class_pointer_coverage_errors(record: Any, signal: str) -> tuple[str, ...]:
+    if not isinstance(record, dict):
+        return ()
+    payload_name = "instrument_data" if signal == "metrics" else "body"
+    if payload_name not in record:
+        return ()
+    field_classes = record.get("field_classes")
+    if not isinstance(field_classes, dict):
+        return ("field_class_coverage_mismatch",)
+    if any(
+        not isinstance(pointer, str)
+        or (pointer != "" and not pointer.startswith("/"))
+        or re.search(r"~(?:[^01]|$)", pointer)
+        or field_class not in _FIELD_CLASS
+        for pointer, field_class in field_classes.items()
+    ):
+        return ("field_class_coverage_mismatch",)
+    expected = set(_json_leaf_pointers(record[payload_name]))
+    return () if set(field_classes) == expected else ("field_class_coverage_mismatch",)
+
+
+@dataclass(slots=True)
+class _ExampleErrorCollector:
+    """Collect distinct stable errors without leaking example values."""
+
+    codes: list[str]
+
+    def add(self, code: str) -> None:
+        if code not in self.codes:
+            self.codes.append(code)
+
+    def result(self) -> tuple[str, ...]:
+        return tuple(self.codes)
+
+
+@dataclass(frozen=True, slots=True)
+class _JSONValueStats:
+    members: int
+    properties: int
+    max_container_depth: int
+    maximum_string_leaf_bytes: int
+    canonical_bytes: int
+
+
+def _canonical_json_number(text: str) -> str:
+    """Mirror normalizeJSONNumber/normalizeExactDecimal in observability.Value."""
+    if re.fullmatch(r"-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?", text) is None:
+        raise ValueError("invalid JSON number")
+    negative = text.startswith("-")
+    if negative:
+        text = text[1:]
+    exponent_text = "0"
+    exponent_match = re.search(r"[eE]", text)
+    if exponent_match is not None:
+        exponent_text = text[exponent_match.start() + 1 :]
+        text = text[: exponent_match.start()]
+    integer_part, separator, fraction_part = text.partition(".")
+    digits = (integer_part + (fraction_part if separator else "")).lstrip("0")
+    if not digits:
+        return "0"
+    exponent = int(exponent_text) - len(fraction_part)
+    trimmed = digits.rstrip("0")
+    exponent += len(digits) - len(trimmed)
+    digits = trimmed
+    scientific_exponent = exponent + len(digits) - 1
+    scientific = digits[0]
+    if len(digits) > 1:
+        scientific += "." + digits[1:]
+    if scientific_exponent:
+        scientific += f"e{scientific_exponent}"
+    point = exponent + len(digits)
+    if point <= 0:
+        plain = "0." + ("0" * -point) + digits
+    elif point >= len(digits):
+        plain = digits + ("0" * (point - len(digits)))
+    else:
+        plain = digits[:point] + "." + digits[point:]
+    result = plain if len(plain) <= len(scientific) else scientific
+    return "-" + result if negative else result
+
+
+def _canonical_json_string(value: str) -> str:
+    """Mirror encoding/json with SetEscapeHTML(false) and literal line separators."""
+    result = ['"']
+    short_escapes = {
+        "\b": "\\b",
+        "\t": "\\t",
+        "\n": "\\n",
+        "\f": "\\f",
+        "\r": "\\r",
+        '"': '\\"',
+        "\\": "\\\\",
+    }
+    for character in value:
+        codepoint = ord(character)
+        if 0xD800 <= codepoint <= 0xDFFF:
+            raise ValueError("unpaired Unicode surrogate")
+        escaped = short_escapes.get(character)
+        if escaped is not None:
+            result.append(escaped)
+        elif codepoint < 0x20:
+            result.append(f"\\u{codepoint:04x}")
+        else:
+            result.append(character)
+    result.append('"')
+    return "".join(result)
+
+
+def _canonical_json_text(value: Any) -> str:
+    if value is None:
+        return "null"
+    if type(value) is bool:
+        return "true" if value else "false"
+    if type(value) is int:
+        return _canonical_json_number(str(value))
+    if type(value) is float:
+        if not math.isfinite(value):
+            raise ValueError("non-finite JSON number")
+        if value == 0:
+            return "0"
+        return _canonical_json_number(repr(value))
+    if isinstance(value, str):
+        return _canonical_json_string(value)
+    if isinstance(value, Mapping):
+        if any(not isinstance(key, str) for key in value):
+            raise ValueError("JSON object key is not a string")
+        return (
+            "{"
+            + ",".join(_canonical_json_string(key) + ":" + _canonical_json_text(value[key]) for key in sorted(value))
+            + "}"
+        )
+    if isinstance(value, (list, tuple)):
+        return "[" + ",".join(_canonical_json_text(item) for item in value) + "]"
+    raise ValueError("unsupported JSON value")
+
+
+def _canonical_json_bytes(value: Any) -> bytes:
+    return _canonical_json_text(value).encode("utf-8")
+
+
+def _json_value_stats(value: Any) -> _JSONValueStats | None:
+    """Return recursive JSON bounds using the same leaf/container model as Go Value."""
+    members = 0
+    properties = 0
+    maximum_depth = 0
+    maximum_string_leaf_bytes = 0
+
+    def visit(item: Any, container_depth: int) -> bool:
+        nonlocal members, properties, maximum_depth, maximum_string_leaf_bytes
+        if item is None or type(item) in {bool, int}:
+            return True
+        if type(item) is float:
+            return math.isfinite(item)
+        if isinstance(item, str):
+            try:
+                encoded_length = len(item.encode("utf-8"))
+            except UnicodeEncodeError:
+                return False
+            maximum_string_leaf_bytes = max(maximum_string_leaf_bytes, encoded_length)
+            return True
+        if isinstance(item, Mapping):
+            maximum_depth = max(maximum_depth, container_depth)
+            members += len(item)
+            properties += len(item)
+            return all(isinstance(key, str) and visit(child, container_depth + 1) for key, child in item.items())
+        if isinstance(item, (list, tuple)):
+            maximum_depth = max(maximum_depth, container_depth)
+            members += len(item)
+            return all(visit(child, container_depth + 1) for child in item)
+        return False
+
+    if not visit(value, 0):
+        return None
+    try:
+        encoded = _canonical_json_bytes(value)
+    except (UnicodeEncodeError, ValueError):
+        return None
+    return _JSONValueStats(
+        members,
+        properties,
+        maximum_depth,
+        maximum_string_leaf_bytes,
+        len(encoded),
+    )
+
+
+def _constraints_accept(value: Any, constraints: Mapping[str, FrozenJSON]) -> bool:
+    stats = _json_value_stats(value)
+    if stats is None:
+        return False
+    enum = constraints.get("enum")
+    constrained_values = value if isinstance(value, (list, tuple)) else (value,)
+    if enum is not None and any(not _typed_json_contains(enum, candidate) for candidate in constrained_values):
+        return False
+    numeric_values = constrained_values
+    if "min" in constraints and any(
+        type(candidate) not in {int, float}
+        or (type(candidate) is float and not math.isfinite(candidate))
+        or candidate < constraints["min"]
+        for candidate in numeric_values
+    ):
+        return False
+    if "max" in constraints and any(
+        type(candidate) not in {int, float}
+        or (type(candidate) is float and not math.isfinite(candidate))
+        or candidate > constraints["max"]
+        for candidate in numeric_values
+    ):
+        return False
+    pattern = constraints.get("pattern")
+    if pattern is not None and any(
+        not isinstance(candidate, str) or re.fullmatch(str(pattern), candidate) is None
+        for candidate in constrained_values
+    ):
+        return False
+    root_items = len(value) if isinstance(value, (Mapping, list, tuple)) else 1
+    if root_items < constraints.get("min_items", 0):
+        return False
+    if "max_items" in constraints:
+        observed_items = stats.members if isinstance(value, (Mapping, list, tuple)) else 1
+        if observed_items > constraints["max_items"]:
+            return False
+    if "max_utf8_bytes" in constraints:
+        observed_bytes = len(value.encode("utf-8")) if isinstance(value, str) else stats.canonical_bytes
+        if observed_bytes > constraints["max_utf8_bytes"]:
+            return False
+    if "max_item_utf8_bytes" in constraints and stats.maximum_string_leaf_bytes > constraints["max_item_utf8_bytes"]:
+        return False
+    if "max_depth" in constraints and stats.max_container_depth > constraints["max_depth"]:
+        return False
+    if "max_properties" in constraints and stats.properties > constraints["max_properties"]:
+        return False
+    return True
+
+
+def _normalization_accepts(value: Any, normalization: NormalizationIR) -> bool:
+    return _constraints_accept(value, normalization.effective_constraints)
+
+
+def _attribute_type_accepts(value: Any, field_type: str) -> bool:
+    if field_type == "string":
+        return isinstance(value, str)
+    if field_type == "boolean":
+        return type(value) is bool
+    if field_type == "int64":
+        return type(value) is int and -(2**63) <= value <= 2**63 - 1
+    if field_type == "double":
+        return type(value) in {int, float} and not isinstance(value, bool) and math.isfinite(value)
+    if field_type == "object":
+        return isinstance(value, dict)
+    if field_type.endswith("[]"):
+        if not isinstance(value, list):
+            return False
+        item_type = field_type.removesuffix("[]")
+        return all(_attribute_type_accepts(item, item_type) for item in value)
+    if field_type == "bytes":
+        return isinstance(value, str)
+    return False
+
+
+def _upstream_attribute_type_accepts(value: Any, attribute: SnapshotAttribute) -> bool:
+    if attribute.shape == "attribute":
+        return any(_attribute_type_accepts(value, field_type) for field_type in attribute.allowed_types)
+    if attribute.shape == "any_value":
+        return value is not None and _json_value_stats(value) is not None
+    if attribute.shape in {"indexed_prefix", "object_prefix"}:
+        return isinstance(value, dict) and _json_value_stats(value) is not None
+    return False
+
+
+def _structural_value_accepts(value: Any, field: StructuralFieldIR) -> bool:
+    type_matches = {
+        "boolean": lambda item: type(item) is bool,
+        "int64": lambda item: type(item) is int and -(2**63) <= item <= 2**63 - 1,
+        "uint32": lambda item: type(item) is int and 0 <= item <= 2**32 - 1,
+        "uint64": lambda item: type(item) is int and 0 <= item <= 2**64 - 1,
+        "double": lambda item: type(item) in {int, float} and not isinstance(item, bool) and math.isfinite(item),
+        "metric_number": lambda item: type(item) in {int, float} and not isinstance(item, bool) and math.isfinite(item),
+        "string": lambda item: isinstance(item, str),
+        "timestamp": lambda item: isinstance(item, str),
+        "object": lambda item: isinstance(item, dict),
+        "array": lambda item: isinstance(item, list),
+        "canonical_json": lambda item: isinstance(item, dict),
+        "field_class_map": lambda item: isinstance(item, dict),
+    }[field.field_type]
+    if not type_matches(value):
+        return False
+    if field.const_present and not _typed_json_equal(value, field.const):
+        return False
+    if field.enum and not _typed_json_contains(field.enum, value):
+        return False
+    if field.normalization is not None and not _normalization_accepts(value, field.normalization):
+        return False
+    if field.semantic_format is not None:
+        if not isinstance(value, str) or set(value) == {"0"}:
+            return False
+    return True
+
+
+def _validate_structural_object_value(
+    payload: Any,
+    object_ir: StructuralObjectIR,
+    object_lookup: Mapping[str, StructuralObjectIR],
+    errors: _ExampleErrorCollector,
+) -> bool:
+    initial_error_count = len(errors.codes)
+    if not isinstance(payload, dict):
+        errors.add("structural_object_type_mismatch")
+        return False
+    fields = {field.name: field for field in object_ir.fields}
+    if set(payload) - set(fields):
+        errors.add("structural_field_not_registered")
+    if any(field.required and field.name not in payload for field in object_ir.fields):
+        errors.add("structural_required_field_missing")
+    for name, value in payload.items():
+        field = fields.get(name)
+        if field is None:
+            continue
+        if not _structural_value_accepts(value, field):
+            errors.add("structural_field_value_invalid")
+            continue
+        if field.object_ref is not None:
+            _validate_structural_object_value(
+                value,
+                object_lookup[field.object_ref],
+                object_lookup,
+                errors,
+            )
+        elif field.item_ref is not None:
+            for item in value:
+                _validate_structural_object_value(
+                    item,
+                    object_lookup[field.item_ref],
+                    object_lookup,
+                    errors,
+                )
+    return len(errors.codes) == initial_error_count
+
+
+def _registered_dynamic_fields(
+    payload: Any,
+    group: GroupIR,
+    *,
+    error_code: str,
+    local_attributes: Mapping[str, AttributeIR],
+    upstream_extensions: Mapping[str, AttributeExtensionIR],
+    upstream_attributes: Mapping[str, tuple[str, SnapshotAttribute]],
+    errors: _ExampleErrorCollector,
+) -> bool:
+    initial_error_count = len(errors.codes)
+    if not isinstance(payload, dict):
+        errors.add("dynamic_attribute_object_required")
+        return False
+    uses = {use.ref: use for use in group.resolved_uses}
+    if set(payload) - set(uses):
+        errors.add(error_code)
+    for reference, use in uses.items():
+        if use.requirement_level == "required" and reference not in payload:
+            errors.add("family_required_attribute_missing")
+    for reference, value in payload.items():
+        use = uses.get(reference)
+        if use is None:
+            continue
+        local = local_attributes.get(reference)
+        extension = upstream_extensions.get(reference)
+        if local is not None and (
+            not _attribute_type_accepts(value, local.field_type)
+            or not _normalization_accepts(value, local.normalization)
+        ):
+            errors.add("dynamic_attribute_value_invalid")
+        if extension is not None:
+            upstream = upstream_attributes.get(reference)
+            if (
+                upstream is None
+                or not _upstream_attribute_type_accepts(value, upstream[1])
+                or not _normalization_accepts(value, extension.normalization)
+            ):
+                errors.add("dynamic_attribute_value_invalid")
+        if not _constraints_accept(value, use.constraints):
+            errors.add("dynamic_attribute_value_invalid")
+    return len(errors.codes) == initial_error_count
+
+
+def _materialized_span_name(pattern: str, attributes: Mapping[str, Any]) -> str | None:
+    result: list[str] = []
+    position = 0
+    for match in re.finditer(r"\{([^{}]+)\}", pattern):
+        result.append(pattern[position : match.start()])
+        reference = match.group(1)
+        if reference not in attributes:
+            return None
+        result.append(str(attributes[reference]))
+        position = match.end()
+    result.append(pattern[position:])
+    return "".join(result)
+
+
+def _validate_example_record(
+    signal: str,
+    family: str | None,
+    record: Any,
+    groups: Mapping[str, GroupIR],
+    structural_contract: StructuralContractIR,
+    value_catalogs: tuple[ValueCatalogIR, ...],
+    semantic_profiles: tuple[SemanticProfileIR, ...],
+    local_attributes: Mapping[str, AttributeIR],
+    upstream_extensions: Mapping[str, AttributeExtensionIR],
+    upstream_attributes: Mapping[str, tuple[str, SnapshotAttribute]],
+) -> tuple[str, ...]:
+    errors = _ExampleErrorCollector([])
+    if family is None:
+        errors.add("compatibility_only_identity_has_no_family")
+        return errors.result()
+    group = groups.get(family)
+    if group is None or group.type not in _SIGNAL_BY_GROUP_TYPE:
+        errors.add("canonical_family_not_registered")
+        return errors.result()
+    if not isinstance(record, dict):
+        errors.add("record_object_required")
+        return errors.result()
+    envelope_fields = {field.name: field for field in structural_contract.envelope.fields}
+    if set(record) - set(envelope_fields):
+        errors.add("envelope_field_not_registered")
+    if any(field.required and field.name not in record for field in structural_contract.envelope.fields):
+        errors.add("envelope_required_field_missing")
+    for name, value in record.items():
+        field = envelope_fields.get(name)
+        if field is None:
+            continue
+        if not _structural_value_accepts(value, field):
+            errors.add("envelope_field_value_invalid")
+    if record.get("signal") != signal:
+        errors.add("example_signal_mismatch")
+    if group.bucket != record.get("bucket"):
+        errors.add("family_bucket_mismatch")
+    expected_event_name = (
+        group.event_name if signal == "logs" else group.instrument_name if signal == "metrics" else group.id
+    )
+    if record.get("event_name") != expected_event_name:
+        errors.add("family_event_name_mismatch")
+    arm = next((candidate for candidate in structural_contract.signal_arms if candidate.signal == signal), None)
+    if arm is None:
+        errors.add("signal_arm_missing")
+        return errors.result()
+    if arm.payload_field not in record or any(name not in record for name in arm.required_fields):
+        errors.add("signal_required_field_missing")
+    if any(name in record for name in arm.forbidden_fields):
+        errors.add("signal_forbidden_field_present")
+    correlation = record.get("correlation")
+    provenance = record.get("provenance")
+    object_lookup = {
+        "correlation": structural_contract.correlation,
+        "provenance": structural_contract.provenance,
+        "trace_body": structural_contract.trace_body,
+        "trace_resource": structural_contract.trace_resource,
+        "trace_scope": structural_contract.trace_scope,
+        "trace_status": structural_contract.trace_status,
+        "trace_event": structural_contract.trace_event,
+        "trace_link": structural_contract.trace_link,
+        "metric_instrument_data": structural_contract.metric_instrument_data,
+    }
+    _validate_structural_object_value(
+        correlation,
+        structural_contract.correlation,
+        object_lookup,
+        errors,
+    )
+    _validate_structural_object_value(
+        provenance,
+        structural_contract.provenance,
+        object_lookup,
+        errors,
+    )
+    if not isinstance(correlation, dict) or any(name not in correlation for name in arm.required_correlation_fields):
+        errors.add("trace_correlation_identity_missing")
+    if record.get("outcome") not in (group.allowed_outcomes or ()):
+        if group.outcome_requirement == "required" or "outcome" in record:
+            errors.add("family_outcome_invalid")
+    if group.outcome_requirement == "forbidden" and "outcome" in record:
+        errors.add("family_outcome_invalid")
+
+    if signal == "logs":
+        _registered_dynamic_fields(
+            record.get("body"),
+            group,
+            error_code="finding_body_field_not_registered",
+            local_attributes=local_attributes,
+            upstream_extensions=upstream_extensions,
+            upstream_attributes=upstream_attributes,
+            errors=errors,
+        )
+    elif signal == "metrics":
+        instrument = record.get("instrument_data")
+        _validate_structural_object_value(
+            instrument,
+            structural_contract.metric_instrument_data,
+            object_lookup,
+            errors,
+        )
+        if isinstance(instrument, dict):
+            _registered_dynamic_fields(
+                instrument.get("attributes"),
+                group,
+                error_code="metric_label_not_registered",
+                local_attributes=local_attributes,
+                upstream_extensions=upstream_extensions,
+                upstream_attributes=upstream_attributes,
+                errors=errors,
+            )
+            metric_value = instrument.get("value")
+            if group.metric_value_type == "int64" and (
+                type(metric_value) is not int or not -(2**63) <= metric_value <= 2**63 - 1
+            ):
+                errors.add("metric_value_type_mismatch")
+            if group.metric_value_type == "double" and (
+                type(metric_value) not in {int, float}
+                or isinstance(metric_value, bool)
+                or not math.isfinite(metric_value)
+            ):
+                errors.add("metric_value_type_mismatch")
+    else:
+        body = record.get("body")
+        _validate_structural_object_value(
+            body,
+            structural_contract.trace_body,
+            object_lookup,
+            errors,
+        )
+        if isinstance(body, dict):
+            attributes = body.get("attributes")
+            _registered_dynamic_fields(
+                attributes,
+                group,
+                error_code="span_attribute_not_registered",
+                local_attributes=local_attributes,
+                upstream_extensions=upstream_extensions,
+                upstream_attributes=upstream_attributes,
+                errors=errors,
+            )
+            if body.get("kind") not in (group.span_kinds or ()):
+                errors.add("span_kind_mismatch")
+            materialized_name = (
+                _materialized_span_name(group.span_name_pattern or "", attributes)
+                if isinstance(attributes, Mapping)
+                else None
+            )
+            if materialized_name is None or record.get("span_name") != materialized_name:
+                errors.add("span_name_mismatch")
+            if isinstance(attributes, Mapping):
+                for envelope_name, attribute_name in (
+                    ("bucket", "defenseclaw.bucket"),
+                    ("source", "defenseclaw.source"),
+                    ("outcome", "defenseclaw.outcome"),
+                ):
+                    if attribute_name in attributes and (
+                        envelope_name not in record
+                        or not _typed_json_equal(attributes[attribute_name], record[envelope_name])
+                    ):
+                        errors.add("span_envelope_attribute_mismatch")
+                resolved_attribute_ids = {use.ref for use in group.resolved_uses}
+                if "defenseclaw.span.family" in resolved_attribute_ids and not _typed_json_equal(
+                    attributes.get("defenseclaw.span.family"), family
+                ):
+                    errors.add("span_family_attribute_mismatch")
+                if "defenseclaw.span.family_schema_version" in resolved_attribute_ids and not _typed_json_equal(
+                    attributes.get("defenseclaw.span.family_schema_version"),
+                    group.family_schema_version,
+                ):
+                    errors.add("span_family_schema_version_mismatch")
+                if "defenseclaw.config.generation" in resolved_attribute_ids and not _typed_json_equal(
+                    attributes.get("defenseclaw.config.generation"),
+                    provenance.get("config_generation") if isinstance(provenance, dict) else None,
+                ):
+                    errors.add("span_config_generation_mismatch")
+            for relation in structural_contract.trace_relations:
+                left = body.get(relation.left)
+                right = body.get(relation.right)
+                if (
+                    relation.kind == "less_than_or_equal"
+                    and type(left) in {int, float}
+                    and type(right) in {int, float}
+                    and left > right
+                ):
+                    errors.add("trace_time_order_invalid")
+            resource = body.get("resource")
+            scope = body.get("scope")
+            resource_group = groups["resource.core"]
+            scope_group = groups["scope.core"]
+            _registered_dynamic_fields(
+                resource.get("attributes") if isinstance(resource, dict) else None,
+                resource_group,
+                error_code="resource_attribute_not_registered",
+                local_attributes=local_attributes,
+                upstream_extensions=upstream_extensions,
+                upstream_attributes=upstream_attributes,
+                errors=errors,
+            )
+            scope_attributes = scope.get("attributes") if isinstance(scope, dict) else None
+            _registered_dynamic_fields(
+                scope_attributes,
+                scope_group,
+                error_code="scope_attribute_not_registered",
+                local_attributes=local_attributes,
+                upstream_extensions=upstream_extensions,
+                upstream_attributes=upstream_attributes,
+                errors=errors,
+            )
+            profile = semantic_profiles[0]
+            if (
+                not isinstance(scope_attributes, dict)
+                or not _typed_json_equal(
+                    scope_attributes.get("defenseclaw.trace.schema_version"),
+                    profile.trace_schema_version,
+                )
+                or not _typed_json_equal(
+                    scope_attributes.get("defenseclaw.semantic_profile"),
+                    profile.id,
+                )
+            ):
+                errors.add("scope_semantic_profile_mismatch")
+            events = body.get("events", [])
+            if isinstance(events, list):
+                for event in events:
+                    if not isinstance(event, dict):
+                        continue
+                    event_group = groups.get("event." + str(event.get("name", "")))
+                    if event_group is None or event.get("name") not in (group.event_refs or ()):
+                        errors.add("span_event_not_registered")
+                        continue
+                    _registered_dynamic_fields(
+                        event.get("attributes"),
+                        event_group,
+                        error_code="span_event_attribute_not_registered",
+                        local_attributes=local_attributes,
+                        upstream_extensions=upstream_extensions,
+                        upstream_attributes=upstream_attributes,
+                        errors=errors,
+                    )
+            links = body.get("links", [])
+            if isinstance(links, list):
+                for link in links:
+                    if not isinstance(link, dict):
+                        continue
+                    _registered_dynamic_fields(
+                        link.get("attributes"),
+                        groups["link.core"],
+                        error_code="span_link_attribute_not_registered",
+                        local_attributes=local_attributes,
+                        upstream_extensions=upstream_extensions,
+                        upstream_attributes=upstream_attributes,
+                        errors=errors,
+                    )
+                    link_attributes = link.get("attributes")
+                    if not isinstance(link_attributes, dict) or link_attributes.get(
+                        "defenseclaw.link.relation"
+                    ) not in (group.link_relations or ()):
+                        errors.add("span_link_relation_invalid")
+
+    for catalog in value_catalogs:
+        instrument = record.get("instrument_data")
+        body = record.get("body")
+        payload = (
+            instrument.get("attributes")
+            if signal == "metrics" and isinstance(instrument, dict)
+            else body.get("attributes", body)
+            if isinstance(body, dict)
+            else None
+        )
+        if not isinstance(payload, dict):
+            continue
+        paired_value = payload.get(catalog.paired_value_attribute)
+        paired_code = payload.get(catalog.code_attribute)
+        if paired_value is not None and paired_code is not None:
+            expected_code = {entry.value: entry.code for entry in catalog.entries}.get(paired_value)
+            if not _typed_json_equal(expected_code, paired_code):
+                errors.add("lifecycle_phase_code_mismatch")
+    return errors.result()
+
+
+def _decode_rfc6901(pointer: str) -> list[str]:
+    if not pointer.startswith("/"):
+        raise RegistryError("example mutation path must be an RFC6901 pointer")
+    if re.search(r"~(?:[^01]|$)", pointer):
+        raise RegistryError("example mutation path contains an invalid RFC6901 escape")
+    return [token.replace("~1", "/").replace("~0", "~") for token in pointer[1:].split("/")]
+
+
+def _apply_example_mutation(target: dict[str, Any], change: ExampleMutationChangeIR) -> None:
+    tokens = _decode_rfc6901(change.path)
+    current: Any = target
+    for token in tokens[:-1]:
+        if isinstance(current, dict):
+            if token not in current:
+                raise RegistryError("example mutation path does not resolve")
+            current = current[token]
+        elif isinstance(current, list):
+            if not token.isdigit() or int(token) >= len(current):
+                raise RegistryError("example mutation path does not resolve")
+            current = current[int(token)]
+        else:
+            raise RegistryError("example mutation path does not resolve")
+    leaf = tokens[-1]
+    if isinstance(current, dict):
+        exists = leaf in current
+        if change.op == "add":
+            if exists:
+                raise RegistryError("example mutation add target already exists")
+            current[leaf] = _thaw_json(change.value)
+        elif change.op == "replace":
+            if not exists:
+                raise RegistryError("example mutation replace target does not exist")
+            current[leaf] = _thaw_json(change.value)
+        else:
+            if not exists:
+                raise RegistryError("example mutation remove target does not exist")
+            del current[leaf]
+        return
+    if not isinstance(current, list) or not leaf.isdigit():
+        raise RegistryError("example mutation path does not resolve")
+    index = int(leaf)
+    if change.op == "add":
+        if index > len(current):
+            raise RegistryError("example mutation add index is out of range")
+        current.insert(index, _thaw_json(change.value))
+    elif change.op == "replace":
+        if index >= len(current):
+            raise RegistryError("example mutation replace index is out of range")
+        current[index] = _thaw_json(change.value)
+    else:
+        if index >= len(current):
+            raise RegistryError("example mutation remove index is out of range")
+        del current[index]
+
+
+def _thaw_json(value: FrozenJSON) -> Any:
+    if isinstance(value, Mapping):
+        return {key: _thaw_json(item) for key, item in value.items()}
+    if isinstance(value, tuple):
+        return [_thaw_json(item) for item in value]
+    return value
+
+
 def _validate_example_field_classes(
     record: Any,
     signal: str,
@@ -2097,6 +3782,7 @@ def _validate_example_field_classes(
     groups: dict[str, GroupIR],
     local_attributes: dict[str, AttributeIR],
     upstream_extensions: dict[str, AttributeExtensionIR],
+    structural_contract: StructuralContractIR,
 ) -> Mapping[str, str]:
     if not isinstance(record, dict):
         raise RegistryError(f"{path}: expected mapping")
@@ -2109,38 +3795,170 @@ def _validate_example_field_classes(
     for projection in group.metric_projections:
         if projection.profile == "local-observability-v1":
             reverse_projection = {label: reference for reference, label in projection.mappings}
-    if signal == "traces":
-        parent = record.get("body")
-        dynamic = parent.get("attributes") if isinstance(parent, dict) else None
-        prefix = "/body/attributes/"
-    elif signal == "logs":
-        dynamic = record.get("body")
-        prefix = "/body/"
-    else:
-        parent = record.get("instrument_data")
-        dynamic = parent.get("attributes") if isinstance(parent, dict) else None
-        prefix = "/instrument_data/attributes/"
-    if not isinstance(dynamic, dict):
-        raise RegistryError(f"{path}: valid {signal} example has no dynamic attribute mapping")
     expected: dict[str, str] = {}
-    for wire_name in dynamic:
-        if not isinstance(wire_name, str):
-            raise RegistryError(f"{path}: dynamic attribute names must be strings")
-        reference = reverse_projection.get(wire_name, wire_name)
-        if reference not in resolved:
-            raise RegistryError(f"{path}: unregistered dynamic field {wire_name!r}")
-        local = local_attributes.get(reference)
-        extension = upstream_extensions.get(reference)
-        if local is not None:
-            field_class = local.field_class
-        elif extension is not None:
-            field_class = extension.field_class
-        else:
-            raise RegistryError(f"{path}: dynamic field {wire_name!r} has no privacy metadata")
-        expected[prefix + _rfc6901_token(wire_name)] = field_class
+
+    def add_registered_fields(
+        dynamic: Any,
+        references: frozenset[str],
+        prefix: str,
+        projections: Mapping[str, str] = MappingProxyType({}),
+        empty_container_class: str = "metadata",
+    ) -> None:
+        if not isinstance(dynamic, dict):
+            raise RegistryError(f"{path}: valid {signal} example has no dynamic attribute mapping")
+        if not dynamic:
+            expected[prefix.removesuffix("/")] = empty_container_class
+            return
+        for wire_name in dynamic:
+            if not isinstance(wire_name, str):
+                raise RegistryError(f"{path}: dynamic attribute names must be strings")
+            reference = projections.get(wire_name, wire_name)
+            if reference not in references:
+                raise RegistryError(f"{path}: unregistered dynamic field {wire_name!r}")
+            local = local_attributes.get(reference)
+            extension = upstream_extensions.get(reference)
+            if local is not None:
+                field_class = local.field_class
+            elif extension is not None:
+                field_class = extension.field_class
+            else:
+                raise RegistryError(f"{path}: dynamic field {wire_name!r} has no privacy metadata")
+            base_pointer = prefix + _rfc6901_token(wire_name)
+            for pointer in _json_leaf_pointers(dynamic[wire_name], base_pointer):
+                expected[pointer] = field_class
+
+    if signal == "logs":
+        body_field = _structural_field(structural_contract.envelope, "body")
+        add_registered_fields(
+            record.get("body"),
+            resolved,
+            "/",
+            reverse_projection,
+            body_field.field_class or "metadata",
+        )
+    elif signal == "metrics":
+        instrument = record.get("instrument_data")
+        if not isinstance(instrument, dict):
+            raise RegistryError(f"{path}: valid metrics example has no instrument_data")
+        value_field = _structural_field(structural_contract.metric_instrument_data, "value")
+        if "value" in instrument and value_field.field_class is not None:
+            expected["/value"] = value_field.field_class
+        metric_attributes_field = _structural_field(
+            structural_contract.metric_instrument_data,
+            "attributes",
+        )
+        add_registered_fields(
+            instrument.get("attributes"),
+            resolved,
+            "/attributes/",
+            reverse_projection,
+            metric_attributes_field.field_class or "metadata",
+        )
+    else:
+        body = record.get("body")
+        if not isinstance(body, dict):
+            raise RegistryError(f"{path}: valid traces example has no body")
+        structural_objects = {
+            "trace_status": structural_contract.trace_status,
+            "trace_resource": structural_contract.trace_resource,
+            "trace_scope": structural_contract.trace_scope,
+            "trace_event": structural_contract.trace_event,
+            "trace_link": structural_contract.trace_link,
+        }
+
+        def add_structural_object(
+            payload: Any,
+            object_ir: StructuralObjectIR,
+            prefix: str,
+        ) -> None:
+            if not isinstance(payload, dict):
+                raise RegistryError(f"{path}: structural object {object_ir.id} must be a mapping")
+            fields = {field.name: field for field in object_ir.fields}
+            for name, child in payload.items():
+                field = fields.get(name)
+                if field is None:
+                    raise RegistryError(f"{path}: unregistered structural field {name!r}")
+                pointer = prefix + "/" + _rfc6901_token(name)
+                if field.object_ref is not None:
+                    if isinstance(child, dict) and not child:
+                        expected[pointer] = field.field_class or "metadata"
+                    else:
+                        add_structural_object(child, structural_objects[field.object_ref], pointer)
+                elif field.item_ref is not None:
+                    if not isinstance(child, list):
+                        raise RegistryError(f"{path}: structural array {name!r} must be a sequence")
+                    if not child:
+                        expected[pointer] = field.field_class or "metadata"
+                    for index, item in enumerate(child):
+                        add_structural_object(
+                            item,
+                            structural_objects[field.item_ref],
+                            f"{pointer}/{index}",
+                        )
+                elif name != "attributes" and field.field_class is not None:
+                    expected[pointer] = field.field_class
+
+        add_structural_object(body, structural_contract.trace_body, "")
+        trace_attributes_field = _structural_field(structural_contract.trace_body, "attributes")
+        add_registered_fields(
+            body.get("attributes"),
+            resolved,
+            "/attributes/",
+            empty_container_class=trace_attributes_field.field_class or "metadata",
+        )
+        resource = body.get("resource")
+        if not isinstance(resource, dict):
+            raise RegistryError(f"{path}: valid trace example has no resource")
+        resource_group = groups.get("resource.core")
+        if resource_group is None:
+            raise RegistryError(f"{path}: resource.core is not registered")
+        add_registered_fields(
+            resource.get("attributes"),
+            _resolved_attributes(groups, "resource.core"),
+            "/resource/attributes/",
+            empty_container_class=(
+                _structural_field(structural_contract.trace_resource, "attributes").field_class or "metadata"
+            ),
+        )
+        scope = body.get("scope")
+        if not isinstance(scope, dict) or not isinstance(scope.get("attributes"), dict):
+            raise RegistryError(f"{path}: valid trace example has no scope attributes")
+        add_registered_fields(
+            scope["attributes"],
+            _resolved_attributes(groups, "scope.core"),
+            "/scope/attributes/",
+            empty_container_class=(
+                _structural_field(structural_contract.trace_scope, "attributes").field_class or "metadata"
+            ),
+        )
+        for index, event in enumerate(body.get("events", [])):
+            if not isinstance(event, dict):
+                raise RegistryError(f"{path}: trace event must be a mapping")
+            event_group = groups.get("event." + str(event.get("name", "")))
+            if event_group is None:
+                raise RegistryError(f"{path}: trace event has no registered family")
+            add_registered_fields(
+                event.get("attributes"),
+                _resolved_attributes(groups, event_group.id),
+                f"/events/{index}/attributes/",
+                empty_container_class=(
+                    _structural_field(structural_contract.trace_event, "attributes").field_class or "metadata"
+                ),
+            )
+        for index, link in enumerate(body.get("links", [])):
+            if not isinstance(link, dict):
+                raise RegistryError(f"{path}: trace link must be a mapping")
+            add_registered_fields(
+                link.get("attributes"),
+                _resolved_attributes(groups, "link.core"),
+                f"/links/{index}/attributes/",
+                empty_container_class=(
+                    _structural_field(structural_contract.trace_link, "attributes").field_class or "metadata"
+                ),
+            )
     observed: dict[str, str] = {}
     for pointer, field_class in field_classes.items():
-        if not isinstance(pointer, str) or not pointer.startswith("/"):
+        if not isinstance(pointer, str) or (pointer != "" and not pointer.startswith("/")):
             raise RegistryError(f"{path}.field_classes: keys must be RFC6901 pointers")
         if field_class not in _FIELD_CLASS:
             raise RegistryError(f"{path}.field_classes.{pointer}: unknown field class")
@@ -2149,13 +3967,10 @@ def _validate_example_field_classes(
         missing = sorted(expected.keys() - observed.keys())
         extra = sorted(observed.keys() - expected.keys())
         mismatched = sorted(
-            pointer
-            for pointer in expected.keys() & observed.keys()
-            if expected[pointer] != observed[pointer]
+            pointer for pointer in expected.keys() & observed.keys() if expected[pointer] != observed[pointer]
         )
         raise RegistryError(
-            f"{path}.field_classes: coverage mismatch "
-            f"missing={missing} extra={extra} mismatched={mismatched}"
+            f"{path}.field_classes: coverage mismatch missing={missing} extra={extra} mismatched={mismatched}"
         )
     return MappingProxyType(dict(observed))
 
@@ -2167,6 +3982,10 @@ def _parse_examples(
     groups: dict[str, GroupIR],
     local_attributes: dict[str, AttributeIR],
     upstream_extensions: dict[str, AttributeExtensionIR],
+    upstream_attributes: dict[str, tuple[str, SnapshotAttribute]],
+    structural_contract: StructuralContractIR,
+    value_catalogs: tuple[ValueCatalogIR, ...],
+    semantic_profiles: tuple[SemanticProfileIR, ...],
 ) -> tuple[tuple[ExampleIR, ...], InputDigest]:
     path, normalized = _safe_relative(
         root,
@@ -2183,6 +4002,8 @@ def _parse_examples(
         raise RegistryError(f"{normalized}.examples: expected sequence")
     seen: set[str] = set()
     parsed_examples: list[ExampleIR] = []
+    raw_vectors: dict[str, dict[str, Any]] = {}
+    validity_by_id: dict[str, bool] = {}
     for index, item in enumerate(examples):
         item_path = f"{normalized}.examples[{index}]"
         if not isinstance(item, dict):
@@ -2190,7 +4011,7 @@ def _parse_examples(
         _exact_keys(
             item,
             {"id", "valid", "signal", "description"},
-            {"family", "record", "expected_error"},
+            {"family", "record", "expected_error", "base_example", "mutation"},
             item_path,
         )
         example_id = _string(item["id"], f"{item_path}.id", pattern=_ID)
@@ -2205,16 +4026,22 @@ def _parse_examples(
         family = None
         if "family" in item:
             family = _string(item["family"], f"{item_path}.family", pattern=_ID)
-            if family not in group_signals:
+            if item["valid"] and family not in group_signals:
                 raise RegistryError(f"{item_path}.family: unknown family")
-            if group_signals[family] != signal:
+            if item["valid"] and group_signals[family] != signal:
                 raise RegistryError(f"{item_path}.signal: family belongs to another signal")
         description = _string(item["description"], f"{item_path}.description")
         if item["valid"]:
-            if family is None or "record" not in item or "expected_error" in item:
+            if (
+                family is None
+                or "record" not in item
+                or any(key in item for key in ("expected_error", "base_example", "mutation"))
+            ):
                 raise RegistryError(f"{item_path}: valid example requires family and record only")
-        elif "expected_error" not in item or "record" not in item:
-            raise RegistryError(f"{item_path}: invalid example requires record and expected_error")
+        elif not all(key in item for key in ("record", "expected_error", "base_example", "mutation")):
+            raise RegistryError(
+                f"{item_path}: invalid example requires record, expected_error, base_example, and mutation"
+            )
         expected_error = None
         if "expected_error" in item:
             expected_error = _string(
@@ -2224,12 +4051,77 @@ def _parse_examples(
             )
         if "record" in item:
             _validate_json_compatible(item["record"], f"{item_path}.record")
+        base_example = None
+        mutation_ir = None
+        if not item["valid"]:
+            base_example = _string(item["base_example"], f"{item_path}.base_example", pattern=_ID)
+            if base_example not in raw_vectors or not validity_by_id[base_example]:
+                raise RegistryError(f"{item_path}.base_example: must reference an earlier valid example")
+            mutation = item["mutation"]
+            if not isinstance(mutation, dict):
+                raise RegistryError(f"{item_path}.mutation: expected mapping")
+            _exact_keys(mutation, {"kind", "changes"}, set(), f"{item_path}.mutation")
+            mutation_kind = _string(mutation["kind"], f"{item_path}.mutation.kind", pattern=_ID)
+            if mutation_kind != expected_error:
+                raise RegistryError(f"{item_path}.mutation.kind: must equal expected_error")
+            changes_raw = mutation["changes"]
+            if not isinstance(changes_raw, list) or not changes_raw:
+                raise RegistryError(f"{item_path}.mutation.changes: expected nonempty sequence")
+            changes: list[ExampleMutationChangeIR] = []
+            seen_paths: set[str] = set()
+            for change_index, change in enumerate(changes_raw):
+                change_path = f"{item_path}.mutation.changes[{change_index}]"
+                if not isinstance(change, dict):
+                    raise RegistryError(f"{change_path}: expected mapping")
+                _exact_keys(change, {"op", "path"}, {"value"}, change_path)
+                op = _string(change["op"], f"{change_path}.op", pattern=_ID)
+                if op not in {"add", "replace", "remove"}:
+                    raise RegistryError(f"{change_path}.op: unsupported mutation operation")
+                pointer = _string(change["path"], f"{change_path}.path")
+                pointer_tokens = _decode_rfc6901(pointer)
+                if pointer_tokens[0] not in {"signal", "family", "record"}:
+                    raise RegistryError(f"{change_path}.path: root must be signal, family, or record")
+                if pointer in seen_paths:
+                    raise RegistryError(f"{item_path}.mutation.changes: duplicate path")
+                value_present = "value" in change
+                if (op in {"add", "replace"}) != value_present:
+                    raise RegistryError(f"{change_path}.value: required for add/replace and forbidden for remove")
+                frozen_value = None
+                if value_present:
+                    _validate_json_compatible(change["value"], f"{change_path}.value")
+                    frozen_value = _freeze_json(change["value"])
+                changes.append(ExampleMutationChangeIR(op, pointer, value_present, frozen_value))
+                seen_paths.add(pointer)
+            mutation_ir = ExampleMutationIR(mutation_kind, tuple(changes))
+            base_vector = raw_vectors[base_example]
+            derived = copy.deepcopy(base_vector)
+            for change in changes:
+                _apply_example_mutation(derived, change)
+            observed_vector: dict[str, Any] = {"signal": signal, "record": item["record"]}
+            if family is not None:
+                observed_vector["family"] = family
+            if not _typed_json_equal(derived, observed_vector):
+                raise RegistryError(f"{item_path}.mutation: derived vector does not equal checked-in invalid example")
         # Invalid examples are negative test vectors. Their raw record is
         # preserved, but any embedded field_classes map is deliberately not
         # promoted into authoritative compiler metadata.
         field_classes: Mapping[str, str] = MappingProxyType({})
         if item["valid"]:
             assert family is not None
+            errors = _validate_example_record(
+                signal,
+                family,
+                item["record"],
+                groups,
+                structural_contract,
+                value_catalogs,
+                semantic_profiles,
+                local_attributes,
+                upstream_extensions,
+                upstream_attributes,
+            )
+            if errors:
+                raise RegistryError(f"{item_path}: valid example failed with {errors!r}")
             field_classes = _validate_example_field_classes(
                 item["record"],
                 signal,
@@ -2238,7 +4130,41 @@ def _parse_examples(
                 groups,
                 local_attributes,
                 upstream_extensions,
+                structural_contract,
             )
+        else:
+            errors = _validate_example_record(
+                signal,
+                family,
+                item["record"],
+                groups,
+                structural_contract,
+                value_catalogs,
+                semantic_profiles,
+                local_attributes,
+                upstream_extensions,
+                upstream_attributes,
+            )
+            errors = tuple(dict.fromkeys((*errors, *_field_class_pointer_coverage_errors(item["record"], signal))))
+            if family in groups and group_signals.get(family) == signal:
+                try:
+                    _validate_example_field_classes(
+                        item["record"],
+                        signal,
+                        family,
+                        f"{item_path}.record",
+                        groups,
+                        local_attributes,
+                        upstream_extensions,
+                        structural_contract,
+                    )
+                except RegistryError as exc:
+                    if "field_classes: coverage mismatch" in str(exc):
+                        errors = tuple(dict.fromkeys((*errors, "field_class_classification_mismatch")))
+            if not errors:
+                raise RegistryError(f"{item_path}: invalid example unexpectedly validates")
+            if errors != (expected_error,):
+                raise RegistryError(f"{item_path}: invalid example errors {errors!r}, expected only {expected_error!r}")
         frozen_record = _freeze_json(item["record"])
         if not isinstance(frozen_record, Mapping):
             raise RegistryError(f"{item_path}.record: expected mapping")
@@ -2252,8 +4178,15 @@ def _parse_examples(
                 frozen_record,
                 expected_error,
                 field_classes,
+                base_example,
+                mutation_ir,
             )
         )
+        raw_vector: dict[str, Any] = {"signal": signal, "record": copy.deepcopy(item["record"])}
+        if family is not None:
+            raw_vector["family"] = family
+        raw_vectors[example_id] = raw_vector
+        validity_by_id[example_id] = item["valid"]
     raw, _ = _read_utf8(path)
     return tuple(parsed_examples), InputDigest(normalized, _sha256(raw))
 
@@ -2284,9 +4217,7 @@ def _parse_metric_settings(
         raise RegistryError("registry.metric_compatibility_profiles[0].id: unexpected profile")
     families = profile["high_cardinality_families"]
     if not isinstance(families, list):
-        raise RegistryError(
-            "registry.metric_compatibility_profiles[0].high_cardinality_families: expected sequence"
-        )
+        raise RegistryError("registry.metric_compatibility_profiles[0].high_cardinality_families: expected sequence")
     observed: dict[str, tuple[str, ...]] = {}
     for index, item in enumerate(families):
         item_path = f"registry.metric_compatibility_profiles[0].high_cardinality_families[{index}]"
@@ -2305,9 +4236,7 @@ def _parse_metric_settings(
         )
     spanmetrics = profile["derived_spanmetrics"]
     if not isinstance(spanmetrics, dict):
-        raise RegistryError(
-            "registry.metric_compatibility_profiles[0].derived_spanmetrics: expected mapping"
-        )
+        raise RegistryError("registry.metric_compatibility_profiles[0].derived_spanmetrics: expected mapping")
     _exact_keys(
         spanmetrics,
         {
@@ -2322,8 +4251,7 @@ def _parse_metric_settings(
     expected_spanmetrics = {"pipeline": "spanmetrics/agent360", **EXPECTED_METRIC_PROFILE_LIMITS}
     if spanmetrics != expected_spanmetrics:
         raise RegistryError(
-            "registry.metric_compatibility_profiles[0].derived_spanmetrics: "
-            "must preserve the pinned Collector limits"
+            "registry.metric_compatibility_profiles[0].derived_spanmetrics: must preserve the pinned Collector limits"
         )
     return (
         cardinality_limit,
@@ -2338,6 +4266,228 @@ def _parse_metric_settings(
             ),
         ),
     )
+
+
+def _validate_condition_references(
+    groups: Mapping[str, GroupIR],
+    conditions: tuple[ConditionIR, ...],
+) -> None:
+    known = {condition.id for condition in conditions}
+    for group in groups.values():
+        for use in group.attribute_uses:
+            if use.requirement_level == "conditional" and use.conditional not in known:
+                raise RegistryError(f"group {group.id}: unknown condition ID {use.conditional!r} for {use.ref}")
+
+
+def _validate_value_catalog_attributes(
+    catalogs: tuple[ValueCatalogIR, ...],
+    local_attributes: Mapping[str, AttributeIR],
+) -> None:
+    for catalog in catalogs:
+        code_attribute = local_attributes.get(catalog.code_attribute)
+        value_attributes = [local_attributes.get(reference) for reference in catalog.value_attributes]
+        if any(attribute is None for attribute in value_attributes) or code_attribute is None:
+            raise RegistryError(f"value catalog {catalog.id}: unknown attribute reference")
+        if any(attribute.field_type != "string" for attribute in value_attributes if attribute is not None) or (
+            code_attribute.field_type != "int64"
+        ):
+            raise RegistryError(f"value catalog {catalog.id}: attribute type mismatch")
+        values = tuple(entry.value for entry in catalog.entries)
+        codes = tuple(entry.code for entry in catalog.entries)
+        for reference, value_attribute in zip(catalog.value_attributes, value_attributes, strict=True):
+            assert value_attribute is not None
+            if (
+                value_attribute.normalization.id != "enum-v1"
+                or value_attribute.normalization.effective_constraints.get("enum") != values
+            ):
+                raise RegistryError(
+                    f"value catalog {catalog.id}: value attribute {reference} must use the exact catalog enum"
+                )
+        code_constraints = code_attribute.normalization.effective_constraints
+        if (
+            code_attribute.normalization.id != "numeric-range-v1"
+            or code_constraints.get("min") != min(codes)
+            or code_constraints.get("max") != max(codes)
+        ):
+            raise RegistryError(f"value catalog {catalog.id}: code attribute must use the exact catalog range")
+
+
+def _structural_field(object_ir: StructuralObjectIR, field_id: str) -> StructuralFieldIR:
+    for field in object_ir.fields:
+        if field.name == field_id:
+            return field
+    raise RegistryError(f"structural contract {object_ir.id}: missing field {field_id}")
+
+
+def _validate_structural_contract_bindings(
+    contract: StructuralContractIR,
+    envelope_schema_version: int,
+    bucket_catalog_version: int,
+    semantic_profiles: tuple[SemanticProfileIR, ...],
+    groups: Mapping[str, GroupIR],
+    local_attributes: Mapping[str, AttributeIR],
+) -> None:
+    structural_objects = (
+        contract.envelope,
+        contract.correlation,
+        contract.provenance,
+        contract.trace_body,
+        contract.trace_resource,
+        contract.trace_scope,
+        contract.trace_status,
+        contract.trace_event,
+        contract.trace_link,
+        contract.metric_instrument_data,
+    )
+    observed_pseudo_refs: dict[str, tuple[str, str]] = {}
+    for object_ir in structural_objects:
+        for field in object_ir.fields:
+            if field.semantic_ref is None:
+                continue
+            if field.semantic_ref in PSEUDO_SEMANTIC_REFS:
+                expected_placement = PSEUDO_SEMANTIC_REF_PLACEMENTS.get(field.semantic_ref)
+                placement = (object_ir.id, field.name)
+                if expected_placement != placement:
+                    raise RegistryError(
+                        f"structural contract {object_ir.id}.{field.name}: pseudo semantic_ref placement mismatch"
+                    )
+                if field.semantic_ref in observed_pseudo_refs:
+                    raise RegistryError(f"structural contract: duplicate pseudo semantic_ref {field.semantic_ref}")
+                observed_pseudo_refs[field.semantic_ref] = placement
+                continue
+            attribute = local_attributes.get(field.semantic_ref)
+            if attribute is not None:
+                if (
+                    field.field_type != attribute.field_type
+                    or field.field_class != attribute.field_class
+                    or field.sensitivity != attribute.sensitivity
+                    or field.normalization is None
+                    or field.normalization.id != attribute.normalization.id
+                    or field.normalization.effective_constraints != attribute.normalization.effective_constraints
+                ):
+                    raise RegistryError(f"structural contract {object_ir.id}.{field.name}: semantic attribute mismatch")
+                continue
+            group = groups.get(field.semantic_ref)
+            if group is None:
+                raise RegistryError(
+                    f"structural contract {object_ir.id}.{field.name}: unknown semantic_ref {field.semantic_ref}"
+                )
+            if field.field_type != "canonical_json" or group.type not in {"attribute_group", "resource"}:
+                raise RegistryError(f"structural contract {object_ir.id}.{field.name}: semantic group type mismatch")
+    missing_pseudo_refs = sorted(PSEUDO_SEMANTIC_REFS - observed_pseudo_refs.keys())
+    if missing_pseudo_refs:
+        raise RegistryError(f"structural contract: missing pseudo semantic_ref values {missing_pseudo_refs}")
+    schema_field = _structural_field(contract.envelope, "schema_version")
+    bucket_version_field = _structural_field(contract.envelope, "bucket_catalog_version")
+    if (
+        not schema_field.const_present
+        or schema_field.const != envelope_schema_version
+        or schema_field.normalization is None
+        or schema_field.normalization.effective_constraints
+        != MappingProxyType({"min": envelope_schema_version, "max": envelope_schema_version})
+    ):
+        raise RegistryError("structural contract: envelope schema_version binding mismatch")
+    if (
+        not bucket_version_field.const_present
+        or bucket_version_field.const != bucket_catalog_version
+        or bucket_version_field.normalization is None
+        or bucket_version_field.normalization.effective_constraints
+        != MappingProxyType({"min": bucket_catalog_version, "max": bucket_catalog_version})
+    ):
+        raise RegistryError("structural contract: bucket_catalog_version binding mismatch")
+    bucket_attribute = local_attributes.get("defenseclaw.bucket")
+    if bucket_attribute is None:
+        raise RegistryError("structural contract: defenseclaw.bucket attribute is missing")
+    bucket_enum = _structural_field(contract.envelope, "bucket").normalization.effective_constraints.get("enum")
+    if bucket_enum != bucket_attribute.normalization.effective_constraints.get("enum"):
+        raise RegistryError("structural contract: bucket vocabulary mismatch")
+    signal_enum = _structural_field(contract.envelope, "signal").normalization.effective_constraints.get("enum")
+    if signal_enum != ("logs", "traces", "metrics"):
+        raise RegistryError("structural contract: signal vocabulary mismatch")
+    if len(semantic_profiles) != 1:
+        raise RegistryError("structural contract: expected one semantic profile")
+    profile = semantic_profiles[0]
+    if profile.trace_schema_version != "defenseclaw-trace-v1":
+        raise RegistryError("structural contract: trace schema profile mismatch")
+    scope_name = _structural_field(contract.trace_scope, "name")
+    if not scope_name.const_present or scope_name.const != "defenseclaw.telemetry":
+        raise RegistryError("structural contract: instrumentation-scope name mismatch")
+    for group_id, group_type in (
+        ("resource.core", "resource"),
+        ("scope.core", "attribute_group"),
+        ("link.core", "attribute_group"),
+    ):
+        group = groups.get(group_id)
+        if group is None or group.type != group_type:
+            raise RegistryError(f"structural contract: {group_id} group is missing")
+    correlation_fields = {field.name for field in contract.correlation.fields}
+    arms_by_signal = {arm.signal: arm for arm in contract.signal_arms}
+    trace_arm = arms_by_signal.get("traces")
+    if trace_arm is None or trace_arm.required_correlation_fields != ("trace_id", "span_id"):
+        raise RegistryError("structural contract: traces require trace_id and span_id correlation")
+    if any(
+        field not in correlation_fields for arm in contract.signal_arms for field in arm.required_correlation_fields
+    ):
+        raise RegistryError("structural contract: signal arm references unknown correlation field")
+    if any(arm.required_correlation_fields for signal, arm in arms_by_signal.items() if signal != "traces"):
+        raise RegistryError("structural contract: only traces require correlation identity")
+    semantic_format_contract = {
+        "otel-trace-id-v1": (32, "^[0-9a-f]{32}$"),
+        "otel-span-id-v1": (16, "^[0-9a-f]{16}$"),
+    }
+    for object_ir in structural_objects:
+        for field in object_ir.fields:
+            if field.semantic_format is None:
+                continue
+            expected_max, expected_pattern = semantic_format_contract[field.semantic_format]
+            constraints = field.normalization.effective_constraints if field.normalization is not None else {}
+            if (
+                field.field_type != "string"
+                or field.normalization is None
+                or field.normalization.id != "digest-v1"
+                or constraints.get("max_utf8_bytes") != expected_max
+                or constraints.get("pattern") != expected_pattern
+            ):
+                raise RegistryError(f"structural contract {object_ir.id}.{field.name}: semantic-format mismatch")
+
+
+def _lifecycle_registry_version(value: str, path: str) -> int:
+    match = re.fullmatch(r"telemetry-registry-v([1-9][0-9]*)", value)
+    if match is None:
+        raise RegistryError(f"{path}: expected telemetry-registry-vN")
+    return int(match.group(1))
+
+
+def _validate_entity_lifecycle(
+    *,
+    entity: str,
+    introduced_in: str | None,
+    deprecated_in: str | None,
+    removed_in: str | None,
+    stability: str,
+    registry_version: int,
+) -> bool:
+    if introduced_in is None:
+        raise RegistryError(f"{entity}.introduced_in: required")
+    introduced = _lifecycle_registry_version(introduced_in, f"{entity}.introduced_in")
+    deprecated = (
+        _lifecycle_registry_version(deprecated_in, f"{entity}.deprecated_in") if deprecated_in is not None else None
+    )
+    removed = _lifecycle_registry_version(removed_in, f"{entity}.removed_in") if removed_in is not None else None
+    if introduced > registry_version:
+        raise RegistryError(f"{entity}.introduced_in: exceeds current registry version")
+    if deprecated is not None and deprecated < introduced:
+        raise RegistryError(f"{entity}.deprecated_in: precedes introduced_in")
+    if deprecated is not None and deprecated > registry_version:
+        raise RegistryError(f"{entity}.deprecated_in: exceeds current registry version")
+    if (stability == "deprecated") != (deprecated is not None):
+        raise RegistryError(f"{entity}: deprecated stability and deprecated_in must agree")
+    if removed is not None:
+        if deprecated is None:
+            raise RegistryError(f"{entity}.deprecated_in: required before removal")
+        if removed <= deprecated:
+            raise RegistryError(f"{entity}.removed_in: must follow deprecated_in")
+    return removed is None or registry_version < removed
 
 
 def compile_registry(root: Path) -> RegistryIR:
@@ -2355,6 +4505,9 @@ def compile_registry(root: Path) -> RegistryIR:
             "examples",
             "semantic_profiles",
             "normalizers",
+            "conditions",
+            "value_catalogs",
+            "structural_contract",
             "metric_defaults",
             "metric_compatibility_profiles",
         },
@@ -2376,6 +4529,13 @@ def compile_registry(root: Path) -> RegistryIR:
     producer_inventory, metric_inventory, inventory_digest = _parse_producer_inventory(root)
     normalizers = _parse_normalizer_catalog(registry["normalizers"], "registry.normalizers")
     normalizers_by_id = {item.id: item for item in normalizers}
+    conditions = _parse_conditions(registry["conditions"], "registry.conditions")
+    value_catalogs = _parse_value_catalogs(registry["value_catalogs"], "registry.value_catalogs")
+    structural_contract = _parse_structural_contract(
+        registry["structural_contract"],
+        "registry.structural_contract",
+        normalizers_by_id,
+    )
     metric_cardinality_limit, metric_compatibility_profile = _parse_metric_settings(
         registry["metric_defaults"],
         registry["metric_compatibility_profiles"],
@@ -2420,6 +4580,42 @@ def compile_registry(root: Path) -> RegistryIR:
         domain, digest = _parse_domain(root, relative, expected_domain, normalizers_by_id)
         domains.append(domain)
         domain_digests.append(digest)
+    active_domains: list[DomainIR] = []
+    for domain in domains:
+        active_attributes = tuple(
+            attribute
+            for attribute in domain.attributes
+            if _validate_entity_lifecycle(
+                entity=f"attribute {attribute.id}",
+                introduced_in=attribute.introduced_in,
+                deprecated_in=attribute.deprecated_in,
+                removed_in=attribute.removed_in,
+                stability=attribute.stability,
+                registry_version=registry_version,
+            )
+        )
+        active_groups: list[GroupIR] = []
+        for group in domain.groups:
+            active = _validate_entity_lifecycle(
+                entity=f"group {group.id}",
+                introduced_in=group.introduced_in,
+                deprecated_in=group.deprecated_in,
+                removed_in=group.removed_in,
+                stability=group.stability,
+                registry_version=registry_version,
+            )
+            if not active and group.route_selector is True:
+                raise RegistryError(f"group {group.id}: removed group cannot remain route-selectable")
+            if active:
+                active_groups.append(group)
+        active_domains.append(
+            replace(
+                domain,
+                attributes=active_attributes,
+                groups=tuple(active_groups),
+            )
+        )
+    domains = active_domains
     attribute_owners: dict[str, str] = {}
     upstream_attributes: dict[str, tuple[str, SnapshotAttribute]] = {}
     core_genai_overlaps = 0
@@ -2433,22 +4629,16 @@ def compile_registry(root: Path) -> RegistryIR:
                 prior_dependency, prior_attribute = prior
                 if prior_dependency == "otel_core" and dependency.id == "openinference":
                     if attribute.id not in {"session.id", "user.id"}:
-                        raise RegistryError(
-                            f"upstream attribute {attribute.id}: unexpected OpenInference overlap"
-                        )
+                        raise RegistryError(f"upstream attribute {attribute.id}: unexpected OpenInference overlap")
                     if (prior_attribute.allowed_types, prior_attribute.shape) != (
                         attribute.allowed_types,
                         attribute.shape,
                     ):
-                        raise RegistryError(
-                            f"upstream attribute {attribute.id}: OpenInference overlap type mismatch"
-                        )
+                        raise RegistryError(f"upstream attribute {attribute.id}: OpenInference overlap type mismatch")
                     openinference_core_overlaps.add(attribute.id)
                     continue
                 if prior_dependency != "otel_core" or dependency.id != "otel_genai":
-                    raise RegistryError(
-                        f"upstream attribute {attribute.id}: duplicate dependency ownership"
-                    )
+                    raise RegistryError(f"upstream attribute {attribute.id}: duplicate dependency ownership")
                 prior_shape = (
                     prior_attribute.allowed_types,
                     prior_attribute.shape,
@@ -2466,24 +4656,18 @@ def compile_registry(root: Path) -> RegistryIR:
                 if prior_attribute.deprecated:
                     core_genai_deprecated_overlaps += 1
                     if prior_attribute.stability != "deprecated" or attribute.deprecated:
-                        raise RegistryError(
-                            f"upstream attribute {attribute.id}: invalid GenAI ownership transition"
-                        )
+                        raise RegistryError(f"upstream attribute {attribute.id}: invalid GenAI ownership transition")
                     if prior_attribute.allowed_types != attribute.allowed_types:
                         disposition = EXPECTED_UPSTREAM_TYPE_MIGRATIONS.get(attribute.id)
                         if disposition is None:
-                            raise RegistryError(
-                                f"upstream attribute {attribute.id}: unreviewed type migration"
-                            )
+                            raise RegistryError(f"upstream attribute {attribute.id}: unreviewed type migration")
                         observed_type_migrations[attribute.id] = (
                             prior_attribute.allowed_types,
                             attribute.allowed_types,
                             disposition[2],
                         )
                 elif prior_shape != current_shape:
-                    raise RegistryError(
-                        f"upstream attribute {attribute.id}: active overlap is inconsistent"
-                    )
+                    raise RegistryError(f"upstream attribute {attribute.id}: active overlap is inconsistent")
                 core_genai_overlaps += 1
             upstream_attributes[attribute.id] = (dependency.id, attribute)
             attribute_owners[attribute.id] = _public_upstream_owner(dependency.id)
@@ -2496,18 +4680,12 @@ def compile_registry(root: Path) -> RegistryIR:
     legacy_core_genai = {
         attribute_id
         for attribute_id, (dependency_id, attribute) in upstream_attributes.items()
-        if dependency_id == "otel_core"
-        and attribute.deprecated
-        and attribute_id.startswith("gen_ai.")
+        if dependency_id == "otel_core" and attribute.deprecated and attribute_id.startswith("gen_ai.")
     }
     if len(legacy_core_genai) != 10:
         raise RegistryError("upstream legacy-only core GenAI inventory changed")
     for attribute_id, (dependency_id, attribute) in tuple(upstream_attributes.items()):
-        if (
-            dependency_id == "otel_core"
-            and attribute.deprecated
-            and attribute_id.startswith("gen_ai.")
-        ):
+        if dependency_id == "otel_core" and attribute.deprecated and attribute_id.startswith("gen_ai."):
             del upstream_attributes[attribute_id]
             del attribute_owners[attribute_id]
     upstream_attribute_ownership = tuple(
@@ -2521,17 +4699,25 @@ def compile_registry(root: Path) -> RegistryIR:
                 raise RegistryError(f"attribute {attribute.id}: duplicate ownership")
             attribute_owners[attribute.id] = domain.domain
             local_attributes[attribute.id] = attribute
+    _validate_value_catalog_attributes(value_catalogs, local_attributes)
     group_owners: dict[str, GroupIR] = {}
     for domain in domains:
         for group in domain.groups:
             if group.id in group_owners:
                 raise RegistryError(f"group {group.id}: duplicate ownership")
             group_owners[group.id] = group
+    _validate_condition_references(group_owners, conditions)
+    _validate_structural_contract_bindings(
+        structural_contract,
+        schema_version,
+        bucket_catalog_version,
+        semantic_profiles,
+        group_owners,
+        local_attributes,
+    )
     _validate_outcome_contracts(group_owners, local_attributes)
     log_event_names = [
-        group.event_name
-        for group in group_owners.values()
-        if group.type == "log" and group.event_name is not None
+        group.event_name for group in group_owners.values() if group.type == "log" and group.event_name is not None
     ]
     if len(log_event_names) != len(set(log_event_names)):
         raise RegistryError("log families: duplicate event_name")
@@ -2539,17 +4725,11 @@ def compile_registry(root: Path) -> RegistryIR:
     if compatibility_names != EXPECTED_COMPATIBILITY_LOG_IDENTITIES:
         raise RegistryError("log families: compatibility identity inventory mismatch")
     dotted_names = set(log_event_names) - compatibility_names
-    if len(dotted_names) != EXPECTED_DOTTED_LOG_IDENTITIES or any(
-        "." not in name for name in dotted_names
-    ):
-        raise RegistryError(
-            f"log families: expected {EXPECTED_DOTTED_LOG_IDENTITIES} canonical dotted identities"
-        )
+    if len(dotted_names) != EXPECTED_DOTTED_LOG_IDENTITIES or any("." not in name for name in dotted_names):
+        raise RegistryError(f"log families: expected {EXPECTED_DOTTED_LOG_IDENTITIES} canonical dotted identities")
     span_families = [group for group in group_owners.values() if group.type == "span"]
     if len(span_families) != EXPECTED_SPAN_FAMILIES:
-        raise RegistryError(
-            f"span families: expected {EXPECTED_SPAN_FAMILIES}, found {len(span_families)}"
-        )
+        raise RegistryError(f"span families: expected {EXPECTED_SPAN_FAMILIES}, found {len(span_families)}")
     producer_keys: dict[str, set[str]] = {producer: set() for producer in EXPECTED_PRODUCER_COUNTS}
     for domain in domains:
         for mapping in domain.producer_mappings:
@@ -2560,9 +4740,7 @@ def compile_registry(root: Path) -> RegistryIR:
         if producer_keys[producer] != expected:
             missing = sorted(expected - producer_keys[producer])
             extra = sorted(producer_keys[producer] - expected)
-            raise RegistryError(
-                f"producer mappings {producer}: inventory mismatch missing={missing} extra={extra}"
-            )
+            raise RegistryError(f"producer mappings {producer}: inventory mismatch missing={missing} extra={extra}")
     for domain in domains:
         for attribute in domain.attributes:
             if attribute.alias_of is not None and attribute.alias_of not in attribute_owners:
@@ -2578,9 +4756,7 @@ def compile_registry(root: Path) -> RegistryIR:
                     or attribute.removed_in is None
                     or attribute.owner != "defenseclaw"
                 ):
-                    raise RegistryError(
-                        f"attribute {attribute.id}: invalid projection-only alias lifecycle"
-                    )
+                    raise RegistryError(f"attribute {attribute.id}: invalid projection-only alias lifecycle")
             elif attribute.alias_of is not None:
                 raise RegistryError(f"attribute {attribute.id}: aliases must be projection-only")
             if attribute.id.startswith("gen_ai."):
@@ -2601,22 +4777,17 @@ def compile_registry(root: Path) -> RegistryIR:
                     raise RegistryError(f"group {group.id}: unknown attribute reference")
                 local_attribute = local_attributes.get(reference)
                 if local_attribute is not None and local_attribute.projection_only:
-                    raise RegistryError(
-                        f"group {group.id}: projection-only alias cannot be a canonical field"
-                    )
+                    raise RegistryError(f"group {group.id}: projection-only alias cannot be a canonical field")
             for event in group.event_refs or ():
                 if event.startswith("event."):
-                    raise RegistryError(
-                        f"group {group.id}: events must use public names without event. prefix"
-                    )
+                    raise RegistryError(f"group {group.id}: events must use public names without event. prefix")
                 target = group_owners.get(f"event.{event}")
                 if target is None or target.type != "span_event":
                     raise RegistryError(f"group {group.id}: unknown span-event reference")
         for mapping in domain.producer_mappings:
             identities = (
-                (() if mapping.default_identity is None else (mapping.default_identity,))
-                + mapping.allowed_context_identities
-            )
+                () if mapping.default_identity is None else (mapping.default_identity,)
+            ) + mapping.allowed_context_identities
             for identity in identities:
                 if identity.compatibility_only:
                     continue
@@ -2624,9 +4795,7 @@ def compile_registry(root: Path) -> RegistryIR:
                 if target is None or target.type != "log":
                     raise RegistryError(f"producer mapping: unknown log family {identity.family}")
                 if target.event_name != identity.event_name:
-                    raise RegistryError(
-                        f"producer mapping {identity.event_name}: family event_name mismatch"
-                    )
+                    raise RegistryError(f"producer mapping {identity.event_name}: family event_name mismatch")
                 if target.bucket != identity.bucket:
                     raise RegistryError(f"producer mapping {identity.event_name}: family bucket mismatch")
     upstream_extensions: dict[str, AttributeExtensionIR] = {}
@@ -2635,9 +4804,7 @@ def compile_registry(root: Path) -> RegistryIR:
             if extension.ref in upstream_extensions:
                 raise RegistryError(f"attribute extension {extension.ref}: duplicate extension")
             if extension.ref not in upstream_attributes:
-                raise RegistryError(
-                    f"attribute extension {extension.ref}: expected canonical upstream attribute"
-                )
+                raise RegistryError(f"attribute extension {extension.ref}: expected canonical upstream attribute")
             upstream = upstream_attributes[extension.ref][1]
             _validate_normalization_compatibility(
                 extension.normalization,
@@ -2655,9 +4822,7 @@ def compile_registry(root: Path) -> RegistryIR:
     if set(upstream_extensions) != referenced_upstream:
         missing = sorted(referenced_upstream - set(upstream_extensions))
         unreferenced = sorted(set(upstream_extensions) - referenced_upstream)
-        raise RegistryError(
-            f"attribute extensions: coverage mismatch missing={missing} unreferenced={unreferenced}"
-        )
+        raise RegistryError(f"attribute extensions: coverage mismatch missing={missing} unreferenced={unreferenced}")
     _validate_attribute_use_constraints(
         group_owners,
         local_attributes,
@@ -2665,13 +4830,9 @@ def compile_registry(root: Path) -> RegistryIR:
         upstream_attributes,
     )
     _validate_alias_cycles(domains)
-    resolved_domains, group_resolution_order, resolved_group_uses = _resolve_group_uses(
-        tuple(domains)
-    )
+    resolved_domains, group_resolution_order, resolved_group_uses = _resolve_group_uses(tuple(domains))
     domains = list(resolved_domains)
-    group_owners = {
-        group.id: group for domain in domains for group in domain.groups
-    }
+    group_owners = {group.id: group for domain in domains for group in domain.groups}
     _validate_metric_attribute_safety(
         group_owners,
         local_attributes,
@@ -2696,6 +4857,10 @@ def compile_registry(root: Path) -> RegistryIR:
         group_owners,
         local_attributes,
         upstream_extensions,
+        upstream_attributes,
+        structural_contract,
+        value_catalogs,
+        semantic_profiles,
     )
     registry_raw, _ = _read_utf8(registry_path)
     registry_digest = InputDigest("schemas/telemetry/v8/registry.yaml", _sha256(registry_raw))
@@ -2718,6 +4883,9 @@ def compile_registry(root: Path) -> RegistryIR:
         dependencies=dependencies,
         semantic_profiles=semantic_profiles,
         normalizers=normalizers,
+        conditions=conditions,
+        value_catalogs=value_catalogs,
+        structural_contract=structural_contract,
         metric_cardinality_limit=metric_cardinality_limit,
         metric_compatibility_profile=metric_compatibility_profile,
         domains=tuple(domains),
@@ -2764,72 +4932,51 @@ def _intersect_use_constraints(
                     result["enum"] = incoming
                 else:
                     allowed = {enum_marker(item) for item in incoming}
-                    result["enum"] = tuple(
-                        item for item in result["enum"] if enum_marker(item) in allowed
-                    )
+                    result["enum"] = tuple(item for item in result["enum"] if enum_marker(item) in allowed)
                 if not result["enum"]:
-                    raise RegistryError(
-                        f"group {group_id}: empty enum intersection for {reference}"
-                    )
+                    raise RegistryError(f"group {group_id}: empty enum intersection for {reference}")
             elif key == "pattern":
                 if "pattern" in result and result["pattern"] != value:
-                    raise RegistryError(
-                        f"group {group_id}: nonrepresentable pattern intersection for {reference}"
-                    )
+                    raise RegistryError(f"group {group_id}: nonrepresentable pattern intersection for {reference}")
                 result["pattern"] = value
             elif key in minimum_keys:
                 result[key] = value if key not in result else max(result[key], value)
             elif key in maximum_keys:
                 result[key] = value if key not in result else min(result[key], value)
             else:
-                raise RegistryError(
-                    f"group {group_id}: unsupported merged constraint {key} for {reference}"
-                )
+                raise RegistryError(f"group {group_id}: unsupported merged constraint {key} for {reference}")
     for minimum, maximum in (("min", "max"), ("min_items", "max_items")):
         if minimum in result and maximum in result and result[minimum] > result[maximum]:
-            raise RegistryError(
-                f"group {group_id}: inconsistent {minimum}/{maximum} intersection for {reference}"
-            )
+            raise RegistryError(f"group {group_id}: inconsistent {minimum}/{maximum} intersection for {reference}")
     if (
         "max_item_utf8_bytes" in result
         and "max_utf8_bytes" in result
         and result["max_item_utf8_bytes"] > result["max_utf8_bytes"]
     ):
-        raise RegistryError(
-            f"group {group_id}: incompatible UTF-8 bounds for {reference}"
-        )
+        raise RegistryError(f"group {group_id}: incompatible UTF-8 bounds for {reference}")
     if "enum" in result:
         enum_values = result["enum"]
         if "pattern" in result:
             pattern = re.compile(result["pattern"])
             enum_values = tuple(
-                value
-                for value in enum_values
-                if isinstance(value, str) and pattern.fullmatch(value) is not None
+                value for value in enum_values if isinstance(value, str) and pattern.fullmatch(value) is not None
             )
         if "min" in result:
             enum_values = tuple(
-                value
-                for value in enum_values
-                if type(value) in {int, float} and value >= result["min"]
+                value for value in enum_values if type(value) in {int, float} and value >= result["min"]
             )
         if "max" in result:
             enum_values = tuple(
-                value
-                for value in enum_values
-                if type(value) in {int, float} and value <= result["max"]
+                value for value in enum_values if type(value) in {int, float} and value <= result["max"]
             )
         if "max_utf8_bytes" in result:
             enum_values = tuple(
                 value
                 for value in enum_values
-                if not isinstance(value, str)
-                or len(value.encode("utf-8")) <= result["max_utf8_bytes"]
+                if not isinstance(value, str) or len(value.encode("utf-8")) <= result["max_utf8_bytes"]
             )
         if not enum_values:
-            raise RegistryError(
-                f"group {group_id}: empty constrained enum intersection for {reference}"
-            )
+            raise RegistryError(f"group {group_id}: empty constrained enum intersection for {reference}")
         result["enum"] = enum_values
     return _freeze_mapping(result)
 
@@ -2864,9 +5011,7 @@ def _resolve_group_uses(
             resolved_role = "body_fields"
         elif group.type == "log":
             if len(group.extends) != 1:
-                raise RegistryError(
-                    f"group {group.id}: log must extend exactly one body_group"
-                )
+                raise RegistryError(f"group {group.id}: log must extend exactly one body_group")
             allowed_parent_types = {"body_group"}
             resolved_role = "body_fields"
         else:
@@ -2889,21 +5034,15 @@ def _resolve_group_uses(
             if parent is None:
                 raise RegistryError(f"group {group.id}: unknown extends reference {parent_id}")
             if parent.type not in allowed_parent_types:
-                raise RegistryError(
-                    f"group {group.id}: incompatible {parent.type} parent {parent_id}"
-                )
+                raise RegistryError(f"group {group.id}: incompatible {parent.type} parent {parent_id}")
             for inherited in visit(parent_id):
                 if resolved_role == "attributes" and inherited.role != "attributes":
-                    raise RegistryError(
-                        f"group {group.id}: body role crosses into attribute family via {parent_id}"
-                    )
+                    raise RegistryError(f"group {group.id}: body role crosses into attribute family via {parent_id}")
                 contribute(inherited.ref, inherited.origins)
 
         for direct in group.attribute_uses:
             if resolved_role == "attributes" and direct.role != "attributes":
-                raise RegistryError(
-                    f"group {group.id}: body_fields are not allowed for {group.type}"
-                )
+                raise RegistryError(f"group {group.id}: body_fields are not allowed for {group.type}")
             origin = AttributeUseOriginIR(
                 group.id,
                 direct.role,
@@ -2923,16 +5062,10 @@ def _resolve_group_uses(
             conditional = None
             if dominant == "conditional":
                 clauses = tuple(
-                    dict.fromkeys(
-                        origin.conditional
-                        for origin in origins
-                        if origin.requirement_level == "conditional"
-                    )
+                    dict.fromkeys(origin.conditional for origin in origins if origin.requirement_level == "conditional")
                 )
                 if len(clauses) != 1 or clauses[0] is None:
-                    raise RegistryError(
-                        f"group {group.id}: conflicting dominant conditional clauses for {reference}"
-                    )
+                    raise RegistryError(f"group {group.id}: conflicting dominant conditional clauses for {reference}")
                 conditional = clauses[0]
             materialized.append(
                 ResolvedAttributeUseIR(
@@ -2956,9 +5089,7 @@ def _resolve_group_uses(
     updated_domains = tuple(
         replace(
             domain,
-            groups=tuple(
-                replace(group, resolved_uses=resolved[group.id]) for group in domain.groups
-            ),
+            groups=tuple(replace(group, resolved_uses=resolved[group.id]) for group in domain.groups),
         )
         for domain in domains
     )
@@ -2991,8 +5122,10 @@ def _validate_outcome_contracts(
     if outcome_attribute is None:
         raise RegistryError("attribute defenseclaw.outcome: canonical outcome enum is missing")
     raw_vocabulary = outcome_attribute.normalization.effective_constraints.get("enum")
-    if not isinstance(raw_vocabulary, tuple) or not raw_vocabulary or not all(
-        isinstance(item, str) for item in raw_vocabulary
+    if (
+        not isinstance(raw_vocabulary, tuple)
+        or not raw_vocabulary
+        or not all(isinstance(item, str) for item in raw_vocabulary)
     ):
         raise RegistryError("attribute defenseclaw.outcome: expected ordered string enum")
     vocabulary = tuple(raw_vocabulary)
@@ -3002,37 +5135,23 @@ def _validate_outcome_contracts(
     for group in groups.values():
         if group.type in {"log", "span"}:
             if group.outcome_requirement is None or group.allowed_outcomes is None:
-                raise RegistryError(
-                    f"group {group.id}: logs/spans require outcome_requirement and allowed_outcomes"
-                )
+                raise RegistryError(f"group {group.id}: logs/spans require outcome_requirement and allowed_outcomes")
             if group.outcome_requirement == "forbidden":
                 if group.allowed_outcomes:
-                    raise RegistryError(
-                        f"group {group.id}: forbidden outcome requires an empty allowed_outcomes"
-                    )
+                    raise RegistryError(f"group {group.id}: forbidden outcome requires an empty allowed_outcomes")
                 continue
             if not group.allowed_outcomes:
-                raise RegistryError(
-                    f"group {group.id}: required/optional outcome requires nonempty allowed_outcomes"
-                )
+                raise RegistryError(f"group {group.id}: required/optional outcome requires nonempty allowed_outcomes")
             unknown = [item for item in group.allowed_outcomes if item not in positions]
             if unknown:
-                raise RegistryError(
-                    f"group {group.id}: allowed_outcomes contains unknown outcome values {unknown}"
-                )
+                raise RegistryError(f"group {group.id}: allowed_outcomes contains unknown outcome values {unknown}")
             indexes = tuple(positions[item] for item in group.allowed_outcomes)
             if indexes != tuple(sorted(indexes)):
-                raise RegistryError(
-                    f"group {group.id}: allowed_outcomes must follow defenseclaw.outcome order"
-                )
+                raise RegistryError(f"group {group.id}: allowed_outcomes must follow defenseclaw.outcome order")
             if group.allowed_outcomes == vocabulary:
-                raise RegistryError(
-                    f"group {group.id}: globally broad allowed_outcomes is forbidden"
-                )
+                raise RegistryError(f"group {group.id}: globally broad allowed_outcomes is forbidden")
         elif group.outcome_requirement is not None or group.allowed_outcomes is not None:
-            raise RegistryError(
-                f"group {group.id}: outcome contract is allowed only on logs/spans"
-            )
+            raise RegistryError(f"group {group.id}: outcome contract is allowed only on logs/spans")
 
 
 def _validate_attribute_use_constraints(
@@ -3060,13 +5179,9 @@ def _validate_attribute_use_constraints(
                 shape = upstream.shape
                 normalization = extension.normalization
             else:
-                raise RegistryError(
-                    f"group {group.id}: constrained attribute {use.ref} has no metadata"
-                )
+                raise RegistryError(f"group {group.id}: constrained attribute {use.ref} has no metadata")
             types = set(field_types)
-            structured = shape in {"any_value", "indexed_prefix", "object_prefix"} or bool(
-                types & {"object", "array"}
-            )
+            structured = shape in {"any_value", "indexed_prefix", "object_prefix"} or bool(types & {"object", "array"})
             constraints = use.constraints
             if "enum" in constraints:
                 enum_types = types or {"object"}
@@ -3075,52 +5190,28 @@ def _validate_attribute_use_constraints(
                         (type(value) is str and bool(enum_types & string_types))
                         or (type(value) is bool and bool(enum_types & {"boolean", "boolean[]"}))
                         or (type(value) is int and bool(enum_types & numeric_types))
-                        or (
-                            type(value) is float
-                            and bool(enum_types & {"double", "double[]"})
-                        )
+                        or (type(value) is float and bool(enum_types & {"double", "double[]"}))
                     )
                     if not compatible:
-                        raise RegistryError(
-                            f"group {group.id}: constraint enum type is incompatible with {use.ref}"
-                        )
+                        raise RegistryError(f"group {group.id}: constraint enum type is incompatible with {use.ref}")
             if "pattern" in constraints and not types.issubset(string_types):
-                raise RegistryError(
-                    f"group {group.id}: pattern constraint is incompatible with {use.ref}"
-                )
+                raise RegistryError(f"group {group.id}: pattern constraint is incompatible with {use.ref}")
             if ({"min", "max"} & constraints.keys()) and not types.issubset(numeric_types):
-                raise RegistryError(
-                    f"group {group.id}: numeric constraint is incompatible with {use.ref}"
-                )
+                raise RegistryError(f"group {group.id}: numeric constraint is incompatible with {use.ref}")
             if types & {"int64", "int64[]"} and any(
-                key in constraints and type(constraints[key]) is not int
-                for key in ("min", "max")
+                key in constraints and type(constraints[key]) is not int for key in ("min", "max")
             ):
-                raise RegistryError(
-                    f"group {group.id}: int64 use constraints must be exact integers for {use.ref}"
-                )
-            if ({"min_items", "max_items"} & constraints.keys()) and not (
-                bool(types & array_types) or structured
-            ):
-                raise RegistryError(
-                    f"group {group.id}: item constraint is incompatible with {use.ref}"
-                )
+                raise RegistryError(f"group {group.id}: int64 use constraints must be exact integers for {use.ref}")
+            if ({"min_items", "max_items"} & constraints.keys()) and not (bool(types & array_types) or structured):
+                raise RegistryError(f"group {group.id}: item constraint is incompatible with {use.ref}")
             if ({"max_utf8_bytes"} & constraints.keys()) and not (
                 bool(types & (string_types | {"bytes"})) or structured
             ):
-                raise RegistryError(
-                    f"group {group.id}: byte constraint is incompatible with {use.ref}"
-                )
-            if ({"max_item_utf8_bytes"} & constraints.keys()) and not (
-                "string[]" in types or structured
-            ):
-                raise RegistryError(
-                    f"group {group.id}: per-item byte constraint is incompatible with {use.ref}"
-                )
+                raise RegistryError(f"group {group.id}: byte constraint is incompatible with {use.ref}")
+            if ({"max_item_utf8_bytes"} & constraints.keys()) and not ("string[]" in types or structured):
+                raise RegistryError(f"group {group.id}: per-item byte constraint is incompatible with {use.ref}")
             if ({"max_depth", "max_properties"} & constraints.keys()) and not structured:
-                raise RegistryError(
-                    f"group {group.id}: structured constraint is incompatible with {use.ref}"
-                )
+                raise RegistryError(f"group {group.id}: structured constraint is incompatible with {use.ref}")
             effective = normalization.effective_constraints
             for maximum in (
                 "max",
@@ -3130,29 +5221,17 @@ def _validate_attribute_use_constraints(
                 "max_depth",
                 "max_properties",
             ):
-                if (
-                    maximum in constraints
-                    and maximum in effective
-                    and constraints[maximum] > effective[maximum]
-                ):
-                    raise RegistryError(
-                        f"group {group.id}: {maximum} weakens normalization for {use.ref}"
-                    )
+                if maximum in constraints and maximum in effective and constraints[maximum] > effective[maximum]:
+                    raise RegistryError(f"group {group.id}: {maximum} weakens normalization for {use.ref}")
             for minimum in ("min", "min_items"):
-                if (
-                    minimum in constraints
-                    and minimum in effective
-                    and constraints[minimum] < effective[minimum]
-                ):
-                    raise RegistryError(
-                        f"group {group.id}: {minimum} weakens normalization for {use.ref}"
-                    )
-            if "enum" in constraints and "enum" in effective and not set(
-                constraints["enum"]
-            ).issubset(effective["enum"]):
-                raise RegistryError(
-                    f"group {group.id}: enum constraint weakens normalization for {use.ref}"
-                )
+                if minimum in constraints and minimum in effective and constraints[minimum] < effective[minimum]:
+                    raise RegistryError(f"group {group.id}: {minimum} weakens normalization for {use.ref}")
+            if (
+                "enum" in constraints
+                and "enum" in effective
+                and not set(constraints["enum"]).issubset(effective["enum"])
+            ):
+                raise RegistryError(f"group {group.id}: enum constraint weakens normalization for {use.ref}")
 
 
 def _validate_metric_attribute_safety(
@@ -3178,9 +5257,7 @@ def _validate_metric_attribute_safety(
         labels = frozenset(use.ref for use in group.resolved_uses)
         if bool(labels) == bool(group.empty_labels_reason):
             requirement = "forbidden" if labels else "required"
-            raise RegistryError(
-                f"metric {group.id}: empty_labels_reason is {requirement} for this label set"
-            )
+            raise RegistryError(f"metric {group.id}: empty_labels_reason is {requirement} for this label set")
         projections_by_profile = {item.profile: item for item in group.metric_projections}
         projection = projections_by_profile.get(compatibility_profile.id)
         projected = set(labels)
@@ -3188,9 +5265,7 @@ def _validate_metric_attribute_safety(
             mappings = dict(projection.mappings)
             unknown = mappings.keys() - labels
             if unknown:
-                raise RegistryError(
-                    f"metric {group.id}: projection references unknown labels {sorted(unknown)}"
-                )
+                raise RegistryError(f"metric {group.id}: projection references unknown labels {sorted(unknown)}")
             projected = {mappings.get(reference, reference) for reference in labels}
             if len(projected) != len(labels):
                 raise RegistryError(f"metric {group.id}: projected label collision")
@@ -3202,8 +5277,7 @@ def _validate_metric_attribute_safety(
             )
         if group.metric_unit != inventory.unit:
             raise RegistryError(
-                f"metric {group.id}: unit {group.metric_unit!r} differs from "
-                f"current inventory {inventory.unit!r}"
+                f"metric {group.id}: unit {group.metric_unit!r} differs from current inventory {inventory.unit!r}"
             )
         if projected != inventory.labels:
             raise RegistryError(
@@ -3222,9 +5296,7 @@ def _validate_metric_attribute_safety(
                 normalization = local.normalization
                 field_types = (local.field_type,)
                 if not reference.startswith("defenseclaw."):
-                    raise RegistryError(
-                        f"metric {group.id}: local canonical label {reference} must use defenseclaw.*"
-                    )
+                    raise RegistryError(f"metric {group.id}: local canonical label {reference} must use defenseclaw.*")
             elif extension is not None:
                 field_class = extension.field_class
                 cardinality = extension.cardinality
@@ -3242,18 +5314,14 @@ def _validate_metric_attribute_safety(
             if set(field_types) & {"string", "string[]"}:
                 if normalization.id not in {"enum-v1", "bounded-v1", "identifier-v1"}:
                     raise RegistryError(
-                        f"metric {group.id}: string label {reference} uses unbounded normalizer "
-                        f"{normalization.id}"
+                        f"metric {group.id}: string label {reference} uses unbounded normalizer {normalization.id}"
                     )
                 if "max_utf8_bytes" not in normalization.effective_constraints:
-                    raise RegistryError(
-                        f"metric {group.id}: string label {reference} lacks max_utf8_bytes"
-                    )
+                    raise RegistryError(f"metric {group.id}: string label {reference} lacks max_utf8_bytes")
         if high_labels:
             profile_exceptions[group.instrument_name] = labels
     configured_exceptions = {
-        family: frozenset(labels)
-        for family, labels in compatibility_profile.high_cardinality_families.items()
+        family: frozenset(labels) for family, labels in compatibility_profile.high_cardinality_families.items()
     }
     if profile_exceptions != configured_exceptions:
         missing = sorted(profile_exceptions.keys() - configured_exceptions.keys())
@@ -3287,15 +5355,8 @@ def _validate_span_name_patterns(
         for _, placeholder, format_spec, conversion in parts:
             if placeholder is None:
                 continue
-            if (
-                not _ID.fullmatch(placeholder)
-                or format_spec
-                or conversion is not None
-                or placeholder not in available
-            ):
-                raise RegistryError(
-                    f"span {group.id}: unresolved or transformed name placeholder {placeholder!r}"
-                )
+            if not _ID.fullmatch(placeholder) or format_spec or conversion is not None or placeholder not in available:
+                raise RegistryError(f"span {group.id}: unresolved or transformed name placeholder {placeholder!r}")
             local = local_attributes.get(placeholder)
             extension = upstream_extensions.get(placeholder)
             if local is not None:
@@ -3322,10 +5383,7 @@ def render_outputs(ir: RegistryIR) -> dict[Path, bytes]:
         "registry_version": ir.registry_version,
         "bucket_catalog_version": ir.bucket_catalog_version,
         "canonical_import_order": list(ir.imports),
-        "inputs": [
-            {"path": item.path, "sha256": item.sha256}
-            for item in ir.input_digests
-        ],
+        "inputs": [{"path": item.path, "sha256": item.sha256} for item in ir.input_digests],
         "snapshots": [
             {
                 "dependency_id": dependency.id,

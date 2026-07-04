@@ -129,6 +129,7 @@ Section references are to this specification package.
 | P-066 | 03 §§4.4-4.4.1 | 07 §13 |
 | P-067 | 12 §5.2.1 | 07 §§2,9.6 |
 | P-068 | 12 §§6.5,13 | 07 §§2,9.6 |
+| P-069 | 02 §§3-3.6; 11 §§5-6; 12 §§4-6.1,8,10-12 | 07 §§2,3.4,9.1,9.3,9.6; generated builder/bundle/OTLP conformance |
 
 ## 5. Review use
 

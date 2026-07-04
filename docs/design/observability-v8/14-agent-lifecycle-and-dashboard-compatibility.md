@@ -153,6 +153,12 @@ Existing numbers MUST NEVER be renumbered because historical Prometheus samples
 and live samples share the same Grafana value mapping. A new phase appends a new
 code; it never reuses a retired code.
 
+The pre-v8 PR #403 Galileo test vector that paired `phase=model` with
+`previous_phase=turn` and `code=4` is intentionally corrected to
+`phase=model`, `previous_phase=planning`, and `code=3`. `turn` is a lifecycle
+event, not a phase, and code 4 is permanently `tool`; the invalid fixture is not a
+legacy alias and MUST NOT be accepted or reproduced by migration.
+
 `defenseclaw.agent.sequence` is monotonically increasing within one execution and
 orders normalized hook observations when timestamps tie or arrive close together.
 A derived observation such as `hook_decision` MUST reuse the operation's identity

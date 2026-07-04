@@ -87,7 +87,8 @@ func TestProjectAcceptsExactRichV2Shapes(t *testing.T) {
 			name: "workflow", bucket: observability.BucketAgentLifecycle, family: "span.workflow.run",
 			spanName: "workflow retrieval-turn", kind: "INTERNAL", wantShape: ShapeWorkflow, wantOIKind: "CHAIN",
 			attributes: map[string]any{
-				"input.value": "turn input", "output.value": "turn output",
+				"defenseclaw.workflow.name": "retrieval-turn",
+				"input.value":               "turn input", "output.value": "turn output",
 			},
 		},
 		{
@@ -131,6 +132,9 @@ func TestProjectAcceptsExactRichV2Shapes(t *testing.T) {
 			}
 			if test.family == "span.guardrail.judge" && attrs["defenseclaw.guardrail.judge"] != true {
 				t.Fatal("judge marker missing")
+			}
+			if test.family == "span.workflow.run" && attrs["defenseclaw.workflow.name"] != "retrieval-turn" {
+				t.Fatalf("workflow name = %#v", attrs["defenseclaw.workflow.name"])
 			}
 			first, _ := result.Bytes()
 			second, _ := Project(projection, Limits{}).Bytes()
@@ -250,6 +254,43 @@ func TestProjectRejectsSchemaMissAndNativeNonGalileoShapes(t *testing.T) {
 	if got := Project(wrongOperation, Limits{}); got.Reason() != ReasonUnsupportedShape {
 		t.Fatalf("wrong operation reason = %q", got.Reason())
 	}
+
+	for _, test := range []struct {
+		name       string
+		spanName   string
+		attributes map[string]any
+		missing    []string
+	}{
+		{
+			name: "missing workflow name", spanName: "workflow retrieval-turn",
+			attributes: map[string]any{}, missing: []string{"defenseclaw.workflow.name"},
+		},
+		{
+			name: "unbounded workflow name", spanName: "workflow " + strings.Repeat("a", 129),
+			attributes: map[string]any{"defenseclaw.workflow.name": strings.Repeat("a", 129)},
+			missing:    []string{"defenseclaw.workflow.name"},
+		},
+		{
+			name: "invalid workflow token", spanName: "workflow Retrieval Turn",
+			attributes: map[string]any{"defenseclaw.workflow.name": "Retrieval Turn"},
+			missing:    []string{"defenseclaw.workflow.name"},
+		},
+		{
+			name: "rendered workflow name mismatch", spanName: "workflow other-turn",
+			attributes: map[string]any{"defenseclaw.workflow.name": "retrieval-turn"},
+			missing:    []string{"span_name"},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			projection := projectRecord(t, observability.BucketAgentLifecycle, "span.workflow.run", test.spanName, map[string]any{
+				"kind": "INTERNAL", "attributes": test.attributes,
+			}, redaction.ProfileNone)
+			got := Project(projection, Limits{})
+			if got.Eligible() || got.Reason() != ReasonSchemaMissingRequired || !reflect.DeepEqual(got.MissingFields(), test.missing) {
+				t.Fatalf("workflow result = eligible:%v reason:%q missing:%v", got.Eligible(), got.Reason(), got.MissingFields())
+			}
+		})
+	}
 }
 
 func TestProjectPreservesLifecycleCorrelationAndSafeSecurityEvents(t *testing.T) {
@@ -264,8 +305,8 @@ func TestProjectPreservesLifecycleCorrelationAndSafeSecurityEvents(t *testing.T)
 			"defenseclaw.agent.root.id": "root", "defenseclaw.agent.parent.id": "parent",
 			"defenseclaw.agent.lifecycle.id": "life", "defenseclaw.agent.execution.id": "exec",
 			"defenseclaw.agent.lifecycle.event": "subagent_start", "defenseclaw.agent.lifecycle.state": "active",
-			"defenseclaw.agent.phase": "model", "defenseclaw.agent.phase.previous": "turn",
-			"defenseclaw.agent.phase.code": 4, "defenseclaw.agent.sequence": 7, "defenseclaw.agent.depth": 2,
+			"defenseclaw.agent.phase": "model", "defenseclaw.agent.phase.previous": "planning",
+			"defenseclaw.agent.phase.code": 3, "defenseclaw.agent.sequence": 7, "defenseclaw.agent.depth": 2,
 			"defenseclaw.session.root.id": "root-session", "defenseclaw.session.parent.id": "parent-session",
 			"defenseclaw.session.source": "claude-code", "defenseclaw.session.resumed": true,
 			"defenseclaw.operation.id": "operation", "defenseclaw.turn.id": "turn",

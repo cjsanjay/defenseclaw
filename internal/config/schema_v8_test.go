@@ -48,15 +48,16 @@ func TestConfigV8SchemaClassifiesEveryTopLevelGoConfigField(t *testing.T) {
 	}
 }
 
-func TestObservabilityV8SemanticProfileLockRejectsDrift(t *testing.T) {
+func TestObservabilityV8SemanticProfileLockRejectsCapabilityAndRelationalDrift(t *testing.T) {
 	profiles := publicschemas.TelemetryV8Registry()
 	lock := publicschemas.TelemetryV8SemconvLock()
 	if err := validateObservabilityV8SemanticLockDocuments(profiles, lock); err != nil {
 		t.Fatalf("embedded semantic lock is inconsistent: %v", err)
 	}
 	driftedProfile := bytes.Replace(profiles, []byte("galileo-rich-v2"), []byte("galileo-rich-v3"), 1)
-	if err := validateObservabilityV8SemanticLockDocuments(driftedProfile, lock); err == nil {
-		t.Fatal("semantic profile drift was accepted")
+	if _, err := resolveObservabilityV8SemanticLockDocuments(driftedProfile, lock); err == nil ||
+		!strings.Contains(err.Error(), "unsupported by compiled runtime capabilities") {
+		t.Fatalf("Galileo capability drift error = %v", err)
 	}
 	driftedLock := bytes.Replace(lock, []byte("b028dceecdad117461a785c3af35315e7184e813"), []byte("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"), 1)
 	if err := validateObservabilityV8SemanticLockDocuments(profiles, driftedLock); err == nil {

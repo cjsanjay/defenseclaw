@@ -37,7 +37,7 @@ def test_observability_v8_spec_is_complete_and_traceable() -> None:
     result = _run()
 
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "D=22 S=12 P=68 total=102" in result.stdout
+    assert "D=22 S=12 P=69 total=103" in result.stdout
 
 
 def test_observability_v8_redaction_contract_locks_machine_boundaries() -> None:
@@ -52,8 +52,34 @@ def test_observability_v8_redaction_contract_locks_machine_boundaries() -> None:
     assert "unicode-age-13.0.json" in redaction
     assert "projection_context_mismatch" in redaction
     assert "one shared success/error fixture" in redaction
-    assert "`P-001` through `P-068`" in verification
+    assert "`P-001` through `P-069`" in verification
     assert "| P-038 | 04 §7.6 | 07 §6.3 |" in traceability
+
+
+def test_observability_v8_structural_contract_is_normative() -> None:
+    taxonomy = (PACKAGE / "02-taxonomy-and-data-model.md").read_text(encoding="utf-8")
+    verification = (PACKAGE / "07-verification-and-acceptance.md").read_text(
+        encoding="utf-8",
+    )
+    decisions = (PACKAGE / "08-decisions-and-exclusions.md").read_text(encoding="utf-8")
+    traces = (PACKAGE / "11-trace-and-span-contract.md").read_text(encoding="utf-8")
+    schemas = (PACKAGE / "12-telemetry-schema-architecture.md").read_text(encoding="utf-8")
+    traceability = (PACKAGE / "13-decision-traceability.md").read_text(encoding="utf-8")
+
+    assert "| P-069 | Define one typed `registry.yaml` `structural_contract`" in decisions
+    assert "| P-069 | 02 §§3-3.6; 11 §§5-6; 12 §§4-6.1,8,10-12 |" in traceability
+    assert "`/body/message` and" in taxonomy
+    assert "`instrument_data` object is exactly `{value, attributes}`" in taxonomy
+    assert "`start_time_unix_nano`" in traces
+    assert "Span, event, link, resource, and scope dropped" in verification
+    assert "workflow {defenseclaw.workflow.name}" in traces
+    assert "id: defenseclaw.canonical-record" in schemas
+    assert "connector-known-v1" in schemas
+    assert "admin-principal-known-v1" in schemas
+    assert "agent-phase-v1" in schemas
+    assert "kind: string-int64-bijection" in schemas
+    assert "Complete single-fault examples" in schemas
+    assert "Candidate-bundle acceptance" in verification
 
 
 def test_observability_v8_delivery_contract_locks_machine_boundaries() -> None:

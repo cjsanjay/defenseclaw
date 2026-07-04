@@ -295,8 +295,8 @@ monotone; source order or a nearest-parent override never weakens a requirement.
 - Repeated references merge by the non-weakening requirement lattice
   `required > conditional > recommended > optional`. A required use dominates a
   conditional use. If conditional is the strongest surviving level, every
-  surviving conditional clause must be byte-identical after scalar parsing or
-  compilation fails.
+  surviving use must reference the same stable root-catalog condition ID or
+  compilation fails; free-form conditional prose is invalid.
 - Per-use constraints merge only by a representable restrictive intersection:
   lower maxima, higher minima, enum intersection, and identical portable patterns.
   An empty/inconsistent range or enum, two different patterns, an invalid item
@@ -349,6 +349,261 @@ tuple's upstream-pinned OTel core, GenAI, and OpenInference members disagree wit
 `semconv.lock.yaml`. The DefenseClaw-owned trace-schema and Galileo compatibility
 profile IDs are validated against their registry entries instead of being invented
 as upstream lock members.
+
+The effective plan derives this tuple from the embedded registry and lock; the Go
+runtime does not duplicate repository URLs, snapshot paths/digests, or upstream
+revision provenance. It separately compares the derived tuple with the semantic
+profile, trace schema, GenAI/OpenInference vocabulary, and Galileo projection
+capabilities compiled into the binary. Source derivation determines what was
+authored, while the capability check proves this binary implements it. A changed
+tuple under the same profile ID therefore fails closed, and a new profile ID remains
+unsupported until its builders and adapters ship together.
+
+#### 5.2.2 Typed structural contract
+
+`registry.yaml` contains exactly one authored `structural_contract`. It is the
+source for the canonical envelope and signal payload structures that cannot be
+expressed by domain attribute groups alone:
+
+```yaml
+structural_contract:
+  id: defenseclaw.canonical-record
+  version: 1
+  runtime_binding:
+    record: internal/observability.Record
+    input: internal/observability.RecordInput
+    value: internal/observability.Value
+    schema_derived_constructor: internal/observability.newSchemaDerivedRecord
+    schema_derived_log_constructor: internal/observability.newSchemaDerivedLogRecord
+  limits:
+    record_id_utf8_bytes: 512
+    correlation_id_utf8_bytes: 512
+    span_name_utf8_bytes: 512
+    binary_version_utf8_bytes: 256
+    provenance_hex_ascii_bytes: 128
+    stable_token_ascii_bytes: 128
+    payload_depth: 32
+    payload_members: 8192
+    payload_encoded_bytes: 1048576
+    record_encoded_bytes: 4194304
+  envelope:
+    additional_properties: false
+    fields: [] # the authored source contains the closed envelope field list
+    signal_arms: [] # the authored source contains logs/traces/metrics arms
+  correlation: {additional_properties: false, fields: []}
+  provenance: {additional_properties: false, fields: []}
+  trace:
+    body: {additional_properties: false, fields: [], relations: []}
+    resource: {additional_properties: false, fields: []}
+    scope: {additional_properties: false, fields: []}
+    status: {additional_properties: false, fields: []}
+    events: {additional_properties: false, fields: []}
+    links: {additional_properties: false, fields: []}
+  metric:
+    instrument_data: {additional_properties: false, fields: []}
+  canonical_to_otlp: {} # exact typed mappings are authored here
+```
+
+This is a source-shaped hierarchy excerpt: empty collections stand only for
+omitted authored entries. There are no `objects`, root `signal_arms`, or
+`otlp_representations` keys; copying those conceptual labels into the source is a
+schema error.
+
+The compiler accepts no second structural-contract ID or version and no unknown
+member. `runtime_binding` is an asserted parity boundary, not a code-generation
+request for a new record. Generated Go builders construct the existing
+`RecordInput`, materialize the registered body and field-class map, and terminate
+at the existing unexported schema-derived constructor. Generated log builders use
+the separate log-only schema-derived constructor when the catalog derives
+`mandatory`; ordinary callers still cannot assert either trust marker. Tests
+compare every bound, version, vocabulary, and regex with the existing Go constants
+and validation; a registry/Go mismatch fails generation.
+
+Each structural field is a closed record with `name`, `type`, `required`, and,
+where applicable, `const`, `enum`, `object_ref`, `item_ref`, `semantic_ref`,
+`semantic_format`, `field_class`, `sensitivity`, `normalization`, and `otlp`. Its
+`type` is exactly one of `boolean`, `int64`, `uint32`, `uint64`, `double`,
+`metric_number`, `string`, `timestamp`, `object`, `array`, `canonical_json`, or
+`field_class_map`. `metric_number` is resolved per family to exactly finite
+`int64` or `double`; it is not a third wire-number type and never coerces an integer
+through binary float. `semantic_ref` inherits type, privacy, and normalization from
+one ordinary registry attribute or resolves one closed registry-owned dynamic
+family/group contract; it cannot be an unchecked string. An inline dynamic leaf
+supplies all three itself. `semantic_format` is closed to the executable nonzero
+OTel trace/span ID formats. Timestamps are UTC RFC 3339-nano on the canonical wire.
+`uint32`/`uint64` use exact nonnegative JSON integers rather than binary-float
+coercion.
+
+The envelope, exact twenty-key correlation object, provenance object, signal arms,
+and payload-rooted field-class rules are those in
+`02-taxonomy-and-data-model.md` §§3-3.6. In particular, metrics forbid envelope
+outcome/severity/log-level state and `instrument_data` is only `{value,
+attributes}`; repeated instrument identity/type/unit/temporality data is invalid.
+Every object sets `additionalProperties: false`.
+
+The trace-body, status, resource, scope, event, link, equality, privacy, and nested
+dropped-count structures are exactly `11-trace-and-span-contract.md` §§5.4-5.5.
+The structural registry registers `defenseclaw.trace.schema_version`,
+`defenseclaw.semantic_profile`, `defenseclaw.link.relation`, and the bounded
+low-cardinality `defenseclaw.workflow.name`; reusable scope/link groups reference
+those attributes rather than hiding strings in adapters. The canonical workflow
+name pattern is exactly `workflow {defenseclaw.workflow.name}`. The producer
+supplies that identifier under its explicit 128-byte ASCII token bound; neither a
+migration nor a destination projector derives a missing value by parsing a
+rendered name. A Galileo projection may add its versioned compatibility-profile
+attribute after route redaction; canonical scope data remains destination-neutral.
+
+The trace signal arm explicitly requires `correlation.trace_id` and
+`correlation.span_id`. `otel-trace-id-v1` and `otel-span-id-v1` reject all-zero or
+wrong-width identifiers. The trace-body relation `trace-time-order-v1` requires
+positive start/end nanoseconds and `start_time_unix_nano <=
+end_time_unix_nano`. These builder-enforced relations remain annotations in JSON
+Schema where the dialect cannot compare two instance fields.
+
+`field_classes` contains concrete RFC 6901 pointers rooted at the selected payload,
+not at the envelope. The compiler derives structural leaf classes from this
+contract and domain leaf classes from the resolved family. At runtime the builder
+expands each concrete array index and materializes the complete map. `/message`,
+`/attributes/defenseclaw.source`, and
+`/attributes/defenseclaw.connector.source` are valid examples;
+`/body/message` and `/instrument_data/attributes/...` are invalid. No container
+classification covers descendants.
+
+Structural privacy is closed. Trace kind, timestamps, dropped counts, status code,
+schema URLs, and scope name/version are `metadata`/`safe`; parent/link IDs are
+`identifier`/`internal`; link trace state is `metadata`/`internal`; and status
+description is `error`/`sensitive`. Metric observation value is
+`metadata`/`safe`. Registered attributes inherit their ordinary registry class and
+sensitivity without an override. Envelope and provenance fields are not selected-
+payload leaves and therefore do not appear in `field_classes`, but the structural
+contract still marks their safe/internal handling: occurrence and correlation IDs
+are identifiers, connector/config digest are internal, and versions, timestamps,
+bucket/signal/severity/log-level/action/phase/outcome/mandatory are bounded
+metadata. A structural field with missing privacy metadata fails compilation.
+
+Structural normalization reuses the root normalizer catalog. Exact OTel IDs add a
+nonzero lowercase-hex format check; timestamps use UTC RFC 3339-nano; counts use
+finite numeric ranges; W3C trace state is at most 512 UTF-8 bytes; and every text
+field remains under the P2 bounds above or a stricter family bound. The structural
+contract cannot introduce a prose-only normalizer or weaken a P2 maximum.
+
+The typed OTLP representation declares an exact canonical source and protobuf
+target for each field. It covers trace/span/parent IDs, rendered name, kind,
+timestamps, status, resource/scope schema URLs, every attribute set, events, links,
+and all span/resource/scope/event/link dropped counts. Its value table maps each
+canonical scalar/array/structured type to a compatible non-null OTLP `AnyValue`
+arm without stringification: Boolean to `boolValue`, `int64` to `intValue`, finite
+double to `doubleValue`, string to `stringValue`, array to `arrayValue`, and object
+to `kvlistValue`; canonical null has explicit `null_value_policy: reject`. The
+closed `object_contexts` map identifies exact protobuf placement for Span,
+ResourceSpans resource, ScopeSpans scope, Status, Event, and Link fields, so a leaf
+target such as `schemaUrl` cannot accidentally bind to the wrong wrapper. The
+closed `field_context_overrides` map handles the two wrapper-owned leaves:
+`trace_resource.schema_url` belongs to `ResourceSpans` and
+`trace_scope.schema_url` belongs to `ResourceSpans.scopeSpans[]`. The resource and
+scope containers themselves do not map to nonexistent Span fields; the projector
+traverses them and re-roots their registered children in those wrapper contexts.
+Metric
+mappings record the raw value and exact labels through the generated SDK instrument
+so SDK aggregation owns OTLP data-point and
+temporality shape. The v8 OTLP-log compatibility representation remains an
+explicit versioned projection of the already route-redacted record; changing it to
+a different structured log-body representation requires its own profile/version
+and golden migration rather than an adapter-local reinterpretation.
+
+##### Stable conditions
+
+Conditional uses reference `conditional: <id>`; prose in a use is invalid. The root
+`conditions` catalog accepts exactly `enforcement.kind: json_schema` or
+`enforcement.kind: builder_fact`. A JSON-Schema condition supplies a closed typed
+predicate over independent record fields. A builder-fact condition supplies one
+closed fact token; generated builders evaluate it from typed producer state before
+record construction. Each row declares `false_requirement: optional|forbidden`;
+an adapter cannot treat omission and permission as the same fallback. The current
+seven conditions all require producer knowledge
+that has no independent serialized discriminator, so all seven are
+`builder_fact`:
+
+| ID | Typed truth condition | False behavior |
+|---|---|---|
+| `connector-known-v1` | A positively normalized nonempty connector identity exists; an `unknown` placeholder does not count | Conditioned connector field forbidden |
+| `operation-terminal-v1` | Terminal evidence exists for this bounded operation; when true the final outcome and trace end are present and coherent | Conditioned outcome remains optional because a nonterminal `attempted` observation is valid |
+| `technical-failure-v1` | The operation/control itself technically failed under the status contract; a successful block decision or caller cancellation alone is not such a failure | Conditioned error field optional because a prevented requested operation may still use `policy_denied` |
+| `guardrail-terminal-decision-available-v1` | The control reached a final typed decision | Conditioned decision forbidden |
+| `security-severity-available-v1` | A recognized producer severity exists or was canonically normalized, including `NONE` to `INFO` | Conditioned severity forbidden |
+| `judge-output-parse-failed-v1` | Judge output parsing failed and a bounded centrally redacted parse-error value exists | Conditioned parse error forbidden |
+| `admin-principal-known-v1` | A positively authenticated/authorized administrative principal is known; submitted credentials and origin metadata cannot synthesize one | Conditioned principal forbidden |
+
+Calling one of these `json_schema` merely because the conditioned field is present
+would be a tautology and is forbidden. Group resolution compares stable condition
+IDs, not human prose. Generated-schema annotations identify builder-fact
+enforcement for offline consumers, while emitted-record conformance proves the
+builder applied it.
+
+##### Agent phase/code value catalog
+
+The root `registry.yaml` `value_catalogs` owns one catalog
+`agent-phase-v1` with exact `kind: string-int64-bijection`. Its ordered
+`value_attributes` are `defenseclaw.agent.phase`,
+`defenseclaw.agent.phase.previous`, `defenseclaw.agent.phase.from`, and
+`defenseclaw.agent.phase.to`; `paired_value_attribute` identifies the current
+phase paired with `code_attribute: defenseclaw.agent.phase.code`. Its authored
+closed `compatibility` object reserves `code: 0`, `value: unknown`, and
+`canonical_emittable: false`; the compiler never synthesizes this metadata. The
+immutable canonical entries are:
+
+```text
+1 session       2 planning      3 model       4 tool
+5 approval      6 waiting       7 responding  8 maintenance
+9 completed    10 failed       11 interrupted 12 observed
+```
+
+The compiler derives the exact four string enums and numeric range `1..12`; the
+attributes cannot hand-author a different enum/range. When current phase and code
+coexist, their pair must match. Code `0` remains reserved for
+unknown/unrecognized compatibility input, has `canonical_emittable: false`, and is
+not part of either canonical normalizer. Evolution is append-only: an existing
+value/code cannot be renamed, removed, or renumbered, and a new phase receives the
+next unused positive code.
+
+##### Group and family lifecycle
+
+Every group has required top-level `introduced_in` and optional top-level
+`deprecated_in` and `removed_in`, matching attribute lifecycle vocabulary rather
+than adding a second nested dialect. Deprecated stability requires
+`deprecated_in`, and removal requires deprecation. Removed families remain in the
+historical catalog but cannot be built or route-selected.
+
+The semantic-diff gate evaluates each fully resolved family, including inherited
+group changes. A required-field, type, meaning, bucket, span-name/kind, applicable
+outcome, field-class, or sensitivity break requires a family-schema-version bump
+and reviewed compatibility disposition. Editing a reusable group cannot evade that
+rule; an optional safe addition may retain the family version.
+
+##### Complete single-fault examples
+
+Every `examples.yaml` valid record is a complete canonical record accepted by the
+generated builder and public bundle, not a partial illustrative fragment. Trace
+examples place IDs only in envelope correlation and the rendered name only in
+`span_name`; their body uses the snake_case structure in §5.4 with status,
+resource, and scope. Log and trace field-class pointers are payload-rooted. Metric
+examples omit envelope outcome, use only `{value, attributes}` in
+`instrument_data`, and use canonical label names rather than compatibility labels.
+
+Each invalid example is derived from `base_example` by one closed `mutation`
+whose `kind` equals the exact stable error code and whose ordered `changes` use
+RFC 6901 pointers rooted at `{signal,family?,record}`. Each change is `add`,
+`replace`, or `remove`; values are required for add/replace and forbidden for
+remove. The compiler applies that one semantic mutation and requires byte-equivalent
+structured equality with the authored invalid vector. It MUST NOT omit unrelated
+required fields or contain a second defect that could fail first. The minimum
+single-fault corpus covers both-arm/neither-arm and forbidden-envelope states;
+envelope-prefixed field-class pointers; unknown structural members; trace
+camelCase/duplicate identity fields; zero/malformed IDs; end-before-start; invalid
+status aliases; every nested dropped-count overflow; scope/profile and family
+equality mismatch; metric unknown labels and outcome; each condition true with its
+field absent and each forbidden false-state field present; all twelve valid phase
+pairs, a mismatched pair, and reserved phase code zero.
 
 ### 5.3 Canonical families and producer mappings
 
@@ -451,6 +706,15 @@ fields remain with the transport envelope; domain fields are not re-authored.
 
 External consumers can validate one bundle and select a `$defs` pointer. They do
 not need to discover which of many similarly named files applies.
+
+The candidate bundle is acceptable only when its top-level union and every family
+definition are generated from the same materialized structural/domain IR as the
+builders. All curated valid examples must pass both, and every single-fault invalid
+example must fail both with the declared code. A candidate that merely renders
+attribute skeletons, lacks the exact envelope/correlation/provenance or signal
+arms, permits unknown members, omits structural privacy, conditions, lifecycle,
+phase/code, or OTLP mapping metadata, or accepts a builder-rejected shape is not a
+complete `telemetry.schema.json` and cannot become public authority.
 
 ### 6.2 Compact catalog
 

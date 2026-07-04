@@ -143,7 +143,7 @@ invoke_agent <agent>                         [agent.lifecycle]
 │   └── model/tool-call events
 ├── execute_tool <tool>                       [tool.activity]
 │   ├── apply_guardrail <name> tool
-│   ├── exec.approval/<approval-id>           [enforcement.action]
+│   ├── exec.approval                         [enforcement.action]
 │   ├── HTTP/RPC client attempt               [network.egress]
 │   └── enforcement <action>                  [enforcement.action]
 └── agent lifecycle/phase events
@@ -233,6 +233,99 @@ session describe delegation, not OTel parentage. Phase codes `1..12` retain the
 immutable mapping in `14-agent-lifecycle-and-dashboard-compatibility.md` section
 3.3, and sequence is monotonically increasing within one execution.
 
+### 5.4 Canonical trace body
+
+The canonical record keeps trace/span IDs and the rendered name in the envelope:
+`correlation.trace_id`, `correlation.span_id`, and `span_name`. It MUST NOT copy
+them into `body` as `traceId`, `spanId`, or `name`. The exact trace body uses
+snake_case and contains the fields below. Both correlation IDs are required,
+nonzero, lowercase OTel IDs for every trace record; a family builder cannot rely
+on a body copy or synthesize either ID.
+
+| Field | Requirement and type |
+|---|---|
+| `kind` | Required enum: `INTERNAL`, `SERVER`, `CLIENT`, `PRODUCER`, or `CONSUMER`; also constrained by the family |
+| `parent_span_id` | Optional nonzero lowercase 16-hex OTel span ID |
+| `start_time_unix_nano` | Required positive `uint64` |
+| `end_time_unix_nano` | Required `uint64`, greater than or equal to start |
+| `attributes` | Required exact family-resolved attribute object |
+| `dropped_attributes_count` | Optional `uint32`; absence means zero |
+| `events` | Optional bounded array of registered event objects |
+| `dropped_events_count` | Optional `uint32`; absence means zero |
+| `links` | Optional bounded array of link objects |
+| `dropped_links_count` | Optional `uint32`; absence means zero |
+| `status` | Required exact status object |
+| `resource` | Required exact resource object |
+| `scope` | Required exact instrumentation-scope object |
+
+`status` is exactly `{code, description?}`. `code` is `UNSET`, `OK`, or `ERROR`;
+`description` is bounded, field class `error`, sensitivity `sensitive`, and passes
+central destination redaction. Numeric status codes and the old `message` spelling
+may be accepted only by an explicitly generated inbound compatibility normalizer;
+canonical builders never emit them.
+
+The structural registry encodes nonzero ID checks as `otel-trace-id-v1` and
+`otel-span-id-v1`, and encodes timestamp ordering as the builder-enforced
+`trace-time-order-v1` relation. These are executable contracts even where JSON
+Schema cannot express a comparison between two instance values.
+
+An event is exactly `{name, time_unix_nano, attributes,
+dropped_attributes_count?}`. `name` identifies one event declared by the span
+family, time is `uint64`, attributes resolve from that event group, and the nested
+dropped count is `uint32`. A link is exactly `{trace_id, span_id, trace_state?,
+attributes, dropped_attributes_count?}`. Its IDs are nonzero lowercase 32-hex and
+16-hex respectively, `trace_state` is bounded to the W3C 512-byte limit, its
+attributes contain one registered family-allowed relation, and its nested dropped
+count is `uint32`. Unknown event/link fields fail rather than disappearing.
+
+`resource` is exactly `{schema_url, attributes, dropped_attributes_count?}`. Its
+resolved `resource.core` use requires `service.name`, `service.version`,
+`service.namespace`, `service.instance.id`, `deployment.environment.name`, and
+`defenseclaw.instance.id` for a DefenseClaw-authored exported trace. Host, OS,
+tenant, workspace, deployment-mode, claw-mode, and device-fingerprint fields are
+emitted only when known and allowed. `scope` is exactly `{name, version,
+schema_url, attributes, dropped_attributes_count?}` and requires the canonical
+`defenseclaw.trace.schema_version` and `defenseclaw.semantic_profile` values bound
+by the selected semantic profile. `defenseclaw.galileo.compatibility_profile` is
+destination-projection metadata and MUST NOT be stamped into a general canonical
+scope merely because a Galileo destination also exists.
+
+All structural objects use `additionalProperties: false`. The family builder also
+enforces these equalities: body `defenseclaw.bucket` equals the envelope bucket;
+`defenseclaw.span.family` equals `event_name`; family schema version equals the
+registered family version; `defenseclaw.source` equals envelope source;
+`defenseclaw.config.generation` equals provenance config generation; and body
+`defenseclaw.outcome` equals the envelope outcome when present. Every structural
+leaf receives the field class and sensitivity declared by the structural registry;
+family, resource, scope, event, and link attributes inherit theirs from the
+ordinary attribute registry.
+
+### 5.5 Canonical-to-OTLP representation
+
+The registry representation is executable mapping data, not adapter prose. It
+maps envelope correlation IDs to `Span.trace_id`/`Span.span_id`,
+`body.parent_span_id` to `Span.parent_span_id`, `span_name` to `Span.name`, and
+every canonical body field to its matching OTLP protobuf field. Resource/scope
+`schema_url` maps to `ResourceSpans.schema_url`/`ScopeSpans.schema_url`, not to a
+field on `Resource` or `InstrumentationScope`. Status codes map `UNSET=0`, `OK=1`,
+and `ERROR=2`; description maps to the OTLP status message. Every span-, event-,
+link-, resource-, and scope-level dropped count survives.
+
+`canonical_to_otlp.object_contexts` supplies the default protobuf message for
+each canonical object. `field_context_overrides` is a closed exception table for
+leaf fields owned by an enclosing wrapper rather than that default message:
+`trace_resource.schema_url` targets `ResourceSpans`, and
+`trace_scope.schema_url` targets `ResourceSpans.scopeSpans[]`. The canonical
+`body.resource` and `body.scope` containers have no direct Span field mapping;
+projection traverses them and places their registered children in the declared
+resource/scope wrapper contexts.
+
+Strings, Booleans, signed integers, finite doubles, arrays, and structured
+non-null values use the matching OTLP `AnyValue` arm. Canonical attributes never
+stringify a typed value merely to satisfy a backend. A value that cannot be
+represented under the pinned type fails projection for that destination without
+mutating the canonical record or another destination projection.
+
 ## 6. Resource and Scope Attributes
 
 Every exported trace resource includes:
@@ -258,35 +351,37 @@ adapters cannot mirror arbitrary resource data.
 
 ## 7. Span Family Catalog
 
-The v8 producer registry includes at least these families. Exact names and required
-attributes are machine-readable schema contracts.
+The v8 producer registry includes at least these families. The table reproduces
+the registry's exact `span.name_pattern` values; braces identify canonical
+attribute substitutions, while literal names have no suffix or hidden identifier.
+Required attributes are machine-readable schema contracts.
 
 | Bucket | Stable family | Span-name pattern | Kind | Purpose |
 |---|---|---|---|---|
-| `agent.lifecycle` | `span.agent.invoke` | `invoke_agent {agent}` | INTERNAL or CLIENT | One bounded agent/turn/hook anchor |
-| `agent.lifecycle` | `span.agent.transition` | `agent.transition {event}` | INTERNAL | Resume, compact, subagent, terminal, and phase transitions |
-| `agent.lifecycle` | `span.workflow.run` | `workflow {workflow}` | INTERNAL | One bounded orchestration/workflow step; the stable family ID is valid in `event_names` route selectors |
-| `model.io` | `span.model.chat` | `chat {model}` | CLIENT | Model inference or completion |
-| `model.io` | `span.model.embeddings` | `embeddings {model}` | CLIENT | Embedding request when supported |
-| `tool.activity` | `span.tool.execute` | `execute_tool {tool}` | INTERNAL or CLIENT | Tool invocation and result |
-| `tool.activity` | `span.retrieval.search` | `retrieve {source}` | CLIENT or INTERNAL | Search/retrieval represented using DB and OpenInference conventions |
-| `guardrail.evaluation` | `span.guardrail.apply` | `apply_guardrail {name} {target}` | INTERNAL | Whole control execution and decision |
-| `guardrail.evaluation` | `span.guardrail.phase` | `guardrail.{phase}` | INTERNAL or CLIENT | Regex, AI Defense, judge, policy, and finalize phase |
-| `guardrail.evaluation` | `span.guardrail.judge` | `chat {judge-model}` | CLIENT | LLM judge call, also a valid GenAI chat span |
-| `enforcement.action` | `span.enforcement.apply` | `enforcement {action}` | INTERNAL or CLIENT | Block, deny, quarantine, release, redact, revoke, terminate |
-| `enforcement.action` | `span.approval.resolve` | `exec.approval/{approval-id}` | INTERNAL | Approval wait and resolution |
-| `security.finding` | `span.finding.enrich` | `finding.enrich {source}` | INTERNAL or CLIENT | Optional expensive enrichment/correlation, not every finding log |
-| `asset.scan` | `span.asset.scan` | `scan {scanner}` | INTERNAL | Whole asset scan |
-| `asset.scan` | `span.asset.scan.phase` | `scan.{phase}` | INTERNAL | Enumeration, fetch, unpack, analyze, correlate, persist |
-| `asset.lifecycle` | `span.asset.transition` | `asset.transition {transition}` | INTERNAL | Actual install/update/quarantine/release transition |
-| `network.egress` | `span.network.request` | Standard HTTP/RPC client name | CLIENT | Each outbound attempt using protocol conventions |
+| `agent.lifecycle` | `span.agent.invoke` | `invoke_agent {defenseclaw.agent.type}` | INTERNAL or CLIENT | One bounded agent/turn/hook anchor |
+| `agent.lifecycle` | `span.agent.transition` | `agent.transition {defenseclaw.agent.lifecycle.event}` | INTERNAL | Resume, compact, subagent, terminal, and phase transitions |
+| `agent.lifecycle` | `span.workflow.run` | `workflow {defenseclaw.workflow.name}` | INTERNAL | One bounded orchestration/workflow step; the stable family ID is valid in `event_names` route selectors |
+| `model.io` | `span.model.chat` | `chat {gen_ai.request.model}` | CLIENT | Model inference or completion |
+| `model.io` | `span.model.embeddings` | `embeddings {gen_ai.request.model}` | CLIENT | Embedding request when supported |
+| `tool.activity` | `span.tool.execute` | `execute_tool {gen_ai.tool.name}` | INTERNAL or CLIENT | Tool invocation and result |
+| `tool.activity` | `span.retrieval.search` | `retrieve {defenseclaw.retrieval.source.id}` | CLIENT or INTERNAL | Search/retrieval represented using DB and OpenInference conventions |
+| `guardrail.evaluation` | `span.guardrail.apply` | `apply_guardrail {defenseclaw.guardrail.name} {defenseclaw.guardrail.target_type}` | INTERNAL | Whole control execution and decision |
+| `guardrail.evaluation` | `span.guardrail.phase` | `guardrail.{defenseclaw.guardrail.phase}` | INTERNAL or CLIENT | Regex, AI Defense, judge, policy, and finalize phase |
+| `guardrail.evaluation` | `span.guardrail.judge` | `chat {gen_ai.request.model}` | CLIENT | LLM judge call, also a valid GenAI chat span |
+| `enforcement.action` | `span.enforcement.apply` | `enforcement {defenseclaw.enforcement.effective_action}` | INTERNAL or CLIENT | Block, deny, quarantine, release, redact, revoke, terminate |
+| `enforcement.action` | `span.approval.resolve` | `exec.approval` | INTERNAL | Approval wait and resolution; approval identity remains an attribute/correlation value |
+| `security.finding` | `span.finding.enrich` | `finding.enrich {defenseclaw.source}` | INTERNAL or CLIENT | Optional expensive enrichment/correlation, not every finding log |
+| `asset.scan` | `span.asset.scan` | `asset.scan` | INTERNAL | Whole asset scan |
+| `asset.scan` | `span.asset.scan.phase` | `asset.scan.phase` | INTERNAL | Enumeration, fetch, unpack, analyze, correlate, persist |
+| `asset.lifecycle` | `span.asset.transition` | `asset.transition {defenseclaw.asset.transition}` | INTERNAL | Actual install/update/quarantine/release transition |
+| `network.egress` | `span.network.request` | `{http.request.method} outbound` | CLIENT | Each outbound attempt using protocol conventions |
 | `ai.discovery` | `span.ai.discovery` | `defenseclaw.ai.discovery` | INTERNAL | Discovery scan |
 | `ai.discovery` | `span.ai.discovery.detector` | `defenseclaw.ai.discovery.detector` | INTERNAL | One detector execution |
-| `telemetry.ingest` | `span.telemetry.receive` | Standard HTTP/RPC server name | SERVER | OTLP/HEC receive boundary |
-| `telemetry.ingest` | `span.telemetry.normalize` | `telemetry.normalize {signal}` | INTERNAL | Decode, validate, normalize, and classify |
-| `platform.health` | `span.destination.export` | `telemetry.export {destination}` | CLIENT | Optional diagnostic/export attempt span; never recursively exported to itself |
+| `telemetry.ingest` | `span.telemetry.receive` | `{http.request.method} telemetry` | SERVER | OTLP/HEC receive boundary |
+| `telemetry.ingest` | `span.telemetry.normalize` | `telemetry.normalize {defenseclaw.telemetry.signal}` | INTERNAL | Decode, validate, normalize, and classify |
+| `platform.health` | `span.destination.export` | `telemetry.export {defenseclaw.destination.id}` | CLIENT | Optional diagnostic/export attempt span; never recursively exported to itself |
 | `platform.health` | `span.config.reload` | `config.reload` | INTERNAL | Parse, validate, build, swap, and drain transaction |
-| `compliance.activity` | `span.admin.operation` | Standard server/command operation name | SERVER or INTERNAL | Authenticated administrative operation |
+| `compliance.activity` | `span.admin.operation` | `{defenseclaw.admin.operation}` | SERVER or INTERNAL | Authenticated administrative operation |
 | `diagnostic` | `span.diagnostic.canary` | `defenseclaw.telemetry.canary` | INTERNAL | Isolated destination-path canary |
 
 `security.finding`, health-state changes, and compliance outcomes remain logs when
@@ -317,9 +412,18 @@ Required when available and applicable:
 alias and canonical field derive from the same destination-redacted value, and
 canonical builders accept only the DefenseClaw-owned field.
 
-Workflow spans use `openinference.span.kind=CHAIN` or the pinned equivalent and
-describe bounded orchestration such as one turn, scan pipeline, or retrieval-
-augmented step. They do not expose internal chain-of-thought or hidden reasoning.
+Workflow spans require the bounded, low-cardinality
+`defenseclaw.workflow.name` used by the registered
+`workflow {defenseclaw.workflow.name}` name pattern. They use
+`openinference.span.kind=CHAIN` or the pinned equivalent and describe bounded
+orchestration such as one turn, scan pipeline, or retrieval-augmented step. They
+do not expose internal chain-of-thought or hidden reasoning.
+
+The producer MUST supply `defenseclaw.workflow.name` as a canonical identifier of
+at most 128 ASCII bytes matching `^[a-z0-9][a-z0-9_.-]{0,127}$`. The span name is
+then rendered from that value. Migration and Galileo projection MUST NOT reverse
+parse a missing workflow attribute from an existing `workflow ...` span name;
+missing, invalid, or mismatched pairs are rejected without fabrication.
 
 ### 8.2 Model spans
 
@@ -569,7 +673,7 @@ The v8 profile accepts and validates:
 | LLM | operation `chat`, `text_completion`, or supported pinned equivalent | provider, request model when known, input, output |
 | Tool | `gen_ai.operation.name=execute_tool` | tool name, call ID when known, arguments/result, input/output |
 | Retriever | DB operation `query` or `search`, optionally OpenInference `RETRIEVER` | input query plus bounded/redacted document output |
-| Workflow | OpenInference `CHAIN` or versioned workflow discriminator | descriptive bounded name, input, output |
+| Workflow | OpenInference `CHAIN` or versioned workflow discriminator | explicit `defenseclaw.workflow.name`, exact rendered name, input, output |
 
 The current three shapes are therefore retained, and retriever/workflow spans are
 added. Agent kind is INTERNAL for in-process orchestration and CLIENT for a remote

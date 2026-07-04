@@ -1883,6 +1883,7 @@ groups:
   type: resource
   brief: Required portable OTel resource plus safe DefenseClaw deployment identity.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: service.name
@@ -1894,7 +1895,7 @@ groups:
   - ref: service.instance.id
     requirement_level: required
   - ref: deployment.environment.name
-    requirement_level: recommended
+    requirement_level: required
   - ref: host.name
     requirement_level: recommended
   - ref: host.arch
@@ -1910,7 +1911,7 @@ groups:
   - ref: defenseclaw.claw.mode
     requirement_level: recommended
   - ref: defenseclaw.instance.id
-    requirement_level: recommended
+    requirement_level: required
   - ref: defenseclaw.device.public_key_fingerprint
     requirement_level: recommended
   body_fields: []
@@ -1929,6 +1930,7 @@ groups:
   type: attribute_group
   brief: Stable OTel HTTP client/server and network fields.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: http.request.method
@@ -1952,6 +1954,7 @@ groups:
   type: attribute_group
   brief: Asset identity and actual state transition.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - correlation.security
   attributes:
@@ -1970,6 +1973,7 @@ groups:
   type: attribute_group
   brief: Inbound telemetry signal, volume and validation result.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.telemetry.signal
@@ -1985,6 +1989,7 @@ groups:
   type: attribute_group
   brief: Destination export identity and exact delivery accounting.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.destination.id
@@ -2002,6 +2007,7 @@ groups:
   type: attribute_group
   brief: Authenticated administrative operation and secret-free change evidence.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.admin.operation
@@ -2017,6 +2023,7 @@ groups:
   type: body_group
   brief: Administrative/control-plane activity and authentication boundary body.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - operation.admin
   attributes: []
@@ -2025,11 +2032,12 @@ groups:
     requirement_level: required
   - ref: defenseclaw.admin.principal_ref
     requirement_level: conditional
-    conditional: principal known
+    conditional: admin-principal-known-v1
 - id: body.asset.lifecycle
   type: body_group
   brief: Actual asset lifecycle transition body.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - lifecycle.asset
   attributes: []
@@ -2042,6 +2050,7 @@ groups:
   type: body_group
   brief: Continuous AI component discovery body.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes: []
   body_fields:
@@ -2059,6 +2068,7 @@ groups:
   type: body_group
   brief: Inbound telemetry batch acceptance/rejection body; raw payload is forbidden.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - telemetry.ingest
   attributes: []
@@ -2073,6 +2083,7 @@ groups:
   type: body_group
   brief: Bounded platform health transition/failure body.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes: []
   body_fields:
@@ -2086,6 +2097,7 @@ groups:
   type: body_group
   brief: Explicitly enabled diagnostic message/snapshot body.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes: []
   body_fields:
@@ -2097,6 +2109,7 @@ groups:
   type: attribute_group
   brief: Explicit migration disposition for all 21 current telemetry schema inputs.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes: []
   body_fields: []
@@ -2222,6 +2235,7 @@ groups:
   type: span_event
   brief: Pinned OTel exception event after central projection.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - error.core
   attributes:
@@ -2238,6 +2252,7 @@ groups:
   type: span_event
   brief: Bounded pipeline drop milestone.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - telemetry.destination
   attributes:
@@ -2254,6 +2269,7 @@ groups:
   type: span
   brief: Canonical span.agent.transition bounded operation.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - span.core
   - correlation.agent
@@ -2296,6 +2312,7 @@ groups:
   type: span
   brief: Canonical span.asset.scan bounded operation.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - span.core
   - correlation.security
@@ -2338,6 +2355,7 @@ groups:
   type: span
   brief: Canonical span.asset.scan.phase bounded operation.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - span.core
   - correlation.security
@@ -2379,6 +2397,7 @@ groups:
   type: span
   brief: Canonical span.asset.transition bounded operation.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - span.core
   - correlation.security
@@ -2426,6 +2445,7 @@ groups:
   type: span
   brief: Canonical span.network.request bounded operation.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - span.core
   - transport.http
@@ -2471,6 +2491,7 @@ groups:
   type: span
   brief: Canonical span.ai.discovery bounded operation.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - span.core
   - error.core
@@ -2510,6 +2531,7 @@ groups:
   type: span
   brief: Canonical span.ai.discovery.detector bounded operation.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - span.core
   - error.core
@@ -2549,6 +2571,7 @@ groups:
   type: span
   brief: Canonical span.telemetry.receive bounded operation.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - span.core
   - transport.http
@@ -2592,6 +2615,7 @@ groups:
   type: span
   brief: Canonical span.telemetry.normalize bounded operation.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - span.core
   - telemetry.ingest
@@ -2634,6 +2658,7 @@ groups:
   type: span
   brief: Canonical span.destination.export bounded operation.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - span.core
   - telemetry.destination
@@ -2676,6 +2701,7 @@ groups:
   type: span
   brief: Canonical span.config.reload bounded operation.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - span.core
   - error.core
@@ -2717,6 +2743,7 @@ groups:
   type: span
   brief: Canonical span.admin.operation bounded operation.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - span.core
   - operation.admin
@@ -2767,6 +2794,7 @@ groups:
   type: span
   brief: Canonical span.diagnostic.canary bounded operation.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - span.core
   - telemetry.destination
@@ -2807,6 +2835,7 @@ groups:
   type: log
   brief: Canonical ai_component.changed log identity.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - body.ai.discovery
   attributes: []
@@ -2829,6 +2858,7 @@ groups:
   type: log
   brief: Canonical ai_component.confidence.changed log identity.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - body.ai.discovery
   attributes: []
@@ -2851,6 +2881,7 @@ groups:
   type: log
   brief: Canonical ai_component.discovered log identity.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - body.ai.discovery
   attributes: []
@@ -2873,6 +2904,7 @@ groups:
   type: log
   brief: Canonical ai_component.removed log identity.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - body.ai.discovery
   attributes: []
@@ -2895,6 +2927,7 @@ groups:
   type: log
   brief: Canonical alert.acknowledgement.requested log identity.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - body.compliance.activity
   attributes: []
@@ -2921,6 +2954,7 @@ groups:
   type: log
   brief: Canonical alert.dismissal.requested log identity.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - body.compliance.activity
   attributes: []
@@ -2947,6 +2981,7 @@ groups:
   type: log
   brief: Canonical asset.activated log identity.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - body.asset.lifecycle
   attributes: []
@@ -2970,6 +3005,7 @@ groups:
   type: log
   brief: Canonical asset.admitted log identity.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - body.asset.lifecycle
   attributes: []
@@ -2993,6 +3029,7 @@ groups:
   type: log
   brief: Canonical asset.disabled log identity.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - body.asset.lifecycle
   attributes: []
@@ -3016,6 +3053,7 @@ groups:
   type: log
   brief: Canonical asset.discovered log identity.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - body.asset.lifecycle
   attributes: []
@@ -3038,6 +3076,7 @@ groups:
   type: log
   brief: Canonical asset.quarantined log identity.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - body.asset.lifecycle
   attributes: []
@@ -3061,6 +3100,7 @@ groups:
   type: log
   brief: Canonical asset.registered log identity.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - body.asset.lifecycle
   attributes: []
@@ -3084,6 +3124,7 @@ groups:
   type: log
   brief: Canonical asset.released log identity.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - body.asset.lifecycle
   attributes: []
@@ -3107,6 +3148,7 @@ groups:
   type: log
   brief: Canonical asset.removed log identity.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - body.asset.lifecycle
   attributes: []
@@ -3130,6 +3172,7 @@ groups:
   type: log
   brief: Canonical asset.updated log identity.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - body.asset.lifecycle
   attributes: []
@@ -3153,6 +3196,7 @@ groups:
   type: log
   brief: Canonical authentication.failed log identity.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - body.compliance.activity
   attributes: []
@@ -3177,6 +3221,7 @@ groups:
   type: log
   brief: Canonical authorization.denied log identity.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - body.compliance.activity
   attributes: []
@@ -3201,6 +3246,7 @@ groups:
   type: log
   brief: Canonical config.change.applied log identity.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - body.compliance.activity
   attributes: []
@@ -3225,6 +3271,7 @@ groups:
   type: log
   brief: Canonical config.change.attempted log identity.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - body.compliance.activity
   attributes: []
@@ -3249,6 +3296,7 @@ groups:
   type: log
   brief: Canonical config.reload.rejected log identity.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - body.compliance.activity
   attributes: []
@@ -3274,6 +3322,7 @@ groups:
   type: log
   brief: Canonical destination.authentication.failed log identity.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - body.platform.health
   attributes: []
@@ -3298,6 +3347,7 @@ groups:
   type: log
   brief: Canonical destination.authorization.denied log identity.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - body.platform.health
   attributes: []
@@ -3322,6 +3372,7 @@ groups:
   type: log
   brief: Canonical destination.export_failed log identity.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - body.platform.health
   attributes: []
@@ -3351,6 +3402,7 @@ groups:
   type: log
   brief: Canonical destination.queue_full log identity.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - body.platform.health
   attributes: []
@@ -3375,6 +3427,7 @@ groups:
   type: log
   brief: Canonical destination.updated log identity.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - body.compliance.activity
   attributes: []
@@ -3400,6 +3453,7 @@ groups:
   type: log
   brief: Canonical diagnostic.message log identity.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - body.diagnostic
   attributes: []
@@ -3422,6 +3476,7 @@ groups:
   type: log
   brief: Canonical diagnostic.snapshot log identity.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - body.diagnostic
   attributes: []
@@ -3444,6 +3499,7 @@ groups:
   type: log
   brief: Canonical observability.profile.changed log identity.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - body.compliance.activity
   attributes: []
@@ -3469,6 +3525,7 @@ groups:
   type: log
   brief: Canonical policy.updated log identity.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - body.compliance.activity
   attributes: []
@@ -3494,6 +3551,7 @@ groups:
   type: log
   brief: Canonical redaction.failed_closed log identity.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - body.platform.health
   attributes: []
@@ -3518,6 +3576,7 @@ groups:
   type: log
   brief: Canonical redaction.profile.updated log identity.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - body.compliance.activity
   attributes: []
@@ -3543,6 +3602,7 @@ groups:
   type: log
   brief: Canonical schema.validation_failed log identity.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - body.platform.health
   attributes: []
@@ -3567,6 +3627,7 @@ groups:
   type: log
   brief: Canonical sqlite.write_failed log identity.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - body.platform.health
   attributes: []
@@ -3592,6 +3653,7 @@ groups:
   type: log
   brief: Canonical subsystem.degraded log identity.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - body.platform.health
   attributes: []
@@ -3617,6 +3679,7 @@ groups:
   type: log
   brief: Canonical subsystem.ready log identity.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - body.platform.health
   attributes: []
@@ -3641,6 +3704,7 @@ groups:
   type: log
   brief: Canonical subsystem.restored log identity.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - body.platform.health
   attributes: []
@@ -3665,6 +3729,7 @@ groups:
   type: log
   brief: Canonical telemetry.authentication.failed log identity.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - body.telemetry.ingest
   attributes: []
@@ -3689,6 +3754,7 @@ groups:
   type: log
   brief: Canonical telemetry.authorization.denied log identity.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - body.telemetry.ingest
   attributes: []
@@ -3713,6 +3779,7 @@ groups:
   type: log
   brief: Canonical telemetry.batch.accepted log identity.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - body.telemetry.ingest
   attributes: []
@@ -3736,6 +3803,7 @@ groups:
   type: log
   brief: Canonical telemetry.batch.normalized log identity.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - body.telemetry.ingest
   attributes: []
@@ -3761,6 +3829,7 @@ groups:
   type: log
   brief: Canonical telemetry.batch.rejected log identity.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - body.telemetry.ingest
   attributes: []
@@ -3785,6 +3854,7 @@ groups:
   type: log
   brief: Canonical telemetry.records.dropped log identity.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends:
   - body.telemetry.ingest
   attributes: []
@@ -3810,6 +3880,7 @@ groups:
   type: metric
   brief: Number of diff entries per EventActivity
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.metric.action
@@ -3849,6 +3920,7 @@ groups:
   type: metric
   brief: Operator mutations recorded (EventActivity)
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.metric.action
@@ -3887,6 +3959,7 @@ groups:
   type: metric
   brief: Distinct install evidences per component as of the last scan.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.metric.ecosystem
@@ -3921,6 +3994,7 @@ groups:
   type: metric
   brief: Per-(ecosystem,name) confidence emissions; one increment per scan that produced a component rollup.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.metric.ecosystem
@@ -3963,6 +4037,7 @@ groups:
   type: metric
   brief: Distinct workspaces a component appears in as of the last scan.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.metric.ecosystem
@@ -3997,6 +4072,7 @@ groups:
   type: metric
   brief: Two-axis Bayesian engine identity score in [0,1] per component, per scan.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.metric.ecosystem
@@ -4036,6 +4112,7 @@ groups:
   type: metric
   brief: Two-axis Bayesian engine presence score in [0,1] per component, per scan.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.metric.ecosystem
@@ -4075,6 +4152,7 @@ groups:
   type: metric
   brief: Latest active AI usage signal count.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.metric.privacy_mode
@@ -4109,6 +4187,7 @@ groups:
   type: metric
   brief: Duplicate AI discovery signals suppressed within a scan.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.metric.privacy_mode
@@ -4147,6 +4226,7 @@ groups:
   type: metric
   brief: Wall-clock duration of continuous AI discovery scans.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.metric.privacy_mode
@@ -4186,6 +4266,7 @@ groups:
   type: metric
   brief: Continuous AI discovery detector errors by bounded detector/reason.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.metric.detector
@@ -4220,6 +4301,7 @@ groups:
   type: metric
   brief: Package manifest and shell history files inspected by continuous AI discovery.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.metric.privacy_mode
@@ -4258,6 +4340,7 @@ groups:
   type: metric
   brief: AI usage signals that disappeared from a full scan.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.metric.ai.product
@@ -4320,6 +4403,7 @@ groups:
   type: metric
   brief: New or changed AI usage signals discovered.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.metric.ai.product
@@ -4382,6 +4466,7 @@ groups:
   type: metric
   brief: Continuous AI discovery scans completed by the sidecar.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.metric.privacy_mode
@@ -4420,6 +4505,7 @@ groups:
   type: metric
   brief: AI usage signals observed by category/vendor/product/state.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.metric.ai.product
@@ -4470,6 +4556,7 @@ groups:
   type: metric
   brief: SQLite audit store operation failures
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.metric.operation
@@ -4500,6 +4587,7 @@ groups:
   type: metric
   brief: Total audit events persisted
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.metric.action
@@ -4538,6 +4626,7 @@ groups:
   type: metric
   brief: Audit sink batches acknowledged by remote
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.metric.kind
@@ -4580,6 +4669,7 @@ groups:
   type: metric
   brief: Audit sink batches dropped due to queue or circuit breaker
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.metric.kind
@@ -4622,6 +4712,7 @@ groups:
   type: metric
   brief: Audit sink circuit breaker state (0=closed, 1=open, 2=half-open)
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.metric.sink.kind
@@ -4656,6 +4747,7 @@ groups:
   type: metric
   brief: Audit sink per-batch delivery latency
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.metric.kind
@@ -4699,6 +4791,7 @@ groups:
   type: metric
   brief: Audit sink send failures by sink kind
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.metric.sink.kind
@@ -4737,6 +4830,7 @@ groups:
   type: metric
   brief: Audit sink in-memory queue depth
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.metric.sink.kind
@@ -4771,6 +4865,7 @@ groups:
   type: metric
   brief: Configuration load or validation errors
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.metric.error_type
@@ -4801,6 +4896,7 @@ groups:
   type: metric
   brief: Structured gateway errors by subsystem/code
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.metric.error.code
@@ -4835,6 +4931,7 @@ groups:
   type: metric
   brief: Gateway events written through the writer choke point
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.metric.event_type
@@ -4869,6 +4966,7 @@ groups:
   type: metric
   brief: HTTP authentication failures by route + reason
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: http.route
@@ -4901,6 +4999,7 @@ groups:
   type: metric
   brief: HTTP rate limit breaches by route
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.metric.client.kind
@@ -4933,6 +5032,7 @@ groups:
   type: metric
   brief: Total HTTP requests to the sidecar API
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: http.request.method
@@ -4969,6 +5069,7 @@ groups:
   type: metric
   brief: HTTP request duration distribution
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: http.request.method
@@ -5006,6 +5107,7 @@ groups:
   type: metric
   brief: Rows committed per judge-persistence transaction
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes: []
   body_fields: []
@@ -5040,6 +5142,7 @@ groups:
   type: metric
   brief: Judge bodies dropped before persistence (queue full)
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.metric.reason
@@ -5070,6 +5173,7 @@ groups:
   type: metric
   brief: Current depth of the async judge-persistence queue
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes: []
   body_fields: []
@@ -5094,6 +5198,7 @@ groups:
   type: metric
   brief: 'Judge concurrency semaphore: slots currently held'
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes: []
   body_fields: []
@@ -5118,6 +5223,7 @@ groups:
   type: metric
   brief: Judge semaphore drops (queue full)
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes: []
   body_fields: []
@@ -5142,6 +5248,7 @@ groups:
   type: metric
   brief: Total OTLP body bytes received by the connector ingest receiver, by signal/source
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.connector.source
@@ -5180,6 +5287,7 @@ groups:
   type: metric
   brief: Unix-seconds timestamp of the most recent OTLP-HTTP batch accepted from a given source/signal. Used by the ConnectorTelemetrySilent alert.
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.connector.source
@@ -5218,6 +5326,7 @@ groups:
   type: metric
   brief: OTLP-JSON bodies that failed to parse, by signal/source
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.connector.source
@@ -5256,6 +5365,7 @@ groups:
   type: metric
   brief: Leaf records (logRecords|dataPoints|spans) extracted from inbound OTLP-JSON batches by signal/source
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.connector.source
@@ -5294,6 +5404,7 @@ groups:
   type: metric
   brief: OTLP-HTTP requests accepted by the connector ingest receiver, by signal/source/result
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.connector.source
@@ -5336,6 +5447,7 @@ groups:
   type: metric
   brief: Recovered panics by subsystem
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.metric.subsystem
@@ -5366,6 +5478,7 @@ groups:
   type: metric
   brief: Total OPA policy reload events
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.metric.policy.status
@@ -5396,6 +5509,7 @@ groups:
   type: metric
   brief: Sidecar process uptime
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes: []
   body_fields: []
@@ -5420,6 +5534,7 @@ groups:
   type: metric
   brief: Monotonic provenance generation bumps
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.metric.reason
@@ -5450,6 +5565,7 @@ groups:
   type: metric
   brief: Current depth of a buffered queue
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.metric.capacity
@@ -5484,6 +5600,7 @@ groups:
   type: metric
   brief: Events dropped due to full queue or backpressure
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.metric.queue
@@ -5518,6 +5635,7 @@ groups:
   type: metric
   brief: Guardrail/egress redactions applied by detector/field
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.metric.detector
@@ -5552,6 +5670,7 @@ groups:
   type: metric
   brief: File descriptors currently held by the sidecar
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes: []
   body_fields: []
@@ -5576,6 +5695,7 @@ groups:
   type: metric
   brief: Go GC pause sample (P99 of recent pauses per tick)
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes: []
   body_fields: []
@@ -5601,6 +5721,7 @@ groups:
   type: metric
   brief: Current goroutine count
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes: []
   body_fields: []
@@ -5625,6 +5746,7 @@ groups:
   type: metric
   brief: Current heap allocation in bytes
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes: []
   body_fields: []
@@ -5649,6 +5771,7 @@ groups:
   type: metric
   brief: Live heap objects (runtime.MemStats.HeapObjects)
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes: []
   body_fields: []
@@ -5673,6 +5796,7 @@ groups:
   type: metric
   brief: Gateway events dropped by the runtime JSON-schema gate (v7)
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.metric.code
@@ -5707,6 +5831,7 @@ groups:
   type: metric
   brief: 'Admission-block enforcement latency (SLO target: < 2000ms)'
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.metric.target_type
@@ -5738,6 +5863,7 @@ groups:
   type: metric
   brief: 'TUI panel refresh latency (SLO target: < 5000ms)'
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.metric.panel
@@ -5769,6 +5895,7 @@ groups:
   type: metric
   brief: SQLite SQLITE_BUSY events by operation
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.metric.operation
@@ -5799,6 +5926,7 @@ groups:
   type: metric
   brief: SQLite PRAGMA wal_checkpoint(PASSIVE) duration
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes: []
   body_fields: []
@@ -5824,6 +5952,7 @@ groups:
   type: metric
   brief: SQLite main database file size
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes: []
   body_fields: []
@@ -5848,6 +5977,7 @@ groups:
   type: metric
   brief: SQLite PRAGMA freelist_count
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes: []
   body_fields: []
@@ -5872,6 +6002,7 @@ groups:
   type: metric
   brief: SQLite PRAGMA page_count
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes: []
   body_fields: []
@@ -5896,6 +6027,7 @@ groups:
   type: metric
   brief: SQLite WAL file size
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes: []
   body_fields: []
@@ -5920,6 +6052,7 @@ groups:
   type: metric
   brief: Spans attempted, delivered, rejected, or failed by a named OTLP destination
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.destination.id
@@ -5958,6 +6091,7 @@ groups:
   type: metric
   brief: Spans accepted or dropped by a named telemetry destination profile
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.destination.id
@@ -5996,6 +6130,7 @@ groups:
   type: metric
   brief: OTel exporter or SDK errors by signal
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.metric.exporter
@@ -6034,6 +6169,7 @@ groups:
   type: metric
   brief: Unix seconds of last successful metric export
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.metric.exporter
@@ -6068,6 +6204,7 @@ groups:
   type: metric
   brief: TUI panel filter applications (operator changed a filter chip or search)
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.metric.filter_type
@@ -6102,6 +6239,7 @@ groups:
   type: metric
   brief: Filesystem watcher errors
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes: []
   body_fields: []
@@ -6126,6 +6264,7 @@ groups:
   type: metric
   brief: Filesystem watcher events observed
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes:
   - ref: defenseclaw.connector.source
@@ -6164,6 +6303,7 @@ groups:
   type: metric
   brief: Watcher or gateway reconnection events
   stability: stable
+  introduced_in: telemetry-registry-v1
   extends: []
   attributes: []
   body_fields: []

@@ -27,9 +27,8 @@ import (
 const (
 	observabilityV8DefaultRedactionProfile  = "none"
 	observabilityV8DefaultSampler           = "parentbased_always_on"
-	observabilityV8DefaultSemanticProfile   = "defenseclaw-genai-rich-v1"
+	observabilityV8DefaultSemanticProfile   = observability.RuntimeSemanticProfileID
 	observabilityV8DefaultMetricTemporality = "delta"
-	observabilityV8GalileoPresetProfile     = "galileo-rich-v2"
 	observabilityV8DefaultTimeoutMS         = 10_000
 	observabilityV8DefaultQueueSize         = 2_048
 	observabilityV8DefaultQueueBytes        = 64 * 1_024 * 1_024
@@ -44,13 +43,6 @@ const (
 	observabilityV8MaxExportBatchBytes      = 64 * 1_024 * 1_024
 	observabilityV8MaxBatchDelayMS          = 600_000
 )
-
-var observabilityV8SemanticProfileLock = ObservabilityV8SemanticProfileLock{
-	TraceSchemaVersion:          "defenseclaw-trace-v1",
-	GenAISemconvProfile:         "otel-genai-b028dceecdad117461a785c3af35315e7184e813",
-	OpenInferenceProfile:        "openinference-semantic-conventions-v0.1.30",
-	GalileoCompatibilityProfile: "galileo-rich-v2",
-}
 
 var (
 	observabilityV8StableNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}$`)
@@ -76,7 +68,8 @@ var (
 // deterministic, immutable effective plan. It performs no I/O, secret
 // resolution, DNS lookup, exporter construction, or runtime mutation.
 func CompileObservabilityV8(source *ObservabilityV8Source) (*ObservabilityV8Plan, error) {
-	if err := validateObservabilityV8SemanticLock(); err != nil {
+	semanticProfileLock, err := resolveObservabilityV8SemanticLock()
+	if err != nil {
 		return nil, fmt.Errorf("observability.trace_policy.semantic_profile: %w", err)
 	}
 	if source == nil {
@@ -103,7 +96,7 @@ func CompileObservabilityV8(source *ObservabilityV8Source) (*ObservabilityV8Plan
 	if err != nil {
 		return nil, err
 	}
-	tracePolicy, err := compileObservabilityV8TracePolicy(source.TracePolicy)
+	tracePolicy, err := compileObservabilityV8TracePolicy(source.TracePolicy, semanticProfileLock)
 	if err != nil {
 		return nil, err
 	}
@@ -128,7 +121,13 @@ func CompileObservabilityV8(source *ObservabilityV8Source) (*ObservabilityV8Plan
 	totalRoutes := 0
 	for index, destination := range source.Destinations {
 		path := fmt.Sprintf("observability.destinations[%d]", index)
-		compiled, explicitRoutes, err := compileObservabilityV8Destination(destination, path, buckets, knownProfiles)
+		compiled, explicitRoutes, err := compileObservabilityV8Destination(
+			destination,
+			path,
+			buckets,
+			knownProfiles,
+			semanticProfileLock.GalileoCompatibilityProfile,
+		)
 		if err != nil {
 			return nil, err
 		}
@@ -236,10 +235,13 @@ func compileObservabilityV8Local(source ObservabilityV8LocalSource) (Observabili
 	return ObservabilityV8EffectiveLocal{Path: source.Path, JudgeBodiesPath: source.JudgeBodiesPath, RetentionDays: retentionDays}, nil
 }
 
-func compileObservabilityV8TracePolicy(source ObservabilityV8TracePolicySource) (ObservabilityV8EffectiveTracePolicy, error) {
+func compileObservabilityV8TracePolicy(
+	source ObservabilityV8TracePolicySource,
+	semanticProfileLock ObservabilityV8SemanticProfileLock,
+) (ObservabilityV8EffectiveTracePolicy, error) {
 	result := ObservabilityV8EffectiveTracePolicy{
 		Sampler: observabilityV8DefaultSampler, SemanticProfile: observabilityV8DefaultSemanticProfile,
-		SemanticProfileLock: observabilityV8SemanticProfileLock, CompatibilityAliases: true,
+		SemanticProfileLock: semanticProfileLock, CompatibilityAliases: true,
 		Limits: ObservabilityV8TraceLimitsSource{MaxAttributesPerSpan: 128, MaxEventsPerSpan: 64, MaxLinksPerSpan: 32, MaxAttributesPerEvent: 32, MaxAttributeValueBytes: 16_384, MaxProjectedSpanBytes: 262_144, MaxStacktraceBytes: 32_768, MaxMessageItems: 128},
 	}
 	if source.Sampler != "" {
@@ -371,7 +373,13 @@ func compileObservabilityV8LocalDestination(buckets []ObservabilityV8EffectiveBu
 	}
 }
 
-func compileObservabilityV8Destination(source ObservabilityV8DestinationSource, path string, buckets []ObservabilityV8EffectiveBucket, knownProfiles map[string]struct{}) (ObservabilityV8EffectiveDestination, int, error) {
+func compileObservabilityV8Destination(
+	source ObservabilityV8DestinationSource,
+	path string,
+	buckets []ObservabilityV8EffectiveBucket,
+	knownProfiles map[string]struct{},
+	galileoCompatibilityProfile string,
+) (ObservabilityV8EffectiveDestination, int, error) {
 	if !observabilityV8StableNamePattern.MatchString(source.Name) {
 		return ObservabilityV8EffectiveDestination{}, 0, fmt.Errorf("%s.name: must be a stable lower-case identifier of at most 64 characters", path)
 	}
@@ -403,7 +411,7 @@ func compileObservabilityV8Destination(source ObservabilityV8DestinationSource, 
 		Capabilities: capabilities, FirstMatchPerSignal: true,
 	}
 	if source.Preset == "galileo" {
-		result.PresetProfile = observabilityV8GalileoPresetProfile
+		result.PresetProfile = galileoCompatibilityProfile
 	}
 	explicitRoutes := 0
 	switch {
