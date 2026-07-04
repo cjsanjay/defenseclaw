@@ -668,52 +668,167 @@ silently ignored. The `always` rule requires no producer fact.
 
 ##### Structured types and bindings
 
-`structured_types` is an ordered list of closed named definitions. Every row has
-exactly `{id, kind, introduced_in}` plus the members required by its kind:
+`structured_types` is an ordered list of named definitions. Every row has exactly
+`{id, kind, introduced_in}` plus the members required by its kind. The ordinary
+kinds remain closed; `canonical_json` is the single compiler-owned, bounded,
+non-null recursion exception required by the pinned OTel GenAI shapes:
 
-- `kind: object` adds `additional_properties: false` and nonempty `fields`. A
-  field uses exactly one closed arm. The scalar-leaf arm is
+- `kind: object` adds `additional_properties: false`, `fields`, and optional
+  `dynamic_members`. `fields` is nonempty unless `dynamic_members` is present. A
+  fixed field uses exactly one closed arm. The scalar-leaf arm is
   `{name, required, type, field_class, sensitivity, normalization}`, where `type`
   is one ordinary scalar registry type. The container/reference arm is
   `{name, required, structured_ref}` and carries no `field_class`, `sensitivity`,
   or `normalization`; those properties belong only to the referenced concrete
-  leaves.
+  leaves. `dynamic_members`, when present, is the following closed block (with
+  concrete finite normalization/bounds in the registry):
+
+  ```yaml
+  dynamic_members:
+    name: {type: string, field_class: identifier, sensitivity: internal, normalization: <bounded-string>}
+    value: {structured_ref: gen_ai.canonical_json}
+    max_items: <finite-positive-int>
+    public_encoding: ordered_typed_entries
+    wire_encoding: native_object_properties
+    duplicate_name_policy: reject
+    fixed_name_collision_policy: reject
+    post_redaction_name_collision_policy: reject
+  ```
+
+  `value.structured_ref` may instead name another compatible bounded structured
+  value. Public APIs retain ordered typed name/value entries. Canonical wire
+  encoding flattens those entries into native JSON properties alongside fixed
+  fields; it never emits an entry-array wrapper. Duplicate dynamic names and a
+  dynamic name equal to any fixed field fail before encoding and again after
+  destination redaction/normalization. A post-redaction collision rejects that
+  destination projection with stable code `structured_member_name_collision` and
+  exporter-health accounting; it never drops or overwrites a member. An object
+  with empty `fields` and no `dynamic_members` is invalid.
 - `kind: array` adds `items`, `min_items`, and `max_items`. Bounds are finite,
   nonnegative, and ordered. Scalar items use exactly
   `{type, field_class, sensitivity, normalization}`, where `type` is one ordinary
   scalar registry type. Structured items use exactly `{structured_ref}` and defer
   classification, sensitivity, and normalization to the child leaves. The array
   container itself is never classified.
-- `kind: tagged_union` adds `discriminator` and at least two `variants`. Each
+- `kind: tagged_union` adds `discriminator`, at least two `variants`, and optional
+  `dynamic_variant`. Each
   variant is exactly `{tag, structured_ref}`; tags and targets are unique and the
   discriminator is the explicit scalar-leaf object
   `{name, type: string, field_class, sensitivity, normalization}`. Its `name` is a
   fixed schema-owned object field, and its registered bounded normalization has a
-  closed enum equal to the variant tags.
+  closed enum equal to the variant tags when `dynamic_variant` is absent.
+  `dynamic_variant` is exactly
+  `{tag_normalization, structured_ref, exclude_registered_tags: true}` and admits
+  an arbitrary bounded string tag except every registered `variants[].tag`; its
+  target is normally a GenericPart object with `dynamic_members`. A false/missing
+  exclusion, registered-tag overlap, an unbounded tag, and a dynamic tag with a
+  different normalization are compile errors.
+- `kind: canonical_json` is recognized only for the reserved
+  `gen_ai.canonical_json` definition. Authors cannot create another instance. Its
+  source shape is exactly the following closed compiler schema; no omitted or
+  extension key is allowed:
 
-Definitions form an acyclic graph, every object member name is fixed schema
-vocabulary, and every reachable string/array/object retains an effective bound.
-Open objects and untagged or overlapping unions are invalid. Provider-, tool-, or
-producer-controlled names use a registered ordered name/value-entry type: `name`
-is a classified bounded string value and `value` is a typed field or structured
-reference. Such names never become JSON property names.
+  ```yaml
+  id: gen_ai.canonical_json
+  kind: canonical_json
+  introduced_in: telemetry-registry-v1
+  discriminator: {visibility: internal, wire: false}
+  arms: [boolean, int64, finite_double, string, array, object]
+  leaf_privacy: {field_class: <registered-field-class>, sensitivity: <registered-sensitivity>}
+  array: {items_ref: gen_ai.canonical_json}
+  object:
+    members:
+      name: {type: string, field_class: identifier, sensitivity: internal, normalization: <bounded-string>}
+      value: {structured_ref: gen_ai.canonical_json}
+    public_encoding: ordered_typed_entries
+    wire_encoding: native_object_properties
+  limits:
+    max_depth: <finite-positive-int>
+    max_aggregate_members: <finite-positive-int>
+    max_array_items: <finite-positive-int>
+    max_string_utf8_bytes: <finite-positive-int>
+    max_member_name_utf8_bytes: <finite-positive-int>
+    max_item_bytes: <finite-positive-int>
+    max_canonical_bytes: <finite-positive-int>
+  ```
 
-After expansion, every reachable concrete scalar leaf, including scalar array
-items and tagged-union discriminators, has exactly one effective `field_class`,
-`sensitivity`, and bounded `normalization`. Object, array, variant, and
-`structured_ref` containers have none. Missing, duplicate, inherited-conflicting,
-or container-level privacy annotations fail compilation; P-069 payload-rooted
-leaf coverage remains the sole emitted-record classification authority.
+  Its public type is one sealed union of Boolean, Int64, finite Double, String,
+  Array, and Object arms; Array contains the same union and Object contains ordered
+  typed member entries whose values use the same union. The arm discriminator is
+  private compiler/runtime state and is never serialized to canonical JSON or
+  OTLP. Null is not an arm: canonical validation and every destination projection
+  reject null at any nesting depth. Nonfinite doubles fail, and this self-reference
+  is the only permitted structured recursion. Bindings may only tighten, never
+  remove or increase, these limits.
 
-`structured_bindings` is an ordered list of exact
-`{attribute, structured_type, canonical_encoding}` rows. `canonical_encoding` is
-`native` for a closed upstream/native shape or `ordered_name_value_entries` for a
-dynamic-name compatibility input. Each structured local attribute and each
-referenced upstream `any_value`, indexed-prefix, or object-prefix attribute has
-exactly one binding; scalar attributes have none. A binding cannot change the
-upstream name, owner, or primitive wire meaning. Missing, duplicate, unused, or
-shape-incompatible bindings fail compilation. A generated public input may not use
-`map[string]any`, `any`, or an untyped `Value` in place of a binding.
+  `gen_ai.tool_call_arguments` and `gen_ai.tool_call_result` are distinct closed
+  `kind: object` roots with `additional_properties: false`, empty `fields`, and the
+  exact `dynamic_members` block above pointing values to
+  `gen_ai.canonical_json`. This preserves the pinned object-only root shape:
+  Boolean, number, string, array, and null are invalid as the whole arguments or
+  result value even though bounded non-null scalar/array arms are valid beneath a
+  dynamic object member.
+
+Apart from the compiler-owned `canonical_json` self-reference, definitions form an
+acyclic graph and every reachable string/array/object retains an effective bound.
+Open objects without `dynamic_members` and untagged or overlapping unions are
+invalid. Provider-, tool-, or producer-controlled names use registered ordered
+typed member entries internally; only `dynamic_members` may turn those names into
+native JSON property names at canonical-encoding time.
+
+After expansion, every reachable fixed concrete scalar leaf, including scalar
+array items and tagged-union discriminators, has exactly one effective
+`field_class`, `sensitivity`, and bounded `normalization`. A dynamic member's
+referenced canonical-JSON `leaf_privacy` applies recursively to its value leaves;
+member names retain their separately bounded identifier classification and never
+upgrade the value's safety. Central redaction therefore traverses canonical-JSON
+String arms and other dynamic leaves exactly as it traverses fixed leaves,
+preserving the remaining typed shape. If a profile transforms a dynamic name, the
+projector repeats normalization, duplicate, and fixed-name collision validation
+before serialization. Object, array, variant, and `structured_ref` containers
+have none. Missing, duplicate, inherited-conflicting, or container-level privacy
+annotations fail compilation; P-069 payload-rooted leaf coverage remains the sole
+emitted-record classification authority.
+
+`structured_bindings` is an ordered list of exact `{attribute, structured_type,
+public_encoding, canonical_wire_encoding}` rows. Version 1 is exactly:
+
+| Attribute | Structured type | Public encoding | Canonical wire encoding |
+|---|---|---|---|
+| `gen_ai.input.messages` | `gen_ai.input_messages` | `sealed_typed` | `native_json` |
+| `gen_ai.output.messages` | `gen_ai.output_messages` | `sealed_typed` | `native_json` |
+| `gen_ai.tool.call.arguments` | `gen_ai.tool_call_arguments` | `ordered_typed_entries` | `native_json_object` |
+| `gen_ai.tool.call.result` | `gen_ai.tool_call_result` | `ordered_typed_entries` | `native_json_object` |
+
+Nested `dynamic_members` still use `ordered_typed_entries` at the public boundary
+and `native_object_properties` on the canonical wire. Local scalar arrays,
+including `defenseclaw.guardrail.rule_ids` and `defenseclaw.approval.argv`, are not
+structured bindings. A binding cannot change the upstream name, owner, or
+primitive wire meaning. Missing, duplicate, unused, additional, or
+shape-incompatible bindings fail compilation. Generated public APIs use only the
+sealed typed union and ordered member types; they may not expose `map[string]any`,
+`any`, `interface{}`, a raw/untyped `Value`, or an equivalent escape hatch.
+
+The compiler consumes the following exact offline upstream structural inputs.
+They are part of the lock contract independently of the normalized snapshot and
+are read from the pinned OTel semantic-conventions commit
+`b028dceecdad117461a785c3af35315e7184e813`:
+
+| Input | SHA-256 |
+|---|---|
+| `model/gen-ai/gen-ai-input-messages.json` | `034fcd8c87f1e013f3a5a5018503210e2bee4d2499c361823b96e906d40a50ad` |
+| `model/gen-ai/gen-ai-output-messages.json` | `a825a6c0cc1b7b22fdbfb9488d8dc3a318be3897ef6d3dbae01a10297bb6e569` |
+| `model/gen-ai/gen-ai-tool-call-arguments.json` | `73607a8e8d9e84393475ef460108c59dbb9e1d2ddc0d0177fce6f735a62367ea` |
+| `model/gen-ai/gen-ai-tool-call-result.json` | `44eb4a93b05eea7da14489f1d253814c6429772d1fe869f8f6fc1749d7593412` |
+
+For each property reachable from those inputs, the compiler records exactly one
+disposition: fixed field, `dynamic_members`, `dynamic_variant`, nullable-optional
+omission, or explicit rejection. It rejects an undisposed property and never
+silently drops an unknown extra. Upstream nullable optional properties normalize
+only by omission: an absent property stays absent, and an explicit null may be
+omitted at the typed producer boundary only when the lock marks that property both
+optional and nullable. Required null, all other null, and emitted null fail under
+P-069; null is never a default or union arm.
 
 ##### Go symbol policy and table
 
@@ -737,7 +852,8 @@ go_symbol_policy:
 The separators split source tokens, and every token must be nonempty ASCII. The
 normalization precedence is exact: lowercase `brand_spellings` lookup first,
 uppercase `initialisms` lookup second, and ordinary title-case last. Namespace
-assignment is closed and exact:
+assignment is closed and exact. The reviewed `OTEL` initialism remains in the
+closed set, but the `otel: OTel` brand entry intentionally wins for that token:
 
 | Declaration | Required Go symbol |
 |---|---|
@@ -752,6 +868,11 @@ assignment is closed and exact:
 | Phase ID | `TelemetryPhase<Name>` |
 | Phase-code ID | `TelemetryPhaseCode<Name>` |
 | Semantic-profile ID | `TelemetrySemanticProfile<Name>` |
+| Structured-type ID | `TelemetryStructured<Name>` |
+| Structured-member ID | `TelemetryStructuredMember<TypeName><MemberName>` |
+| Structured-union-arm ID | `TelemetryStructuredArm<TypeName><ArmName>` |
+| Typed structured-member input | `<TypeName><MemberName>MemberInput` |
+| Typed structured-member constructor | `New<TypeName><MemberName>Member` |
 | Per-family input | `Log<Name>Input`, `Span<Name>Input`, or `Metric<Name>Input` according to the family signal |
 | Per-family builder method | `BuildLog<Name>`, `BuildSpan<Name>`, or `BuildMetric<Name>` according to the family signal |
 | Typed span-event input | `Span<FamilyName><EventName>EventInput` |
@@ -797,9 +918,11 @@ builder_context:
 
 `occurrence` is exactly `{timestamp, record_id}` and supplies the deterministic
 clock/ID results used by the real builder. They must equal the emitted record's
-canonical occurrence fields. `condition_facts` contains exactly the fact tokens
+canonical occurrence fields. `condition_facts` contains exactly the registered
+`ConditionIR.enforcement.fact` tokens (for example, `operation_terminal`)
 referenced by the selected family's resolved fields, resource/scope fields,
-instantiated events, and links; every value is Boolean. `mandatory_facts` contains
+instantiated events, and links; keys are never condition IDs, display names, or Go
+symbols, and every value is Boolean. `mandatory_facts` contains
 exactly the nonconstant mandatory facts referenced by the selected log family and
 is empty for traces, metrics, and logs without such rules. Missing, extra,
 duplicate, non-Boolean, or contradictory facts fail before construction.
@@ -835,6 +958,10 @@ from that view. It contains:
   span name parts/kinds/events/links, metric instruments, expanded producer
   identity sets/mappings, semantic profiles, conditions, value catalogs, and Go
   symbols;
+- the four exact upstream structural-input paths, pinned commit, SHA-256 digests,
+  and complete property-disposition table; exactly four structured bindings; and
+  every fixed/dynamic member, dynamic-variant exclusion, canonical-JSON recursion
+  bound, and structured type/member/arm/input/constructor Go symbol;
 - normalized examples with explicit/inherited builder contexts; and
 - the complete P-069 structural objects, relations, derivations, and OTLP
   representation.
@@ -846,6 +973,18 @@ catalog, producer maps, builders, and fixture tests receive this same index
 instance. A renderer may not read registry YAML, current public schemas, current
 handwritten Go registries, prior generated bytes, or recompute inheritance,
 ownership, constraint intersection, symbol names, or structured bindings.
+
+The compiler validates each example ID against `^[a-z][a-z0-9-]{0,127}$` and
+materializes canonical repository-relative POSIX output-path facts in the index.
+Before rendering a payload or returning any bytes to the transaction adapter, the
+renderer coordinator preflights the complete output set. Normalized-example and
+OTLP-fixture paths are direct children of their declared generated directories and
+are derived only from the validated ID. Every output remains beneath the generated
+root. Absolute paths, empty/`.`/`..` segments, backslashes, NUL, doubled or trailing
+separators, traversal, nested example IDs, and platform-reserved path syntax fail.
+Candidate IDs and paths are unique both byte-for-byte and after NFC case folding.
+The coordinator rejects all collisions before invoking a renderer; the publication
+transaction repeats containment and collision checks as defense in depth.
 
 ##### Generated kernel and seven-file acceptance
 
@@ -891,8 +1030,9 @@ Candidate generation MUST remain incomplete until all of these are resolved:
    structured-type/binding grammar, or Go symbol policy/override grammar.
 2. `ExampleIR` has no builder context, so condition and mandatory truth would have
    to be inferred tautologically and occurrence output would be nondeterministic.
-3. Upstream `gen_ai.input.messages`, `gen_ai.output.messages`, tool arguments, and
-   tool results retain generic structured shapes without closed public Go types.
+3. The four digest-pinned upstream GenAI inputs are not yet compiled into the
+   bounded canonical-JSON exception, fixed/dynamic property dispositions, and
+   sealed public Go union/member types.
 4. The materialized view preserves validated facts but has no single enriched
    `CandidateRenderIndex`; separate renderer-side joins can drift.
 5. The seven generated Go outputs and complete symbol table do not yet exist, and
@@ -1371,7 +1511,9 @@ The seven Go files in §5.2.3 have these non-overlapping contracts:
   `TelemetryAttribute`/`TelemetryFamily`/`TelemetryEvent`/`TelemetrySpanEvent`/
   `TelemetryLinkRelation`/`TelemetryInstrument`/`TelemetryCondition`/
   `TelemetryConditionFact`/`TelemetryPhase`/`TelemetryPhaseCode`/
-  `TelemetrySemanticProfile` and never repeats raw normalization.
+  `TelemetrySemanticProfile`/`TelemetryStructured`/
+  `TelemetryStructuredMember`/`TelemetryStructuredArm` and never repeats raw
+  normalization.
 - `zz_generated_telemetry_catalog.go` contains immutable private family, field,
   event, link, outcome, and instrument descriptors plus copy-safe candidate
   lookups. It does not wire the current public event-registry functions before
@@ -1387,6 +1529,12 @@ The seven Go files in §5.2.3 have these non-overlapping contracts:
   `NewSpan<FamilyName><EventName>Event`; links use
   `Span<FamilyName><RelationName>LinkInput` plus
   `NewSpan<FamilyName><RelationName>Link`. There is no generic builder entrypoint.
+- Structured inputs use sealed generated union arms and
+  `<TypeName><MemberName>MemberInput` plus
+  `New<TypeName><MemberName>Member` for ordered members. The discriminator for
+  `gen_ai.canonical_json` remains private and non-wire. No generated structured
+  type, member, arm, or constructor exposes `map`, `any`, `interface{}`, or raw
+  `Value`.
 - `zz_generated_telemetry_builder_fixtures_test.go` instantiates every active
   descriptor and named method, runs the normalized explicit builder contexts, and
   compares exact canonical record bytes/classes and stable failures with the

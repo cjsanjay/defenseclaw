@@ -121,8 +121,76 @@ def test_observability_v8_generated_builder_source_contract_is_normative() -> No
     assert "{name, required, structured_ref}" in schemas
     assert "{type, field_class, sensitivity, normalization}" in schemas
     assert "{name, type: string, field_class, sensitivity, normalization}" in schemas
+    assert "kind: canonical_json" in schemas
+    assert "introduced_in: telemetry-registry-v1" in schemas
+    assert "arms: [boolean, int64, finite_double, string, array, object]" in schemas
+    assert "discriminator: {visibility: internal, wire: false}" in schemas
+    assert "field_class: identifier, sensitivity: internal" in schemas
+    for limit in (
+        "max_depth",
+        "max_aggregate_members",
+        "max_array_items",
+        "max_string_utf8_bytes",
+        "max_member_name_utf8_bytes",
+        "max_item_bytes",
+        "max_canonical_bytes",
+    ):
+        assert f"{limit}: <finite-positive-int>" in schemas
+    assert "public_encoding: ordered_typed_entries" in schemas
+    assert "wire_encoding: native_object_properties" in schemas
+    assert "duplicate_name_policy: reject" in schemas
+    assert "fixed_name_collision_policy: reject" in schemas
+    assert "post_redaction_name_collision_policy: reject" in schemas
+    assert "`structured_member_name_collision`" in schemas
+    assert "exclude_registered_tags: true" in schemas
+    assert "with empty `fields`" in schemas
+    assert "no `dynamic_members` is invalid" in schemas
+    assert "reject null at any nesting depth" in schemas
+    assert "Upstream nullable optional properties normalize" in schemas
+    assert "only by omission" in schemas
+    for path, digest in (
+        (
+            "model/gen-ai/gen-ai-input-messages.json",
+            "034fcd8c87f1e013f3a5a5018503210e2bee4d2499c361823b96e906d40a50ad",
+        ),
+        (
+            "model/gen-ai/gen-ai-output-messages.json",
+            "a825a6c0cc1b7b22fdbfb9488d8dc3a318be3897ef6d3dbae01a10297bb6e569",
+        ),
+        (
+            "model/gen-ai/gen-ai-tool-call-arguments.json",
+            "73607a8e8d9e84393475ef460108c59dbb9e1d2ddc0d0177fce6f735a62367ea",
+        ),
+        (
+            "model/gen-ai/gen-ai-tool-call-result.json",
+            "44eb4a93b05eea7da14489f1d253814c6429772d1fe869f8f6fc1749d7593412",
+        ),
+    ):
+        assert f"`{path}`" in schemas
+        assert f"`{digest}`" in schemas
+    assert "Version 1 is exactly" in schemas
+    for attribute in (
+        "gen_ai.input.messages",
+        "gen_ai.output.messages",
+        "gen_ai.tool.call.arguments",
+        "gen_ai.tool.call.result",
+    ):
+        assert f"| `{attribute}` |" in schemas
+    assert (
+        "| `gen_ai.tool.call.arguments` | `gen_ai.tool_call_arguments` | "
+        "`ordered_typed_entries` | `native_json_object` |"
+    ) in schemas
+    assert (
+        "| `gen_ai.tool.call.result` | `gen_ai.tool_call_result` | "
+        "`ordered_typed_entries` | `native_json_object` |"
+    ) in schemas
+    assert "distinct closed" in schemas
+    assert "invalid as the whole arguments or" in schemas
+    assert "Local scalar arrays" in schemas
+    assert "complete property-disposition table" in schemas
     assert "tagged-union discriminators" in verification
-    assert "every reachable concrete leaf exactly once" in verification
+    assert "Expansion proves every reachable" in verification
+    assert "concrete leaf exactly once" in verification
     assert "object/array/variant container carry none" in verification
     assert "`go_symbol_policy` is exactly" in schemas
     assert "defenseclaw: DefenseClaw" in schemas
@@ -148,6 +216,11 @@ def test_observability_v8_generated_builder_source_contract_is_normative() -> No
         "TelemetryPhase<Name>",
         "TelemetryPhaseCode<Name>",
         "TelemetrySemanticProfile<Name>",
+        "TelemetryStructured<Name>",
+        "TelemetryStructuredMember<TypeName><MemberName>",
+        "TelemetryStructuredArm<TypeName><ArmName>",
+        "<TypeName><MemberName>MemberInput",
+        "New<TypeName><MemberName>Member",
         "Log<Name>Input",
         "Span<Name>Input",
         "Metric<Name>Input",
@@ -169,6 +242,13 @@ def test_observability_v8_generated_builder_source_contract_is_normative() -> No
     assert "`EnrichedFieldDescriptor`" in schemas
     assert "`EnrichedContainerDescriptor`" in schemas
     assert "carrying no field class, sensitivity, or" in schemas
+    assert "`ConditionIR.enforcement.fact` tokens" in schemas
+    assert "never condition IDs, display names, or Go" in schemas
+    assert "`^[a-z][a-z0-9-]{0,127}$`" in schemas
+    assert "renderer coordinator preflights the complete output set" in schemas
+    assert "unique both byte-for-byte and after NFC case folding" in schemas
+    assert "`a/../../catalog`" in verification
+    assert "129-character IDs" in verification
     for path in (
         "internal/observability/zz_generated_telemetry_ids.go",
         "internal/observability/zz_generated_telemetry_catalog.go",

@@ -130,7 +130,7 @@ Section references are to this specification package.
 | P-067 | 12 §5.2.1 | 07 §§2,9.6 |
 | P-068 | 12 §§6.5,13 | 07 §§2,9.6 |
 | P-069 | 02 §§3-3.6; 11 §§5-6; 12 §§4-6.1,8,10-12 | 07 §§2,3.4,9.1,9.3,9.6; generated builder/bundle/OTLP conformance |
-| P-070 | 12 §§5.2.3,6,12,17 | 07 §§2,3.4,9.6,17; generated source-grammar, kernel, seven-file, builder/bundle/fixture conformance |
+| P-070 | 12 §§5.2.3,6,12,17 | 07 §§2,3.4,9.6,17; mandatory-rule, four-input/digest/property-disposition, bounded canonical-JSON recursion, dynamic-member/variant, null/tag/collision/redaction, structured-symbol, portable example-path preflight, kernel, seven-file, and builder/bundle/fixture conformance |
 
 ## 5. Review use
 

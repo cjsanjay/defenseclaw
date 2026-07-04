@@ -200,11 +200,12 @@ a parallel hand-authored P2 registry:
   restriction, condition-fact reference, and mandatory-fact reference is
   exhaustive; an unknown/missing fact or caller-supplied `mandatory` value fails
   before the P2 constructor is called.
-- Structured-value tests prove every registry binding resolves to one closed,
-  acyclic, bounded type and canonical encoding. Provider-controlled names use the
-  ordered name/value-entry representation; no public generated input, constructor,
-  field, or method admits `map[string]any`, `any`, `interface{}`, or a generic
-  catalog lookup.
+- Structured-value tests prove every registry binding resolves to a bounded typed
+  shape and canonical encoding. The sole recursion exception is the compiler-owned
+  non-null `gen_ai.canonical_json` sealed union; dynamic members remain ordered
+  typed entries internally and flatten to native JSON only at encoding. No public
+  generated input, constructor, field, or method admits `map[string]any`, `any`,
+  `interface{}`, raw `Value`, or a generic catalog lookup.
 - Go symbol and generated-output tests prove the closed policy plus reviewed
   overrides produces one complete collision-free `GoSymbolTableIR`. The generated
   builder kernel and all renderers consume the same immutable
@@ -832,18 +833,40 @@ Required cases:
   false, and in combination with every other applicable rule to prove deterministic
   OR semantics; unknown rules/facts, missing referenced facts, non-log use, and a
   raw/caller-controlled mandatory Boolean fail closed.
-- Every P-070 `structured_type` object, array, and tagged union is compiled as a
-  closed, acyclic, bounded type. Every `structured_binding` names an existing
-  attribute and type with a compatible canonical encoding. Dynamic names survive
-  only as ordered name/value entries. Scalar object leaves, scalar array items,
-  and tagged-union discriminators carry exact class/sensitivity/normalization;
-  structured references and every object/array/variant container carry none.
-  Expansion proves every reachable concrete leaf exactly once. Mutation fixtures
-  reject missing/duplicate/conflicting leaf privacy, container annotations,
-  literal dynamic property maps, unbounded members, unknown variants, duplicate
-  bindings, and public Go/Python `any` escape hatches.
+- Every P-070 ordinary `structured_type` object, array, and tagged union is closed,
+  acyclic, and bounded. The only recursive type is the compiler-owned, non-null
+  `gen_ai.canonical_json` sealed union with Boolean, Int64, finite Double, String,
+  Array, and ordered-member Object arms and an internal non-wire discriminator.
+  Positive/negative fixtures exercise exact depth, aggregate-member, item,
+  per-string/name UTF-8, per-item, and total-canonical-byte limits; ordinary
+  reference cycles, null, and nonfinite doubles fail.
+- Version 1 locks exactly four `structured_binding` rows for
+  `gen_ai.input.messages`, `gen_ai.output.messages`,
+  `gen_ai.tool.call.arguments`, and `gen_ai.tool.call.result`; local scalar arrays
+  are not bindings. Arguments and result bind distinct object-only roots whose
+  dynamic member values use the canonical-JSON union; whole-root scalar, array,
+  and null fixtures fail. The compiler verifies the exact commit and all four
+  SHA-256 upstream inputs, then records one disposition for every reachable
+  upstream property. Golden round trips preserve unknown message/part/tool extras through
+  `dynamic_members`, preserve arbitrary bounded unregistered GenericPart tags
+  through `dynamic_variant`, and retain native JSON wire shape. Missing or extra
+  bindings, an undisposed property, registered/dynamic tag overlap, duplicate
+  dynamic keys, fixed/dynamic name collision, or an empty object without
+  `dynamic_members` fails.
+- Scalar object leaves, scalar array items, and tagged-union discriminators carry
+  exact class/sensitivity/normalization; structured references and every
+  object/array/variant container carry none. Expansion proves every reachable
+  concrete leaf exactly once. Redaction fixtures traverse dynamic and recursively
+  nested string leaves, transform only classified content, and prove unknown
+  extras cannot bypass the selected profile. A post-redaction dynamic/fixed or
+  dynamic/dynamic name collision fails with `structured_member_name_collision`
+  and exporter-health accounting; no member is dropped or overwritten. Upstream nullable optionals normalize
+  only by omission; explicit emitted null and required null fail under P-069.
+  Public Go/Python APIs expose no map, `any`, `interface{}`, raw `Value`, or other
+  untyped escape hatch.
 - The exact P-070 `go_symbol_policy` is compiled before rendering. Golden fixtures
-  cover every ID/input/method/event/link namespace, initialism, exact
+  cover every ID/input/method/event/link/structured-type/structured-member/
+  structured-arm/member-constructor namespace, initialism, exact
   `DefenseClaw`/`OpenTelemetry`/`OTel` brand spelling, and deterministic
   separators/casing. They also cover reserved-word rejection, invalid identifiers,
   cross-kind and same-kind collisions, and reviewed exact-key overrides. Collisions
@@ -860,7 +883,8 @@ Required cases:
   recursively immutable `CandidateRenderIndex`, including complete
   scalar-leaf `EnrichedFieldDescriptor` joins, unclassified
   `EnrichedContainerDescriptor` structure, symbol table, mandatory-rule
-  descriptors and per-family resolutions, structured bindings, examples, producer
+  descriptors and per-family resolutions, the four upstream structural inputs and
+  property dispositions, structured bindings/dynamic rules, examples, producer
   mappings, and projection descriptors. Its digest is stable under source-map
   iteration, and every bundle, catalog, documentation,
   fixture, projection, and Go/Python renderer receives this same index. Tests make
@@ -878,6 +902,14 @@ Required cases:
   complete candidate bundle, or none is published/accepted. Missing, extra, stale,
   mixed-digest, partially written, independently generated, or current-authority
   files fail before cutover.
+- Portable example-output preflight runs before any renderer or transaction
+  adapter. It accepts only IDs matching `^[a-z][a-z0-9-]{0,127}$`, direct-child
+  normalized-example/OTLP-fixture outputs, and unique canonical repository-relative
+  POSIX paths under the generated root. Fixtures reject `a/../../catalog`,
+  `a/../b`, `a/b`, `a:b`, uppercase/case-fold aliases, 129-character IDs,
+  absolute/backslash/NUL/doubled/trailing-separator paths, exact output collisions,
+  and NFC-case-fold collisions before renderer invocation; the transaction repeats
+  containment/collision validation.
 - Each curated valid record passes the real generated builder and complete candidate
   bundle. Each invalid record names one valid `base_example` plus exactly one typed
   mutation. The compiler applies its ordered RFC 6901 changes to the base
