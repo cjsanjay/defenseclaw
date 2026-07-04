@@ -183,6 +183,7 @@ def _snapshot(
             | legacy_core
             | {
                 "service.name",
+                "service.version",
                 "session.id",
                 "user.id",
             }
@@ -465,6 +466,12 @@ def _domain_sources() -> dict[str, dict[str, Any]]:
             copy.deepcopy(next(item for item in canonical_genai["groups"] if item["id"] == group_id))
         )
     operations = domains["operations.yaml"]
+    canonical_operations = yaml.safe_load((ROOT / "schemas/telemetry/v8/operations.yaml").read_text(encoding="utf-8"))
+    operations["attribute_extensions"].append(
+        copy.deepcopy(
+            next(item for item in canonical_operations["attribute_extensions"] if item["ref"] == "service.version")
+        )
+    )
     for index in range(74):
         operations["groups"].append(
             {
@@ -593,6 +600,7 @@ def _domain_sources() -> dict[str, dict[str, Any]]:
             "type": "resource",
             "brief": "A fixture resource contract.",
             "stability": "stable",
+            "attributes": [{"ref": "service.version", "requirement_level": "required"}],
         },
     )
     for domain in domains.values():
@@ -784,7 +792,7 @@ def _fixture_root(tmp_path: Path) -> Path:
                             "status": {"code": "OK"},
                             "resource": {
                                 "schema_url": "https://opentelemetry.io/schemas/1.42.0",
-                                "attributes": {},
+                                "attributes": {"service.version": "8.0.0"},
                             },
                             "scope": {
                                 "name": "defenseclaw.telemetry",
@@ -808,7 +816,7 @@ def _fixture_root(tmp_path: Path) -> Path:
                             "/attributes/gen_ai.operation.name": "metadata",
                             "/status/code": "metadata",
                             "/resource/schema_url": "metadata",
-                            "/resource/attributes": "metadata",
+                            "/resource/attributes/service.version": "metadata",
                             "/scope/name": "metadata",
                             "/scope/version": "metadata",
                             "/scope/schema_url": "metadata",
@@ -3878,35 +3886,99 @@ def test_structural_contract_ir_is_closed_lossless_and_runtime_bound(tmp_path: P
     assert contract.trace_relations[0].right == "end_time_unix_nano"
     assert {
         (
-            item.target_attribute,
+            "target_attribute" if item.target_attribute is not None else "target_field",
+            item.target_attribute if item.target_attribute is not None else item.target_field,
             item.source,
             item.equality,
             item.presence,
         )
         for item in contract.trace_derivations
     } == {
-        ("defenseclaw.bucket", "envelope.bucket", "typed-json-exact", "when-registered"),
-        ("defenseclaw.span.family", "family.id", "typed-json-exact", "when-registered"),
         (
+            "target_attribute",
+            "defenseclaw.bucket",
+            "envelope.bucket",
+            "typed-json-exact",
+            "when-registered",
+        ),
+        (
+            "target_attribute",
+            "defenseclaw.span.family",
+            "family.id",
+            "typed-json-exact",
+            "when-registered",
+        ),
+        (
+            "target_attribute",
             "defenseclaw.span.family_schema_version",
             "family.family_schema_version",
             "typed-json-exact",
             "when-registered",
         ),
-        ("defenseclaw.source", "envelope.source", "typed-json-exact", "when-registered"),
         (
+            "target_attribute",
+            "defenseclaw.source",
+            "envelope.source",
+            "typed-json-exact",
+            "when-registered",
+        ),
+        (
+            "target_attribute",
             "defenseclaw.config.generation",
             "provenance.config_generation",
             "typed-json-exact",
             "when-registered",
         ),
         (
+            "target_attribute",
             "defenseclaw.outcome",
             "envelope.outcome",
             "typed-json-exact",
             "when-registered-and-source-present",
         ),
+        (
+            "target_attribute",
+            "service.version",
+            "provenance.binary_version",
+            "typed-json-exact",
+            "when-registered",
+        ),
+        (
+            "target_field",
+            "trace_scope.version",
+            "provenance.binary_version",
+            "typed-json-exact",
+            "when-registered",
+        ),
+        (
+            "target_attribute",
+            "defenseclaw.trace.schema_version",
+            "semantic_profile.trace_schema_version",
+            "typed-json-exact",
+            "when-registered",
+        ),
+        (
+            "target_attribute",
+            "defenseclaw.semantic_profile",
+            "semantic_profile.id",
+            "typed-json-exact",
+            "when-registered",
+        ),
+        (
+            "target_attribute",
+            "defenseclaw.link.relation",
+            "link.relation",
+            "typed-json-exact",
+            "when-registered",
+        ),
     }
+    assert len(contract.trace_derivations) == 11
+    scope_fields = {field.name: field for field in contract.trace_scope.fields}
+    assert scope_fields["name"].const == "defenseclaw.telemetry"
+    assert scope_fields["schema_url"].const == "https://defenseclaw.io/schemas/telemetry/v8"
+    assert scope_fields["version"].const_present is False
+    resource_fields = {field.name: field for field in contract.trace_resource.fields}
+    assert resource_fields["schema_url"].const_present is False
     assert {field.name for field in contract.trace_body.fields}.isdisjoint(
         {"trace_id", "span_id", "name", "traceId", "spanId"}
     )
@@ -4529,6 +4601,27 @@ def test_mandatory_builder_facts_use_or_semantics_and_exact_wire_value(tmp_path:
         parse(("control_plane_mutation",), {"control_plane_mutation": 1}, False)
     with pytest.raises(module.RegistryError, match="derived mandatory does not equal record.mandatory"):
         parse(("control_plane_mutation",), {"control_plane_mutation": True}, False)
+
+
+def test_asset_state_log_families_preserve_enforcement_state_change_floor() -> None:
+    module = _load_generator_module("telemetry_registry_asset_state_mandatory_floor")
+    ir = module.compile_registry(ROOT)
+    groups = {group.id: group for domain in ir.domains for group in domain.groups}
+    asset_state_families = (
+        "log.asset.activated",
+        "log.asset.admitted",
+        "log.asset.disabled",
+        "log.asset.discovered",
+        "log.asset.quarantined",
+        "log.asset.registered",
+        "log.asset.released",
+        "log.asset.removed",
+        "log.asset.updated",
+    )
+
+    assert {family_id: groups[family_id].mandatory_floor for family_id in asset_state_families} == {
+        family_id: ("enforcement_state_change",) for family_id in asset_state_families
+    }
 
 
 def test_trace_and_metric_builder_contexts_forbid_mandatory_facts(tmp_path: Path) -> None:
@@ -5608,6 +5701,14 @@ def test_materialized_digest_canonicalizes_declared_set_fields_only(tmp_path: Pa
             "trace.derivations: binding inventory mismatch",
         ),
         (
+            lambda contract: contract["trace"]["derivations"][0].__setitem__("target_field", "trace_scope.version"),
+            "expected exactly one of target_attribute or target_field",
+        ),
+        (
+            lambda contract: contract["trace"]["derivations"][0].pop("target_attribute"),
+            "expected exactly one of target_attribute or target_field",
+        ),
+        (
             lambda contract: contract.__setitem__("derivations", contract["trace"].pop("derivations")),
             "registry.structural_contract: unknown keys ['derivations']",
         ),
@@ -5631,6 +5732,45 @@ def test_trace_derivations_are_complete_exact_and_trace_scoped(
 
 
 @pytest.mark.parametrize(
+    ("mutation", "expected"),
+    [
+        (
+            lambda scope, _resource: scope["schema_url"].pop("const"),
+            "instrumentation-scope schema URL mismatch",
+        ),
+        (
+            lambda scope, _resource: scope["schema_url"].__setitem__("const", "https://example.invalid/telemetry/v8"),
+            "instrumentation-scope schema URL mismatch",
+        ),
+        (
+            lambda _scope, resource: resource["schema_url"].__setitem__(
+                "const", "https://opentelemetry.io/schemas/1.42.0"
+            ),
+            "resource schema URL must remain producer input",
+        ),
+    ],
+)
+def test_trace_scope_constants_and_resource_schema_url_input_are_exact(
+    tmp_path: Path,
+    mutation: Any,
+    expected: str,
+) -> None:
+    root = _fixture_root(tmp_path)
+    path = root / "schemas/telemetry/v8/registry.yaml"
+    registry = yaml.safe_load(path.read_text(encoding="utf-8"))
+    trace = registry["structural_contract"]["trace"]
+    scope = {field["name"]: field for field in trace["scope"]["fields"]}
+    resource = {field["name"]: field for field in trace["resource"]["fields"]}
+    mutation(scope, resource)
+    _write_yaml(path, registry)
+
+    result = _run(root, "--write")
+
+    assert result.returncode == 1
+    assert expected in result.stderr
+
+
+@pytest.mark.parametrize(
     ("object_name", "field_name", "expected"),
     [
         ("envelope", "bucket", "structural contract envelope: missing field bucket"),
@@ -5638,6 +5778,11 @@ def test_trace_derivations_are_complete_exact_and_trace_scoped(
             "provenance",
             "config_generation",
             "structural contract provenance: missing field config_generation",
+        ),
+        (
+            "provenance",
+            "binary_version",
+            "structural contract provenance: missing field binary_version",
         ),
     ],
 )
@@ -5658,6 +5803,11 @@ def test_trace_derivation_source_field_lookup_fails_with_safe_registry_error(
     broken_contract = module.replace(ir.structural_contract, **{object_name: broken_object})
     groups = {group.id: group for domain in ir.domains for group in domain.groups}
     attributes = {attribute.id: attribute for domain in ir.domains for attribute in domain.attributes}
+    upstream_attributes = {
+        attribute.id: (dependency.id, attribute)
+        for dependency in ir.dependencies
+        for attribute in dependency.snapshot.attributes
+    }
 
     with pytest.raises(module.RegistryError, match=expected):
         module._validate_structural_contract_bindings(
@@ -5667,6 +5817,7 @@ def test_trace_derivation_source_field_lookup_fails_with_safe_registry_error(
             ir.semantic_profiles,
             groups,
             attributes,
+            upstream_attributes,
         )
 
 

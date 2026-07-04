@@ -540,6 +540,11 @@ structural_contract:
       - {id: trace-source-equality-v1, target_attribute: defenseclaw.source, source: envelope.source, equality: typed-json-exact, presence: when-registered}
       - {id: trace-config-generation-equality-v1, target_attribute: defenseclaw.config.generation, source: provenance.config_generation, equality: typed-json-exact, presence: when-registered}
       - {id: trace-outcome-equality-v1, target_attribute: defenseclaw.outcome, source: envelope.outcome, equality: typed-json-exact, presence: when-registered-and-source-present}
+      - {id: trace-resource-service-version-equality-v1, target_attribute: service.version, source: provenance.binary_version, equality: typed-json-exact, presence: when-registered}
+      - {id: trace-scope-version-equality-v1, target_field: trace_scope.version, source: provenance.binary_version, equality: typed-json-exact, presence: when-registered}
+      - {id: trace-scope-schema-version-equality-v1, target_attribute: defenseclaw.trace.schema_version, source: semantic_profile.trace_schema_version, equality: typed-json-exact, presence: when-registered}
+      - {id: trace-scope-semantic-profile-equality-v1, target_attribute: defenseclaw.semantic_profile, source: semantic_profile.id, equality: typed-json-exact, presence: when-registered}
+      - {id: trace-link-relation-equality-v1, target_attribute: defenseclaw.link.relation, source: link.relation, equality: typed-json-exact, presence: when-registered}
     body:
       additional_properties: false
       fields:
@@ -569,7 +574,7 @@ structural_contract:
       fields:
         - {name: name, type: string, required: true, const: defenseclaw.telemetry, field_class: metadata, sensitivity: safe, normalization: {id: enum-v1, overrides: {enum: [defenseclaw.telemetry]}}, otlp: {target: name, encoding: direct}}
         - {name: version, type: string, required: true, field_class: metadata, sensitivity: safe, normalization: {id: bounded-v1, overrides: {max_utf8_bytes: 256}}, otlp: {target: version, encoding: direct}}
-        - {name: schema_url, type: string, required: true, field_class: metadata, sensitivity: safe, normalization: {id: url-v1, overrides: {max_utf8_bytes: 512}}, otlp: {target: schemaUrl, encoding: direct}}
+        - {name: schema_url, type: string, required: true, const: 'https://defenseclaw.io/schemas/telemetry/v8', field_class: metadata, sensitivity: safe, normalization: {id: url-v1, overrides: {max_utf8_bytes: 512}}, otlp: {target: schemaUrl, encoding: direct}}
         - {name: attributes, type: canonical_json, required: true, semantic_ref: scope.core, field_class: metadata, sensitivity: internal, normalization: {id: structured-content-v1, overrides: {max_utf8_bytes: 16384, max_item_utf8_bytes: 4096, max_items: 16, max_depth: 1, max_properties: 16}}, otlp: {target: attributes, encoding: key_value_array}}
         - {name: dropped_attributes_count, type: uint32, required: false, field_class: metadata, sensitivity: safe, normalization: {id: numeric-range-v1, overrides: {min: 0, max: 4294967295}}, otlp: {target: droppedAttributesCount, encoding: direct}}
     status:

@@ -2995,7 +2995,8 @@ groups:
     allowed_outcomes:
     - applied
     route_selector: true
-    mandatory_floor: []
+    mandatory_floor:
+    - enforcement_state_change
     compatibility_profiles:
     - local-observability-v1
     legacy_bindings:
@@ -3019,7 +3020,8 @@ groups:
     allowed_outcomes:
     - allowed
     route_selector: true
-    mandatory_floor: []
+    mandatory_floor:
+    - enforcement_state_change
     compatibility_profiles:
     - local-observability-v1
     legacy_bindings:
@@ -3043,7 +3045,8 @@ groups:
     allowed_outcomes:
     - applied
     route_selector: true
-    mandatory_floor: []
+    mandatory_floor:
+    - enforcement_state_change
     compatibility_profiles:
     - local-observability-v1
     legacy_bindings:
@@ -3066,7 +3069,8 @@ groups:
     outcome_requirement: forbidden
     allowed_outcomes: []
     route_selector: true
-    mandatory_floor: []
+    mandatory_floor:
+    - enforcement_state_change
     compatibility_profiles:
     - local-observability-v1
     legacy_bindings:
@@ -3090,7 +3094,8 @@ groups:
     allowed_outcomes:
     - quarantined
     route_selector: true
-    mandatory_floor: []
+    mandatory_floor:
+    - enforcement_state_change
     compatibility_profiles:
     - local-observability-v1
     legacy_bindings:
@@ -3114,7 +3119,8 @@ groups:
     allowed_outcomes:
     - applied
     route_selector: true
-    mandatory_floor: []
+    mandatory_floor:
+    - enforcement_state_change
     compatibility_profiles:
     - local-observability-v1
     legacy_bindings:
@@ -3138,7 +3144,8 @@ groups:
     allowed_outcomes:
     - released
     route_selector: true
-    mandatory_floor: []
+    mandatory_floor:
+    - enforcement_state_change
     compatibility_profiles:
     - local-observability-v1
     legacy_bindings:
@@ -3162,7 +3169,8 @@ groups:
     allowed_outcomes:
     - applied
     route_selector: true
-    mandatory_floor: []
+    mandatory_floor:
+    - enforcement_state_change
     compatibility_profiles:
     - local-observability-v1
     legacy_bindings:
@@ -3186,7 +3194,8 @@ groups:
     allowed_outcomes:
     - applied
     route_selector: true
-    mandatory_floor: []
+    mandatory_floor:
+    - enforcement_state_change
     compatibility_profiles:
     - local-observability-v1
     legacy_bindings:

@@ -685,7 +685,16 @@ def test_bundle_is_complete_draft_2020_12_and_examples_have_exact_dispositions(
         "trace_resource.schema_url": "ResourceSpans",
         "trace_scope.schema_url": "ResourceSpans.scopeSpans[]",
     }
-    assert len(schema["x-defenseclaw-trace-derivations"]) == 6
+    trace_derivations = schema["x-defenseclaw-trace-derivations"]
+    assert len(trace_derivations) == 11
+    assert next(item for item in trace_derivations if item["id"] == "trace-scope-version-equality-v1") == {
+        "equality": "typed-json-exact",
+        "id": "trace-scope-version-equality-v1",
+        "presence": "when-registered",
+        "source": "provenance.binary_version",
+        "target_attribute": None,
+        "target_field": "trace_scope.version",
+    }
     conformance = schema["x-defenseclaw-conformance"]
     assert conformance["scope"] == "canonical-schema-comparison-only"
     assert conformance["builder_parity"] == "pending-source-inputs"

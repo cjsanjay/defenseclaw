@@ -584,6 +584,7 @@ STRUCTURAL_SEMANTIC_FORMATS: Final = frozenset({"otel-trace-id-v1", "otel-span-i
 TRACE_DERIVATION_BINDINGS: Final = (
     (
         "trace-bucket-equality-v1",
+        "target_attribute",
         "defenseclaw.bucket",
         "envelope.bucket",
         "typed-json-exact",
@@ -591,6 +592,7 @@ TRACE_DERIVATION_BINDINGS: Final = (
     ),
     (
         "trace-family-equality-v1",
+        "target_attribute",
         "defenseclaw.span.family",
         "family.id",
         "typed-json-exact",
@@ -598,6 +600,7 @@ TRACE_DERIVATION_BINDINGS: Final = (
     ),
     (
         "trace-family-schema-version-equality-v1",
+        "target_attribute",
         "defenseclaw.span.family_schema_version",
         "family.family_schema_version",
         "typed-json-exact",
@@ -605,6 +608,7 @@ TRACE_DERIVATION_BINDINGS: Final = (
     ),
     (
         "trace-source-equality-v1",
+        "target_attribute",
         "defenseclaw.source",
         "envelope.source",
         "typed-json-exact",
@@ -612,6 +616,7 @@ TRACE_DERIVATION_BINDINGS: Final = (
     ),
     (
         "trace-config-generation-equality-v1",
+        "target_attribute",
         "defenseclaw.config.generation",
         "provenance.config_generation",
         "typed-json-exact",
@@ -619,13 +624,55 @@ TRACE_DERIVATION_BINDINGS: Final = (
     ),
     (
         "trace-outcome-equality-v1",
+        "target_attribute",
         "defenseclaw.outcome",
         "envelope.outcome",
         "typed-json-exact",
         "when-registered-and-source-present",
     ),
+    (
+        "trace-resource-service-version-equality-v1",
+        "target_attribute",
+        "service.version",
+        "provenance.binary_version",
+        "typed-json-exact",
+        "when-registered",
+    ),
+    (
+        "trace-scope-version-equality-v1",
+        "target_field",
+        "trace_scope.version",
+        "provenance.binary_version",
+        "typed-json-exact",
+        "when-registered",
+    ),
+    (
+        "trace-scope-schema-version-equality-v1",
+        "target_attribute",
+        "defenseclaw.trace.schema_version",
+        "semantic_profile.trace_schema_version",
+        "typed-json-exact",
+        "when-registered",
+    ),
+    (
+        "trace-scope-semantic-profile-equality-v1",
+        "target_attribute",
+        "defenseclaw.semantic_profile",
+        "semantic_profile.id",
+        "typed-json-exact",
+        "when-registered",
+    ),
+    (
+        "trace-link-relation-equality-v1",
+        "target_attribute",
+        "defenseclaw.link.relation",
+        "link.relation",
+        "typed-json-exact",
+        "when-registered",
+    ),
 )
 TRACE_OUTCOME_PRESENCE_CONDITION: Final = "operation-terminal-v1"
+TRACE_SCOPE_SCHEMA_URL: Final = "https://defenseclaw.io/schemas/telemetry/v8"
 MATERIALIZED_VIEW_FORMAT: Final = "defenseclaw-materialized-registry-view-v1"
 MATERIALIZED_VIEW_DIGEST_DOMAIN: Final = b"DefenseClaw MaterializedRegistryView v1\x00"
 PSEUDO_SEMANTIC_REF_PLACEMENTS: Final = {
@@ -1486,7 +1533,8 @@ class StructuralRelationIR:
 @dataclass(frozen=True, slots=True)
 class TraceDerivationIR:
     id: str
-    target_attribute: str
+    target_attribute: str | None
+    target_field: str | None
     source: str
     equality: str
     presence: str
@@ -4151,14 +4199,23 @@ def _parse_structural_contract(
             raise RegistryError(f"{item_path}: expected mapping")
         _exact_keys(
             item,
-            {"id", "target_attribute", "source", "equality", "presence"},
-            set(),
+            {"id", "source", "equality", "presence"},
+            {"target_attribute", "target_field"},
             item_path,
         )
+        has_target_attribute = "target_attribute" in item
+        has_target_field = "target_field" in item
+        if has_target_attribute == has_target_field:
+            raise RegistryError(f"{item_path}: expected exactly one of target_attribute or target_field")
         derivations.append(
             TraceDerivationIR(
                 _string(item["id"], f"{item_path}.id", pattern=_ID),
-                _string(item["target_attribute"], f"{item_path}.target_attribute", pattern=_ID),
+                (
+                    _string(item["target_attribute"], f"{item_path}.target_attribute", pattern=_ID)
+                    if has_target_attribute
+                    else None
+                ),
+                (_string(item["target_field"], f"{item_path}.target_field", pattern=_ID) if has_target_field else None),
                 _string(item["source"], f"{item_path}.source", pattern=_ID),
                 _string(item["equality"], f"{item_path}.equality", pattern=_ID),
                 _string(item["presence"], f"{item_path}.presence", pattern=_ID),
@@ -4167,7 +4224,8 @@ def _parse_structural_contract(
     observed_derivations = {
         (
             item.id,
-            item.target_attribute,
+            "target_attribute" if item.target_attribute is not None else "target_field",
+            item.target_attribute if item.target_attribute is not None else item.target_field,
             item.source,
             item.equality,
             item.presence,
@@ -6612,6 +6670,7 @@ def _validate_structural_contract_bindings(
     semantic_profiles: tuple[SemanticProfileIR, ...],
     groups: Mapping[str, GroupIR],
     local_attributes: Mapping[str, AttributeIR],
+    upstream_attributes: Mapping[str, tuple[str, SnapshotAttribute]],
 ) -> None:
     structural_objects = (
         contract.envelope,
@@ -6670,14 +6729,28 @@ def _validate_structural_contract_bindings(
         "family.id": "string",
         "family.family_schema_version": "uint32",
         "provenance.config_generation": _structural_field(contract.provenance, "config_generation").field_type,
+        "provenance.binary_version": _structural_field(contract.provenance, "binary_version").field_type,
+        "semantic_profile.trace_schema_version": "string",
+        "semantic_profile.id": "string",
+        "link.relation": "string",
     }
     for derivation in contract.trace_derivations:
-        target = local_attributes.get(derivation.target_attribute)
-        if target is None or target.projection_only:
-            raise RegistryError(
-                f"structural contract trace derivation {derivation.id}: target attribute is unavailable"
-            )
-        if target.field_type != derivation_source_types[derivation.source]:
+        if derivation.target_attribute is not None:
+            local_target = local_attributes.get(derivation.target_attribute)
+            upstream_target = upstream_attributes.get(derivation.target_attribute)
+            if local_target is not None and not local_target.projection_only:
+                target_types = (local_target.field_type,)
+            elif upstream_target is not None:
+                target_types = upstream_target[1].allowed_types
+            else:
+                raise RegistryError(
+                    f"structural contract trace derivation {derivation.id}: target attribute is unavailable"
+                )
+        elif derivation.target_field == "trace_scope.version":
+            target_types = (_structural_field(contract.trace_scope, "version").field_type,)
+        else:
+            raise RegistryError(f"structural contract trace derivation {derivation.id}: target field is unavailable")
+        if target_types != (derivation_source_types[derivation.source],):
             raise RegistryError(f"structural contract trace derivation {derivation.id}: source/target type mismatch")
     schema_field = _structural_field(contract.envelope, "schema_version")
     bucket_version_field = _structural_field(contract.envelope, "bucket_catalog_version")
@@ -6714,6 +6787,11 @@ def _validate_structural_contract_bindings(
     scope_name = _structural_field(contract.trace_scope, "name")
     if not scope_name.const_present or scope_name.const != "defenseclaw.telemetry":
         raise RegistryError("structural contract: instrumentation-scope name mismatch")
+    scope_schema_url = _structural_field(contract.trace_scope, "schema_url")
+    if not scope_schema_url.const_present or scope_schema_url.const != TRACE_SCOPE_SCHEMA_URL:
+        raise RegistryError("structural contract: instrumentation-scope schema URL mismatch")
+    if _structural_field(contract.trace_resource, "schema_url").const_present:
+        raise RegistryError("structural contract: resource schema URL must remain producer input")
     for group_id, group_type in (
         ("resource.core", "resource"),
         ("scope.core", "attribute_group"),
@@ -6753,28 +6831,37 @@ def _validate_structural_contract_bindings(
                 raise RegistryError(f"structural contract {object_ir.id}.{field.name}: semantic-format mismatch")
 
 
-def _validate_span_derivation_coverage(
+def _validate_trace_derivation_coverage(
     contract: StructuralContractIR,
     groups: Mapping[str, GroupIR],
 ) -> None:
-    unconditional_targets = tuple(
+    span_unconditional_targets = (
+        "defenseclaw.bucket",
+        "defenseclaw.span.family",
+        "defenseclaw.span.family_schema_version",
+        "defenseclaw.source",
+        "defenseclaw.config.generation",
+    )
+    unconditional_attribute_targets = tuple(
         derivation.target_attribute
         for derivation in contract.trace_derivations
-        if derivation.presence == "when-registered"
+        if derivation.target_attribute is not None and derivation.presence == "when-registered"
     )
     source_present_targets = tuple(
         derivation.target_attribute
         for derivation in contract.trace_derivations
-        if derivation.presence == "when-registered-and-source-present"
+        if derivation.target_attribute is not None and derivation.presence == "when-registered-and-source-present"
     )
-    if len(unconditional_targets) != 5 or source_present_targets != ("defenseclaw.outcome",):
+    if not set(span_unconditional_targets).issubset(unconditional_attribute_targets) or source_present_targets != (
+        "defenseclaw.outcome",
+    ):
         raise RegistryError("structural contract: trace derivation presence inventory mismatch")
 
     for group in groups.values():
         if group.type != "span":
             continue
         resolved = {use.ref: use for use in group.resolved_uses}
-        for target in unconditional_targets:
+        for target in span_unconditional_targets:
             use = resolved.get(target)
             if (
                 use is None
@@ -6804,6 +6891,32 @@ def _validate_span_derivation_coverage(
                 f"group {group.id}: trace derivation target defenseclaw.outcome must resolve with exact "
                 f"{TRACE_OUTCOME_PRESENCE_CONDITION} source-presence semantics"
             )
+
+    required_context_targets = (
+        ("resource.core", "resource", "service.version"),
+        ("scope.core", "attribute_group", "defenseclaw.trace.schema_version"),
+        ("scope.core", "attribute_group", "defenseclaw.semantic_profile"),
+        ("link.core", "attribute_group", "defenseclaw.link.relation"),
+    )
+    for group_id, group_type, target in required_context_targets:
+        group = groups.get(group_id)
+        if group is None or group.type != group_type:
+            raise RegistryError(f"structural contract: trace derivation context {group_id} is unavailable")
+        use = next((item for item in group.resolved_uses if item.ref == target), None)
+        if (
+            use is None
+            or use.role != "attributes"
+            or use.requirement_level != "required"
+            or use.conditional is not None
+        ):
+            raise RegistryError(
+                f"group {group_id}: trace derivation target {target} must resolve as an unconditional "
+                "required attribute"
+            )
+
+    scope_version = _structural_field(contract.trace_scope, "version")
+    if not scope_version.required or scope_version.const_present:
+        raise RegistryError("structural contract trace_scope.version: derived target must be required and non-constant")
 
 
 def _lifecycle_registry_version(value: str, path: str) -> int:
@@ -7777,6 +7890,7 @@ def compile_registry(root: Path) -> RegistryIR:
         semantic_profiles,
         group_owners,
         local_attributes,
+        upstream_attributes,
     )
     _validate_outcome_contracts(group_owners, local_attributes)
     log_event_names = [
@@ -7908,7 +8022,7 @@ def compile_registry(root: Path) -> RegistryIR:
     resolved_domains, group_resolution_order, resolved_group_uses = _resolve_group_uses(tuple(domains))
     domains = list(resolved_domains)
     group_owners = {group.id: group for domain in domains for group in domain.groups}
-    _validate_span_derivation_coverage(structural_contract, group_owners)
+    _validate_trace_derivation_coverage(structural_contract, group_owners)
     _validate_metric_attribute_safety(
         group_owners,
         local_attributes,
