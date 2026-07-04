@@ -121,6 +121,173 @@ EXPECTED_STRUCTURED_BINDINGS: Final = (
         "native_json_object",
     ),
 )
+EXPECTED_GO_SYMBOL_POLICY: Final = {
+    "version": 1,
+    "package": "observability",
+    "separators": (".", "-", "/", "_"),
+    "brand_spellings": {
+        "defenseclaw": "DefenseClaw",
+        "opentelemetry": "OpenTelemetry",
+        "otel": "OTel",
+    },
+    "initialisms": (
+        "AI",
+        "API",
+        "DB",
+        "HEC",
+        "HTTP",
+        "ID",
+        "JSON",
+        "LLM",
+        "OTEL",
+        "OTLP",
+        "PII",
+        "RPC",
+        "SDK",
+        "SQL",
+        "TLS",
+        "URL",
+        "UTF8",
+    ),
+    "reserved_word_policy": "reject",
+    "collision_policy": "reject",
+    "auto_suffix_policy": "reject",
+}
+GO_SYMBOL_KIND_ORDER: Final = (
+    "attribute",
+    "family",
+    "log_event",
+    "span_event",
+    "link_relation",
+    "metric_instrument",
+    "condition",
+    "condition_fact",
+    "phase",
+    "phase_code",
+    "semantic_profile",
+    "structured_type",
+    "structured_member",
+    "structured_arm",
+    "structured_member_input",
+    "structured_member_constructor",
+    "family_input",
+    "family_builder",
+    "span_event_input",
+    "span_event_constructor",
+    "span_link_input",
+    "span_link_constructor",
+)
+EXPECTED_GO_SYMBOL_KIND_COUNTS: Final = {
+    "attribute": 325,
+    "family": 243,
+    "log_event": 87,
+    "span_event": 15,
+    "link_relation": 4,
+    "metric_instrument": 131,
+    "condition": 7,
+    "condition_fact": 7,
+    "phase": 12,
+    "phase_code": 12,
+    "semantic_profile": 1,
+    "structured_type": 21,
+    "structured_member": 49,
+    "structured_arm": 17,
+    "structured_member_input": 17,
+    "structured_member_constructor": 17,
+    "family_input": 243,
+    "family_builder": 243,
+    "span_event_input": 61,
+    "span_event_constructor": 61,
+    "span_link_input": 100,
+    "span_link_constructor": 100,
+}
+EXPECTED_GO_SYMBOL_DECLARATION_COUNTS: Final = {
+    "exported_const": 893,
+    "exported_type": 459,
+    "exported_function": 178,
+    "family_builder_method": 243,
+}
+EXPECTED_GO_SYMBOL_COUNT: Final = 1773
+EXPECTED_GO_SYMBOL_TABLE_SHA256: Final = "d897fab03a91351740e122682f96cc821a66f522250ba881e3a47b65afcc5fd7"
+GO_SYMBOL_TABLE_BASELINES: Final = Path("schemas/telemetry/v8/baselines/go-symbol-table")
+GO_SYMBOL_TABLE_BASELINE_FORMAT: Final = "defenseclaw-go-symbol-table-baseline-v1"
+EXPECTED_GO_SYMBOL_TABLE_BASELINE_SHA256: Final = "ee63f1aed1d6940f7315bc309db828095511f6d977d8137c3406e477e3803232"
+_GO_IDENTIFIER = re.compile(r"^[A-Za-z][A-Za-z0-9]*$")
+_GO_SOURCE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:/#-]{0,511}$")
+_GO_SOURCE_ID_PART = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,255}$")
+_GO_RESERVED_IDENTIFIERS: Final = frozenset(
+    {
+        "break",
+        "default",
+        "func",
+        "interface",
+        "select",
+        "case",
+        "defer",
+        "go",
+        "map",
+        "struct",
+        "chan",
+        "else",
+        "goto",
+        "package",
+        "switch",
+        "const",
+        "fallthrough",
+        "if",
+        "range",
+        "type",
+        "continue",
+        "for",
+        "import",
+        "return",
+        "var",
+        "any",
+        "append",
+        "bool",
+        "byte",
+        "cap",
+        "clear",
+        "close",
+        "comparable",
+        "complex",
+        "complex64",
+        "complex128",
+        "copy",
+        "delete",
+        "error",
+        "false",
+        "float32",
+        "float64",
+        "imag",
+        "int",
+        "int8",
+        "int16",
+        "int32",
+        "int64",
+        "iota",
+        "len",
+        "make",
+        "max",
+        "min",
+        "new",
+        "nil",
+        "panic",
+        "print",
+        "println",
+        "real",
+        "recover",
+        "rune",
+        "string",
+        "true",
+        "uint",
+        "uint8",
+        "uint16",
+        "uint32",
+        "uint64",
+        "uintptr",
+    }
+)
 EXPECTED_AUTHORED_STRUCTURED_TYPES_SHA256: Final = "c4ee28168fddd3e509d92b474b136e057ab0b6063a160a70f415ece0e42a9b15"
 EXPECTED_MESSAGE_PART_VARIANTS: Final = (
     ("text", "gen_ai.text_part"),
@@ -1552,6 +1719,46 @@ class UpstreamAttributeOwnershipIR:
 
 
 @dataclass(frozen=True, slots=True)
+class GoSymbolPolicyIR:
+    version: int
+    package: str
+    separators: tuple[str, ...]
+    brand_spellings: Mapping[str, str]
+    initialisms: tuple[str, ...]
+    reserved_word_policy: str
+    collision_policy: str
+    auto_suffix_policy: str
+    __hash__ = None
+
+
+@dataclass(frozen=True, slots=True)
+class GoSymbolOverrideIR:
+    kind: str
+    source_id: str
+    symbol: str
+    reason: str
+
+
+@dataclass(frozen=True, slots=True)
+class GoSymbolIR:
+    kind: str
+    source_id: str
+    symbol: str
+    declaration_form: str
+
+
+@dataclass(frozen=True, slots=True)
+class GoSymbolTableIR:
+    version: int
+    package: str
+    rows: tuple[GoSymbolIR, ...]
+    kind_counts: Mapping[str, int]
+    declaration_form_counts: Mapping[str, int]
+    table_sha256: str
+    __hash__ = None
+
+
+@dataclass(frozen=True, slots=True)
 class MaterializedRegistryView:
     format: str
     facts: Mapping[str, FrozenJSON]
@@ -1571,6 +1778,9 @@ class RegistryIR:
     input_digests: tuple[InputDigest, ...]
     dependencies: tuple[DependencyIR, ...]
     semantic_profiles: tuple[SemanticProfileIR, ...]
+    go_symbol_policy: GoSymbolPolicyIR
+    go_symbol_overrides: tuple[GoSymbolOverrideIR, ...]
+    go_symbol_table: GoSymbolTableIR
     normalizers: tuple[NormalizerIR, ...]
     conditions: tuple[ConditionIR, ...]
     mandatory_rule_catalog: MandatoryRuleCatalogIR
@@ -6603,6 +6813,552 @@ def _lifecycle_registry_version(value: str, path: str) -> int:
     return int(match.group(1))
 
 
+def _parse_go_symbol_contract(
+    policy_value: Any,
+    overrides_value: Any,
+) -> tuple[GoSymbolPolicyIR, tuple[GoSymbolOverrideIR, ...]]:
+    path = "registry.go_symbol_policy"
+    if not isinstance(policy_value, dict):
+        raise RegistryError(f"{path}: expected mapping")
+    _exact_keys(
+        policy_value,
+        {
+            "version",
+            "package",
+            "separators",
+            "brand_spellings",
+            "initialisms",
+            "reserved_word_policy",
+            "collision_policy",
+            "auto_suffix_policy",
+        },
+        set(),
+        path,
+    )
+    version = _integer(policy_value["version"], f"{path}.version")
+    package = _string(policy_value["package"], f"{path}.package", pattern=_GO_IDENTIFIER)
+    separators = _string_list(policy_value["separators"], f"{path}.separators", allow_empty=False)
+    brands_raw = policy_value["brand_spellings"]
+    if not isinstance(brands_raw, dict):
+        raise RegistryError(f"{path}.brand_spellings: expected mapping")
+    brands: dict[str, str] = {}
+    for key, value in brands_raw.items():
+        if not re.fullmatch(r"[a-z][a-z0-9]*", key):
+            raise RegistryError(f"{path}.brand_spellings: invalid lowercase brand token")
+        spelling = _string(value, f"{path}.brand_spellings.{key}", pattern=_GO_IDENTIFIER)
+        brands[key] = spelling
+    initialisms = _string_list(policy_value["initialisms"], f"{path}.initialisms", allow_empty=False)
+    for index, initialism in enumerate(initialisms):
+        if not re.fullmatch(r"[A-Z][A-Z0-9]*", initialism):
+            raise RegistryError(f"{path}.initialisms[{index}]: expected uppercase ASCII token")
+    parsed = {
+        "version": version,
+        "package": package,
+        "separators": separators,
+        "brand_spellings": brands,
+        "initialisms": initialisms,
+        "reserved_word_policy": _string(policy_value["reserved_word_policy"], f"{path}.reserved_word_policy"),
+        "collision_policy": _string(policy_value["collision_policy"], f"{path}.collision_policy"),
+        "auto_suffix_policy": _string(policy_value["auto_suffix_policy"], f"{path}.auto_suffix_policy"),
+    }
+    if parsed != EXPECTED_GO_SYMBOL_POLICY:
+        raise RegistryError(f"{path}: policy does not match the exact version 1 contract")
+    policy = GoSymbolPolicyIR(
+        version,
+        package,
+        separators,
+        _freeze_mapping(brands),
+        initialisms,
+        parsed["reserved_word_policy"],
+        parsed["collision_policy"],
+        parsed["auto_suffix_policy"],
+    )
+
+    if overrides_value is None:
+        return policy, ()
+    if not isinstance(overrides_value, list):
+        raise RegistryError("registry.go_symbol_overrides: expected sequence")
+    overrides: list[GoSymbolOverrideIR] = []
+    seen: set[tuple[str, str]] = set()
+    for index, item in enumerate(overrides_value):
+        item_path = f"registry.go_symbol_overrides[{index}]"
+        if not isinstance(item, dict):
+            raise RegistryError(f"{item_path}: expected mapping")
+        _exact_keys(item, {"kind", "source_id", "symbol", "reason"}, set(), item_path)
+        kind = _string(item["kind"], f"{item_path}.kind")
+        if kind not in GO_SYMBOL_KIND_ORDER:
+            raise RegistryError(f"{item_path}.kind: unknown Go symbol kind")
+        source_id = _string(item["source_id"], f"{item_path}.source_id", pattern=_GO_SOURCE_ID)
+        _validate_go_override_source_id(policy, kind, source_id, f"{item_path}.source_id")
+        symbol = _string(item["symbol"], f"{item_path}.symbol", pattern=_GO_IDENTIFIER)
+        reason = _string(item["reason"], f"{item_path}.reason")
+        key = (kind, source_id)
+        if key in seen:
+            raise RegistryError("registry.go_symbol_overrides: duplicate kind/source_id")
+        seen.add(key)
+        overrides.append(GoSymbolOverrideIR(kind, source_id, symbol, reason))
+    return policy, tuple(overrides)
+
+
+def _validate_go_override_source_id(
+    policy: GoSymbolPolicyIR,
+    kind: str,
+    source_id: str,
+    path: str,
+) -> None:
+    compound_kinds = {
+        "structured_member",
+        "structured_arm",
+        "structured_member_input",
+        "structured_member_constructor",
+        "span_event_input",
+        "span_event_constructor",
+        "span_link_input",
+        "span_link_constructor",
+    }
+    parts = source_id.split("#")
+    expected_parts = 2 if kind in compound_kinds else 1
+    if len(parts) != expected_parts or any(_GO_SOURCE_ID_PART.fullmatch(part) is None for part in parts):
+        shape = "owner#member" if expected_parts == 2 else "unscoped identity without #"
+        raise RegistryError(f"{path}: expected {shape}")
+    for part in parts:
+        _go_public_name(policy, part, path)
+
+
+def _go_public_name(policy: GoSymbolPolicyIR, source: str, path: str) -> str:
+    separators = frozenset(policy.separators)
+    tokens: list[str] = []
+    current: list[str] = []
+    for character in source:
+        if character in separators:
+            if not current:
+                raise RegistryError(f"{path}: empty Go symbol token")
+            tokens.append("".join(current))
+            current = []
+            continue
+        if not character.isascii() or not character.isalnum():
+            raise RegistryError(f"{path}: Go symbol tokens require ASCII letters and digits")
+        current.append(character)
+    if not current:
+        raise RegistryError(f"{path}: empty Go symbol token")
+    tokens.append("".join(current))
+    brands = policy.brand_spellings
+    initialisms = frozenset(policy.initialisms)
+    normalized: list[str] = []
+    for token in tokens:
+        brand = brands.get(token.lower())
+        if isinstance(brand, str):
+            normalized.append(brand)
+        elif token.upper() in initialisms:
+            normalized.append(token.upper())
+        else:
+            normalized.append(token[:1].upper() + token[1:].lower())
+    result = "".join(normalized)
+    if not result or result[0].isdigit() or _GO_IDENTIFIER.fullmatch(result) is None:
+        raise RegistryError(f"{path}: invalid or leading-digit Go symbol result")
+    return result
+
+
+def _go_override_has_required_shape(kind: str, default: str, symbol: str) -> bool:
+    fixed_shapes: dict[str, tuple[str, str]] = {
+        "attribute": ("TelemetryAttribute", ""),
+        "family": ("TelemetryFamily", ""),
+        "log_event": ("TelemetryEvent", ""),
+        "span_event": ("TelemetrySpanEvent", ""),
+        "link_relation": ("TelemetryLinkRelation", ""),
+        "metric_instrument": ("TelemetryInstrument", ""),
+        "condition": ("TelemetryCondition", ""),
+        "condition_fact": ("TelemetryConditionFact", ""),
+        "phase": ("TelemetryPhase", ""),
+        "phase_code": ("TelemetryPhaseCode", ""),
+        "semantic_profile": ("TelemetrySemanticProfile", ""),
+        "structured_type": ("TelemetryStructured", ""),
+        "structured_member": ("TelemetryStructuredMember", ""),
+        "structured_arm": ("TelemetryStructuredArm", ""),
+        "structured_member_input": ("", "MemberInput"),
+        "structured_member_constructor": ("New", "Member"),
+        "span_event_input": ("Span", "EventInput"),
+        "span_event_constructor": ("NewSpan", "Event"),
+        "span_link_input": ("Span", "LinkInput"),
+        "span_link_constructor": ("NewSpan", "Link"),
+    }
+    if kind == "family_input":
+        prefix = next((item for item in ("Log", "Span", "Metric") if default.startswith(item)), "")
+        suffix = "Input"
+    elif kind == "family_builder":
+        prefix = next((item for item in ("BuildLog", "BuildSpan", "BuildMetric") if default.startswith(item)), "")
+        suffix = ""
+    else:
+        prefix, suffix = fixed_shapes[kind]
+    if not prefix and kind in {"family_input", "family_builder"}:
+        return False
+    if not default.startswith(prefix) or not symbol.startswith(prefix):
+        return False
+    if suffix and (not default.endswith(suffix) or not symbol.endswith(suffix)):
+        return False
+    default_end = len(default) - len(suffix) if suffix else len(default)
+    symbol_end = len(symbol) - len(suffix) if suffix else len(symbol)
+    default_stem = default[len(prefix) : default_end]
+    symbol_stem = symbol[len(prefix) : symbol_end]
+    # A reviewed override may only append an ASCII disambiguator to the
+    # policy-derived variable stem. This retains the exact signal namespace,
+    # suffix, and every policy-owned brand/initialism spelling.
+    disambiguator = symbol_stem[len(default_stem) :] if symbol_stem.startswith(default_stem) else ""
+    return bool(disambiguator) and disambiguator.isascii() and disambiguator.isalnum()
+
+
+def _go_symbol_table_digest(rows: tuple[GoSymbolIR, ...]) -> str:
+    payload = json.dumps(
+        [[row.kind, row.source_id, row.symbol, row.declaration_form] for row in rows],
+        ensure_ascii=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(b"DefenseClaw GoSymbolTableIR v1\x00" + payload).hexdigest()
+
+
+def _validate_go_symbol_rows(rows: tuple[GoSymbolIR, ...]) -> None:
+    symbol_owners: dict[str, GoSymbolIR] = {}
+    for row in rows:
+        if _GO_IDENTIFIER.fullmatch(row.symbol) is None or not row.symbol.isascii() or row.symbol[0].isdigit():
+            raise RegistryError(f"Go symbol {row.kind}/{row.source_id}: invalid or leading-digit identifier")
+        if row.symbol in _GO_RESERVED_IDENTIFIERS:
+            raise RegistryError(f"Go symbol {row.kind}/{row.source_id}: reserved identifier collision")
+        prior = symbol_owners.get(row.symbol)
+        if prior is not None:
+            raise RegistryError(f"Go symbol collision: {prior.kind}/{prior.source_id} and {row.kind}/{row.source_id}")
+        symbol_owners[row.symbol] = row
+
+
+def _apply_go_symbol_overrides(
+    candidates: tuple[GoSymbolIR, ...],
+    overrides: tuple[GoSymbolOverrideIR, ...],
+) -> tuple[GoSymbolIR, ...]:
+    source_keys = [(row.kind, row.source_id) for row in candidates]
+    if len(source_keys) != len(set(source_keys)):
+        raise RegistryError("Go symbol table: duplicate kind/source_id")
+    defaults_by_symbol: dict[str, list[GoSymbolIR]] = {}
+    for row in candidates:
+        defaults_by_symbol.setdefault(row.symbol, []).append(row)
+    rows_by_key = {(row.kind, row.source_id): row for row in candidates}
+    for override in overrides:
+        key = (override.kind, override.source_id)
+        default = rows_by_key.get(key)
+        if default is None:
+            raise RegistryError(f"Go symbol override {override.kind}/{override.source_id}: unused override")
+        if override.symbol == default.symbol:
+            raise RegistryError(f"Go symbol override {override.kind}/{override.source_id}: policy-equivalent override")
+        if len(defaults_by_symbol[default.symbol]) < 2:
+            raise RegistryError(
+                f"Go symbol override {override.kind}/{override.source_id}: no reviewed default collision; "
+                "released-symbol preservation requires a future prior-release baseline"
+            )
+        if not _go_override_has_required_shape(override.kind, default.symbol, override.symbol):
+            raise RegistryError(
+                f"Go symbol override {override.kind}/{override.source_id}: required namespace shape changed"
+            )
+        rows_by_key[key] = replace(default, symbol=override.symbol)
+    rows = tuple(rows_by_key[key] for key in source_keys)
+    _validate_go_symbol_rows(rows)
+    return rows
+
+
+def _build_go_symbol_table(
+    policy: GoSymbolPolicyIR,
+    overrides: tuple[GoSymbolOverrideIR, ...],
+    *,
+    domains: tuple[DomainIR, ...],
+    upstream_extensions: Mapping[str, AttributeExtensionIR],
+    conditions: tuple[ConditionIR, ...],
+    value_catalogs: tuple[ValueCatalogIR, ...],
+    semantic_profiles: tuple[SemanticProfileIR, ...],
+    structured_types: tuple[StructuredTypeIR, ...],
+) -> GoSymbolTableIR:
+    candidates: list[GoSymbolIR] = []
+
+    def add(kind: str, source_id: str, symbol: str, declaration_form: str) -> None:
+        if kind not in GO_SYMBOL_KIND_ORDER:
+            raise RegistryError(f"Go symbol {source_id}: internal unknown kind")
+        if _GO_SOURCE_ID.fullmatch(source_id) is None:
+            raise RegistryError(f"Go symbol {kind}/{source_id}: invalid source identity")
+        if _GO_IDENTIFIER.fullmatch(symbol) is None or not symbol.isascii() or symbol[0].isdigit():
+            raise RegistryError(f"Go symbol {kind}/{source_id}: invalid exported identifier")
+        candidates.append(GoSymbolIR(kind, source_id, symbol, declaration_form))
+
+    local_attributes = [attribute for domain in domains for attribute in domain.attributes]
+    attribute_ids = sorted({attribute.id for attribute in local_attributes} | set(upstream_extensions))
+    for source_id in attribute_ids:
+        add(
+            "attribute",
+            source_id,
+            "TelemetryAttribute" + _go_public_name(policy, source_id, f"Go attribute {source_id}"),
+            "exported_const",
+        )
+
+    families = sorted(
+        (group for domain in domains for group in domain.groups if group.type in _SIGNAL_BY_GROUP_TYPE),
+        key=lambda group: group.id.encode("ascii"),
+    )
+    for group in families:
+        family_leading = group.type + "."
+        family_source = group.id[len(family_leading) :] if group.id.startswith(family_leading) else group.id
+        add(
+            "family",
+            group.id,
+            "TelemetryFamily" + _go_public_name(policy, family_source, f"Go family {group.id}"),
+            "exported_const",
+        )
+    for group in (group for group in families if group.type == "log"):
+        if group.event_name is None:
+            raise RegistryError(f"Go log event {group.id}: missing event_name")
+        add(
+            "log_event",
+            group.event_name,
+            "TelemetryEvent" + _go_public_name(policy, group.event_name, f"Go log event {group.event_name}"),
+            "exported_const",
+        )
+
+    span_event_groups = sorted(
+        (group for domain in domains for group in domain.groups if group.type == "span_event"),
+        key=lambda group: group.id.encode("ascii"),
+    )
+    span_event_names: dict[str, str] = {}
+    for group in span_event_groups:
+        public_id = group.event_name or (group.id[6:] if group.id.startswith("event.") else group.id)
+        span_event_names[group.id] = public_id
+        add(
+            "span_event",
+            public_id,
+            "TelemetrySpanEvent" + _go_public_name(policy, public_id, f"Go span event {group.id}"),
+            "exported_const",
+        )
+
+    link_relations = sorted(
+        {relation for group in families if group.type == "span" for relation in (group.link_relations or ())},
+        key=str.encode,
+    )
+    for relation in link_relations:
+        add(
+            "link_relation",
+            relation,
+            "TelemetryLinkRelation" + _go_public_name(policy, relation, f"Go link relation {relation}"),
+            "exported_const",
+        )
+    for group in (group for group in families if group.type == "metric"):
+        if group.instrument_name is None:
+            raise RegistryError(f"Go metric instrument {group.id}: missing instrument_name")
+        add(
+            "metric_instrument",
+            group.instrument_name,
+            "TelemetryInstrument"
+            + _go_public_name(policy, group.instrument_name, f"Go metric instrument {group.instrument_name}"),
+            "exported_const",
+        )
+
+    for condition in sorted(conditions, key=lambda item: item.id.encode("ascii")):
+        add(
+            "condition",
+            condition.id,
+            "TelemetryCondition" + _go_public_name(policy, condition.id, f"Go condition {condition.id}"),
+            "exported_const",
+        )
+    condition_facts = sorted({condition.enforcement.fact for condition in conditions}, key=str.encode)
+    for fact in condition_facts:
+        add(
+            "condition_fact",
+            fact,
+            "TelemetryConditionFact" + _go_public_name(policy, fact, f"Go condition fact {fact}"),
+            "exported_const",
+        )
+    phase_entries = tuple(entry for catalog in value_catalogs for entry in catalog.entries)
+    for entry in sorted(phase_entries, key=lambda item: item.value.encode("ascii")):
+        name = _go_public_name(policy, entry.value, f"Go phase {entry.value}")
+        add("phase", entry.value, "TelemetryPhase" + name, "exported_const")
+        add("phase_code", entry.value, "TelemetryPhaseCode" + name, "exported_const")
+    for profile in sorted(semantic_profiles, key=lambda item: item.id.encode("ascii")):
+        add(
+            "semantic_profile",
+            profile.id,
+            "TelemetrySemanticProfile" + _go_public_name(policy, profile.id, f"Go semantic profile {profile.id}"),
+            "exported_const",
+        )
+
+    ordered_members: list[tuple[str, str]] = []
+    for structured_type in structured_types:
+        type_name = _go_public_name(policy, structured_type.id, f"Go structured type {structured_type.id}")
+        add(
+            "structured_type",
+            structured_type.id,
+            "TelemetryStructured" + type_name,
+            "exported_type",
+        )
+        member_names: list[str] = []
+        if structured_type.fields is not None:
+            member_names.extend(field.name for field in structured_type.fields)
+        if structured_type.discriminator is not None:
+            member_names.append(structured_type.discriminator.name)
+        dynamic_member_id: str | None = None
+        if structured_type.dynamic_members is not None:
+            dynamic_member_id = structured_type.dynamic_members.member_id
+        elif structured_type.canonical_json is not None:
+            dynamic_member_id = structured_type.canonical_json.object_member_id
+        if dynamic_member_id is not None:
+            member_names.append(dynamic_member_id)
+            ordered_members.append((structured_type.id, dynamic_member_id))
+        for member_name in member_names:
+            source_id = f"{structured_type.id}#{member_name}"
+            add(
+                "structured_member",
+                source_id,
+                "TelemetryStructuredMember"
+                + type_name
+                + _go_public_name(policy, member_name, f"Go structured member {source_id}"),
+                "exported_const",
+            )
+        arm_names: list[str] = []
+        if structured_type.canonical_json is not None:
+            arm_names.extend(structured_type.canonical_json.arms)
+        if structured_type.variants is not None:
+            arm_names.extend(variant.tag for variant in structured_type.variants)
+        if structured_type.dynamic_variant is not None:
+            arm_names.append(structured_type.dynamic_variant.arm_id)
+        for arm_name in arm_names:
+            source_id = f"{structured_type.id}#{arm_name}"
+            add(
+                "structured_arm",
+                source_id,
+                "TelemetryStructuredArm"
+                + type_name
+                + _go_public_name(policy, arm_name, f"Go structured arm {source_id}"),
+                "exported_type",
+            )
+    for type_id, member_id in ordered_members:
+        source_id = f"{type_id}#{member_id}"
+        type_name = _go_public_name(policy, type_id, f"Go structured member input {source_id}")
+        member_name = _go_public_name(policy, member_id, f"Go structured member input {source_id}")
+        add(
+            "structured_member_input",
+            source_id,
+            type_name + member_name + "MemberInput",
+            "exported_type",
+        )
+        add(
+            "structured_member_constructor",
+            source_id,
+            "New" + type_name + member_name + "Member",
+            "exported_function",
+        )
+
+    for group in families:
+        signal_name = {"log": "Log", "span": "Span", "metric": "Metric"}[group.type]
+        leading = group.type + "."
+        family_source = group.id[len(leading) :] if group.id.startswith(leading) else group.id
+        family_name = _go_public_name(policy, family_source, f"Go family API {group.id}")
+        add("family_input", group.id, signal_name + family_name + "Input", "exported_type")
+        add("family_builder", group.id, "Build" + signal_name + family_name, "family_builder_method")
+        if group.type != "span":
+            continue
+        for event_ref in group.event_refs or ():
+            event_group_id = f"event.{event_ref}"
+            event_name_id = span_event_names.get(event_group_id)
+            if event_name_id is None:
+                raise RegistryError(f"Go span event pair {group.id}#{event_ref}: unknown event")
+            source_id = f"{group.id}#{event_ref}"
+            event_name = _go_public_name(policy, event_name_id, f"Go span event pair {source_id}")
+            add(
+                "span_event_input",
+                source_id,
+                "Span" + family_name + event_name + "EventInput",
+                "exported_type",
+            )
+            add(
+                "span_event_constructor",
+                source_id,
+                "NewSpan" + family_name + event_name + "Event",
+                "exported_function",
+            )
+        for relation in group.link_relations or ():
+            source_id = f"{group.id}#{relation}"
+            relation_name = _go_public_name(policy, relation, f"Go span link pair {source_id}")
+            add(
+                "span_link_input",
+                source_id,
+                "Span" + family_name + relation_name + "LinkInput",
+                "exported_type",
+            )
+            add(
+                "span_link_constructor",
+                source_id,
+                "NewSpan" + family_name + relation_name + "Link",
+                "exported_function",
+            )
+
+    rank = {kind: index for index, kind in enumerate(GO_SYMBOL_KIND_ORDER)}
+    candidates.sort(key=lambda row: (rank[row.kind], row.source_id.encode("ascii")))
+    rows = _apply_go_symbol_overrides(tuple(candidates), overrides)
+    kind_counts = {kind: 0 for kind in GO_SYMBOL_KIND_ORDER}
+    declaration_counts = {key: 0 for key in EXPECTED_GO_SYMBOL_DECLARATION_COUNTS}
+    for row in rows:
+        kind_counts[row.kind] += 1
+        if row.declaration_form not in declaration_counts:
+            raise RegistryError(f"Go symbol {row.kind}/{row.source_id}: unknown declaration form")
+        declaration_counts[row.declaration_form] += 1
+    return GoSymbolTableIR(
+        1,
+        policy.package,
+        rows,
+        _freeze_mapping(kind_counts),
+        _freeze_mapping(declaration_counts),
+        _go_symbol_table_digest(rows),
+    )
+
+
+def _go_symbol_baseline_document(table: GoSymbolTableIR) -> dict[str, Any]:
+    return {
+        "format_version": 1,
+        "format": GO_SYMBOL_TABLE_BASELINE_FORMAT,
+        "table_version": table.version,
+        "package": table.package,
+        "table_sha256": table.table_sha256,
+        "row_count": len(table.rows),
+        "kind_order": list(GO_SYMBOL_KIND_ORDER),
+        "kind_counts": {kind: table.kind_counts[kind] for kind in GO_SYMBOL_KIND_ORDER},
+        "declaration_form_counts": {
+            declaration_form: table.declaration_form_counts[declaration_form]
+            for declaration_form in EXPECTED_GO_SYMBOL_DECLARATION_COUNTS
+        },
+        "rows": [
+            {
+                "kind": row.kind,
+                "source_id": row.source_id,
+                "symbol": row.symbol,
+                "declaration_form": row.declaration_form,
+            }
+            for row in table.rows
+        ],
+    }
+
+
+def _validate_reviewed_go_symbol_baseline(root: Path, table: GoSymbolTableIR) -> InputDigest:
+    if len(table.rows) != EXPECTED_GO_SYMBOL_COUNT:
+        raise RegistryError(f"reviewed Go symbol table: expected {EXPECTED_GO_SYMBOL_COUNT} rows")
+    if dict(table.kind_counts) != EXPECTED_GO_SYMBOL_KIND_COUNTS:
+        raise RegistryError("reviewed Go symbol table: kind inventory changed")
+    if dict(table.declaration_form_counts) != EXPECTED_GO_SYMBOL_DECLARATION_COUNTS:
+        raise RegistryError("reviewed Go symbol table: declaration-form inventory changed")
+    if table.table_sha256 != EXPECTED_GO_SYMBOL_TABLE_SHA256:
+        raise RegistryError("reviewed Go symbol table: canonical table digest changed")
+    baseline_relative = GO_SYMBOL_TABLE_BASELINES / f"{EXPECTED_GO_SYMBOL_TABLE_BASELINE_SHA256}.json"
+    baseline_path = root.resolve() / baseline_relative
+    raw, _ = _read_utf8(baseline_path)
+    actual_digest = _sha256(raw)
+    if actual_digest != EXPECTED_GO_SYMBOL_TABLE_BASELINE_SHA256:
+        raise RegistryError("reviewed Go symbol table: baseline content-address mismatch")
+    document = _parse_json_strict_bytes(baseline_path, raw)
+    if not _typed_json_equal(document, _go_symbol_baseline_document(table)):
+        raise RegistryError("reviewed Go symbol table: baseline rows differ from compiled table")
+    return InputDigest(baseline_relative.as_posix(), actual_digest)
+
+
 _CANONICAL_SET_TUPLE_FIELDS: Final = frozenset(
     {
         ("GroupIR", "compatibility_profiles"),
@@ -6783,12 +7539,13 @@ def compile_registry(root: Path) -> RegistryIR:
             "mandatory_rule_catalog",
             "structured_types",
             "structured_bindings",
+            "go_symbol_policy",
             "value_catalogs",
             "structural_contract",
             "metric_defaults",
             "metric_compatibility_profiles",
         },
-        set(),
+        {"go_symbol_overrides"},
         "schemas/telemetry/v8/registry.yaml",
     )
     schema_version = _integer(registry["schema_version"], "registry.schema_version")
@@ -6819,6 +7576,10 @@ def compile_registry(root: Path) -> RegistryIR:
         registry["structured_bindings"],
         "registry.structured_bindings",
         structured_types,
+    )
+    go_symbol_policy, go_symbol_overrides = _parse_go_symbol_contract(
+        registry["go_symbol_policy"],
+        registry.get("go_symbol_overrides"),
     )
     conditions = _parse_conditions(registry["conditions"], "registry.conditions")
     mandatory_rule_catalog = _parse_mandatory_rule_catalog(
@@ -7157,6 +7918,16 @@ def compile_registry(root: Path) -> RegistryIR:
         metric_inventory,
     )
     _validate_span_name_patterns(group_owners, local_attributes, upstream_extensions)
+    go_symbol_table = _build_go_symbol_table(
+        go_symbol_policy,
+        go_symbol_overrides,
+        domains=tuple(domains),
+        upstream_extensions=upstream_extensions,
+        conditions=conditions,
+        value_catalogs=value_catalogs,
+        semantic_profiles=semantic_profiles,
+        structured_types=structured_types,
+    )
     group_signals = {
         group.id: _SIGNAL_BY_GROUP_TYPE[group.type]
         for group in group_owners.values()
@@ -7202,6 +7973,9 @@ def compile_registry(root: Path) -> RegistryIR:
         "input_digests": tuple(input_digests),
         "dependencies": dependencies,
         "semantic_profiles": semantic_profiles,
+        "go_symbol_policy": go_symbol_policy,
+        "go_symbol_overrides": go_symbol_overrides,
+        "go_symbol_table": go_symbol_table,
         "normalizers": normalizers,
         "conditions": conditions,
         "mandatory_rule_catalog": mandatory_rule_catalog,

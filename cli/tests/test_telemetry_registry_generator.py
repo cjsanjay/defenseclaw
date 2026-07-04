@@ -717,6 +717,7 @@ def _fixture_root(tmp_path: Path) -> Path:
             "mandatory_rule_catalog": registry_source["mandatory_rule_catalog"],
             "structured_types": registry_source["structured_types"],
             "structured_bindings": registry_source["structured_bindings"],
+            "go_symbol_policy": registry_source["go_symbol_policy"],
             "value_catalogs": registry_source["value_catalogs"],
             "structural_contract": registry_source["structural_contract"],
             "metric_defaults": registry_source["metric_defaults"],
@@ -6916,3 +6917,406 @@ def test_updater_transaction_bootstrap_failure_removes_exact_created_inode(
 
     assert injected is True
     assert not tuple(root.glob(".telemetry-upstream-update-*"))
+
+
+@pytest.fixture(scope="module")
+def canonical_go_symbol_compilation() -> tuple[Any, Any]:
+    module = _load_generator_module("telemetry_registry_go_symbol_canonical")
+    return module, module.compile_registry(ROOT)
+
+
+def test_go_symbol_policy_tokenization_is_exact_and_strict() -> None:
+    module = _load_generator_module("telemetry_registry_go_symbol_policy")
+    registry = yaml.safe_load((ROOT / "schemas/telemetry/v8/registry.yaml").read_text(encoding="utf-8"))
+    policy, overrides = module._parse_go_symbol_contract(registry["go_symbol_policy"], None)
+
+    assert overrides == ()
+    assert policy.separators == (".", "-", "/", "_")
+    assert tuple(policy.brand_spellings.items()) == (
+        ("defenseclaw", "DefenseClaw"),
+        ("opentelemetry", "OpenTelemetry"),
+        ("otel", "OTel"),
+    )
+    assert (
+        module._go_public_name(
+            policy,
+            "defenseclaw/opentelemetry-otel.ai_utf8",
+            "test",
+        )
+        == "DefenseClawOpenTelemetryOTelAIUTF8"
+    )
+    assert module._go_public_name(policy, "gen_ai.canonical_json", "test") == "GenAICanonicalJSON"
+    for source, message in (
+        ("a..b", "empty Go symbol token"),
+        ("a-é", "ASCII letters and digits"),
+        ("1thing", "leading-digit Go symbol result"),
+        ("a:b", "ASCII letters and digits"),
+    ):
+        with pytest.raises(module.RegistryError, match=message):
+            module._go_public_name(policy, source, "test")
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    (
+        "missing",
+        "extra",
+        "type",
+        "value",
+        "separator_order",
+        "duplicate_separator",
+        "initialism_order",
+        "duplicate_initialism",
+        "brand_value",
+        "brand_extra",
+    ),
+)
+def test_go_symbol_policy_rejects_every_noncanonical_shape(mutation: str) -> None:
+    module = _load_generator_module(f"telemetry_registry_go_symbol_policy_{mutation}")
+    registry = yaml.safe_load((ROOT / "schemas/telemetry/v8/registry.yaml").read_text(encoding="utf-8"))
+    policy = copy.deepcopy(registry["go_symbol_policy"])
+    if mutation == "missing":
+        del policy["package"]
+    elif mutation == "extra":
+        policy["future"] = True
+    elif mutation == "type":
+        policy["version"] = "1"
+    elif mutation == "value":
+        policy["package"] = "telemetry"
+    elif mutation == "separator_order":
+        policy["separators"] = list(reversed(policy["separators"]))
+    elif mutation == "duplicate_separator":
+        policy["separators"].append(".")
+    elif mutation == "initialism_order":
+        policy["initialisms"] = list(reversed(policy["initialisms"]))
+    elif mutation == "duplicate_initialism":
+        policy["initialisms"].append("AI")
+    elif mutation == "brand_value":
+        policy["brand_spellings"]["otel"] = "Otel"
+    elif mutation == "brand_extra":
+        policy["brand_spellings"]["genai"] = "GenAI"
+    with pytest.raises(module.RegistryError):
+        module._parse_go_symbol_contract(policy, None)
+
+
+def test_go_symbol_overrides_absent_and_empty_are_equivalent(tmp_path: Path) -> None:
+    root = _fixture_root(tmp_path)
+    module = _load_generator_module("telemetry_registry_go_symbol_empty_overrides")
+    absent = module.compile_registry(root)
+    registry_path = root / "schemas/telemetry/v8/registry.yaml"
+    registry = yaml.safe_load(registry_path.read_text(encoding="utf-8"))
+    registry["go_symbol_overrides"] = []
+    _write_yaml(registry_path, registry)
+    explicit_empty = module.compile_registry(root)
+
+    assert absent.go_symbol_overrides == explicit_empty.go_symbol_overrides == ()
+    assert absent.go_symbol_table == explicit_empty.go_symbol_table
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        absent.go_symbol_table.rows[0].symbol = "Changed"
+
+
+def test_go_symbol_override_rules_reject_policy_equivalence_and_shape_evasion(tmp_path: Path) -> None:
+    root = _fixture_root(tmp_path)
+    module = _load_generator_module("telemetry_registry_go_symbol_overrides")
+    registry_path = root / "schemas/telemetry/v8/registry.yaml"
+    registry = yaml.safe_load(registry_path.read_text(encoding="utf-8"))
+    registry["go_symbol_overrides"] = [
+        {
+            "kind": "attribute",
+            "source_id": "defenseclaw.test.name",
+            "symbol": "TelemetryAttributeDefenseClawTestName",
+            "reason": "synthetic policy-equivalent override",
+        }
+    ]
+    _write_yaml(registry_path, registry)
+    with pytest.raises(module.RegistryError, match="policy-equivalent override"):
+        module.compile_registry(root)
+
+    assert module._go_override_has_required_shape(
+        "family_input",
+        "LogDefenseClawAuditInput",
+        "LogDefenseClawAuditV2Input",
+    )
+    assert not module._go_override_has_required_shape(
+        "family_input",
+        "LogDefenseClawAuditInput",
+        "SpanDefenseClawAuditV2Input",
+    )
+    assert not module._go_override_has_required_shape(
+        "family_input",
+        "LogDefenseClawAuditInput",
+        "LogDefenseclawAuditV2Input",
+    )
+    assert not module._go_override_has_required_shape(
+        "family_builder",
+        "BuildMetricOTelRequests",
+        "BuildLogOTelRequestsV2",
+    )
+
+
+def test_go_symbol_override_parser_covers_all_kinds_and_compound_source_grammar() -> None:
+    module = _load_generator_module("telemetry_registry_go_symbol_override_kinds")
+    registry = yaml.safe_load((ROOT / "schemas/telemetry/v8/registry.yaml").read_text(encoding="utf-8"))
+    compound = {
+        "structured_member",
+        "structured_arm",
+        "structured_member_input",
+        "structured_member_constructor",
+        "span_event_input",
+        "span_event_constructor",
+        "span_link_input",
+        "span_link_constructor",
+    }
+    overrides = [
+        {
+            "kind": kind,
+            "source_id": f"owner.{index}#member.{index}" if kind in compound else f"source.{index}",
+            "symbol": f"ReviewedOverride{index}",
+            "reason": f"reviewed collision {index}",
+        }
+        for index, kind in enumerate(module.GO_SYMBOL_KIND_ORDER)
+    ]
+    _, parsed = module._parse_go_symbol_contract(registry["go_symbol_policy"], overrides)
+    assert tuple(item.kind for item in parsed) == module.GO_SYMBOL_KIND_ORDER
+
+
+@pytest.mark.parametrize(
+    ("kind", "source_id"),
+    (
+        ("attribute", "owner#member"),
+        ("structured_member", "owner"),
+        ("structured_member", "owner#member#extra"),
+        ("structured_member", "owner#"),
+        ("span_event_input", "#event"),
+        ("span_link_constructor", "owner##relation"),
+        ("attribute", "owner..member"),
+        ("structured_member", "owner/#member"),
+    ),
+)
+def test_go_symbol_override_parser_rejects_malformed_source_ids(kind: str, source_id: str) -> None:
+    module = _load_generator_module("telemetry_registry_go_symbol_override_malformed")
+    registry = yaml.safe_load((ROOT / "schemas/telemetry/v8/registry.yaml").read_text(encoding="utf-8"))
+    override = [{"kind": kind, "source_id": source_id, "symbol": "ReviewedSymbol", "reason": "reviewed"}]
+    with pytest.raises(module.RegistryError):
+        module._parse_go_symbol_contract(registry["go_symbol_policy"], override)
+
+
+def test_go_symbol_override_parser_rejects_unknown_duplicate_unused_and_empty_reason() -> None:
+    module = _load_generator_module("telemetry_registry_go_symbol_override_failures")
+    registry = yaml.safe_load((ROOT / "schemas/telemetry/v8/registry.yaml").read_text(encoding="utf-8"))
+    policy = registry["go_symbol_policy"]
+    with pytest.raises(module.RegistryError, match="unknown Go symbol kind"):
+        module._parse_go_symbol_contract(
+            policy,
+            [{"kind": "future", "source_id": "source", "symbol": "Reviewed", "reason": "reviewed"}],
+        )
+    duplicate = {
+        "kind": "attribute",
+        "source_id": "source",
+        "symbol": "TelemetryAttributeSourceV2",
+        "reason": "reviewed",
+    }
+    with pytest.raises(module.RegistryError, match="duplicate kind/source_id"):
+        module._parse_go_symbol_contract(policy, [duplicate, dict(duplicate)])
+    with pytest.raises(module.RegistryError, match="nonempty bounded string"):
+        module._parse_go_symbol_contract(
+            policy,
+            [{"kind": "attribute", "source_id": "source", "symbol": "Reviewed", "reason": ""}],
+        )
+    candidate = module.GoSymbolIR("attribute", "source", "TelemetryAttributeSource", "exported_const")
+    unused = module.GoSymbolOverrideIR("attribute", "other", "TelemetryAttributeOtherV2", "reviewed")
+    with pytest.raises(module.RegistryError, match="unused override"):
+        module._apply_go_symbol_overrides((candidate,), (unused,))
+
+
+def test_go_symbol_collision_only_override_resolves_exactly_one_collision() -> None:
+    module = _load_generator_module("telemetry_registry_go_symbol_collision_override")
+    candidates = (
+        module.GoSymbolIR("attribute", "source.a", "TelemetryAttributeThing", "exported_const"),
+        module.GoSymbolIR("attribute", "source.b", "TelemetryAttributeThing", "exported_const"),
+    )
+    override = module.GoSymbolOverrideIR(
+        "attribute",
+        "source.b",
+        "TelemetryAttributeThingB",
+        "reviewed collision disambiguator",
+    )
+    rows = module._apply_go_symbol_overrides(candidates, (override,))
+    assert tuple(row.symbol for row in rows) == ("TelemetryAttributeThing", "TelemetryAttributeThingB")
+
+    post_collision = candidates + (
+        module.GoSymbolIR("attribute", "source.c", "TelemetryAttributeThingB", "exported_const"),
+    )
+    with pytest.raises(module.RegistryError, match="Go symbol collision"):
+        module._apply_go_symbol_overrides(post_collision, (override,))
+
+    noncollision = (module.GoSymbolIR("attribute", "source.only", "TelemetryAttributeOnly", "exported_const"),)
+    arbitrary = module.GoSymbolOverrideIR(
+        "attribute",
+        "source.only",
+        "TelemetryAttributeOnlyV2",
+        "not backed by a collision",
+    )
+    with pytest.raises(module.RegistryError, match="no reviewed default collision"):
+        module._apply_go_symbol_overrides(noncollision, (arbitrary,))
+
+
+def test_go_symbol_row_validation_rejects_literal_cross_kind_collision() -> None:
+    module = _load_generator_module("telemetry_registry_go_symbol_cross_kind_collision")
+    rows = (
+        module.GoSymbolIR("attribute", "source.attribute", "TelemetryCollision", "exported_const"),
+        module.GoSymbolIR("family", "source.family", "TelemetryCollision", "exported_const"),
+    )
+    with pytest.raises(module.RegistryError, match="Go symbol collision"):
+        module._validate_go_symbol_rows(rows)
+
+    signal_stripped_families = (
+        module.GoSymbolIR("family", "log.shared", "TelemetryFamilyShared", "exported_const"),
+        module.GoSymbolIR("family", "span.shared", "TelemetryFamilyShared", "exported_const"),
+    )
+    with pytest.raises(module.RegistryError, match="Go symbol collision"):
+        module._validate_go_symbol_rows(signal_stripped_families)
+
+
+@pytest.mark.parametrize(
+    ("symbol", "message"),
+    (
+        ("type", "reserved identifier collision"),
+        ("Éxported", "invalid or leading-digit identifier"),
+        ("1Exported", "invalid or leading-digit identifier"),
+    ),
+)
+def test_go_symbol_row_validation_rejects_reserved_nonascii_and_leading_digit(
+    symbol: str,
+    message: str,
+) -> None:
+    module = _load_generator_module("telemetry_registry_go_symbol_row_validation")
+    row = module.GoSymbolIR("attribute", "source", symbol, "exported_const")
+    with pytest.raises(module.RegistryError, match=message):
+        module._validate_go_symbol_rows((row,))
+
+
+def test_canonical_go_symbol_table_matches_digest_addressed_reviewed_baseline(
+    canonical_go_symbol_compilation: tuple[Any, Any],
+) -> None:
+    module, ir = canonical_go_symbol_compilation
+    table = ir.go_symbol_table
+    baseline_digest = module._validate_reviewed_go_symbol_baseline(ROOT, table)
+
+    assert len(table.rows) == 1773
+    assert dict(table.kind_counts) == module.EXPECTED_GO_SYMBOL_KIND_COUNTS
+    assert dict(table.declaration_form_counts) == {
+        "exported_const": 893,
+        "exported_type": 459,
+        "exported_function": 178,
+        "family_builder_method": 243,
+    }
+    assert table.table_sha256 == "d897fab03a91351740e122682f96cc821a66f522250ba881e3a47b65afcc5fd7"
+    assert baseline_digest.sha256 == "ee63f1aed1d6940f7315bc309db828095511f6d977d8137c3406e477e3803232"
+    assert baseline_digest.path.endswith(f"/{baseline_digest.sha256}.json")
+    rank = {kind: index for index, kind in enumerate(module.GO_SYMBOL_KIND_ORDER)}
+    assert list(table.rows) == sorted(
+        table.rows,
+        key=lambda row: (rank[row.kind], row.source_id.encode("ascii")),
+    )
+    assert len({(row.kind, row.source_id) for row in table.rows}) == len(table.rows)
+    assert len({row.symbol for row in table.rows}) == len(table.rows)
+
+    rows = {(row.kind, row.source_id): row for row in table.rows}
+    assert rows[("family", "span.model.chat")].symbol == "TelemetryFamilyModelChat"
+    assert rows[("span_event", "model.retry")].symbol == "TelemetrySpanEventModelRetry"
+    assert rows[("structured_type", "gen_ai.canonical_json")].symbol == ("TelemetryStructuredGenAICanonicalJSON")
+    assert rows[("structured_type", "gen_ai.canonical_json")].declaration_form == "exported_type"
+    assert rows[("structured_member", "gen_ai.canonical_json#entry")].declaration_form == "exported_const"
+    assert rows[("structured_arm", "gen_ai.canonical_json#finite_double")].declaration_form == "exported_type"
+    assert rows[("structured_member_input", "gen_ai.canonical_json#entry")].symbol == (
+        "GenAICanonicalJSONEntryMemberInput"
+    )
+    assert rows[("structured_member_constructor", "gen_ai.canonical_json#entry")].symbol == (
+        "NewGenAICanonicalJSONEntryMember"
+    )
+    assert rows[("family_input", "span.model.chat")].symbol == "SpanModelChatInput"
+    assert rows[("family_builder", "span.model.chat")].symbol == "BuildSpanModelChat"
+    assert rows[("span_event_input", "span.model.chat#model.retry")].symbol == ("SpanModelChatModelRetryEventInput")
+    assert rows[("span_link_constructor", "span.model.chat#caused_by")].symbol == ("NewSpanModelChatCausedByLink")
+
+    payload = json.dumps(
+        [[row.kind, row.source_id, row.symbol, row.declaration_form] for row in table.rows],
+        ensure_ascii=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    assert hashlib.sha256(b"DefenseClaw GoSymbolTableIR v1\x00" + payload).hexdigest() == table.table_sha256
+
+
+def test_go_symbol_file_domain_ownership_counts_are_frozen(
+    canonical_go_symbol_compilation: tuple[Any, Any],
+) -> None:
+    _, ir = canonical_go_symbol_compilation
+    family_domains = {
+        group.id: domain.domain
+        for domain in ir.domains
+        for group in domain.groups
+        if group.type in {"log", "span", "metric"}
+    }
+    ownership = {"ids": 0, "genai": 0, "security": 0, "operations": 0}
+    for row in ir.go_symbol_table.rows:
+        if row.declaration_form == "exported_const":
+            ownership["ids"] += 1
+        elif row.kind.startswith("structured_"):
+            ownership["genai"] += 1
+        else:
+            family_id = row.source_id.split("#", 1)[0]
+            ownership[family_domains[family_id]] += 1
+    assert ownership == {"ids": 893, "genai": 282, "security": 212, "operations": 386}
+
+
+def test_go_symbol_policy_and_table_are_materialized_and_row_order_is_digest_significant(
+    canonical_go_symbol_compilation: tuple[Any, Any],
+) -> None:
+    module, ir = canonical_go_symbol_compilation
+    facts = ir.materialized_view.facts["fields"]
+    assert facts["go_symbol_policy"]["$type"] == "GoSymbolPolicyIR"
+    assert facts["go_symbol_overrides"] == ()
+    assert facts["go_symbol_table"]["$type"] == "GoSymbolTableIR"
+    reversed_rows = tuple(reversed(ir.go_symbol_table.rows))
+    assert module._go_symbol_table_digest(reversed_rows) != ir.go_symbol_table.table_sha256
+
+
+def test_go_symbol_reviewed_baseline_rejects_missing_and_content_address_mismatch(
+    canonical_go_symbol_compilation: tuple[Any, Any],
+    tmp_path: Path,
+) -> None:
+    module, ir = canonical_go_symbol_compilation
+    with pytest.raises(module.RegistryError, match="cannot read"):
+        module._validate_reviewed_go_symbol_baseline(tmp_path / "missing", ir.go_symbol_table)
+
+    relative = module.GO_SYMBOL_TABLE_BASELINES / f"{module.EXPECTED_GO_SYMBOL_TABLE_BASELINE_SHA256}.json"
+    target = tmp_path / relative
+    target.parent.mkdir(parents=True)
+    source = ROOT / relative
+    target.write_bytes(source.read_bytes() + b" ")
+    with pytest.raises(module.RegistryError, match="content-address mismatch"):
+        module._validate_reviewed_go_symbol_baseline(tmp_path, ir.go_symbol_table)
+
+
+@pytest.mark.parametrize("mutation", ("row", "order"))
+def test_go_symbol_reviewed_baseline_rejects_row_and_order_tamper(
+    canonical_go_symbol_compilation: tuple[Any, Any],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mutation: str,
+) -> None:
+    module, ir = canonical_go_symbol_compilation
+    document = module._go_symbol_baseline_document(ir.go_symbol_table)
+    if mutation == "row":
+        document["rows"][0]["symbol"] += "Tampered"
+    else:
+        document["rows"][0], document["rows"][1] = document["rows"][1], document["rows"][0]
+    raw = (json.dumps(document, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
+    digest = _sha256(raw)
+    monkeypatch.setattr(module, "EXPECTED_GO_SYMBOL_TABLE_BASELINE_SHA256", digest)
+    target = tmp_path / module.GO_SYMBOL_TABLE_BASELINES / f"{digest}.json"
+    target.parent.mkdir(parents=True)
+    target.write_bytes(raw)
+    with pytest.raises(module.RegistryError, match="baseline rows differ"):
+        module._validate_reviewed_go_symbol_baseline(tmp_path, ir.go_symbol_table)

@@ -438,6 +438,18 @@ structured_bindings:
   - {attribute: gen_ai.output.messages, structured_type: gen_ai.output_messages, public_encoding: sealed_typed, canonical_wire_encoding: native_json}
   - {attribute: gen_ai.tool.call.arguments, structured_type: gen_ai.tool_call_arguments, public_encoding: ordered_typed_entries, canonical_wire_encoding: native_json_object}
   - {attribute: gen_ai.tool.call.result, structured_type: gen_ai.tool_call_result, public_encoding: ordered_typed_entries, canonical_wire_encoding: native_json_object}
+go_symbol_policy:
+  version: 1
+  package: observability
+  separators: ['.', '-', '/', '_']
+  brand_spellings:
+    defenseclaw: DefenseClaw
+    opentelemetry: OpenTelemetry
+    otel: OTel
+  initialisms: [AI, API, DB, HEC, HTTP, ID, JSON, LLM, OTEL, OTLP, PII, RPC, SDK, SQL, TLS, URL, UTF8]
+  reserved_word_policy: reject
+  collision_policy: reject
+  auto_suffix_policy: reject
 structural_contract:
   id: defenseclaw.canonical-record
   version: 1
