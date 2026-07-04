@@ -1034,6 +1034,37 @@ required namespace prefix/suffix, change the declaration kind/signature, or evad
 brand spelling. Duplicate, unused, or policy-equivalent overrides fail. An
 override is the only reviewed collision resolution; automatic suffixing remains
 forbidden.
+
+The override `kind` vocabulary is exactly `attribute`, `family`, `log_event`,
+`span_event`, `link_relation`, `metric_instrument`, `condition`,
+`condition_fact`, `phase`, `phase_code`, `semantic_profile`, `structured_type`,
+`structured_member`, `structured_arm`, `structured_member_input`,
+`structured_member_constructor`, `family_input`, `family_builder`,
+`span_event_input`, `span_event_constructor`, `span_link_input`, and
+`span_link_constructor`. The override key is the pair `(kind, source_id)`; a
+`source_id` alone is not globally unique across declaration kinds.
+
+For unscoped ID, family input, and family-builder rows, `source_id` is the exact
+stable registry identity owned by that row. Structured members, arms, ordered
+member inputs, and ordered member constructors use
+`<structured_type_id>#<member_id_or_arm_id>`. Family-scoped span-event and link
+inputs/constructors use `<span_family_id>#<event_name_or_relation>`. The same
+compound `source_id` may intentionally occur for matching input/constructor rows,
+but their `kind` values differ. Empty components, additional `#`, aliases, Go
+symbols in place of registry identities, and a span event's internal `event.`
+group ID are invalid.
+
+Override eligibility is machine-checked. A row may be overridden only when its
+policy-derived symbol participates in the pre-override collision being resolved,
+or when the exact `(kind, source_id, symbol)` is present in a named, digest-pinned
+prior released-symbol baseline for the new registry epoch. A free-standing rename
+of a noncolliding symbol is invalid even with a reason. Registry v1 has no prior
+released-symbol baseline and its policy-derived table has no collisions, so its
+`go_symbol_overrides` is absent or an empty list. A future epoch cannot use the
+released-symbol arm until its source contract names that prior baseline as a
+locked compiler input. This rule keeps `reason` reviewable prose rather than an
+authorization bypass.
+
 The compiler materializes a complete immutable `GoSymbolTableIR` for every symbol,
 including unoverridden rows, and records `declaration_form` on every row. Renderers
 consume that table, emit no row as both a constant and a type, and do not repeat

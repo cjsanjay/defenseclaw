@@ -260,9 +260,18 @@ def test_observability_v8_generated_builder_source_contract_is_normative() -> No
     assert "emit no row as both a constant and a type" in schemas
     assert "whose\n  `declaration_form` is `exported_const`" in schemas
     assert "17 `TelemetryStructuredArm*` types are absent as constants" in schemas
+    assert "The override `kind` vocabulary is exactly" in schemas
+    assert "`span_link_constructor`" in schemas
+    assert "`<structured_type_id>#<member_id_or_arm_id>`" in schemas
+    assert "`<span_family_id>#<event_name_or_relation>`" in schemas
+    assert "A free-standing rename" in schemas
+    assert "Registry v1 has no prior" in schemas
+    assert "`go_symbol_overrides` is absent or an empty list" in schemas
     assert "all 21 structured-type and 17" in verification
     assert "structured-arm rows are emitted exactly once as `exported_type`" in verification
     assert "all 49 structured-member rows remain" in verification
+    assert "Override fixtures cover all 22 closed `kind` tokens" in verification
+    assert "a prose reason never authorizes a rename" in verification
     for namespace in (
         "TelemetryAttribute<Name>",
         "TelemetryFamily<Name>",

@@ -901,6 +901,13 @@ Required cases:
   structured-arm rows are emitted exactly once as `exported_type`, never as
   `zz_generated_telemetry_ids.go` constants; all 49 structured-member rows remain
   `exported_const`. A row emitted in two forms or omitted from its form fails.
+  Override fixtures cover all 22 closed `kind` tokens and exact unscoped,
+  structured `type#member-or-arm`, and family-scoped `family#event-or-relation`
+  source IDs. Duplicate/unknown/unused keys, extra or empty components, arbitrary
+  noncollision renames, policy-equivalent overrides, declaration-form changes,
+  brand evasion, and post-override collisions fail. Registry v1 proves the
+  override table is empty because there is no default collision or named prior
+  released-symbol baseline; a prose reason never authorizes a rename.
 - Every valid example has an explicit `builder_context` with occurrence,
   condition, mandatory, and inheritance facts. Deterministic fixtures prove the
   same context yields the same timestamp/record identity inputs and exact facts.
