@@ -673,6 +673,19 @@ silently ignored. The `always` rule requires no producer fact.
 kinds remain closed; `canonical_json` is the single compiler-owned, bounded,
 non-null recursion exception required by the pinned OTel GenAI shapes:
 
+Version 1 contains exactly these twenty-one fully qualified type IDs, in this
+order: `gen_ai.canonical_json`, `gen_ai.tool_call_arguments`,
+`gen_ai.tool_call_result`, `gen_ai.input_messages`, `gen_ai.output_messages`,
+`gen_ai.message_parts`, `gen_ai.message_part`, `gen_ai.chat_message`,
+`gen_ai.output_message`, `gen_ai.text_part`, `gen_ai.tool_call_request_part`,
+`gen_ai.tool_call_response_part`, `gen_ai.server_tool_call_part`,
+`gen_ai.server_tool_call_response_part`, `gen_ai.blob_part`, `gen_ai.file_part`,
+`gen_ai.uri_part`, `gen_ai.reasoning_part`, `gen_ai.compaction_part`,
+`gen_ai.generic_part`, and `gen_ai.generic_server_tool_payload`. The named P-070
+type `gen_ai.canonical_json` is not P-069's primitive structural
+`type: canonical_json`: the named type is reachable only through the four
+structured bindings below and does not reclassify or replace any P-069 field.
+
 - `kind: object` adds `additional_properties: false`, `fields`, and optional
   `dynamic_members`. `fields` is nonempty unless `dynamic_members` is present. A
   fixed field uses exactly one closed arm. The scalar-leaf arm is
@@ -685,9 +698,14 @@ non-null recursion exception required by the pinned OTel GenAI shapes:
 
   ```yaml
   dynamic_members:
-    name: {type: string, field_class: identifier, sensitivity: internal, normalization: <bounded-string>}
+    member_id: entry
+    name:
+      type: string
+      field_class: identifier
+      sensitivity: internal
+      normalization: {id: bounded-v1, overrides: {max_utf8_bytes: 256}}
     value: {structured_ref: gen_ai.canonical_json}
-    max_items: <finite-positive-int>
+    max_items: 256
     public_encoding: ordered_typed_entries
     wire_encoding: native_object_properties
     duplicate_name_policy: reject
@@ -704,6 +722,11 @@ non-null recursion exception required by the pinned OTel GenAI shapes:
   destination projection with stable code `structured_member_name_collision` and
   exporter-health accounting; it never drops or overwrites a member. An object
   with empty `fields` and no `dynamic_members` is invalid.
+  `member_id` is the stable compile-time identity used for symbols and descriptors;
+  it is never wire data. `name` is the producer-supplied runtime member name. Every
+  open object in the version-1 closure uses `member_id: entry`, scoped by its
+  owning type, including the tool roots, `gen_ai.generic_part`, and
+  `gen_ai.generic_server_tool_payload`.
 - `kind: array` adds `items`, `min_items`, and `max_items`. Bounds are finite,
   nonnegative, and ordered. Scalar items use exactly
   `{type, field_class, sensitivity, normalization}`, where `type` is one ordinary
@@ -718,11 +741,47 @@ non-null recursion exception required by the pinned OTel GenAI shapes:
   fixed schema-owned object field, and its registered bounded normalization has a
   closed enum equal to the variant tags when `dynamic_variant` is absent.
   `dynamic_variant` is exactly
-  `{tag_normalization, structured_ref, exclude_registered_tags: true}` and admits
+  `{arm_id, tag_normalization, structured_ref, exclude_registered_tags: true}` and admits
   an arbitrary bounded string tag except every registered `variants[].tag`; its
   target is normally a GenericPart object with `dynamic_members`. A false/missing
   exclusion, registered-tag overlap, an unbounded tag, and a dynamic tag with a
   different normalization are compile errors.
+
+  Version 1 has one tagged union, `gen_ai.message_part`. Its `dynamic_variant` is
+  exactly:
+
+  ```yaml
+  dynamic_variant:
+    arm_id: generic
+    tag_normalization: {id: bounded-v1, overrides: {max_utf8_bytes: 256}}
+    structured_ref: gen_ai.generic_part
+    exclude_registered_tags: true
+  ```
+
+  Its registered variants are exactly:
+
+  | Tag and stable arm ID | Structured target |
+  |---|---|
+  | `text` | `gen_ai.text_part` |
+  | `tool_call` | `gen_ai.tool_call_request_part` |
+  | `tool_call_response` | `gen_ai.tool_call_response_part` |
+  | `server_tool_call` | `gen_ai.server_tool_call_part` |
+  | `server_tool_call_response` | `gen_ai.server_tool_call_response_part` |
+  | `blob` | `gen_ai.blob_part` |
+  | `file` | `gen_ai.file_part` |
+  | `uri` | `gen_ai.uri_part` |
+  | `reasoning` | `gen_ai.reasoning_part` |
+  | `compaction` | `gen_ai.compaction_part` |
+
+  A registered tag is also that variant's stable arm identity. The union owns the
+  only wire `type` discriminator; target objects do not redeclare it. The compiler
+  adds `type` to every target's effective fixed/reserved-name collision set and
+  rejects a target fixed field with that name. Runtime validation rejects a
+  dynamic `type` member before and after redaction with
+  `structured_member_name_collision`. The encoder emits the discriminator exactly
+  once before flattening dynamic members. The open discriminator and dynamic tag
+  use the same effective bounded normalization, and the dynamic arm always
+  excludes all registered tags.
 - `kind: canonical_json` is recognized only for the reserved
   `gen_ai.canonical_json` definition. Authors cannot create another instance. Its
   source shape is exactly the following closed compiler schema; no omitted or
@@ -734,22 +793,27 @@ non-null recursion exception required by the pinned OTel GenAI shapes:
   introduced_in: telemetry-registry-v1
   discriminator: {visibility: internal, wire: false}
   arms: [boolean, int64, finite_double, string, array, object]
-  leaf_privacy: {field_class: <registered-field-class>, sensitivity: <registered-sensitivity>}
+  leaf_privacy: {field_class: content, sensitivity: sensitive}
   array: {items_ref: gen_ai.canonical_json}
   object:
     members:
-      name: {type: string, field_class: identifier, sensitivity: internal, normalization: <bounded-string>}
+      member_id: entry
+      name:
+        type: string
+        field_class: identifier
+        sensitivity: internal
+        normalization: {id: bounded-v1, overrides: {max_utf8_bytes: 256}}
       value: {structured_ref: gen_ai.canonical_json}
     public_encoding: ordered_typed_entries
     wire_encoding: native_object_properties
   limits:
-    max_depth: <finite-positive-int>
-    max_aggregate_members: <finite-positive-int>
-    max_array_items: <finite-positive-int>
-    max_string_utf8_bytes: <finite-positive-int>
-    max_member_name_utf8_bytes: <finite-positive-int>
-    max_item_bytes: <finite-positive-int>
-    max_canonical_bytes: <finite-positive-int>
+    max_depth: 8
+    max_aggregate_members: 256
+    max_array_items: 256
+    max_string_utf8_bytes: 4096
+    max_member_name_utf8_bytes: 256
+    max_item_bytes: 32768
+    max_canonical_bytes: 65536
   ```
 
   Its public type is one sealed union of Boolean, Int64, finite Double, String,
@@ -760,6 +824,23 @@ non-null recursion exception required by the pinned OTel GenAI shapes:
   reject null at any nesting depth. Nonfinite doubles fail, and this self-reference
   is the only permitted structured recursion. Bindings may only tighten, never
   remove or increase, these limits.
+
+  All limits are inclusive and are rechecked after every destination redaction or
+  normalization pass. The root object or array is at depth zero; entering a child
+  object or array increments depth by one, while scalar leaves do not. Across one
+  canonical value, `max_aggregate_members` counts every object entry plus every
+  array element at every depth; `max_array_items` separately caps each array.
+  String and member-name limits count normalized unescaped UTF-8 content, and the
+  member-name normalizer's effective bound must equal
+  `max_member_name_utf8_bytes`. `max_item_bytes` counts the canonical UTF-8 JSON
+  encoding of each immediate object-member value or array-element subtree,
+  including its own quoting, escaping, and nested delimiters but excluding an
+  enclosing object key and colon; the root is not an item. Its 32-KiB bound is
+  intentionally larger than the 4-KiB unescaped string bound so worst-case JSON
+  escaping does not make an otherwise valid string contradictory.
+  `max_canonical_bytes` counts the complete canonical UTF-8 JSON encoding. A
+  pre-redaction or post-redaction value exceeding any bound is rejected rather
+  than truncated.
 
   `gen_ai.tool_call_arguments` and `gen_ai.tool_call_result` are distinct closed
   `kind: object` roots with `additional_properties: false`, empty `fields`, and the
@@ -854,6 +935,13 @@ normalization precedence is exact: lowercase `brand_spellings` lookup first,
 uppercase `initialisms` lookup second, and ordinary title-case last. Namespace
 assignment is closed and exact. The reviewed `OTEL` initialism remains in the
 closed set, but the `otel: OTel` brand entry intentionally wins for that token:
+
+Structured declarations tokenize the complete fully qualified type ID, so
+`gen_ai.canonical_json` produces `TelemetryStructuredGenAICanonicalJSON`.
+`<MemberName>` comes from a fixed field `name` or from `member_id` for a controlled
+dynamic entry. `<ArmName>` comes from a registered `tag`, or from `arm_id` for a
+dynamic variant. Identical `entry` member IDs are scoped by owning structured type
+and therefore remain distinct declarations.
 
 | Declaration | Required Go symbol |
 |---|---|
@@ -961,7 +1049,9 @@ from that view. It contains:
 - the four exact upstream structural-input paths, pinned commit, SHA-256 digests,
   and complete property-disposition table; exactly four structured bindings; and
   every fixed/dynamic member, dynamic-variant exclusion, canonical-JSON recursion
-  bound, and structured type/member/arm/input/constructor Go symbol;
+  bound and exact counting rule, union-owned discriminator, effective reserved-name
+  set, stable member/arm ID, and structured type/member/arm/input/constructor Go
+  symbol;
 - normalized examples with explicit/inherited builder contexts; and
 - the complete P-069 structural objects, relations, derivations, and OTLP
   representation.

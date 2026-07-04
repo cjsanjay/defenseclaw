@@ -125,29 +125,73 @@ def test_observability_v8_generated_builder_source_contract_is_normative() -> No
     assert "introduced_in: telemetry-registry-v1" in schemas
     assert "arms: [boolean, int64, finite_double, string, array, object]" in schemas
     assert "discriminator: {visibility: internal, wire: false}" in schemas
-    assert "field_class: identifier, sensitivity: internal" in schemas
-    for limit in (
-        "max_depth",
-        "max_aggregate_members",
-        "max_array_items",
-        "max_string_utf8_bytes",
-        "max_member_name_utf8_bytes",
-        "max_item_bytes",
-        "max_canonical_bytes",
+    assert "leaf_privacy: {field_class: content, sensitivity: sensitive}" in schemas
+    assert "member_id: entry" in schemas
+    for limit, value in (
+        ("max_depth", 8),
+        ("max_aggregate_members", 256),
+        ("max_array_items", 256),
+        ("max_string_utf8_bytes", 4096),
+        ("max_member_name_utf8_bytes", 256),
+        ("max_item_bytes", 32768),
+        ("max_canonical_bytes", 65536),
     ):
-        assert f"{limit}: <finite-positive-int>" in schemas
+        assert f"{limit}: {value}" in schemas
+    assert "The root object or array is at depth zero" in schemas
+    assert "counts every object entry plus every" in schemas
+    assert "canonical UTF-8 JSON" in schemas
     assert "public_encoding: ordered_typed_entries" in schemas
     assert "wire_encoding: native_object_properties" in schemas
     assert "duplicate_name_policy: reject" in schemas
     assert "fixed_name_collision_policy: reject" in schemas
     assert "post_redaction_name_collision_policy: reject" in schemas
     assert "`structured_member_name_collision`" in schemas
+    assert "arm_id: generic" in schemas
     assert "exclude_registered_tags: true" in schemas
     assert "with empty `fields`" in schemas
     assert "no `dynamic_members` is invalid" in schemas
     assert "reject null at any nesting depth" in schemas
     assert "Upstream nullable optional properties normalize" in schemas
     assert "only by omission" in schemas
+    for type_id in (
+        "gen_ai.canonical_json",
+        "gen_ai.tool_call_arguments",
+        "gen_ai.tool_call_result",
+        "gen_ai.input_messages",
+        "gen_ai.output_messages",
+        "gen_ai.message_parts",
+        "gen_ai.message_part",
+        "gen_ai.chat_message",
+        "gen_ai.output_message",
+        "gen_ai.text_part",
+        "gen_ai.tool_call_request_part",
+        "gen_ai.tool_call_response_part",
+        "gen_ai.server_tool_call_part",
+        "gen_ai.server_tool_call_response_part",
+        "gen_ai.blob_part",
+        "gen_ai.file_part",
+        "gen_ai.uri_part",
+        "gen_ai.reasoning_part",
+        "gen_ai.compaction_part",
+        "gen_ai.generic_part",
+        "gen_ai.generic_server_tool_payload",
+    ):
+        assert f"`{type_id}`" in schemas
+    for tag in (
+        "text",
+        "tool_call",
+        "tool_call_response",
+        "server_tool_call",
+        "server_tool_call_response",
+        "blob",
+        "file",
+        "uri",
+        "reasoning",
+        "compaction",
+    ):
+        assert f"| `{tag}` | `gen_ai." in schemas
+    assert "union owns the" in schemas
+    assert "only wire `type` discriminator" in schemas
     for path, digest in (
         (
             "model/gen-ai/gen-ai-input-messages.json",
@@ -204,6 +248,9 @@ def test_observability_v8_generated_builder_source_contract_is_normative() -> No
     assert "lowercase `brand_spellings` lookup first" in schemas
     assert "uppercase `initialisms` lookup second" in schemas
     assert "ordinary title-case last" in schemas
+    assert "`gen_ai.canonical_json` produces `TelemetryStructuredGenAICanonicalJSON`" in schemas
+    assert "`<MemberName>` comes from a fixed field `name` or from `member_id`" in schemas
+    assert "`<ArmName>` comes from a registered `tag`, or from `arm_id`" in schemas
     for namespace in (
         "TelemetryAttribute<Name>",
         "TelemetryFamily<Name>",
