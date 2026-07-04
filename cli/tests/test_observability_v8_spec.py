@@ -37,7 +37,7 @@ def test_observability_v8_spec_is_complete_and_traceable() -> None:
     result = _run()
 
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "D=22 S=12 P=69 total=103" in result.stdout
+    assert "D=22 S=12 P=70 total=104" in result.stdout
 
 
 def test_observability_v8_redaction_contract_locks_machine_boundaries() -> None:
@@ -52,7 +52,7 @@ def test_observability_v8_redaction_contract_locks_machine_boundaries() -> None:
     assert "unicode-age-13.0.json" in redaction
     assert "projection_context_mismatch" in redaction
     assert "one shared success/error fixture" in redaction
-    assert "`P-001` through `P-069`" in verification
+    assert "`P-001` through `P-070`" in verification
     assert "| P-038 | 04 §7.6 | 07 §6.3 |" in traceability
 
 
@@ -80,6 +80,111 @@ def test_observability_v8_structural_contract_is_normative() -> None:
     assert "kind: string-int64-bijection" in schemas
     assert "Complete single-fault examples" in schemas
     assert "Candidate-bundle acceptance" in verification
+
+
+def test_observability_v8_generated_builder_source_contract_is_normative() -> None:
+    verification = (PACKAGE / "07-verification-and-acceptance.md").read_text(
+        encoding="utf-8",
+    )
+    decisions = (PACKAGE / "08-decisions-and-exclusions.md").read_text(encoding="utf-8")
+    schemas = (PACKAGE / "12-telemetry-schema-architecture.md").read_text(
+        encoding="utf-8",
+    )
+    traceability = (PACKAGE / "13-decision-traceability.md").read_text(
+        encoding="utf-8",
+    )
+
+    assert "| P-070 | Add one closed generated-builder source contract" in decisions
+    assert "| P-070 | 12 §§5.2.3,6,12,17 |" in traceability
+    assert "`mandatory_rule_catalog` is the closed object" in schemas
+    assert "eleven rules" in schemas
+    for rule in (
+        "always",
+        "control_plane_mutation",
+        "approval_resolution",
+        "alert_mutation",
+        "protected_boundary_auth_failure",
+        "enforced_outcome",
+        "enforcement_state_change",
+        "schema_validation_failure",
+        "sqlite_failure",
+        "exporter_initialization_failure",
+        "durable_health_transition",
+    ):
+        assert f"`{rule}`" in schemas
+    assert "`structured_types`" in schemas
+    assert "`structured_bindings`" in schemas
+    assert "The scalar-leaf arm is" in schemas
+    assert "The container/reference arm is" in schemas
+    assert "Scalar items use exactly" in schemas
+    assert "{name, required, type, field_class, sensitivity, normalization}" in schemas
+    assert "{name, required, structured_ref}" in schemas
+    assert "{type, field_class, sensitivity, normalization}" in schemas
+    assert "{name, type: string, field_class, sensitivity, normalization}" in schemas
+    assert "tagged-union discriminators" in verification
+    assert "every reachable concrete leaf exactly once" in verification
+    assert "object/array/variant container carry none" in verification
+    assert "`go_symbol_policy` is exactly" in schemas
+    assert "defenseclaw: DefenseClaw" in schemas
+    assert "opentelemetry: OpenTelemetry" in schemas
+    assert "otel: OTel" in schemas
+    assert "separators: ['.', '-', '/', '_']" in schemas
+    assert (
+        "initialisms: [AI, API, DB, HEC, HTTP, ID, JSON, LLM, OTEL, OTLP, PII, "
+        "RPC, SDK, SQL, TLS, URL, UTF8]"
+    ) in schemas
+    assert "lowercase `brand_spellings` lookup first" in schemas
+    assert "uppercase `initialisms` lookup second" in schemas
+    assert "ordinary title-case last" in schemas
+    for namespace in (
+        "TelemetryAttribute<Name>",
+        "TelemetryFamily<Name>",
+        "TelemetryEvent<Name>",
+        "TelemetrySpanEvent<Name>",
+        "TelemetryLinkRelation<Name>",
+        "TelemetryInstrument<Name>",
+        "TelemetryCondition<Name>",
+        "TelemetryConditionFact<Name>",
+        "TelemetryPhase<Name>",
+        "TelemetryPhaseCode<Name>",
+        "TelemetrySemanticProfile<Name>",
+        "Log<Name>Input",
+        "Span<Name>Input",
+        "Metric<Name>Input",
+        "BuildLog<Name>",
+        "BuildSpan<Name>",
+        "BuildMetric<Name>",
+        "NewSpan<FamilyName><EventName>Event",
+        "NewSpan<FamilyName><RelationName>Link",
+    ):
+        assert f"`{namespace}`" in schemas
+    assert "auto_suffix_policy: reject" in schemas
+    assert "collision_policy: reject" in schemas
+    assert "never appends a numeric, signal, or" in schemas
+    assert "BuildTelemetry<Family>" not in schemas
+    assert "Telemetry<Family>Input" not in schemas
+    assert "`GoSymbolTableIR`" in schemas
+    assert "`builder_context`" in schemas
+    assert "`CandidateRenderIndex`" in schemas
+    assert "`EnrichedFieldDescriptor`" in schemas
+    assert "`EnrichedContainerDescriptor`" in schemas
+    assert "carrying no field class, sensitivity, or" in schemas
+    for path in (
+        "internal/observability/zz_generated_telemetry_ids.go",
+        "internal/observability/zz_generated_telemetry_catalog.go",
+        "internal/observability/zz_generated_telemetry_producers.go",
+        "internal/observability/zz_generated_telemetry_builders_genai.go",
+        "internal/observability/zz_generated_telemetry_builders_security.go",
+        "internal/observability/zz_generated_telemetry_builders_operations.go",
+        "internal/observability/zz_generated_telemetry_builder_fixtures_test.go",
+    ):
+        assert path in schemas
+    assert "accept all seven or none" in schemas
+    assert "`legacy.audit.*`" in schemas
+    assert "Candidate generation MUST remain incomplete" in schemas
+    assert "Generated-builder source authority" in verification
+    assert "exactly version 1 and its eleven" in verification
+    assert "accepted together or none is accepted" in verification
 
 
 def test_observability_v8_delivery_contract_locks_machine_boundaries() -> None:

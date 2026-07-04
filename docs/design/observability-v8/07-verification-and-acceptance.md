@@ -43,6 +43,7 @@ Tests must validate outputs, not merely that functions returned no error.
 | Trace sampling invariants | Explicit collection-before-construction, unsampled-route, durable-log, parent-coherence, safe-decision-debug, and targeted-canary tests in section 9.2 |
 | Simplified telemetry schemas | One logical registry with a small focused authoring set generates deterministic bundle/catalog/docs/constants/fixtures/projections; every current field has a migration disposition |
 | Deterministic registry inheritance | DAG, diamond, body-role transposition, non-weakening requiredness, conditional-clause, restrictive-constraint-intersection, and zero-unresolved-family tests; every generated consumer uses the same materialized resolved-use contract |
+| Generated-builder source authority | The closed P-070 mandatory-rule catalog, structured types/bindings, Go symbol policy/table, and explicit example builder contexts compile with P-069 into one immutable enriched `CandidateRenderIndex`; builder, bundle, fixture, and exact seven-file all-or-nothing acceptance tests consume that index without inference or partial authority |
 | Public-schema baseline integrity | Full-commit/tree/blob/source/canonical digest tests; exact 21-path identity/dialect/reference inventory; lossless numeric lexemes; strict JSON/depth/ref rejection; typed field/open-object coverage; generated-marker recursion rejection; pre-cutover refresh and explicit new-epoch tests |
 | Agent lifecycle and dashboard compatibility | PR #403 root/subagent lifecycle, execution, phase, operation, decision, real-time completion, and missing-data goldens plus PR #412 metric/label/bucket/cadence, UID, query, live inventory, and source/packaged dashboard checks |
 | Push network safety | HTTP JSONL, OTLP, and Splunk tests cover every prohibited address class, guarded dialing/DNS rebinding, disabled redirects, failure isolation, and narrowly bounded private/CGNAT opt-ins |
@@ -50,7 +51,7 @@ Tests must validate outputs, not merely that functions returned no error.
 | Splunk projection-only compatibility | Every HEC alias is equal to a value in that destination's already-redacted projection or absent; raw/canonical/producer/other-destination fallback is impossible |
 
 Decision-level coverage for `D-001` through `D-022`, `S-001` through `S-012`, and
-`P-001` through `P-069` is normative in `13-decision-traceability.md`; this matrix is
+`P-001` through `P-070` is normative in `13-decision-traceability.md`; this matrix is
 the requirement-level summary rather than a competing decision index.
 
 ## 3. Taxonomy Tests
@@ -194,6 +195,21 @@ a parallel hand-authored P2 registry:
   log identity matches the record and whose mandatory state was catalog-derived;
   it accepts no raw mandatory boolean, and a trace or metric cannot acquire
   mandatory/floor authority through it.
+- P-070 generated-builder boundary tests resolve mandatory state only by OR-ing
+  the closed catalog rules whose exact typed facts are true. Every rule, signal
+  restriction, condition-fact reference, and mandatory-fact reference is
+  exhaustive; an unknown/missing fact or caller-supplied `mandatory` value fails
+  before the P2 constructor is called.
+- Structured-value tests prove every registry binding resolves to one closed,
+  acyclic, bounded type and canonical encoding. Provider-controlled names use the
+  ordered name/value-entry representation; no public generated input, constructor,
+  field, or method admits `map[string]any`, `any`, `interface{}`, or a generic
+  catalog lookup.
+- Go symbol and generated-output tests prove the closed policy plus reviewed
+  overrides produces one complete collision-free `GoSymbolTableIR`. The generated
+  builder kernel and all renderers consume the same immutable
+  `CandidateRenderIndex`; the exact seven generated Go files in 12 §5.2.3 are
+  accepted together or none is accepted.
 
 ## 4. Configuration Tests
 
@@ -811,6 +827,57 @@ Required cases:
   for all payload leaves. Missing, stale, extra, or wrong pointers fail; stable
   error codes remain metadata while dynamic error text follows the configured
   error-class transform.
+- The P-070 `mandatory_rule_catalog` accepts exactly version 1 and its eleven
+  registered rules. Each rule is exercised with its one typed fact true, all facts
+  false, and in combination with every other applicable rule to prove deterministic
+  OR semantics; unknown rules/facts, missing referenced facts, non-log use, and a
+  raw/caller-controlled mandatory Boolean fail closed.
+- Every P-070 `structured_type` object, array, and tagged union is compiled as a
+  closed, acyclic, bounded type. Every `structured_binding` names an existing
+  attribute and type with a compatible canonical encoding. Dynamic names survive
+  only as ordered name/value entries. Scalar object leaves, scalar array items,
+  and tagged-union discriminators carry exact class/sensitivity/normalization;
+  structured references and every object/array/variant container carry none.
+  Expansion proves every reachable concrete leaf exactly once. Mutation fixtures
+  reject missing/duplicate/conflicting leaf privacy, container annotations,
+  literal dynamic property maps, unbounded members, unknown variants, duplicate
+  bindings, and public Go/Python `any` escape hatches.
+- The exact P-070 `go_symbol_policy` is compiled before rendering. Golden fixtures
+  cover every ID/input/method/event/link namespace, initialism, exact
+  `DefenseClaw`/`OpenTelemetry`/`OTel` brand spelling, and deterministic
+  separators/casing. They also cover reserved-word rejection, invalid identifiers,
+  cross-kind and same-kind collisions, and reviewed exact-key overrides. Collisions
+  are never repaired with an automatic suffix. The complete `GoSymbolTableIR`
+  contains one stable symbol for every generated declaration; no renderer derives,
+  normalizes, or repairs a name independently.
+- Every valid example has an explicit `builder_context` with occurrence,
+  condition, mandatory, and inheritance facts. Deterministic fixtures prove the
+  same context yields the same timestamp/record identity inputs and exact facts.
+  Every invalid example names one valid base, inherits its context unchanged, and
+  applies only its declared mutation; mutations cannot create, remove, or alter
+  condition/mandatory facts or occurrence identity.
+- The compiler materializes the P-069 structure and all P-070 facts into one
+  recursively immutable `CandidateRenderIndex`, including complete
+  scalar-leaf `EnrichedFieldDescriptor` joins, unclassified
+  `EnrichedContainerDescriptor` structure, symbol table, mandatory-rule
+  descriptors and per-family resolutions, structured bindings, examples, producer
+  mappings, and projection descriptors. Its digest is stable under source-map
+  iteration, and every bundle, catalog, documentation,
+  fixture, projection, and Go/Python renderer receives this same index. Tests make
+  raw registry/snapshot access unavailable to renderers and reject any recomputed
+  join, inferred default, incomplete descriptor, or post-materialization mutation.
+- Generated-kernel tests enforce the exact method/signature allowlist from the
+  complete symbol table, per-family typed inputs, typed event/link constructors,
+  exact family identity, and private constructor termination. Generic build-by-name,
+  caller catalog access, map/`any` inputs, direct schema construction, builders for
+  `legacy.audit.*`, and builders for compatibility-only/deprecated-removed
+  identities are compile- or generation-time failures.
+- Candidate publication accepts exactly the seven generated Go paths in 12 §5.2.3
+  as one manifest-owned transaction: all seven exist, match the same candidate
+  digest and symbol table, compile with the fixture suite, and agree with the
+  complete candidate bundle, or none is published/accepted. Missing, extra, stale,
+  mixed-digest, partially written, independently generated, or current-authority
+  files fail before cutover.
 - Each curated valid record passes the real generated builder and complete candidate
   bundle. Each invalid record names one valid `base_example` plus exactly one typed
   mutation. The compiler applies its ordered RFC 6901 changes to the base
@@ -1312,4 +1379,9 @@ Release is blocked until:
   bucket catalog evolution cannot cause silent new optional-destination delivery.
 - Historical one-command upgrades, failure injection, exact-config recovery,
   retry/idempotence, and permission tests pass for the v8 boundary.
+- P-070's closed mandatory rules, structured bindings, Go symbol table, example
+  builder contexts, and enriched candidate index pass the §3.4/§9.6 conformance
+  suite. The exact seven generated Go files are accepted all-or-nothing and remain
+  candidate-only until the independently specified authority cutover; any current
+  blocker listed in 12 §5.2.3 keeps this gate open.
 - The repository-required PR structure and linked-follow-up rule are satisfied.

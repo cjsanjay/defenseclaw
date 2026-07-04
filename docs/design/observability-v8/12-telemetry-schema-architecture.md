@@ -624,6 +624,284 @@ equality mismatch; metric unknown labels and outcome; each condition true with i
 field absent and each forbidden false-state field present; all twelve valid phase
 pairs, a mismatched pair, and reserved phase code zero.
 
+#### 5.2.3 Generated-builder source grammar and candidate render contract
+
+P-069 remains the sole authority for canonical record structure. The following
+source is additional P-070 generation authority: it supplies facts that cannot be
+reconstructed from an emitted record, closed structured input shapes, and stable
+language symbols. It MUST NOT redefine an envelope field, family field, privacy
+class, normalizer, outcome, or OTLP placement already owned by P-069.
+
+The registry root adds exactly `mandatory_rule_catalog`, `structured_types`,
+`structured_bindings`, `go_symbol_policy`, and optional `go_symbol_overrides`.
+Unknown members fail. Domain files continue to own families and ordinary
+attributes; they do not acquire local copies of these root catalogs.
+
+##### Mandatory-rule catalog
+
+`mandatory_rule_catalog` is the closed object `{version, rules}` with
+`version: 1`. Each rule is exactly `{id, enforcement}`. `enforcement` is one of
+`{kind: constant, value: true}` or `{kind: builder_fact, fact: <stable-token>}`.
+Rule IDs and builder-fact tokens are unique. Version 1 contains exactly the
+following eleven rules:
+
+| Rule ID | Enforcement |
+|---|---|
+| `always` | constant true |
+| `control_plane_mutation` | builder fact `control_plane_mutation` |
+| `approval_resolution` | builder fact `approval_resolution` |
+| `alert_mutation` | builder fact `alert_mutation` |
+| `protected_boundary_auth_failure` | builder fact `protected_boundary_auth_failure` |
+| `enforced_outcome` | builder fact `enforced_outcome` |
+| `enforcement_state_change` | builder fact `enforcement_state_change` |
+| `schema_validation_failure` | builder fact `schema_validation_failure` |
+| `sqlite_failure` | builder fact `sqlite_failure` |
+| `exporter_initialization_failure` | builder fact `exporter_initialization_failure` |
+| `durable_health_transition` | builder fact `durable_health_transition` |
+
+Only log families may declare `mandatory_floor`; every listed ID resolves through
+this catalog. A log occurrence is mandatory when at least one referenced rule is
+true. An absent/empty rule list is false. The compiler never equates a nonempty
+rule list with a true occurrence, and producers never supply a raw `mandatory`
+Boolean. Facts not referenced by the selected family are rejected rather than
+silently ignored. The `always` rule requires no producer fact.
+
+##### Structured types and bindings
+
+`structured_types` is an ordered list of closed named definitions. Every row has
+exactly `{id, kind, introduced_in}` plus the members required by its kind:
+
+- `kind: object` adds `additional_properties: false` and nonempty `fields`. A
+  field uses exactly one closed arm. The scalar-leaf arm is
+  `{name, required, type, field_class, sensitivity, normalization}`, where `type`
+  is one ordinary scalar registry type. The container/reference arm is
+  `{name, required, structured_ref}` and carries no `field_class`, `sensitivity`,
+  or `normalization`; those properties belong only to the referenced concrete
+  leaves.
+- `kind: array` adds `items`, `min_items`, and `max_items`. Bounds are finite,
+  nonnegative, and ordered. Scalar items use exactly
+  `{type, field_class, sensitivity, normalization}`, where `type` is one ordinary
+  scalar registry type. Structured items use exactly `{structured_ref}` and defer
+  classification, sensitivity, and normalization to the child leaves. The array
+  container itself is never classified.
+- `kind: tagged_union` adds `discriminator` and at least two `variants`. Each
+  variant is exactly `{tag, structured_ref}`; tags and targets are unique and the
+  discriminator is the explicit scalar-leaf object
+  `{name, type: string, field_class, sensitivity, normalization}`. Its `name` is a
+  fixed schema-owned object field, and its registered bounded normalization has a
+  closed enum equal to the variant tags.
+
+Definitions form an acyclic graph, every object member name is fixed schema
+vocabulary, and every reachable string/array/object retains an effective bound.
+Open objects and untagged or overlapping unions are invalid. Provider-, tool-, or
+producer-controlled names use a registered ordered name/value-entry type: `name`
+is a classified bounded string value and `value` is a typed field or structured
+reference. Such names never become JSON property names.
+
+After expansion, every reachable concrete scalar leaf, including scalar array
+items and tagged-union discriminators, has exactly one effective `field_class`,
+`sensitivity`, and bounded `normalization`. Object, array, variant, and
+`structured_ref` containers have none. Missing, duplicate, inherited-conflicting,
+or container-level privacy annotations fail compilation; P-069 payload-rooted
+leaf coverage remains the sole emitted-record classification authority.
+
+`structured_bindings` is an ordered list of exact
+`{attribute, structured_type, canonical_encoding}` rows. `canonical_encoding` is
+`native` for a closed upstream/native shape or `ordered_name_value_entries` for a
+dynamic-name compatibility input. Each structured local attribute and each
+referenced upstream `any_value`, indexed-prefix, or object-prefix attribute has
+exactly one binding; scalar attributes have none. A binding cannot change the
+upstream name, owner, or primitive wire meaning. Missing, duplicate, unused, or
+shape-incompatible bindings fail compilation. A generated public input may not use
+`map[string]any`, `any`, or an untyped `Value` in place of a binding.
+
+##### Go symbol policy and table
+
+`go_symbol_policy` is exactly:
+
+```yaml
+go_symbol_policy:
+  version: 1
+  package: observability
+  separators: ['.', '-', '/', '_']
+  brand_spellings:
+    defenseclaw: DefenseClaw
+    opentelemetry: OpenTelemetry
+    otel: OTel
+  initialisms: [AI, API, DB, HEC, HTTP, ID, JSON, LLM, OTEL, OTLP, PII, RPC, SDK, SQL, TLS, URL, UTF8]
+  reserved_word_policy: reject
+  collision_policy: reject
+  auto_suffix_policy: reject
+```
+
+The separators split source tokens, and every token must be nonempty ASCII. The
+normalization precedence is exact: lowercase `brand_spellings` lookup first,
+uppercase `initialisms` lookup second, and ordinary title-case last. Namespace
+assignment is closed and exact:
+
+| Declaration | Required Go symbol |
+|---|---|
+| Attribute ID | `TelemetryAttribute<Name>` |
+| Family ID | `TelemetryFamily<Name>` |
+| Log-event ID | `TelemetryEvent<Name>` |
+| Span-event ID | `TelemetrySpanEvent<Name>` |
+| Link-relation ID | `TelemetryLinkRelation<Name>` |
+| Metric-instrument ID | `TelemetryInstrument<Name>` |
+| Condition ID | `TelemetryCondition<Name>` |
+| Condition-fact ID | `TelemetryConditionFact<Name>` |
+| Phase ID | `TelemetryPhase<Name>` |
+| Phase-code ID | `TelemetryPhaseCode<Name>` |
+| Semantic-profile ID | `TelemetrySemanticProfile<Name>` |
+| Per-family input | `Log<Name>Input`, `Span<Name>Input`, or `Metric<Name>Input` according to the family signal |
+| Per-family builder method | `BuildLog<Name>`, `BuildSpan<Name>`, or `BuildMetric<Name>` according to the family signal |
+| Typed span-event input | `Span<FamilyName><EventName>EventInput` |
+| Typed span-event constructor | `NewSpan<FamilyName><EventName>Event` |
+| Typed link input | `Span<FamilyName><RelationName>LinkInput` |
+| Typed link constructor | `NewSpan<FamilyName><RelationName>Link` |
+
+For family declarations, `<Name>` omits the leading signal token from the stable
+family ID; for example, `span.model.chat` produces `SpanModelChatInput` and
+`BuildSpanModelChat`. Event and link type/constructor names include the owning
+span family, so reusable event or relation IDs cannot collide across typed APIs.
+The compiler rejects an empty token, non-ASCII symbol result, Go
+keyword/predeclared-identifier collision, leading digit, or two source identities
+that produce one symbol in any namespace. It never appends a numeric, signal, or
+hash suffix to repair a collision.
+
+`go_symbol_overrides`, when present, is a closed ordered table of
+`{kind, source_id, symbol, reason}`. It is allowed only to resolve a reviewed
+collision or preserve a released public symbol; it cannot remove the
+required namespace prefix/suffix, change the declaration kind/signature, or evade
+brand spelling. Duplicate, unused, or policy-equivalent overrides fail. An
+override is the only reviewed collision resolution; automatic suffixing remains
+forbidden.
+The compiler materializes a complete immutable `GoSymbolTableIR` for every symbol,
+including unoverridden rows. Renderers consume that table and do not repeat the
+tokenization algorithm.
+
+##### Builder context in examples
+
+Every `ExampleIR` gains required `builder_context`. A valid example uses the
+closed explicit arm:
+
+```yaml
+builder_context:
+  inheritance: {mode: explicit}
+  occurrence:
+    timestamp: '2026-07-03T12:00:00Z'
+    record_id: rec-model-001
+  condition_facts:
+    operation_terminal: true
+  mandatory_facts: {}
+```
+
+`occurrence` is exactly `{timestamp, record_id}` and supplies the deterministic
+clock/ID results used by the real builder. They must equal the emitted record's
+canonical occurrence fields. `condition_facts` contains exactly the fact tokens
+referenced by the selected family's resolved fields, resource/scope fields,
+instantiated events, and links; every value is Boolean. `mandatory_facts` contains
+exactly the nonconstant mandatory facts referenced by the selected log family and
+is empty for traces, metrics, and logs without such rules. Missing, extra,
+duplicate, non-Boolean, or contradictory facts fail before construction.
+
+An invalid example uses the closed inherited arm
+`builder_context: {inheritance: {mode: exact_base, base_example: <id>}}` and has no
+local occurrence/fact objects. The named example must equal `base_example`, must
+be valid, and its complete builder context is inherited byte-for-byte. Invalid
+mutations remain rooted only at `{signal,family?,record}`; they cannot alter facts
+to introduce a competing failure. Inheritance is one level only and cycles are
+impossible.
+
+##### Compiler IR and one enriched candidate render index
+
+The compiler adds immutable `MandatoryRuleIR`, `StructuredTypeIR`,
+`StructuredBindingIR`, `GoSymbolPolicyIR`, `GoSymbolIR`, `BuilderContextIR`, and
+typed occurrence/fact IR. All are retained recursively in
+`MaterializedRegistryView` and its typed digest.
+
+Before any candidate renderer runs, exactly one `CandidateRenderIndex` is derived
+from that view. It contains:
+
+- one `EnrichedFieldDescriptor` for every resolved scalar family/resource/scope/
+  event/link use and every expanded structured concrete scalar leaf, joining
+  canonical upstream ownership, primitive type, effective and per-use constraints,
+  requirement/condition, class, sensitivity, cardinality, lifecycle, derivation
+  source, origin, and exact payload-rooted leaf path;
+- one `EnrichedContainerDescriptor` for every object, array, tagged-union variant,
+  and structured-reference edge, retaining closed shape, bounds, requirement,
+  lifecycle, origin, and child links but carrying no field class, sensitivity, or
+  scalar normalization;
+- exact active/historical family identities, outcomes, dynamic mandatory rules,
+  span name parts/kinds/events/links, metric instruments, expanded producer
+  identity sets/mappings, semantic profiles, conditions, value catalogs, and Go
+  symbols;
+- normalized examples with explicit/inherited builder contexts; and
+- the complete P-069 structural objects, relations, derivations, and OTLP
+  representation.
+
+The index is recursively immutable, complete, sorted only where the source
+declares set semantics, and domain-separated-digested against the materialized-view
+digest. Bundle, catalog, Markdown, normalized examples, OTLP fixtures, Go IDs,
+catalog, producer maps, builders, and fixture tests receive this same index
+instance. A renderer may not read registry YAML, current public schemas, current
+handwritten Go registries, prior generated bytes, or recompute inheritance,
+ownership, constraint intersection, symbol names, or structured bindings.
+
+##### Generated kernel and seven-file acceptance
+
+Generated public family inputs expose only typed producer data. Required fields
+are plain values; recommended/optional fields use `Optional[T]`; conditional
+fields use an optional typed value plus the exact builder fact. Resource, scope,
+event, and link helpers bind private catalog contracts. Bucket, signal, event or
+family identity, family/registry version, span name, instrument metadata,
+field-class maps, mandatory/floor state, and derivation values remain private.
+Every wrapper terminates at the existing private `buildGeneratedLog`,
+`buildGeneratedTrace`, or `buildGeneratedMetric` kernel. Compatibility-only
+`legacy.audit.*` identities and removed families have no builder.
+
+The Go candidate output set is exactly these seven files:
+
+```text
+internal/observability/zz_generated_telemetry_ids.go
+internal/observability/zz_generated_telemetry_catalog.go
+internal/observability/zz_generated_telemetry_producers.go
+internal/observability/zz_generated_telemetry_builders_genai.go
+internal/observability/zz_generated_telemetry_builders_security.go
+internal/observability/zz_generated_telemetry_builders_operations.go
+internal/observability/zz_generated_telemetry_builder_fixtures_test.go
+```
+
+The generated-output manifest and transaction accept all seven or none. A strict
+subset, extra generated Go path, handwritten marker, stale digest, symbol-table
+disagreement, missing family entrypoint, or builder for a compatibility-only/
+removed identity fails before publication. Candidate files compile and test but
+do not replace current event/classification/metric/public-schema authority; that
+switch remains one later atomic cutover.
+
+The static API gate changes from the pre-generation placeholder "no exported
+`FamilyBuilder` methods" to an exact generated method/signature allowlist. It
+still rejects a generic `Build`, map/`any` input, caller-controlled catalog state,
+or direct schema-derived-constructor call outside `family_builder.go`.
+
+##### Current implementation blockers
+
+Candidate generation MUST remain incomplete until all of these are resolved:
+
+1. `registry.yaml` and the compiler currently have no mandatory-rule catalog,
+   structured-type/binding grammar, or Go symbol policy/override grammar.
+2. `ExampleIR` has no builder context, so condition and mandatory truth would have
+   to be inferred tautologically and occurrence output would be nondeterministic.
+3. Upstream `gen_ai.input.messages`, `gen_ai.output.messages`, tool arguments, and
+   tool results retain generic structured shapes without closed public Go types.
+4. The materialized view preserves validated facts but has no single enriched
+   `CandidateRenderIndex`; separate renderer-side joins can drift.
+5. The seven generated Go outputs and complete symbol table do not yet exist, and
+   the placeholder static test rejects all exported builder methods.
+6. Current portable candidate artifacts remain candidate-only and the twenty-one
+   existing public schema paths, mirrors, embeds, handwritten event/classification
+   registries, metric callsites, Galileo, and local-observability consumers remain
+   authoritative until their separate parity/cutover gates pass.
+
 ### 5.3 Canonical families and producer mappings
 
 Canonical log families and current producer identities are different registry
@@ -748,6 +1026,12 @@ covers the complete view, including structural fields, resolved families, produc
 mappings, examples, lifecycle/privacy metadata, and OTLP placement. The current
 telemetry output manifest records this `materialized_view_sha256`; WP02-A adds no
 candidate bundle, catalog, generated Go, or public-schema output.
+
+For candidate generation, the compiler then derives the P-070
+`CandidateRenderIndex` exactly once from that view. Every generated public artifact
+and fixture consumes the same enriched descriptors, rule results, structured
+bindings, symbol table, and builder contexts; no output-specific join or source
+fallback is permitted.
 
 ### 6.2 Compact catalog
 
@@ -1080,6 +1364,40 @@ Generated builders do not hide domain decisions. Required/conditional fields rem
 visible to the caller, and unavailable data stays unavailable rather than receiving
 synthetic defaults.
 
+The seven Go files in §5.2.3 have these non-overlapping contracts:
+
+- `zz_generated_telemetry_ids.go` contains only the complete `GoSymbolTableIR`
+  constants. It uses only the exact ID namespaces
+  `TelemetryAttribute`/`TelemetryFamily`/`TelemetryEvent`/`TelemetrySpanEvent`/
+  `TelemetryLinkRelation`/`TelemetryInstrument`/`TelemetryCondition`/
+  `TelemetryConditionFact`/`TelemetryPhase`/`TelemetryPhaseCode`/
+  `TelemetrySemanticProfile` and never repeats raw normalization.
+- `zz_generated_telemetry_catalog.go` contains immutable private family, field,
+  event, link, outcome, and instrument descriptors plus copy-safe candidate
+  lookups. It does not wire the current public event-registry functions before
+  cutover.
+- `zz_generated_telemetry_producers.go` contains the fully expanded fourteen
+  gateway and 188 audit mappings. Named identity sets disappear into exact rows;
+  mappings cannot create a family or override its bucket.
+- The three domain builder files contain one
+  `Log<Name>Input`/`Span<Name>Input`/`Metric<Name>Input` and one matching
+  `BuildLog<Name>`/`BuildSpan<Name>`/`BuildMetric<Name>` method on
+  `*FamilyBuilder` for each active canonical family owned by that domain. Span
+  events use `Span<FamilyName><EventName>EventInput` plus
+  `NewSpan<FamilyName><EventName>Event`; links use
+  `Span<FamilyName><RelationName>LinkInput` plus
+  `NewSpan<FamilyName><RelationName>Link`. There is no generic builder entrypoint.
+- `zz_generated_telemetry_builder_fixtures_test.go` instantiates every active
+  descriptor and named method, runs the normalized explicit builder contexts, and
+  compares exact canonical record bytes/classes and stable failures with the
+  bundle and catalog.
+
+All exported input structs are closed under the static gate: no map, `any`, raw
+`Value`, catalog identity, version, instrument metadata, field classes, or
+mandatory/floor field may cross the public boundary. A generated method may call
+only the matching private kernel entrypoint and cannot call the schema-derived
+record constructor directly.
+
 ## 13. Migration From Current Schema Files
 
 The current telemetry files are migration inputs:
@@ -1193,6 +1511,18 @@ live content or secret values.
   hand-maintained schemas.
 - Human documentation clearly distinguishes canonical, compatibility, required,
   optional, sensitive, and deprecated fields.
+- P-070's exact mandatory-rule catalog, structured types/bindings, Go symbol
+  policy/table, and explicit valid/inherited example builder contexts compile with
+  P-069 into one complete immutable `CandidateRenderIndex`; every candidate
+  renderer consumes that index without inference or fallback.
+- The generated builder surface contains only symbol-table-allowlisted typed
+  methods and private-kernel calls. Compatibility-only/removed identities have no
+  builder, and public inputs expose no map/`any`, raw `Value`, identity, version,
+  field-class, instrument, or mandatory/floor authority.
+- The exact seven generated Go files in §5.2.3 are published and accepted as one
+  candidate transaction or none. They cannot activate current runtime or public
+  schema authority while any §5.2.3 implementation blocker or parity/cutover gate
+  remains open.
 - Every PR #403 lifecycle identity/event/state/phase, operation boundary,
   connector-facing decision, missing-data flag, and Agent360 dimension has an
   explicit registry disposition.
