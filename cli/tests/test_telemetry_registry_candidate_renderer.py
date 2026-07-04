@@ -124,6 +124,29 @@ def _copy_materialized(value: Any) -> Any:
     return value
 
 
+def _go_symbol_table_fields(facts: Mapping[str, Any]) -> dict[str, Any]:
+    return facts["fields"]["go_symbol_table"]["fields"]
+
+
+def _redigest_go_symbol_table(renderer: ModuleType, table: dict[str, Any]) -> str:
+    payload = json.dumps(
+        [
+            [
+                row["fields"]["kind"],
+                row["fields"]["source_id"],
+                row["fields"]["symbol"],
+                row["fields"]["declaration_form"],
+            ]
+            for row in table["rows"]
+        ],
+        ensure_ascii=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    digest = hashlib.sha256(renderer._GO_SYMBOL_TABLE_DIGEST_DOMAIN + payload).hexdigest()
+    table["table_sha256"] = digest
+    return digest
+
+
 def _set_unreferenced_invalid_example_id(facts: dict[str, Any], example_id: str) -> None:
     examples = facts["fields"]["examples"]
     referenced = {item["fields"]["base_example"] for item in examples if item["fields"]["base_example"] is not None}
@@ -219,6 +242,164 @@ def test_candidate_renderer_is_deterministic_complete_and_in_memory(
         assert path.startswith(f"{PREFIX}/")
         assert renderer._normalized_candidate_path(path) == path
         assert not PurePosixPath(path).is_absolute()
+
+
+def test_candidate_index_consumes_reviewed_go_symbol_contract_immutably_and_preserves_real_smoke(
+    renderer: ModuleType,
+    view: Any,
+    artifacts: Mapping[str, Any],
+) -> None:
+    index = renderer.build_candidate_render_index(view)
+    table = index.go_symbol_table
+    rows = {(row.kind, row.source_id): row for row in table.rows}
+
+    assert index.go_symbol_policy.package == "observability"
+    assert index.go_symbol_policy.brand_spellings == {
+        "defenseclaw": "DefenseClaw",
+        "opentelemetry": "OpenTelemetry",
+        "otel": "OTel",
+    }
+    assert index.go_symbol_overrides == ()
+    assert len(table.rows) == 1773
+    assert table.table_sha256 == "d897fab03a91351740e122682f96cc821a66f522250ba881e3a47b65afcc5fd7"
+    assert table.kind_counts == renderer._GO_SYMBOL_KIND_COUNTS
+    assert table.declaration_form_counts == {
+        "exported_const": 893,
+        "exported_type": 459,
+        "exported_function": 178,
+        "family_builder_method": 243,
+    }
+    assert rows[("family", "span.model.chat")].symbol == "TelemetryFamilyModelChat"
+    assert rows[("span_event", "model.retry")].symbol == "TelemetrySpanEventModelRetry"
+    assert rows[("structured_type", "gen_ai.canonical_json")].declaration_form == "exported_type"
+    assert rows[("span_link_constructor", "span.model.chat#caused_by")].symbol == ("NewSpanModelChatCausedByLink")
+    assert len(artifacts) == 29
+    with pytest.raises(TypeError):
+        index.go_symbol_policy.brand_spellings["otel"] = "Otel"  # type: ignore[index]
+    with pytest.raises(TypeError):
+        table.kind_counts["attribute"] = 1  # type: ignore[index]
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        table.rows[0].symbol = "Changed"  # type: ignore[misc]
+
+
+@pytest.mark.parametrize("target", ("policy", "table", "row", "override"))
+def test_candidate_index_rejects_noncanonical_go_symbol_tag_shapes(
+    renderer: ModuleType,
+    view: Any,
+    target: str,
+) -> None:
+    facts = _copy_materialized(view.facts)
+    if target == "policy":
+        facts["fields"]["go_symbol_policy"]["fields"]["future"] = True
+    elif target == "table":
+        _go_symbol_table_fields(facts)["future"] = True
+    elif target == "row":
+        _go_symbol_table_fields(facts)["rows"][0]["fields"]["future"] = True
+    else:
+        facts["fields"]["go_symbol_overrides"] = (
+            {
+                "$type": "GoSymbolOverrideIR",
+                "fields": {
+                    "kind": "attribute",
+                    "source_id": "action",
+                    "symbol": "TelemetryAttributeActionV2",
+                    "reason": "reviewed test override",
+                    "future": True,
+                },
+            },
+        )
+
+    with pytest.raises(renderer.CandidateRenderError, match="GoSymbol|Go symbol"):
+        renderer.build_candidate_render_index(_retagged_view(renderer, view, facts))
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    (
+        "policy",
+        "policy_version_bool",
+        "policy_version_float",
+        "table_version_bool",
+        "table_version_float",
+        "kind_count_bool",
+        "kind_count_float",
+        "declaration_count_float",
+        "override",
+        "count",
+        "form",
+        "order",
+        "symbol",
+        "digest",
+    ),
+)
+def test_candidate_index_rejects_forged_go_symbol_policy_rows_and_counts(
+    renderer: ModuleType,
+    view: Any,
+    mutation: str,
+) -> None:
+    facts = _copy_materialized(view.facts)
+    table = _go_symbol_table_fields(facts)
+    if mutation == "policy":
+        facts["fields"]["go_symbol_policy"]["fields"]["brand_spellings"]["otel"] = "Otel"
+    elif mutation == "policy_version_bool":
+        facts["fields"]["go_symbol_policy"]["fields"]["version"] = True
+    elif mutation == "policy_version_float":
+        facts["fields"]["go_symbol_policy"]["fields"]["version"] = 1.0
+    elif mutation == "table_version_bool":
+        table["version"] = True
+    elif mutation == "table_version_float":
+        table["version"] = 1.0
+    elif mutation == "kind_count_bool":
+        table["kind_counts"]["semantic_profile"] = True
+    elif mutation == "kind_count_float":
+        table["kind_counts"]["semantic_profile"] = 1.0
+    elif mutation == "declaration_count_float":
+        table["declaration_form_counts"]["exported_const"] = 893.0
+    elif mutation == "override":
+        facts["fields"]["go_symbol_overrides"] = (
+            {
+                "$type": "GoSymbolOverrideIR",
+                "fields": {
+                    "kind": "attribute",
+                    "source_id": "action",
+                    "symbol": "TelemetryAttributeActionV2",
+                    "reason": "reviewed test override",
+                },
+            },
+        )
+    elif mutation == "count":
+        table["kind_counts"]["attribute"] -= 1
+    elif mutation == "form":
+        table["rows"][0]["fields"]["declaration_form"] = "exported_type"
+        _redigest_go_symbol_table(renderer, table)
+    elif mutation == "order":
+        reordered = list(table["rows"])
+        reordered[0], reordered[1] = reordered[1], reordered[0]
+        table["rows"] = tuple(reordered)
+        _redigest_go_symbol_table(renderer, table)
+    elif mutation == "symbol":
+        table["rows"][0]["fields"]["symbol"] = "TelemetryAttributeActionForged"
+        _redigest_go_symbol_table(renderer, table)
+    else:
+        table["table_sha256"] = "0" * 64
+
+    with pytest.raises(renderer.CandidateRenderError):
+        renderer.build_candidate_render_index(_retagged_view(renderer, view, facts))
+
+
+def test_candidate_index_source_reconciliation_rejects_rehashed_forged_source_even_with_digest_pin_bypassed(
+    renderer: ModuleType,
+    view: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    facts = _copy_materialized(view.facts)
+    table = _go_symbol_table_fields(facts)
+    table["rows"][0]["fields"]["source_id"] = "action.forged"
+    forged_digest = _redigest_go_symbol_table(renderer, table)
+    monkeypatch.setattr(renderer, "_GO_SYMBOL_TABLE_SHA256", forged_digest)
+
+    with pytest.raises(renderer.CandidateRenderError, match="sources disagree with registry facts"):
+        renderer.build_candidate_render_index(_retagged_view(renderer, view, facts))
 
 
 @pytest.mark.parametrize(
