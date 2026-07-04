@@ -6,7 +6,7 @@ goal_status: active
 current_phase: P3-P5
 target_config_version: 8
 baseline_commit: fd13acedfcffc0cc431d5a72f329b56b50b22baa
-last_verified_commit: ecf70595c
+last_verified_commit: d1ed5278d
 last_updated: 2026-07-03
 ```
 
@@ -31,7 +31,7 @@ or a plausible-looking dashboard is not completion.
 
 | Field | Value |
 |---|---|
-| Active work package | `P3-WP02`, `P3-WP04`, `P5-WP01..02` — the registry/compiler/builders and generated projections that unblock safe signal activation |
+| Active work package | `P3-WP02`, `P3-WP04`, `P5-WP02` — generated builders, schemas, and projections that unblock safe signal activation |
 | Ready queue | Implement and cut over the generated telemetry registry, activate Galileo/inbound projections, then run the complete P3 E2E gate against the already-verified local stack |
 | Blocked | None |
 | Next phase gate | `P3-GATE` — destination isolation plus Galileo and local-observability compatibility |
@@ -232,9 +232,9 @@ substitute a converter-local family list, `*`, or all-catalog-buckets fallback.
 
 | ID | Status | Owner | Depends on | Deliverable | Verification/evidence |
 |---|---|---|---|---|---|
-| `P4-WP01` | `TODO` | unassigned | `P3-GATE` | Control-plane/platform/health producers migrated | Exact-count classification tests |
-| `P4-WP02` | `TODO` | unassigned | `P3-GATE` | Guardrail/model/tool/approval/enforcement producers migrated | PR #403 correlation goldens |
-| `P4-WP03` | `TODO` | unassigned | `P3-GATE` | Scan/asset/network/discovery/ingest producers migrated | Domain projection tests |
+| `P4-WP01` | `TODO` | unassigned | `P3-GATE`, `P5-WP02` | Control-plane/platform/health producers migrated | Exact-count classification tests |
+| `P4-WP02` | `TODO` | unassigned | `P3-GATE`, `P5-WP02..05` | Guardrail/model/tool/approval/enforcement producers migrated | PR #403 correlation goldens |
+| `P4-WP03` | `TODO` | unassigned | `P3-GATE`, `P5-WP02` | Scan/asset/network/discovery/ingest producers migrated | Domain projection tests |
 | `P4-WP04` | `TODO` | unassigned | `P4-WP01..03` | Duplicate bridges/direct fan-out/global toggles/legacy emit gates removed | Repository search plus no-dup tests |
 | `P4-GATE` | `TODO` | root | `P4-WP01..04` | Every current producer classified; no active duplicate/legacy path | Exhaustive producer inventory |
 
@@ -242,8 +242,8 @@ substitute a converter-local family list, `*`, or all-catalog-buckets fallback.
 
 | ID | Status | Owner | Depends on | Deliverable | Verification/evidence |
 |---|---|---|---|---|---|
-| `P5-WP01` | `IN_PROGRESS` | root + registry/compiler subagent | `P2-GATE` | Registry authoring model, dependency lock, sole compiler | Commit `73a54b548` closes offline upstream provenance, family/mapping separation, generated consumer ownership, and compatibility-view cutover contracts; compiler/authoring implementation active |
-| `P5-WP02` | `IN_PROGRESS` | root + domain-authoring subagent | `P5-WP01` | Generated bundle/catalog/docs/constants/builders/field classes/selector registries/fixtures | Complete canonical domain authoring and generator outputs active in parallel under disjoint ownership |
+| `P5-WP01` | `DONE` | root + registry/compiler/domain subagents + Claude review | `P2-GATE` | Registry authoring model, dependency lock, sole compiler | Commits `73a54b548`, `d95c2f23f`, and `d1ed5278d`: pinned lossless upstream snapshots; 277 local attributes plus 45 privacy overlays; 25 bounded span and 131 exact metric families; structured normalizers; sole offline compiler; projection-aware current metric inventory; atomic drift/provenance gates. Seventy-seven focused tests, schema/inventory/generator/Go gates, and two Claude Opus xhigh reviews passed with no unresolved finding. |
+| `P5-WP02` | `IN_PROGRESS` | root + generation subagents | `P5-WP01` | Generated bundle/catalog/docs/constants/builders/field classes/selector registries/fixtures | First slice preserves every validated family, attribute-use, producer-mapping, example, privacy, metric, span, and compatibility contract in compiler IR before rendering candidate outputs; runtime authority cutover remains atomic after parity gates. |
 | `P5-WP03` | `TODO` | unassigned | `P5-WP01`, `P3-WP02` | Rich bounded spans/events/links/status/content/retry/timing | Golden topology/sampling tests |
 | `P5-WP04` | `TODO` | unassigned | `P5-WP02..03` | PR #403 lifecycle fixture migration and missing-data fidelity | Root/subagent real-producer goldens |
 | `P5-WP05` | `TODO` | unassigned | `P3-WP05`, `P5-WP02` | Galileo/OpenInference/local-observability generated projections | Vendor/dashboard inventory tests |
@@ -372,6 +372,8 @@ only “passed.” A relevant change invalidates old evidence.
 | `V-0061` | 2026-07-03 | `73a54b548` | P5 registry source boundaries | `make check-observability-v8-spec`; 7 focused spec tests; Ruff; diff check | The contract now defines offline SHA-256-verified upstream convention snapshots, separates 14 gateway/188 audit producer mappings from canonical families, generates local-observability ownership from parsed bundle assets, and preserves old public schema `$id`/`$ref` plus copy-safe embed compatibility through one generated cutover. Existing P-030/P-040/P-046/P-056/P-061 traceability covers the clarified behavior without a new decision. | root + registry subagent |
 | `V-0062` | 2026-07-03 | `3197fdf74` | P3 PR #403 first-phase fidelity | Gateway focused normal x10 and parent rerun; focused race; gateway vet; gatewaylog/observability packages; corrected 18-event live replay | First root/subagent observations no longer fabricate `agent_previous_phase: unknown`, which the strict canonical schema correctly rejected. Logs/traces omit the unreported value while only the bounded metric label projects `unknown`. The replay produced no schema violations, exact paired tool IDs, 61/61 OTLP deliveries, three-agent root/parent/lifecycle/execution lineage, a Loki first-lifecycle record, and a two-span Tempo root-to-tool waterfall. | root + local-observability subagent |
 | `V-0063` | 2026-07-03 | `ecf70595c` | P3 live local-observability gate | 21 focused checker tests; Ruff; 14-dashboard/313-panel static audit; five-service live 48-hour packaged inventory under 900s global/60s query budgets; root in-app Browser DOM/screenshot/interaction QA | Per-query timeouts are configurable and capped by the shared deadline, so valid heavy queries complete without hiding genuine hangs. The canonical inventory returned data=250, zero=47, expected-idle empty=11, interactive=2, static=3, errors=0, unexpected-empty=0. Agent360 rendered the live root plus direct/nested subagents, 2 turns, 4 model calls, 2 tool calls, 2 descendants, truthful unreported tokens/cost, and 100% terminal success; Activity navigation worked. Span throughput/p95 `No data` after inactivity was proven rate-window idleness: 33 count/495 bucket series existed and fresh activity made exact PromQL nonzero with finite p95. | root + local-observability subagent |
+| `V-0064` | 2026-07-03 | `d95c2f23f` | P5 canonical telemetry source model | Generator write/check; exact source counts; upstream digest and ownership checks; schema gate; diff check | The canonical source now contains the exact pinned OTel core, dedicated GenAI, and OpenInference 0.1.30 normalized inputs plus 277 DefenseClaw attributes, 45 upstream privacy overlays, 322 structured normalizers, 25 bounded span families, 131 metric families, 112 local compatibility projections, and 11 exact field-class examples. PR #403 lifecycle identities and PR #412 labels remain explicit compatibility contracts rather than inferred aliases. | root + domain/registry subagents + Claude Opus xhigh |
+| `V-0065` | 2026-07-03 | `d1ed5278d` | P5 sole compiler and provenance gate | 77 focused pytest cases; Ruff; Python compile; generator write/check; current inventory checker; `make check-schemas`; `go test ./schemas -count=1`; diff check; two Claude Opus xhigh reviews | The offline compiler now rejects provenance, ownership, overlap, type/unit, normalizer, portable constraint, array-bound, span-name, field-class, metric-label projection, and generated-output drift. A one-release fail-closed analyzer proves all 131 current metric label/callsite sets and ten legacy-gate drops; malformed helpers, dynamic keys, timeouts, upstream YAML, deleted outputs, and rollback paths have negative coverage. Both Claude passes ended with no unresolved P0-P3 finding. | root + registry/compiler subagent + Claude Opus xhigh |
 
 Final integration requires, at minimum:
 
@@ -415,6 +417,7 @@ and exact-trace canary acknowledgement against its conformance harness.
 | `C-0015` | 2026-07-03 | delivery semantics | `P3-WP01..02` | P-062, P-064 | Distinguish pre-write transient failures from post-write acknowledgement ambiguity. Both may retry within the same bounded delivery sequence using identical projected bytes and record identity, so no retry can re-run redaction or recover canonical data; only the ambiguity window permits a downstream duplicate. Authentication, malformed payload, and unsafe endpoint outcomes remain terminal. | complete |
 | `C-0016` | 2026-07-03 | security compatibility | `P3-WP01..02` | P-039, P-050, P-066 | Preserve intentional plaintext HTTP collectors rather than introducing a new breaking transport ban, but surface every resolved bearer, Splunk token, authentication-like header, or secret-backed header crossing that boundary through one content-free warning/audit. HTTPS and unauthenticated HTTP remain unchanged; no endpoint, header, reference, or secret enters the warning. | complete |
 | `C-0017` | 2026-07-03 | OTLP retry and bounds | `P3-WP02..04` | P-032, P-039, P-048, P-062, P-064 | Keep trace/metric retry inside the protocol-specific OTel SDK layer where HTTP/gRPC outcomes remain classifiable and the exact encoded request is reusable; do not add a second processor retry that could replay authentication, permanent, or partial-success accepted subsets. DefenseClaw owns the count/byte trace queue and request preflight, while metric backpressure stays SDK-owned. Guarded-dial violations are terminal and externally retain `unsafe_endpoint`. | complete |
+| `C-0018` | 2026-07-03 | generation architecture | `P5-WP01..02`, `P4-WP01..03` | D-019, P-010, P-030, P-040, P-046, P-056, P-061 | Close P5-WP01 at `d1ed5278d` with a manifest/provenance compiler only. Before P5-WP02 renders or activates runtime consumers, extend the compiler IR to preserve every already-validated requirement, constraint, privacy class, metric/span contract, producer mapping, example, and compatibility binding. Candidate bundle/catalog/builders land before one atomic generated-authority cutover; P4 producer migration depends on those generated builders/projections and cannot start solely from P3-GATE. | complete |
 
 A new product choice requires a new decision ID and traceability row. A behavior
 change updates its contract and required test in the same change. Deferred release
