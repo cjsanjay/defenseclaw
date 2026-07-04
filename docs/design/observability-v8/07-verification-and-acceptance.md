@@ -42,13 +42,14 @@ Tests must validate outputs, not merely that functions returned no error.
 | Rich trace contract | Golden agent/model/tool/retrieval/workflow/security graphs with exact families, parents/links, events, status/outcome, fields, limits, and redaction |
 | Trace sampling invariants | Explicit collection-before-construction, unsampled-route, durable-log, parent-coherence, safe-decision-debug, and targeted-canary tests in section 9.2 |
 | Simplified telemetry schemas | One logical registry with a small focused authoring set generates deterministic bundle/catalog/docs/constants/fixtures/projections; every current field has a migration disposition |
+| Deterministic registry inheritance | DAG, diamond, body-role transposition, non-weakening requiredness, conditional-clause, restrictive-constraint-intersection, and zero-unresolved-family tests; every generated consumer uses the same materialized resolved-use contract |
 | Agent lifecycle and dashboard compatibility | PR #403 root/subagent lifecycle, execution, phase, operation, decision, real-time completion, and missing-data goldens plus PR #412 metric/label/bucket/cadence, UID, query, live inventory, and source/packaged dashboard checks |
 | Push network safety | HTTP JSONL, OTLP, and Splunk tests cover every prohibited address class, guarded dialing/DNS rebinding, disabled redirects, failure isolation, and narrowly bounded private/CGNAT opt-ins |
 | Bounded destination delivery | Every queue-backed destination resolves count and byte defaults, drops the newest attempted enqueue when either limit is full, bounds encoded push batches by count and bytes, and remains isolated under saturation |
 | Splunk projection-only compatibility | Every HEC alias is equal to a value in that destination's already-redacted projection or absent; raw/canonical/producer/other-destination fallback is impossible |
 
 Decision-level coverage for `D-001` through `D-022`, `S-001` through `S-012`, and
-`P-001` through `P-063` is normative in `13-decision-traceability.md`; this matrix is
+`P-001` through `P-067` is normative in `13-decision-traceability.md`; this matrix is
 the requirement-level summary rather than a competing decision index.
 
 ## 3. Taxonomy Tests
@@ -727,6 +728,13 @@ Required cases:
   alias, content, path, credential, reason, evidence, error, and high-cardinality
   placeholders fail. Hostile path, address, PII, and unbounded strings never enter
   a span name.
+- Registry inheritance resolves every group once in DAG order. Fixtures cover
+  diamond de-duplication, attribute-to-body transposition, required/conditional/
+  recommended/optional strengthening, identical and conflicting conditional
+  clauses, compatible restrictive constraint intersection, empty/incompatible
+  intersection, body-role crossings, log parent cardinality, and cycles. The real
+  registry has zero unresolved family uses, and generated Go, Python, schema,
+  catalog, redaction, and fixture outputs consume the same materialized tuple.
 - The closed normalizer catalog, defaults, overrides, and type applicability are
   tested in Go and Python from shared fixtures. Missing numeric bounds, removed
   effective bounds, invalid item/depth/property/UTF-8 limits, nonportable regexes,

@@ -279,6 +279,46 @@ and attributes classified as content, path, credential, reason, evidence, error,
 or high-cardinality. Fixed names need no placeholder. Span names therefore remain
 bounded even when the corresponding span carries richer values as attributes.
 
+#### 5.2.1 Deterministic group resolution
+
+The compiler preserves every direct attribute use and also materializes one
+immutable resolved-use contract for every family. Resolution is structural and
+monotone; source order or a nearest-parent override never weakens a requirement.
+
+- An `attribute_group` resolves its inherited and direct uses as attributes.
+- A `body_group` transposes every inherited and direct use into `body_fields`.
+  A log family extends exactly one `body_group` and no non-body group, so all of
+  its resolved payload uses have an unambiguous body role.
+- Span, resource, metric, and span-event families cannot inherit a body use.
+  Their resolved uses remain attributes; metric attributes are the canonical
+  label schema described in section 5.4.
+- Repeated references merge by the non-weakening requirement lattice
+  `required > conditional > recommended > optional`. A required use dominates a
+  conditional use. If conditional is the strongest surviving level, every
+  surviving conditional clause must be byte-identical after scalar parsing or
+  compilation fails.
+- Per-use constraints merge only by a representable restrictive intersection:
+  lower maxima, higher minima, enum intersection, and identical portable patterns.
+  An empty/inconsistent range or enum, two different patterns, an invalid item
+  bound, or any other non-representable intersection fails. An absent constraint
+  never removes a constraint declared by another use.
+- The compiler retains the contributing direct uses for provenance and emits the
+  resolved role, requirement, condition, and effective constraints for builders,
+  schemas, the catalog, and field-class derivation. Unknown, cyclic, mixed-role,
+  or unresolved inheritance fails before any output is written.
+
+The checked v1 source satisfies these rules without an exception: every log
+extends exactly one body group, body transposition resolves its inherited
+correlation/content/security fields, and every duplicate requirement has one
+non-weakening result. Generated code MUST consume the materialized result rather
+than independently walking the YAML hierarchy.
+
+Every signal family registers a nonempty applicable subset of the canonical
+outcome vocabulary. The global vocabulary is not a family default: copying all
+canonical outcomes into a family without family-specific applicability and tests
+is invalid. Metrics may register only the outcome represented by their instrument
+contract. Builders reject a globally valid but family-inapplicable outcome.
+
 The registry manifest also owns immutable semantic-profile bindings. The
 `defenseclaw-genai-rich-v1` entry is exactly:
 
@@ -476,6 +516,26 @@ from the same bytes. Runtime and public-schema consumers switch to these artifac
 only after byte/semantic, `$id`/`$ref`, fixture, and embed parity passes in one
 cutover change; merely adding candidate generated files does not make them a second
 active source of truth.
+
+Coarse `legacy_bindings` are not sufficient authority for that cutover. Before an
+existing public path becomes generated, the registry owns a typed `public_views`
+entry containing its exact output path, JSON Schema dialect, `$id`, compatibility
+lifecycle, root/transport template, definition and discriminator layout,
+`additionalProperties` policy, local and cross-resource reference closure, mirror
+and embed targets, and a field-level disposition for every legacy JSON Pointer.
+Each field disposition is exactly one of preserved, renamed/alias, removed, or
+corrected; preserved/renamed fields identify their canonical source, projected
+name, requiredness, constraints, encoding conversion, redaction/class parity, and
+fixture coverage. Transport-only fields are explicit and classified rather than
+being inferred from a similarly named canonical attribute.
+
+The immutable migration baseline may be a digest-pinned normalized snapshot of the
+current twenty-one public schemas, but generated output can never recursively serve
+as its own migration input. The compiler rejects a missing field disposition,
+unresolved `$ref`, changed dialect/ID, incomplete offline resource closure, mirror
+or wheel byte drift, and any compatibility view whose dynamic leaves lack an exact
+field-class derivation. Candidate bundle/catalog artifacts may land before this
+metadata; no existing public path changes authority until the complete parity gate.
 
 ## 7. Standard Base Plus DefenseClaw Overlay
 
@@ -711,8 +771,10 @@ The current telemetry files are migration inputs:
 
 Migration proceeds in stages:
 
-1. Import all current fields, types, requirements, name/kind patterns, events, and
-   Galileo eligibility into registry v1.
+1. Snapshot all twenty-one current public schemas as an immutable digest-pinned
+   migration baseline, and import every field, type, requirement, name/kind
+   pattern, event, Galileo eligibility, public identity, reference closure, and
+   field-level disposition into registry v1 `public_views` metadata.
 2. Detect duplicate definitions and incompatible meanings for the same key.
 3. Assign standard/DefenseClaw/compatibility ownership.
 4. Extract common resource, correlation, content, error, lifecycle, and security
