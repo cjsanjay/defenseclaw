@@ -422,137 +422,137 @@ classes:
     source: schemas/otel/metrics.schema.json
     migration_disposition: import_telemetry_registry
     items:
-      "defenseclaw.activity.diff_entries": {type: "histogram", unit: "{entry}"}
-      "defenseclaw.activity.total": {type: "counter", unit: "{activity}"}
-      "defenseclaw.admission.decisions": {type: "counter", unit: "{decision}"}
-      "defenseclaw.agent.discovery.duration": {type: "histogram", unit: "ms"}
-      "defenseclaw.agent.discovery.errors": {type: "counter", unit: "{error}"}
-      "defenseclaw.agent.discovery.installed": {type: "gauge", unit: "1"}
-      "defenseclaw.agent.discovery.runs": {type: "counter", unit: "{run}"}
-      "defenseclaw.agent.discovery.signals": {type: "counter", unit: "{signal}"}
-      "defenseclaw.agent.last_seen": {type: "gauge", unit: "s"}
-      "defenseclaw.agent.lifecycle.transitions": {type: "counter", unit: "{transition}"}
-      "defenseclaw.agent.phase.current": {type: "gauge", unit: "1"}
-      "defenseclaw.agent.phase.transitions": {type: "counter", unit: "{transition}"}
-      "defenseclaw.agent.reported_cost": {type: "gauge", unit: "USD"}
-      "defenseclaw.agent.token.usage": {type: "counter", unit: "{token}"}
-      "defenseclaw.ai.components.installs": {type: "gauge", unit: "{install}"}
-      "defenseclaw.ai.components.observations": {type: "counter", unit: "{observation}"}
-      "defenseclaw.ai.components.workspaces": {type: "gauge", unit: "{workspace}"}
-      "defenseclaw.ai.confidence.identity_score": {type: "histogram", unit: "1"}
-      "defenseclaw.ai.confidence.presence_score": {type: "histogram", unit: "1"}
-      "defenseclaw.ai.discovery.active_signals": {type: "gauge", unit: "{signal}"}
-      "defenseclaw.ai.discovery.dedupe_suppressed": {type: "counter", unit: "{signal}"}
-      "defenseclaw.ai.discovery.duration": {type: "histogram", unit: "ms"}
-      "defenseclaw.ai.discovery.errors": {type: "counter", unit: "{error}"}
-      "defenseclaw.ai.discovery.files_scanned": {type: "counter", unit: "{file}"}
-      "defenseclaw.ai.discovery.gone_signals": {type: "counter", unit: "{signal}"}
-      "defenseclaw.ai.discovery.new_signals": {type: "counter", unit: "{signal}"}
-      "defenseclaw.ai.discovery.runs": {type: "counter", unit: "{run}"}
-      "defenseclaw.ai.discovery.signals": {type: "counter", unit: "{signal}"}
-      "defenseclaw.alert.count": {type: "counter", unit: "{alert}"}
-      "defenseclaw.approval.count": {type: "counter", unit: "{request}"}
-      "defenseclaw.audit.db.errors": {type: "counter", unit: "{error}"}
-      "defenseclaw.audit.events.total": {type: "counter", unit: "{event}"}
-      "defenseclaw.audit.sink.batches.delivered": {type: "counter", unit: "{batch}"}
-      "defenseclaw.audit.sink.batches.dropped": {type: "counter", unit: "{batch}"}
-      "defenseclaw.audit.sink.circuit.state": {type: "updowncounter", unit: "1"}
-      "defenseclaw.audit.sink.delivery.latency": {type: "histogram", unit: "ms"}
-      "defenseclaw.audit.sink.failures": {type: "counter", unit: "{failure}"}
-      "defenseclaw.audit.sink.queue.depth": {type: "updowncounter", unit: "{event}"}
-      "defenseclaw.cisco.errors": {type: "counter", unit: "{error}"}
-      "defenseclaw.cisco_inspect.latency": {type: "histogram", unit: "ms"}
-      "defenseclaw.codex.notify": {type: "counter", unit: "{event}"}
-      "defenseclaw.codex.notify.malformed": {type: "counter", unit: "{event}"}
-      "defenseclaw.config.load.errors": {type: "counter", unit: "{error}"}
-      "defenseclaw.connector.hook.invocations": {type: "counter", unit: "{hook}"}
-      "defenseclaw.connector.hook.latency": {type: "histogram", unit: "ms"}
-      "defenseclaw.connector.hook.outcome": {type: "counter", unit: "{decision}"}
-      "defenseclaw.connector.hook.tokens": {type: "counter", unit: "{token}"}
-      "defenseclaw.connector.hook.unified_dispatch": {type: "counter", unit: "{invocation}"}
-      "defenseclaw.egress.events": {type: "counter", unit: "{event}"}
-      "defenseclaw.gateway.errors": {type: "counter", unit: "{error}"}
-      "defenseclaw.gateway.events.emitted": {type: "counter", unit: "{event}"}
-      "defenseclaw.gateway.forwarded_headers": {type: "counter", unit: "{header}"}
-      "defenseclaw.gateway.judge.errors": {type: "counter", unit: "{error}"}
-      "defenseclaw.gateway.judge.invocations": {type: "counter", unit: "{invocation}"}
-      "defenseclaw.gateway.judge.latency": {type: "histogram", unit: "ms"}
-      "defenseclaw.gateway.verdicts": {type: "counter", unit: "{verdict}"}
-      "defenseclaw.guardrail.cache.hits": {type: "counter", unit: "{hit}"}
-      "defenseclaw.guardrail.cache.misses": {type: "counter", unit: "{miss}"}
-      "defenseclaw.guardrail.evaluations": {type: "counter", unit: "{evaluation}"}
-      "defenseclaw.guardrail.judge.latency": {type: "histogram", unit: "ms"}
-      "defenseclaw.guardrail.latency": {type: "histogram", unit: "ms"}
-      "defenseclaw.http.auth.failures": {type: "counter", unit: "{failure}"}
-      "defenseclaw.http.rate_limit.breaches": {type: "counter", unit: "{breach}"}
-      "defenseclaw.http.request.count": {type: "counter", unit: "{request}"}
-      "defenseclaw.http.request.duration": {type: "histogram", unit: "ms"}
-      "defenseclaw.inspect.evaluations": {type: "counter", unit: "{evaluation}"}
-      "defenseclaw.inspect.latency": {type: "histogram", unit: "ms"}
-      "defenseclaw.judge.persist.batch_size": {type: "histogram", unit: "{row}"}
-      "defenseclaw.judge.persist.drops": {type: "counter", unit: "{drop}"}
-      "defenseclaw.judge.persist.queue_depth": {type: "gauge", unit: "{item}"}
-      "defenseclaw.judge.semaphore.depth": {type: "updowncounter", unit: "{slot}"}
-      "defenseclaw.judge.semaphore.drops": {type: "counter", unit: "{drop}"}
-      "defenseclaw.llm_bridge.latency": {type: "histogram", unit: "ms"}
-      "defenseclaw.openshell.exit": {type: "counter", unit: "{exit}"}
-      "defenseclaw.otel.ingest.bytes": {type: "counter", unit: "By"}
-      "defenseclaw.otel.ingest.last_seen_ts": {type: "gauge", unit: "s"}
-      "defenseclaw.otel.ingest.malformed": {type: "counter", unit: "{request}"}
-      "defenseclaw.otel.ingest.records": {type: "counter", unit: "{record}"}
-      "defenseclaw.otel.ingest.requests": {type: "counter", unit: "{request}"}
-      "defenseclaw.panics.total": {type: "counter", unit: "{panic}"}
-      "defenseclaw.policy.evaluations": {type: "counter", unit: "{evaluation}"}
-      "defenseclaw.policy.latency": {type: "histogram", unit: "ms"}
-      "defenseclaw.policy.reloads": {type: "counter", unit: "{reload}"}
-      "defenseclaw.process.uptime_seconds": {type: "gauge", unit: "s"}
-      "defenseclaw.provenance.bumps": {type: "counter", unit: "{bump}"}
-      "defenseclaw.quarantine.actions": {type: "counter", unit: "{action}"}
-      "defenseclaw.queue.depth": {type: "gauge", unit: "{item}"}
-      "defenseclaw.queue.drops": {type: "counter", unit: "{drop}"}
-      "defenseclaw.redaction.applied": {type: "counter", unit: "{redaction}"}
-      "defenseclaw.runtime.fd.in_use": {type: "gauge", unit: "{fd}"}
-      "defenseclaw.runtime.gc.pause": {type: "histogram", unit: "ns"}
-      "defenseclaw.runtime.goroutines": {type: "gauge", unit: "{goroutine}"}
-      "defenseclaw.runtime.heap.alloc": {type: "gauge", unit: "By"}
-      "defenseclaw.runtime.heap.objects": {type: "gauge", unit: "{object}"}
-      "defenseclaw.scan.count": {type: "counter", unit: "{scan}"}
-      "defenseclaw.scan.duration": {type: "histogram", unit: "ms"}
-      "defenseclaw.scan.errors": {type: "counter", unit: "{error}"}
-      "defenseclaw.scan.findings": {type: "counter", unit: "{finding}"}
-      "defenseclaw.scan.findings.by_rule": {type: "counter", unit: "{finding}"}
-      "defenseclaw.scan.findings.gauge": {type: "updowncounter", unit: "{finding}"}
-      "defenseclaw.scanner.queue.depth": {type: "updowncounter", unit: "{scan}"}
-      "defenseclaw.schema.violations": {type: "counter", unit: "{event}"}
-      "defenseclaw.slo.block.latency": {type: "histogram", unit: "ms"}
-      "defenseclaw.slo.tui.refresh": {type: "histogram", unit: "ms"}
-      "defenseclaw.sqlite.busy_retries": {type: "counter", unit: "{event}"}
-      "defenseclaw.sqlite.checkpoint.duration": {type: "histogram", unit: "ms"}
-      "defenseclaw.sqlite.db.bytes": {type: "gauge", unit: "By"}
-      "defenseclaw.sqlite.freelist_count": {type: "gauge", unit: "{page}"}
-      "defenseclaw.sqlite.page_count": {type: "gauge", unit: "{page}"}
-      "defenseclaw.sqlite.wal.bytes": {type: "gauge", unit: "By"}
-      "defenseclaw.stream.bytes_sent": {type: "histogram", unit: "By"}
-      "defenseclaw.stream.duration_ms": {type: "histogram", unit: "ms"}
-      "defenseclaw.stream.lifecycle": {type: "counter", unit: "{transition}"}
-      "defenseclaw.telemetry.destination.spans": {type: "counter", unit: "{span}"}
-      "defenseclaw.telemetry.destination.exports": {type: "counter", unit: "{span}"}
-      "defenseclaw.telemetry.exporter.errors": {type: "counter", unit: "{error}"}
-      "defenseclaw.telemetry.exporter.last_export_ts": {type: "gauge", unit: "s"}
-      "defenseclaw.tool.calls": {type: "counter", unit: "{call}"}
-      "defenseclaw.tool.duration": {type: "histogram", unit: "ms"}
-      "defenseclaw.tool.errors": {type: "counter", unit: "{error}"}
-      "defenseclaw.tui.filter.applied": {type: "counter", unit: "{filter}"}
-      "defenseclaw.watcher.errors": {type: "counter", unit: "{error}"}
-      "defenseclaw.watcher.events": {type: "counter", unit: "{event}"}
-      "defenseclaw.watcher.restarts": {type: "counter", unit: "{restart}"}
-      "defenseclaw.webhook.circuit_breaker": {type: "counter", unit: "{transition}"}
-      "defenseclaw.webhook.cooldown.suppressed": {type: "counter", unit: "{event}"}
-      "defenseclaw.webhook.dispatches": {type: "counter", unit: "{dispatch}"}
-      "defenseclaw.webhook.failures": {type: "counter", unit: "{failure}"}
-      "defenseclaw.webhook.latency": {type: "histogram", unit: "ms"}
-      "gen_ai.client.operation.duration": {type: "histogram", unit: "s"}
-      "gen_ai.client.token.usage": {type: "histogram", unit: "{token}"}
+      "defenseclaw.activity.diff_entries": {type: "histogram", unit: "{entry}", labels: ["action", "actor", "target_type"], callsites: ["internal/telemetry/metrics.go:2158"], dropped_by_current_global_v8_gate: []}
+      "defenseclaw.activity.total": {type: "counter", unit: "{activity}", labels: ["action", "actor", "target_type"], callsites: ["internal/telemetry/metrics.go:2157"], dropped_by_current_global_v8_gate: []}
+      "defenseclaw.admission.decisions": {type: "counter", unit: "{decision}", labels: ["decision", "source", "target_type"], callsites: ["internal/telemetry/metrics.go:1498"], dropped_by_current_global_v8_gate: []}
+      "defenseclaw.agent.discovery.duration": {type: "histogram", unit: "ms", labels: ["cache_hit", "result", "source"], callsites: ["internal/telemetry/metrics.go:3118"], dropped_by_current_global_v8_gate: []}
+      "defenseclaw.agent.discovery.errors": {type: "counter", unit: "{error}", labels: ["connector", "reason"], callsites: ["internal/telemetry/metrics.go:3155"], dropped_by_current_global_v8_gate: []}
+      "defenseclaw.agent.discovery.installed": {type: "gauge", unit: "1", labels: ["connector"], callsites: ["internal/telemetry/metrics.go:3142"], dropped_by_current_global_v8_gate: []}
+      "defenseclaw.agent.discovery.runs": {type: "counter", unit: "{run}", labels: ["cache_hit", "result", "source"], callsites: ["internal/telemetry/metrics.go:3116"], dropped_by_current_global_v8_gate: []}
+      "defenseclaw.agent.discovery.signals": {type: "counter", unit: "{signal}", labels: ["connector", "has_binary", "has_config", "installed", "probe_status"], callsites: ["internal/telemetry/metrics.go:3137"], dropped_by_current_global_v8_gate: []}
+      "defenseclaw.agent.last_seen": {type: "gauge", unit: "s", labels: ["connector", "defenseclaw.agent.execution.id", "defenseclaw.agent.lifecycle.id", "defenseclaw.agent.parent.id", "defenseclaw.agent.root.id", "defenseclaw.session.root.id", "gen_ai.agent.id", "gen_ai.agent.name", "gen_ai.agent.type"], callsites: ["internal/telemetry/metrics.go:3033"], dropped_by_current_global_v8_gate: []}
+      "defenseclaw.agent.lifecycle.transitions": {type: "counter", unit: "{transition}", labels: ["connector", "defenseclaw.agent.depth", "defenseclaw.agent.execution.id", "defenseclaw.agent.lifecycle.event", "defenseclaw.agent.lifecycle.id", "defenseclaw.agent.lifecycle.state", "defenseclaw.agent.parent.id", "defenseclaw.agent.root.id", "defenseclaw.session.root.id", "gen_ai.agent.id", "gen_ai.agent.name", "gen_ai.agent.type", "gen_ai.provider.name", "gen_ai.request.model"], callsites: ["internal/telemetry/metrics.go:3012"], dropped_by_current_global_v8_gate: []}
+      "defenseclaw.agent.phase.current": {type: "gauge", unit: "1", labels: ["connector", "defenseclaw.agent.execution.id", "defenseclaw.agent.lifecycle.id", "defenseclaw.agent.root.id", "gen_ai.agent.id", "gen_ai.agent.name"], callsites: ["internal/telemetry/metrics.go:3034"], dropped_by_current_global_v8_gate: []}
+      "defenseclaw.agent.phase.transitions": {type: "counter", unit: "{transition}", labels: ["connector", "defenseclaw.agent.execution.id", "defenseclaw.agent.phase.from", "defenseclaw.agent.phase.to", "defenseclaw.agent.root.id", "gen_ai.agent.id", "gen_ai.agent.name"], callsites: ["internal/telemetry/metrics.go:3046"], dropped_by_current_global_v8_gate: []}
+      "defenseclaw.agent.reported_cost": {type: "gauge", unit: "USD", labels: ["connector", "defenseclaw.agent.execution.id", "defenseclaw.agent.lifecycle.id", "defenseclaw.agent.root.id", "gen_ai.agent.id", "gen_ai.agent.name", "gen_ai.provider.name", "gen_ai.request.model"], callsites: ["internal/telemetry/metrics.go:3059"], dropped_by_current_global_v8_gate: []}
+      "defenseclaw.agent.token.usage": {type: "counter", unit: "{token}", labels: ["connector", "defenseclaw.agent.execution.id", "defenseclaw.agent.lifecycle.id", "defenseclaw.agent.root.id", "gen_ai.agent.id", "gen_ai.agent.name", "gen_ai.provider.name", "gen_ai.request.model", "kind"], callsites: ["internal/telemetry/metrics.go:3086"], dropped_by_current_global_v8_gate: []}
+      "defenseclaw.ai.components.installs": {type: "gauge", unit: "{install}", labels: ["ecosystem", "name"], callsites: ["internal/telemetry/metrics.go:3409"], dropped_by_current_global_v8_gate: []}
+      "defenseclaw.ai.components.observations": {type: "counter", unit: "{observation}", labels: ["ecosystem", "identity_band", "name", "presence_band"], callsites: ["internal/telemetry/metrics.go:3408"], dropped_by_current_global_v8_gate: []}
+      "defenseclaw.ai.components.workspaces": {type: "gauge", unit: "{workspace}", labels: ["ecosystem", "name"], callsites: ["internal/telemetry/metrics.go:3410"], dropped_by_current_global_v8_gate: []}
+      "defenseclaw.ai.confidence.identity_score": {type: "histogram", unit: "1", labels: ["ecosystem", "framework", "name"], callsites: ["internal/telemetry/metrics.go:3411"], dropped_by_current_global_v8_gate: []}
+      "defenseclaw.ai.confidence.presence_score": {type: "histogram", unit: "1", labels: ["ecosystem", "framework", "name"], callsites: ["internal/telemetry/metrics.go:3412"], dropped_by_current_global_v8_gate: []}
+      "defenseclaw.ai.discovery.active_signals": {type: "gauge", unit: "{signal}", labels: ["privacy_mode", "source"], callsites: ["internal/telemetry/metrics.go:3237"], dropped_by_current_global_v8_gate: []}
+      "defenseclaw.ai.discovery.dedupe_suppressed": {type: "counter", unit: "{signal}", labels: ["privacy_mode", "result", "source"], callsites: ["internal/telemetry/metrics.go:3245"], dropped_by_current_global_v8_gate: []}
+      "defenseclaw.ai.discovery.duration": {type: "histogram", unit: "ms", labels: ["privacy_mode", "result", "source"], callsites: ["internal/telemetry/metrics.go:3236"], dropped_by_current_global_v8_gate: []}
+      "defenseclaw.ai.discovery.errors": {type: "counter", unit: "{error}", labels: ["detector", "reason"], callsites: ["internal/telemetry/metrics.go:3282"], dropped_by_current_global_v8_gate: []}
+      "defenseclaw.ai.discovery.files_scanned": {type: "counter", unit: "{file}", labels: ["privacy_mode", "result", "source"], callsites: ["internal/telemetry/metrics.go:3242"], dropped_by_current_global_v8_gate: []}
+      "defenseclaw.ai.discovery.gone_signals": {type: "counter", unit: "{signal}", labels: ["ai.product", "ai.vendor", "confidence", "detector", "privacy_mode", "result", "signal.category", "source", "state"], callsites: ["internal/telemetry/metrics.go:3251", "internal/telemetry/metrics.go:3274"], dropped_by_current_global_v8_gate: []}
+      "defenseclaw.ai.discovery.new_signals": {type: "counter", unit: "{signal}", labels: ["ai.product", "ai.vendor", "confidence", "detector", "privacy_mode", "result", "signal.category", "source", "state"], callsites: ["internal/telemetry/metrics.go:3248", "internal/telemetry/metrics.go:3271"], dropped_by_current_global_v8_gate: []}
+      "defenseclaw.ai.discovery.runs": {type: "counter", unit: "{run}", labels: ["privacy_mode", "result", "source"], callsites: ["internal/telemetry/metrics.go:3235"], dropped_by_current_global_v8_gate: []}
+      "defenseclaw.ai.discovery.signals": {type: "counter", unit: "{signal}", labels: ["ai.product", "ai.vendor", "confidence", "detector", "signal.category", "state"], callsites: ["internal/telemetry/metrics.go:3269"], dropped_by_current_global_v8_gate: []}
+      "defenseclaw.alert.count": {type: "counter", unit: "{alert}", labels: ["alert.severity", "alert.source", "alert.type", "connector"], callsites: ["internal/telemetry/metrics.go:1414"], dropped_by_current_global_v8_gate: []}
+      "defenseclaw.approval.count": {type: "counter", unit: "{request}", labels: ["auto", "dangerous", "result"], callsites: ["internal/telemetry/metrics.go:1322"], dropped_by_current_global_v8_gate: []}
+      "defenseclaw.audit.db.errors": {type: "counter", unit: "{error}", labels: ["operation"], callsites: ["internal/telemetry/metrics.go:1961"], dropped_by_current_global_v8_gate: []}
+      "defenseclaw.audit.events.total": {type: "counter", unit: "{event}", labels: ["action", "connector", "severity"], callsites: ["internal/telemetry/metrics.go:1992"], dropped_by_current_global_v8_gate: []}
+      "defenseclaw.audit.sink.batches.delivered": {type: "counter", unit: "{batch}", labels: ["kind", "retry_count", "sink", "status_code"], callsites: ["internal/telemetry/metrics.go:2238"], dropped_by_current_global_v8_gate: []}
+      "defenseclaw.audit.sink.batches.dropped": {type: "counter", unit: "{batch}", labels: ["kind", "retry_count", "sink", "status_code"], callsites: ["internal/telemetry/metrics.go:2247"], dropped_by_current_global_v8_gate: []}
+      "defenseclaw.audit.sink.circuit.state": {type: "updowncounter", unit: "1", labels: ["sink.kind", "sink.name"], callsites: ["internal/telemetry/metrics.go:2280"], dropped_by_current_global_v8_gate: []}
+      "defenseclaw.audit.sink.delivery.latency": {type: "histogram", unit: "ms", labels: ["kind", "retry_count", "sink", "status_code"], callsites: ["internal/telemetry/metrics.go:2239"], dropped_by_current_global_v8_gate: []}
+      "defenseclaw.audit.sink.failures": {type: "counter", unit: "{failure}", labels: ["sink.kind", "sink.name", "sink.reason"], callsites: ["internal/telemetry/metrics.go:2071"], dropped_by_current_global_v8_gate: []}
+      "defenseclaw.audit.sink.queue.depth": {type: "updowncounter", unit: "{event}", labels: ["sink.kind", "sink.name"], callsites: ["internal/telemetry/metrics.go:2266"], dropped_by_current_global_v8_gate: []}
+      "defenseclaw.cisco.errors": {type: "counter", unit: "{error}", labels: ["code"], callsites: ["internal/telemetry/metrics.go:2433"], dropped_by_current_global_v8_gate: []}
+      "defenseclaw.cisco_inspect.latency": {type: "histogram", unit: "ms", labels: ["outcome"], callsites: ["internal/telemetry/metrics.go:2450"], dropped_by_current_global_v8_gate: []}
+      "defenseclaw.codex.notify": {type: "counter", unit: "{event}", labels: ["result", "status", "type"], callsites: ["internal/telemetry/metrics.go:3515"], dropped_by_current_global_v8_gate: []}
+      "defenseclaw.codex.notify.malformed": {type: "counter", unit: "{event}", labels: ["type"], callsites: ["internal/telemetry/metrics.go:3521"], dropped_by_current_global_v8_gate: []}
+      "defenseclaw.config.load.errors": {type: "counter", unit: "{error}", labels: ["error_type"], callsites: ["internal/telemetry/metrics.go:2002"], dropped_by_current_global_v8_gate: []}
+      "defenseclaw.connector.hook.invocations": {type: "counter", unit: "{hook}", labels: ["connector", "event_type", "reason", "result"], callsites: ["internal/telemetry/metrics.go:1608"], dropped_by_current_global_v8_gate: []}
+      "defenseclaw.connector.hook.latency": {type: "histogram", unit: "ms", labels: ["connector", "event_type", "reason", "result"], callsites: ["internal/telemetry/metrics.go:1609"], dropped_by_current_global_v8_gate: []}
+      "defenseclaw.connector.hook.outcome": {type: "counter", unit: "{decision}", labels: ["action", "connector", "event_type", "severity", "would_block"], callsites: ["internal/telemetry/metrics.go:1923"], dropped_by_current_global_v8_gate: []}
+      "defenseclaw.connector.hook.tokens": {type: "counter", unit: "{token}", labels: ["connector", "kind", "model"], callsites: ["internal/telemetry/metrics.go:1641"], dropped_by_current_global_v8_gate: []}
+      "defenseclaw.connector.hook.unified_dispatch": {type: "counter", unit: "{invocation}", labels: ["connector"], callsites: ["internal/telemetry/metrics.go:1951"], dropped_by_current_global_v8_gate: []}
+      "defenseclaw.egress.events": {type: "counter", unit: "{event}", labels: ["branch", "decision", "source"], callsites: ["internal/telemetry/metrics.go:2172"], dropped_by_current_global_v8_gate: []}
+      "defenseclaw.gateway.errors": {type: "counter", unit: "{error}", labels: ["error.code", "error.subsystem"], callsites: ["internal/telemetry/gateway_events.go:127"], dropped_by_current_global_v8_gate: ["error.code", "error.subsystem"]}
+      "defenseclaw.gateway.events.emitted": {type: "counter", unit: "{event}", labels: ["event_type", "severity"], callsites: ["internal/telemetry/metrics.go:2733"], dropped_by_current_global_v8_gate: []}
+      "defenseclaw.gateway.forwarded_headers": {type: "counter", unit: "{header}", labels: ["path", "result"], callsites: ["internal/telemetry/metrics.go:2195"], dropped_by_current_global_v8_gate: []}
+      "defenseclaw.gateway.judge.errors": {type: "counter", unit: "{error}", labels: ["judge.kind", "judge.reason"], callsites: ["internal/telemetry/gateway_events.go:118"], dropped_by_current_global_v8_gate: ["judge.reason"]}
+      "defenseclaw.gateway.judge.invocations": {type: "counter", unit: "{invocation}", labels: ["judge.action", "judge.kind", "judge.severity"], callsites: ["internal/telemetry/gateway_events.go:99"], dropped_by_current_global_v8_gate: ["judge.action", "judge.severity"]}
+      "defenseclaw.gateway.judge.latency": {type: "histogram", unit: "ms", labels: ["judge.kind"], callsites: ["internal/telemetry/gateway_events.go:104"], dropped_by_current_global_v8_gate: []}
+      "defenseclaw.gateway.verdicts": {type: "counter", unit: "{verdict}", labels: ["destination_app", "policy_id", "verdict.action", "verdict.severity", "verdict.stage"], callsites: ["internal/telemetry/gateway_events.go:94"], dropped_by_current_global_v8_gate: ["destination_app", "policy_id", "verdict.action", "verdict.severity", "verdict.stage"]}
+      "defenseclaw.guardrail.cache.hits": {type: "counter", unit: "{hit}", labels: ["cache", "scanner", "ttl_bucket", "verdict"], callsites: ["internal/telemetry/metrics.go:2824"], dropped_by_current_global_v8_gate: []}
+      "defenseclaw.guardrail.cache.misses": {type: "counter", unit: "{miss}", labels: ["cache", "scanner", "ttl_bucket", "verdict"], callsites: ["internal/telemetry/metrics.go:2837"], dropped_by_current_global_v8_gate: []}
+      "defenseclaw.guardrail.evaluations": {type: "counter", unit: "{evaluation}", labels: ["guardrail.action_taken", "guardrail.connector", "guardrail.scanner"], callsites: ["internal/telemetry/metrics.go:1450"], dropped_by_current_global_v8_gate: []}
+      "defenseclaw.guardrail.judge.latency": {type: "histogram", unit: "ms", labels: ["gen_ai.request.model", "judge.kind"], callsites: ["internal/telemetry/metrics.go:2796"], dropped_by_current_global_v8_gate: []}
+      "defenseclaw.guardrail.latency": {type: "histogram", unit: "ms", labels: ["guardrail.connector", "guardrail.scanner"], callsites: ["internal/telemetry/metrics.go:1464"], dropped_by_current_global_v8_gate: []}
+      "defenseclaw.http.auth.failures": {type: "counter", unit: "{failure}", labels: ["http.route", "reason"], callsites: ["internal/telemetry/metrics.go:2293"], dropped_by_current_global_v8_gate: []}
+      "defenseclaw.http.rate_limit.breaches": {type: "counter", unit: "{breach}", labels: ["client.kind", "http.route"], callsites: ["internal/telemetry/metrics.go:2304"], dropped_by_current_global_v8_gate: []}
+      "defenseclaw.http.request.count": {type: "counter", unit: "{request}", labels: ["http.method", "http.route", "http.status_code"], callsites: ["internal/telemetry/metrics.go:1489"], dropped_by_current_global_v8_gate: []}
+      "defenseclaw.http.request.duration": {type: "histogram", unit: "ms", labels: ["http.method", "http.route", "http.status_code"], callsites: ["internal/telemetry/metrics.go:1490"], dropped_by_current_global_v8_gate: []}
+      "defenseclaw.inspect.evaluations": {type: "counter", unit: "{evaluation}", labels: ["action", "connector", "severity", "tool"], callsites: ["internal/telemetry/metrics.go:1546"], dropped_by_current_global_v8_gate: []}
+      "defenseclaw.inspect.latency": {type: "histogram", unit: "ms", labels: ["connector", "tool"], callsites: ["internal/telemetry/metrics.go:1577"], dropped_by_current_global_v8_gate: []}
+      "defenseclaw.judge.persist.batch_size": {type: "histogram", unit: "{row}", labels: [], callsites: ["internal/telemetry/metrics.go:2722"], dropped_by_current_global_v8_gate: [], empty_labels_reason: "All current production Add/Record callsites pass no instrument-specific attributes; OTel resource attributes may still be attached by the provider."}
+      "defenseclaw.judge.persist.drops": {type: "counter", unit: "{drop}", labels: ["reason"], callsites: ["internal/telemetry/metrics.go:2697"], dropped_by_current_global_v8_gate: []}
+      "defenseclaw.judge.persist.queue_depth": {type: "gauge", unit: "{item}", labels: [], callsites: ["internal/telemetry/metrics.go:2710"], dropped_by_current_global_v8_gate: [], empty_labels_reason: "All current production Add/Record callsites pass no instrument-specific attributes; OTel resource attributes may still be attached by the provider."}
+      "defenseclaw.judge.semaphore.depth": {type: "updowncounter", unit: "{slot}", labels: [], callsites: ["internal/telemetry/metrics.go:2683"], dropped_by_current_global_v8_gate: [], empty_labels_reason: "All current production Add/Record callsites pass no instrument-specific attributes; OTel resource attributes may still be attached by the provider."}
+      "defenseclaw.judge.semaphore.drops": {type: "counter", unit: "{drop}", labels: [], callsites: ["internal/telemetry/metrics.go:2685"], dropped_by_current_global_v8_gate: [], empty_labels_reason: "All current production Add/Record callsites pass no instrument-specific attributes; OTel resource attributes may still be attached by the provider."}
+      "defenseclaw.llm_bridge.latency": {type: "histogram", unit: "ms", labels: ["gen_ai.request.model", "status"], callsites: ["internal/telemetry/metrics.go:2367"], dropped_by_current_global_v8_gate: []}
+      "defenseclaw.openshell.exit": {type: "counter", unit: "{exit}", labels: ["command", "exit_code"], callsites: ["internal/telemetry/metrics.go:2385"], dropped_by_current_global_v8_gate: []}
+      "defenseclaw.otel.ingest.bytes": {type: "counter", unit: "By", labels: ["connector", "signal", "source"], callsites: ["internal/telemetry/metrics.go:2903"], dropped_by_current_global_v8_gate: []}
+      "defenseclaw.otel.ingest.last_seen_ts": {type: "gauge", unit: "s", labels: ["connector", "signal", "source"], callsites: ["internal/telemetry/metrics.go:2909"], dropped_by_current_global_v8_gate: []}
+      "defenseclaw.otel.ingest.malformed": {type: "counter", unit: "{request}", labels: ["connector", "signal", "source"], callsites: ["internal/telemetry/metrics.go:2887"], dropped_by_current_global_v8_gate: []}
+      "defenseclaw.otel.ingest.records": {type: "counter", unit: "{record}", labels: ["connector", "signal", "source"], callsites: ["internal/telemetry/metrics.go:2900"], dropped_by_current_global_v8_gate: []}
+      "defenseclaw.otel.ingest.requests": {type: "counter", unit: "{request}", labels: ["connector", "result", "signal", "source"], callsites: ["internal/telemetry/metrics.go:2885"], dropped_by_current_global_v8_gate: []}
+      "defenseclaw.panics.total": {type: "counter", unit: "{panic}", labels: ["subsystem"], callsites: ["internal/telemetry/metrics.go:2607"], dropped_by_current_global_v8_gate: []}
+      "defenseclaw.policy.evaluations": {type: "counter", unit: "{evaluation}", labels: ["policy.domain", "policy.verdict"], callsites: ["internal/telemetry/metrics.go:2037"], dropped_by_current_global_v8_gate: []}
+      "defenseclaw.policy.latency": {type: "histogram", unit: "ms", labels: ["policy.domain"], callsites: ["internal/telemetry/metrics.go:2048"], dropped_by_current_global_v8_gate: []}
+      "defenseclaw.policy.reloads": {type: "counter", unit: "{reload}", labels: ["policy.status"], callsites: ["internal/telemetry/metrics.go:2058"], dropped_by_current_global_v8_gate: []}
+      "defenseclaw.process.uptime_seconds": {type: "gauge", unit: "s", labels: [], callsites: ["internal/telemetry/metrics.go:2474"], dropped_by_current_global_v8_gate: [], empty_labels_reason: "All current production Add/Record callsites pass no instrument-specific attributes; OTel resource attributes may still be attached by the provider."}
+      "defenseclaw.provenance.bumps": {type: "counter", unit: "{bump}", labels: ["reason"], callsites: ["internal/telemetry/metrics.go:2786"], dropped_by_current_global_v8_gate: []}
+      "defenseclaw.quarantine.actions": {type: "counter", unit: "{action}", labels: ["quarantine.op", "quarantine.result"], callsites: ["internal/telemetry/metrics.go:2127"], dropped_by_current_global_v8_gate: []}
+      "defenseclaw.queue.depth": {type: "gauge", unit: "{item}", labels: ["capacity", "queue"], callsites: ["internal/telemetry/metrics.go:2536"], dropped_by_current_global_v8_gate: []}
+      "defenseclaw.queue.drops": {type: "counter", unit: "{drop}", labels: ["queue", "reason"], callsites: ["internal/telemetry/metrics.go:2547"], dropped_by_current_global_v8_gate: []}
+      "defenseclaw.redaction.applied": {type: "counter", unit: "{redaction}", labels: ["detector", "field"], callsites: ["internal/telemetry/metrics.go:2773"], dropped_by_current_global_v8_gate: []}
+      "defenseclaw.runtime.fd.in_use": {type: "gauge", unit: "{fd}", labels: [], callsites: ["internal/telemetry/metrics.go:2473"], dropped_by_current_global_v8_gate: [], empty_labels_reason: "All current production Add/Record callsites pass no instrument-specific attributes; OTel resource attributes may still be attached by the provider."}
+      "defenseclaw.runtime.gc.pause": {type: "histogram", unit: "ns", labels: [], callsites: ["internal/telemetry/metrics.go:2476"], dropped_by_current_global_v8_gate: [], empty_labels_reason: "All current production Add/Record callsites pass no instrument-specific attributes; OTel resource attributes may still be attached by the provider."}
+      "defenseclaw.runtime.goroutines": {type: "gauge", unit: "{goroutine}", labels: [], callsites: ["internal/telemetry/metrics.go:2470"], dropped_by_current_global_v8_gate: [], empty_labels_reason: "All current production Add/Record callsites pass no instrument-specific attributes; OTel resource attributes may still be attached by the provider."}
+      "defenseclaw.runtime.heap.alloc": {type: "gauge", unit: "By", labels: [], callsites: ["internal/telemetry/metrics.go:2471"], dropped_by_current_global_v8_gate: [], empty_labels_reason: "All current production Add/Record callsites pass no instrument-specific attributes; OTel resource attributes may still be attached by the provider."}
+      "defenseclaw.runtime.heap.objects": {type: "gauge", unit: "{object}", labels: [], callsites: ["internal/telemetry/metrics.go:2472"], dropped_by_current_global_v8_gate: [], empty_labels_reason: "All current production Add/Record callsites pass no instrument-specific attributes; OTel resource attributes may still be attached by the provider."}
+      "defenseclaw.scan.count": {type: "counter", unit: "{scan}", labels: ["scanner", "target_type", "verdict"], callsites: ["internal/telemetry/metrics.go:1260"], dropped_by_current_global_v8_gate: []}
+      "defenseclaw.scan.duration": {type: "histogram", unit: "ms", labels: ["scanner", "target_type"], callsites: ["internal/telemetry/metrics.go:1265", "internal/telemetry/metrics.go:2116"], dropped_by_current_global_v8_gate: []}
+      "defenseclaw.scan.errors": {type: "counter", unit: "{error}", labels: ["error_type", "scanner", "target_type"], callsites: ["internal/telemetry/metrics.go:1472"], dropped_by_current_global_v8_gate: []}
+      "defenseclaw.scan.findings": {type: "counter", unit: "{finding}", labels: ["connector", "scanner", "severity", "target_type"], callsites: ["internal/telemetry/metrics.go:1269"], dropped_by_current_global_v8_gate: []}
+      "defenseclaw.scan.findings.by_rule": {type: "counter", unit: "{finding}", labels: ["connector", "rule_id", "scanner", "severity"], callsites: ["internal/telemetry/metrics.go:2103"], dropped_by_current_global_v8_gate: []}
+      "defenseclaw.scan.findings.gauge": {type: "updowncounter", unit: "{finding}", labels: ["severity", "target_type"], callsites: ["internal/telemetry/metrics.go:1275"], dropped_by_current_global_v8_gate: []}
+      "defenseclaw.scanner.queue.depth": {type: "updowncounter", unit: "{scan}", labels: ["scanner"], callsites: ["internal/telemetry/metrics.go:2140"], dropped_by_current_global_v8_gate: []}
+      "defenseclaw.schema.violations": {type: "counter", unit: "{event}", labels: ["code", "event_type"], callsites: ["internal/telemetry/metrics.go:2026"], dropped_by_current_global_v8_gate: []}
+      "defenseclaw.slo.block.latency": {type: "histogram", unit: "ms", labels: ["target_type"], callsites: ["internal/telemetry/metrics.go:2649"], dropped_by_current_global_v8_gate: []}
+      "defenseclaw.slo.tui.refresh": {type: "histogram", unit: "ms", labels: ["panel"], callsites: ["internal/telemetry/metrics.go:2659"], dropped_by_current_global_v8_gate: []}
+      "defenseclaw.sqlite.busy_retries": {type: "counter", unit: "{event}", labels: ["operation"], callsites: ["internal/telemetry/metrics.go:2637"], dropped_by_current_global_v8_gate: []}
+      "defenseclaw.sqlite.checkpoint.duration": {type: "histogram", unit: "ms", labels: [], callsites: ["internal/telemetry/metrics.go:2523"], dropped_by_current_global_v8_gate: [], empty_labels_reason: "All current production Add/Record callsites pass no instrument-specific attributes; OTel resource attributes may still be attached by the provider."}
+      "defenseclaw.sqlite.db.bytes": {type: "gauge", unit: "By", labels: [], callsites: ["internal/telemetry/metrics.go:2518"], dropped_by_current_global_v8_gate: [], empty_labels_reason: "All current production Add/Record callsites pass no instrument-specific attributes; OTel resource attributes may still be attached by the provider."}
+      "defenseclaw.sqlite.freelist_count": {type: "gauge", unit: "{page}", labels: [], callsites: ["internal/telemetry/metrics.go:2521"], dropped_by_current_global_v8_gate: [], empty_labels_reason: "All current production Add/Record callsites pass no instrument-specific attributes; OTel resource attributes may still be attached by the provider."}
+      "defenseclaw.sqlite.page_count": {type: "gauge", unit: "{page}", labels: [], callsites: ["internal/telemetry/metrics.go:2520"], dropped_by_current_global_v8_gate: [], empty_labels_reason: "All current production Add/Record callsites pass no instrument-specific attributes; OTel resource attributes may still be attached by the provider."}
+      "defenseclaw.sqlite.wal.bytes": {type: "gauge", unit: "By", labels: [], callsites: ["internal/telemetry/metrics.go:2519"], dropped_by_current_global_v8_gate: [], empty_labels_reason: "All current production Add/Record callsites pass no instrument-specific attributes; OTel resource attributes may still be attached by the provider."}
+      "defenseclaw.stream.bytes_sent": {type: "histogram", unit: "By", labels: ["http.route", "outcome"], callsites: ["internal/telemetry/metrics.go:2761"], dropped_by_current_global_v8_gate: []}
+      "defenseclaw.stream.duration_ms": {type: "histogram", unit: "ms", labels: ["http.route", "outcome"], callsites: ["internal/telemetry/metrics.go:2759"], dropped_by_current_global_v8_gate: []}
+      "defenseclaw.stream.lifecycle": {type: "counter", unit: "{transition}", labels: ["http.route", "outcome", "transition"], callsites: ["internal/telemetry/metrics.go:2749"], dropped_by_current_global_v8_gate: []}
+      "defenseclaw.telemetry.destination.spans": {type: "counter", unit: "{span}", labels: ["destination", "outcome", "reason"], callsites: ["internal/telemetry/metrics.go:2586"], dropped_by_current_global_v8_gate: []}
+      "defenseclaw.telemetry.destination.exports": {type: "counter", unit: "{span}", labels: ["destination", "outcome", "signal"], callsites: ["internal/telemetry/metrics.go:2597"], dropped_by_current_global_v8_gate: []}
+      "defenseclaw.telemetry.exporter.errors": {type: "counter", unit: "{error}", labels: ["exporter", "reason", "signal"], callsites: ["internal/telemetry/metrics.go:2567", "internal/telemetry/provider.go:287"], dropped_by_current_global_v8_gate: []}
+      "defenseclaw.telemetry.exporter.last_export_ts": {type: "gauge", unit: "s", labels: ["exporter", "signal"], callsites: ["internal/telemetry/metrics.go:2574"], dropped_by_current_global_v8_gate: []}
+      "defenseclaw.tool.calls": {type: "counter", unit: "{call}", labels: ["dangerous", "gen_ai.tool.name", "tool.provider"], callsites: ["internal/telemetry/metrics.go:1288"], dropped_by_current_global_v8_gate: []}
+      "defenseclaw.tool.duration": {type: "histogram", unit: "ms", labels: ["gen_ai.tool.name", "tool.provider"], callsites: ["internal/telemetry/metrics.go:1300"], dropped_by_current_global_v8_gate: []}
+      "defenseclaw.tool.errors": {type: "counter", unit: "{error}", labels: ["exit_code", "gen_ai.tool.name"], callsites: ["internal/telemetry/metrics.go:1311"], dropped_by_current_global_v8_gate: []}
+      "defenseclaw.tui.filter.applied": {type: "counter", unit: "{filter}", labels: ["filter_type", "panel"], callsites: ["internal/telemetry/metrics.go:2670"], dropped_by_current_global_v8_gate: []}
+      "defenseclaw.watcher.errors": {type: "counter", unit: "{error}", labels: [], callsites: ["internal/telemetry/metrics.go:1530"], dropped_by_current_global_v8_gate: [], empty_labels_reason: "All current production Add/Record callsites pass no instrument-specific attributes; OTel resource attributes may still be attached by the provider."}
+      "defenseclaw.watcher.events": {type: "counter", unit: "{event}", labels: ["connector", "event_type", "target_type"], callsites: ["internal/telemetry/metrics.go:1518"], dropped_by_current_global_v8_gate: []}
+      "defenseclaw.watcher.restarts": {type: "counter", unit: "{restart}", labels: [], callsites: ["internal/telemetry/metrics.go:1538"], dropped_by_current_global_v8_gate: [], empty_labels_reason: "All current production Add/Record callsites pass no instrument-specific attributes; OTel resource attributes may still be attached by the provider."}
+      "defenseclaw.webhook.circuit_breaker": {type: "counter", unit: "{transition}", labels: ["state", "webhook.target_hash"], callsites: ["internal/telemetry/metrics.go:2346"], dropped_by_current_global_v8_gate: []}
+      "defenseclaw.webhook.cooldown.suppressed": {type: "counter", unit: "{event}", labels: ["webhook.kind"], callsites: ["internal/telemetry/metrics.go:2357"], dropped_by_current_global_v8_gate: []}
+      "defenseclaw.webhook.dispatches": {type: "counter", unit: "{dispatch}", labels: ["outcome", "webhook.kind"], callsites: ["internal/telemetry/metrics.go:2320"], dropped_by_current_global_v8_gate: []}
+      "defenseclaw.webhook.failures": {type: "counter", unit: "{failure}", labels: ["outcome", "webhook.kind"], callsites: ["internal/telemetry/metrics.go:2322"], dropped_by_current_global_v8_gate: []}
+      "defenseclaw.webhook.latency": {type: "histogram", unit: "ms", labels: ["http.status_code", "webhook.kind", "webhook.target_hash"], callsites: ["internal/telemetry/metrics.go:2333"], dropped_by_current_global_v8_gate: []}
+      "gen_ai.client.operation.duration": {type: "histogram", unit: "s", labels: ["gen_ai.agent.id", "gen_ai.agent.name", "gen_ai.operation.name", "gen_ai.provider.name", "gen_ai.request.model"], callsites: ["internal/telemetry/metrics.go:1398"], dropped_by_current_global_v8_gate: []}
+      "gen_ai.client.token.usage": {type: "histogram", unit: "{token}", labels: ["gen_ai.agent.id", "gen_ai.agent.name", "gen_ai.conversation.id", "gen_ai.operation.name", "gen_ai.provider.name", "gen_ai.request.model", "gen_ai.token.type"], callsites: ["internal/telemetry/metrics.go:1377", "internal/telemetry/metrics.go:2812"], dropped_by_current_global_v8_gate: []}
 
   schema_files:
     source_directory: schemas
@@ -560,6 +560,7 @@ classes:
     # targets, not v7 migration sources. They have their own drift gates.
     excluded_target_directories:
       - schemas/telemetry/v8
+      - schemas/telemetry/generated
     migration_disposition: per_item
     items:
       - path: schemas/config/v8/defenseclaw-config.schema.json

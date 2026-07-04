@@ -43,6 +43,7 @@ OBSERVABILITY_REDACTION_UNICODE_GENERATOR = (
 OBSERVABILITY_REDACTION_CATALOG_GENERATOR = (
     ROOT / "scripts" / "generate_observability_redaction_catalog.py"
 )
+TELEMETRY_REGISTRY_GENERATOR = ROOT / "scripts" / "generate_telemetry_registry.py"
 
 EXPECTED_ENVELOPE_EVENT_TYPES = {
     "verdict", "judge", "lifecycle", "error", "diagnostic",
@@ -586,6 +587,16 @@ def check_observability_redaction_catalog() -> bool:
     return result.returncode == 0
 
 
+def check_telemetry_registry() -> bool:
+    """Reject canonical telemetry input, provenance, or generated-output drift."""
+    result = subprocess.run(
+        [sys.executable, str(TELEMETRY_REGISTRY_GENERATOR), "--check"],
+        cwd=ROOT,
+        check=False,
+    )
+    return result.returncode == 0
+
+
 def main() -> int:
     if not SCHEMA_DIR.is_dir():
         print(f"check_schemas: schema dir not found: {SCHEMA_DIR}", file=sys.stderr)
@@ -680,6 +691,9 @@ def main() -> int:
         ok = False
 
     if not check_observability_redaction_catalog():
+        ok = False
+
+    if not check_telemetry_registry():
         ok = False
 
     return 0 if ok else 1

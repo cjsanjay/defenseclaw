@@ -29,6 +29,9 @@ from typing import Any
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
+METRIC_LABEL_ANALYZER = Path(__file__).with_name(
+    "extract_observability_v8_metric_labels.py",
+)
 DEFAULT_INVENTORY = (
     ROOT / "docs" / "design" / "observability-v8" / "current-state-inventory.yaml"
 )
@@ -135,7 +138,32 @@ def discover_go_constants(path: Path, pattern: re.Pattern[str], *, label: str) -
     return result
 
 
-def discover_metrics(path: Path) -> dict[str, dict[str, str]]:
+def discover_metric_label_contract(root: Path) -> dict[str, dict[str, Any]]:
+    try:
+        completed = subprocess.run(
+            [sys.executable, str(METRIC_LABEL_ANALYZER), "--root", str(root)],
+            cwd=root,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise InventoryError("metric label analyzer timed out after 60 seconds") from exc
+    if completed.returncode != 0:
+        detail = completed.stderr.strip() or completed.stdout.strip() or "unknown analyzer failure"
+        raise InventoryError(f"metric label analyzer failed: {detail}")
+    try:
+        report = json.loads(completed.stdout)
+    except json.JSONDecodeError as exc:
+        raise InventoryError("metric label analyzer produced invalid JSON") from exc
+    instruments = report.get("instruments") if isinstance(report, dict) else None
+    if not isinstance(instruments, dict) or not instruments:
+        raise InventoryError("metric label analyzer must report a nonempty instrument mapping")
+    return instruments
+
+
+def discover_metrics(path: Path, root: Path) -> dict[str, dict[str, Any]]:
     try:
         document = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
@@ -143,7 +171,8 @@ def discover_metrics(path: Path) -> dict[str, dict[str, str]]:
     emitted = document.get("x-emitted-metrics")
     if not isinstance(emitted, list) or not emitted:
         raise InventoryError(f"{path}: x-emitted-metrics must be a non-empty list")
-    result: dict[str, dict[str, str]] = {}
+    producer_contract = discover_metric_label_contract(root)
+    result: dict[str, dict[str, Any]] = {}
     for index, item in enumerate(emitted):
         if not isinstance(item, dict):
             raise InventoryError(f"{path}: x-emitted-metrics[{index}] must be an object")
@@ -156,7 +185,34 @@ def discover_metrics(path: Path) -> dict[str, dict[str, str]]:
             )
         if name in result:
             raise InventoryError(f"{path}: duplicate emitted metric {name!r}")
-        result[name] = {"type": metric_type, "unit": unit}
+        evidence = producer_contract.get(name)
+        if not isinstance(evidence, dict):
+            raise InventoryError(f"metric label analyzer omitted instrument {name!r}")
+        labels = evidence.get("labels")
+        callsites = evidence.get("callsites")
+        dropped = evidence.get("dropped_by_current_global_v8_gate")
+        empty_reason = evidence.get("label_free_reason")
+        if not all(
+            isinstance(values, list)
+            and all(isinstance(value, str) and value for value in values)
+            for values in (labels, callsites, dropped)
+        ):
+            raise InventoryError(f"metric label analyzer returned malformed evidence for {name!r}")
+        contract: dict[str, Any] = {
+            "type": metric_type,
+            "unit": unit,
+            "labels": labels,
+            "callsites": callsites,
+            "dropped_by_current_global_v8_gate": dropped,
+        }
+        if empty_reason is not None:
+            if not isinstance(empty_reason, str) or not empty_reason:
+                raise InventoryError(f"metric label analyzer returned malformed empty reason for {name!r}")
+            contract["empty_labels_reason"] = empty_reason
+        result[name] = contract
+    extra = sorted(set(producer_contract) - set(result))
+    if extra:
+        raise InventoryError(f"metric schema omitted producer instruments {extra}")
     return result
 
 
@@ -401,7 +457,7 @@ def run_checks(
     metrics = _class(inventory, "emitted_metrics")
     metric_source = _root_path(root, metrics.get("source"), field="classes.emitted_metrics.source")
     expected_metrics = _mapping_items(metrics, name="emitted_metrics")
-    actual_metrics = discover_metrics(metric_source)
+    actual_metrics = discover_metrics(metric_source, root)
     counts["emitted_metrics"] = len(actual_metrics)
     errors.extend(compare_mapping("emitted_metrics", expected_metrics, actual_metrics))
 

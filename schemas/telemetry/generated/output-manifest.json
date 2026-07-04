@@ -1,0 +1,101 @@
+{
+  "format_version": 1,
+  "generated_by": "scripts/generate_telemetry_registry.py",
+  "generator_version": 1,
+  "registry_schema_version": 1,
+  "registry_version": 1,
+  "bucket_catalog_version": 1,
+  "canonical_import_order": [
+    "genai.yaml",
+    "security.yaml",
+    "operations.yaml"
+  ],
+  "inputs": [
+    {
+      "path": "schemas/telemetry/v8/registry.yaml",
+      "sha256": "ae293b2505b1a50ff490c31543b2d765a3012561e85a9ffdb77d50b7ee312e61"
+    },
+    {
+      "path": "schemas/telemetry/v8/genai.yaml",
+      "sha256": "29fb885f6b6045458b91717f93c3774d593041e9aaabd655eb83ce6a04817819"
+    },
+    {
+      "path": "schemas/telemetry/v8/security.yaml",
+      "sha256": "8e06edcf9aee334e9c39c7f8fe089421fbb1144cb9e676565257b48f7f6e61d6"
+    },
+    {
+      "path": "schemas/telemetry/v8/operations.yaml",
+      "sha256": "ef8e06035aa50fb8dd68d473327e7f88c4f01e750861dcd1b58eb8fec17d0fcf"
+    },
+    {
+      "path": "schemas/telemetry/v8/semconv.lock.yaml",
+      "sha256": "32aa49761b50a8fdfd7d8cc0fc3ec08924ad4fc94b2bd2103314a8247a2e0829"
+    },
+    {
+      "path": "docs/design/observability-v8/current-state-inventory.yaml",
+      "sha256": "dfdd27c1f62e53349421cd8e5ec70f7e38848645cd28f857b97b1ff959dc54b4"
+    },
+    {
+      "path": "schemas/telemetry/v8/examples.yaml",
+      "sha256": "48ebb4cb06fa63d37dc5684e927c295ad1159484473593cef87677b4f8eb205a"
+    }
+  ],
+  "snapshots": [
+    {
+      "dependency_id": "otel_core",
+      "path": "schemas/telemetry/v8/upstream/otel-core-v1.42.0.normalized.json",
+      "sha256": "609177ec1aba35688f941ecec289aac1776301c442ae06553822c881289e4f5a"
+    },
+    {
+      "dependency_id": "otel_genai",
+      "path": "schemas/telemetry/v8/upstream/otel-genai-b028dceecdad117461a785c3af35315e7184e813.normalized.json",
+      "sha256": "48d450685930c9a8734aa4b49f79985c4c5c20ef37922aa0bb4e8e36cbfc6156"
+    },
+    {
+      "dependency_id": "openinference",
+      "path": "schemas/telemetry/v8/upstream/openinference-v0.1.30.normalized.json",
+      "sha256": "997d963568174711f233834b40374d8a06d68c9b9ef2cd26cf46516cb72121ff"
+    }
+  ],
+  "upstream_ownership_transitions": [
+    {
+      "attribute": "gen_ai.request.top_k",
+      "from_dependency": "otel_core",
+      "to_dependency": "otel_genai",
+      "from_allowed_types": [
+        "double"
+      ],
+      "to_allowed_types": [
+        "int64"
+      ],
+      "disposition": "breaking_type_correction_to_dedicated_genai"
+    }
+  ],
+  "upstream_compatibility_overlaps": [
+    {
+      "attribute": "session.id",
+      "canonical_owner": "otel_core",
+      "compatibility_provenance": "openinference"
+    },
+    {
+      "attribute": "user.id",
+      "canonical_owner": "otel_core",
+      "compatibility_provenance": "openinference"
+    }
+  ],
+  "legacy_only_upstream_attributes": [
+    "gen_ai.completion",
+    "gen_ai.openai.request.response_format",
+    "gen_ai.openai.request.seed",
+    "gen_ai.openai.request.service_tier",
+    "gen_ai.openai.response.service_tier",
+    "gen_ai.openai.response.system_fingerprint",
+    "gen_ai.prompt",
+    "gen_ai.system",
+    "gen_ai.usage.completion_tokens",
+    "gen_ai.usage.prompt_tokens"
+  ],
+  "outputs": [
+    "schemas/telemetry/generated/output-manifest.json"
+  ]
+}

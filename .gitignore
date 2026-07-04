@@ -100,6 +100,11 @@ temp/
 *.bak
 *.orig
 
+# Atomic telemetry compiler/updater staging and rollback directories.
+/schemas/telemetry/.telemetry-generated-stage-*/
+/schemas/telemetry/.telemetry-generated-backup/
+/telemetry-upstream-update-*/
+
 # Local-only TUI testing notes and panel walkthroughs. These are
 # personal/agent scratch docs and should not be source-controlled.
 docs/testing/
