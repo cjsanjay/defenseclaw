@@ -313,11 +313,22 @@ correlation/content/security fields, and every duplicate requirement has one
 non-weakening result. Generated code MUST consume the materialized result rather
 than independently walking the YAML hierarchy.
 
-Every signal family registers a nonempty applicable subset of the canonical
-outcome vocabulary. The global vocabulary is not a family default: copying all
-canonical outcomes into a family without family-specific applicability and tests
-is invalid. Metrics may register only the outcome represented by their instrument
-contract. Builders reject a globally valid but family-inapplicable outcome.
+Every log/span family registers both `outcome_requirement` and
+`allowed_outcomes`. `outcome_requirement` is exactly `required`, `optional`, or
+`forbidden`. A required/optional family has a nonempty, canonical-order subset of
+the global outcome vocabulary; a forbidden family has an explicit empty list and
+rejects an envelope outcome. The global vocabulary is not a family default:
+copying every canonical outcome into a family without family-specific
+applicability and tests is invalid. Generated builders reject a missing required
+outcome and a globally valid but family-inapplicable outcome.
+
+Metric families omit both keys because instrument recording is not an
+outcome-bearing envelope operation. A metric label may still reference the
+canonical `defenseclaw.outcome` attribute, in which case its live values use the
+canonical outcome vocabulary and any old `ok`, `success`, `delivered`,
+`accepted`, `upstream-error`, `cooldown_suppressed`, `circuit_open`, or arbitrary
+`http-N` label is migrated through an explicit compatibility projection/reason or
+status-code label. It is never modeled as the metric family's envelope outcome.
 
 The registry manifest also owns immutable semantic-profile bindings. The
 `defenseclaw-genai-rich-v1` entry is exactly:

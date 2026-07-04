@@ -151,8 +151,11 @@ a parallel hand-authored P2 registry:
   signal-mismatched identities before any route or exporter observes the record.
   P5 generated-registry tests add exact event-to-bucket ownership.
 - P2 accepts every globally canonical outcome and rejects unregistered synonyms.
-  P5 generated family tests accept only each family's registered subset and reject
-  family-inapplicable outcomes.
+  P5 generated family tests enforce each log/span family's required, optional, or
+  forbidden contract, accept only its exact registered subset, and reject missing
+  required or family-inapplicable outcomes. Metric families reject authored
+  envelope-outcome contracts; metric outcome labels accept only canonical values
+  before explicit compatibility projection.
 - Field-class tests cover all eight classes, JSON Pointer escaping/resolution,
   unknown/conflicting/unresolved entries, exact non-inherited leaf coverage, and
   rejection when any dynamic field remains unclassified. Tests prove ordinary
