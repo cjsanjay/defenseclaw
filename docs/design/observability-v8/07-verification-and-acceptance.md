@@ -851,7 +851,10 @@ Required cases:
   registered rules. Each rule is exercised with its one typed fact true, all facts
   false, and in combination with every other applicable rule to prove deterministic
   OR semantics; unknown rules/facts, missing referenced facts, non-log use, and a
-  raw/caller-controlled mandatory Boolean fail closed.
+  raw/caller-controlled mandatory Boolean fail closed. Expanded producer-row tests
+  prove the selected family's program is authoritative, a true unrelated fact is
+  rejected, unrelated false transition-carrier members are inert, and the legacy
+  mapping-level evaluator cannot affect a generated occurrence.
 - Every P-070 ordinary `structured_type` object, array, and tagged union is closed,
   acyclic, and bounded. The only recursive type is the compiler-owned, non-null
   `gen_ai.canonical_json` sealed union with Boolean, Int64, finite Double, String,
@@ -915,6 +918,28 @@ Required cases:
   Missing, renamed, reordered, byte-tampered, row-tampered, digest-mismatched, or
   count-mismatched golden state fails the acceptance test. The baseline remains
   test-only and is never read by `compile_registry` or a renderer.
+- Derived-value fixtures cover all eleven trace derivations and both P-069 scope
+  constants. They prove span/resource/scope/event/link context scoping,
+  `service.version` and scope version equality with provenance, profile ID/version
+  equality, private link relation, input resource schema URL, and that the metric
+  `defenseclaw.outcome` label remains producer input. Missing, duplicate, unused,
+  wrong-context, name-inferred, or source-incompatible derivations fail.
+- The complete compiler-owned `GoAPIPlanIR` is digest-pinned independently of the
+  1,773-row declaration table. Golden tests cover every selector, type AST,
+  required/optional presence, field order, callable parameter/result/error
+  contract, conversion operation, private descriptor binding, and file assignment.
+  They prove the fixed common log/span/metric/event/link layouts, the common typed
+  resource/scope structural inputs, family-local typed resource values,
+  selected-family condition/mandatory fields, parsed span-name
+  parts, and exact 893/282/212/386 declaration partition. Renderer tests receive
+  only this plan and fail if asked to tokenize an ID, strip a symbol prefix, join a
+  condition/constraint, parse a span name, infer a value source, or choose a file.
+- Structured API-plan tests cover all 21 owner shapes, 31 fixed fields, 17 ordered
+  member inputs/constructors, 17 arm types, and the canonical JSON six-arm sealed
+  union. Compile/static tests reject map/`any`/raw `Value`, unsealed public unions,
+  wrong `Optional[T]` use, nonfinite doubles, reserved selector collisions,
+  constructor signature drift, and conversion plans that bypass the private
+  structured validator.
 - Every valid example has an explicit `builder_context` with occurrence,
   condition, mandatory, and inheritance facts. Deterministic fixtures prove the
   same context yields the same timestamp/record identity inputs and exact facts.
@@ -924,11 +949,12 @@ Required cases:
 - The compiler materializes the P-069 structure and all P-070 facts into one
   recursively immutable `CandidateRenderIndex`, including complete
   scalar-leaf `EnrichedFieldDescriptor` joins, unclassified
-  `EnrichedContainerDescriptor` structure, symbol table, mandatory-rule
-  descriptors and per-family resolutions, the four upstream structural inputs and
-  property dispositions, structured bindings/dynamic rules, examples, producer
-  mappings, and projection descriptors. Its digest is stable under source-map
-  iteration, and every bundle, catalog, documentation,
+  `EnrichedContainerDescriptor` structure, typed family/trace/metric descriptors,
+  parsed span names, symbol and Go API plans, mandatory-rule programs, the four
+  upstream structural inputs and property dispositions, structured bindings/
+  dynamic rules, examples, expanded producer rows, and projection descriptors.
+  Its domain-separated digest is distinct from and binds the materialized-view
+  digest, is stable under source-map iteration, and every bundle, catalog, documentation,
   fixture, projection, and Go/Python renderer receives this same index. Tests make
   raw registry/snapshot access unavailable to renderers and reject any recomputed
   join, inferred default, incomplete descriptor, or post-materialization mutation.
@@ -940,7 +966,7 @@ Required cases:
   identities are compile- or generation-time failures.
 - Candidate publication accepts exactly the seven generated Go paths in 12 §5.2.3
   as one manifest-owned transaction: all seven exist, match the same candidate
-  digest and symbol table, compile with the fixture suite, and agree with the
+  digest, materialized-view digest, and symbol table, compile with the fixture suite, and agree with the
   complete candidate bundle, or none is published/accepted. Missing, extra, stale,
   mixed-digest, partially written, independently generated, or current-authority
   files fail before cutover. The compiled package must contain no duplicate

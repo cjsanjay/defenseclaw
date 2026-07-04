@@ -407,7 +407,7 @@ structural_contract:
   correlation: {additional_properties: false, fields: []}
   provenance: {additional_properties: false, fields: []}
   trace:
-    derivations: [] # six authored typed equality bindings
+    derivations: [] # eleven authored typed equality bindings
     body: {additional_properties: false, fields: [], relations: []}
     resource: {additional_properties: false, fields: []}
     scope: {additional_properties: false, fields: []}
@@ -424,22 +424,33 @@ omitted authored entries. There are no `objects`, root `signal_arms`, or
 `otlp_representations` keys; copying those conceptual labels into the source is a
 schema error.
 
-`trace.derivations` is the sole executable authority for the six trace overlay
-equalities. It binds `defenseclaw.bucket` to `envelope.bucket`,
+`trace.derivations` is the sole executable authority for the eleven trace-derived
+values. An attribute row is exactly
+`{id,target_attribute,source,equality,presence}`; the one structural-field row is
+exactly `{id,target_field,source,equality,presence}`. It binds
+`defenseclaw.bucket` to `envelope.bucket`,
 `defenseclaw.span.family` to `family.id`,
 `defenseclaw.span.family_schema_version` to `family.family_schema_version`,
 `defenseclaw.source` to `envelope.source`, and
 `defenseclaw.config.generation` to `provenance.config_generation` whenever the
 target is registered. It binds `defenseclaw.outcome` to `envelope.outcome` only
-when the target is registered and the envelope source is present. Every binding
-uses exact typed-JSON equality. Missing, duplicate, misplaced, or altered bindings
-fail compilation; builders and later renderers consume this IR instead of
-hard-coding the equalities again. After inheritance resolution, every active span
-family MUST resolve the five unconditional target attributes as unconditional
-required attributes. Its outcome target MUST be absent when outcome is forbidden;
-otherwise it MUST retain the exact `operation-terminal-v1` conditional presence
-that represents a present terminal source outcome. This total-family check applies
-even when no curated example references the span.
+when the target is registered and the envelope source is present. It also binds
+resource `service.version` and structural `trace_scope.version` to
+`provenance.binary_version`, scope `defenseclaw.trace.schema_version` and
+`defenseclaw.semantic_profile` to the selected semantic profile fields, and link
+`defenseclaw.link.relation` to the typed link relation. Every binding uses exact
+typed-JSON equality. Missing, duplicate, misplaced, unused, context-incompatible,
+or altered bindings fail compilation; builders and later renderers consume this
+IR instead of hard-coding the equalities again.
+
+After inheritance resolution, every active span family MUST resolve the five
+unconditional span targets as unconditional required attributes. Its outcome
+target MUST be absent when outcome is forbidden; otherwise it MUST retain the
+exact `operation-terminal-v1` conditional presence that represents a present
+terminal source outcome. `resource.core`, `scope.core`, `link.core`, and
+`trace_scope.version` must each contain their exact required derived target. This
+total-family/context check applies even when no curated example references the
+span.
 
 The compiler accepts no second structural-contract ID or version and no unknown
 member. `runtime_binding` is an asserted parity boundary, not a code-generation
@@ -679,6 +690,24 @@ true. An absent/empty rule list is false. The compiler never equates a nonempty
 rule list with a true occurrence, and producers never supply a raw `mandatory`
 Boolean. Facts not referenced by the selected family are rejected rather than
 silently ignored. The `always` rule requires no producer fact.
+
+The selected canonical family is the sole floor authority. A producer mapping's
+`mandatory_rules` list records only the pre-cutover legacy
+`Classification.isMandatory` behavior; it is not a second v8 floor program or a
+capability declaration. The transitional broad `MandatoryFacts` carrier can
+represent all ten builder facts. After identity selection, the generated adapter
+reads only facts referenced by the selected family's program and rejects any
+unrelated fact asserted true; unrelated false members assert nothing and are
+ignored. Generated family inputs expose only the selected family's facts, so an
+unrelated fact is unrepresentable there. The generated producer adapter never
+uses the legacy mapping-level result, and that evaluator is removed at the atomic
+producer cutover. Family floors are updated before cutover where a legacy mapping
+represented a genuine durable family property that must remain mandatory.
+Specifically, the nine asset-state families `asset.activated`, `asset.admitted`,
+`asset.disabled`, `asset.discovered`, `asset.quarantined`, `asset.registered`,
+`asset.released`, `asset.removed`, and `asset.updated` add
+`enforcement_state_change`; the fact remains false for observations that did not
+change durable state.
 
 ##### Structured types and bindings
 
@@ -1092,6 +1121,190 @@ including unoverridden rows, and records `declaration_form` on every row. Render
 consume that table, emit no row as both a constant and a type, and do not repeat
 the tokenization algorithm.
 
+##### Derived-value and compiler-owned Go API plan
+
+The 1,773-row symbol table is the package-declaration ABI; it deliberately does
+not contain owner-scoped struct fields. A second immutable `GoAPIPlanIR` is
+compiler output, never authored YAML and never renderer policy. It closes the
+shape of every generated declaration while keeping the reviewed declaration table
+stable. Renderers receive already-resolved plans and perform only syntax emission.
+
+P-069 `trace.derivations` is the only authored source of non-input trace values.
+A derivation targets either `target_attribute` or `target_field`, never both.
+`target_attribute` is scoped to its registered trace occurrence (span, resource,
+scope, event, or link), so the trace derivation for `defenseclaw.outcome` cannot
+affect the metric label with the same attribute ID. `target_field` version 1
+accepts only `trace_scope.version`. The closed value-source vocabulary is:
+
+| Value source | Exact producer value |
+|---|---|
+| `input` | Typed public field selected by the plan |
+| `constant` | P-069 field `const` |
+| `envelope.bucket` | Selected family's registered identity bucket |
+| `family.id` | Selected family ID |
+| `family.family_schema_version` | Selected family schema version |
+| `envelope.source` | `FamilyEnvelopeInput.Source` |
+| `provenance.config_generation` | `FamilyEnvelopeInput.Provenance.ConfigGeneration` |
+| `envelope.outcome` | The selected builder's typed outcome, when present |
+| `provenance.binary_version` | `FamilyEnvelopeInput.Provenance.BinaryVersion` |
+| `semantic_profile.trace_schema_version` | Selected semantic profile trace schema version |
+| `semantic_profile.id` | Selected semantic profile ID |
+| `link.relation` | Generated typed link constructor's registered relation |
+
+Compiler precedence is exact: a P-069 `const` yields `constant`; an exact
+trace-derivation target yields its declared source; every other registered leaf
+yields `input`. There is no name-based fallback. Version 1 authors the existing
+six span derivations plus `service.version <- provenance.binary_version`,
+`trace_scope.version <- provenance.binary_version`,
+`defenseclaw.trace.schema_version <- semantic_profile.trace_schema_version`,
+`defenseclaw.semantic_profile <- semantic_profile.id`, and
+`defenseclaw.link.relation <- link.relation`. Scope name and schema URL are the
+constants `defenseclaw.telemetry` and
+`https://defenseclaw.io/schemas/telemetry/v8`; resource schema URL remains typed
+producer input. A missing, duplicate, context-incompatible, or unused derivation
+fails compilation.
+
+`GoAPIPlanIR` is composed of these recursively immutable records:
+
+| Record | Required contents |
+|---|---|
+| `GoTypeRefIR` | Closed AST arm `builtin`, `named`, `optional`, or `slice`; nested type refs, never renderer-built Go text |
+| `GoFieldPlanIR` | Owner, exact selector, type ref, order, presence, semantic source ID, enriched descriptor ID, value source, target slot, condition/mandatory binding, and conversion op |
+| `GoInputPlanIR` | Symbol-table declaration key, exact output file, ordered fields, private kernel target, and referenced event/link/resource plans |
+| `GoCallablePlanIR` | Declaration key, optional receiver, ordered parameters/results, error contract, and one private kernel/conversion target |
+| `GoStructuredPlanIR` | Owner shape, ordered fixed fields/items/arms/dynamic members, private discriminator, and complete recursive conversion plan |
+| `GoDescriptorPlanIR` | Pre-resolved family/field/limit/name/event/link/metric/mandatory contracts accepted by the private kernel |
+| `GoFilePlanIR` | One of the exact seven paths, ordered declaration keys, private descriptor/projection sections, and expected digest headers |
+
+The Go type mapping is closed: `string -> string`, `boolean -> bool`,
+`int64 -> int64`, `uint32 -> uint32`, `uint64 -> uint64`, `double -> float64`,
+`string[] -> []string`, and a structured binding to its named public structured
+type. Required values use `T`; recommended, optional, and conditional values use
+`Optional[T]`. A metric's `Value` is the registry's exact `int64` or `float64` and
+the plan selects `familyInt64MetricNumber` or `familyDoubleMetricNumber`.
+Conversion ops are a closed enum covering required scalar, optional scalar,
+copied string slice, structured encoder, metric number, condition fact,
+mandatory fact, trace event, and trace link. A plan that the private kernel cannot
+represent fails before rendering.
+
+Owner-scoped selectors use the same already-compiled token policy as package
+symbols, but the compiler—not a renderer—applies it. For an ordinary canonical
+attribute, the selector is the complete attribute ID without a declaration
+prefix (`gen_ai.request.model -> GenAIRequestModel`). Fixed structured members
+use their wire member name within the owning type. Condition selectors are
+`Condition<FactName>` and mandatory selectors are `Mandatory<FactName>`.
+Common structural selectors are frozen below. Owner-local collisions with another
+semantic selector, common selector, Go keyword/predeclared identifier, or reserved
+structured selector fail; no suffix repair is permitted. The plan stores the
+final selector and renderers never strip `TelemetryAttribute`, tokenize an ID, or
+invent a field name.
+
+Generated family input layouts are exact:
+
+| Signal/input | Ordered common fields before generated value fields |
+|---|---|
+| Log | `Envelope FamilyEnvelopeInput`; `Severity Optional[Severity]`; `LogLevel Optional[LogLevel]`; then `Outcome` as `Outcome`, `Optional[Outcome]`, or omitted according to the family outcome policy |
+| Span | `Envelope FamilyEnvelopeInput`; `Outcome Outcome`; `Kind string`; `StartTimeUnixNano uint64`; `EndTimeUnixNano uint64`; `ParentSpanID Optional[string]`; `Status TraceStatusInput`; `Resource TraceResourceInput`; `Scope TraceScopeInput`; `DroppedAttributesCount Optional[uint32]`; `Events []TraceEventInput`; `DroppedEventsCount Optional[uint32]`; `Links []TraceLinkInput`; `DroppedLinksCount Optional[uint32]` |
+| Metric | `Envelope FamilyEnvelopeInput`; `Value int64|float64` |
+| Span event | `TimeUnixNano uint64`; `DroppedAttributesCount Optional[uint32]` |
+| Span link | `TraceID string`; `SpanID string`; `TraceState Optional[string]`; `DroppedAttributesCount Optional[uint32]` |
+
+Resolved public log-family and metric-label fields follow those common fields in
+resolved source order. For spans, the thirteen input-sourced `resource.core`
+fields follow the common fields in resolved resource order, followed by the
+input-sourced family span attributes in resolved family order. Only
+`value_source: input` fields are public. Family-scoped
+condition fields follow their conditioned values in first-use order, deduplicated
+by fact. Nonconstant mandatory fields follow log values in mandatory-rule order.
+Required outcome is a plain value, optional outcome is `Optional[Outcome]`, and a
+forbidden outcome has no selector. There is no public bucket, family, schema
+version, span name, scope identity/profile, link relation, mandatory Boolean,
+field-class map, or private descriptor selector.
+
+Every family method has the exact signature
+`func (*FamilyBuilder) Build<Family>(input <FamilyInput>) (Record, error)`.
+Every typed event constructor is
+`func New<Family><Event>Event(input <EventInput>) (TraceEventInput, error)`, and
+every typed link constructor is
+`func New<Family><Relation>Link(input <LinkInput>) (TraceLinkInput, error)`.
+They take no context, catalog, descriptor, variadic option, map, or raw value.
+Future cancellation belongs outside deterministic record construction; changing a
+signature is a reviewed public-API epoch change, not renderer discretion.
+
+`TraceResourceInput` remains the common structural input with
+`SchemaURL string` and `DroppedAttributesCount Optional[uint32]`; its registered
+values stay package-private. Each generated span-family input then owns the
+thirteen `resource.core` attributes whose value source is `input`, using selectors
+`Resource<FullAttributeSelector>` so the fields are emitted and versioned with the
+family API. The derived `service.version` has no public selector. Required resource
+attributes use plain types and recommended attributes use `Optional[T]`.
+`TraceScopeInput` owns only `DroppedAttributesCount Optional[uint32]`; scope name,
+version, schema URL, profile attributes, and its private values are derived.
+Generated wrappers copy family-local resource fields into a local
+`TraceResourceInput.values` before calling the kernel. No generated public field
+is added manually to a handwritten common type.
+
+A condition fact lives with the smallest generated component whose presence
+activates it: family/metric/resource/scope conditions on the family input, event
+conditions on the typed event input, and link conditions on the typed link input.
+`TraceEventInput` and `TraceLinkInput` retain
+private condition facts beside their private contract/values. The wrapper merges
+facts only from instantiated components; duplicate active facts must carry the
+same state. It therefore never sends an event-only false fact when that event is
+absent, and the kernel can continue rejecting missing or extra active facts.
+
+Each log has a `ResolvedMandatoryProgramIR` containing its ordered rule IDs,
+constant terms, distinct typed fact terms, and exact public selectors. Generated
+code ORs those terms once, creates a package-private resolved log contract, and
+passes the resulting private Boolean to `newSchemaDerivedLogRecord`. The public
+input contains facts, not a caller-controlled mandatory result. `always` adds no
+field; an empty program resolves false. The broad handwritten `MandatoryFacts`
+type is only a transition carrier for generic producer adapters and is not reused
+as a generated family-builder input.
+
+Structured public shapes are also fixed by the plan:
+
+- a P-070 object is an exported struct with ordered typed fixed fields followed by
+  `Entries []<MemberInput>` when it has `dynamic_members`;
+- an array is an exported struct with `Items []<ItemType>`;
+- a tagged union is an exported interface with an unexported marker method, and
+  each exported registered arm is `{Value <TargetType>}`; a dynamic arm is
+  `{Tag string; Value <TargetType>}`;
+- `gen_ai.canonical_json` is a sealed exported interface. Its Boolean, Int64,
+  Double, and String arms are `{Value T}`, its Array arm is
+  `{Items []TelemetryStructuredGenAICanonicalJSON}`, and its Object arm is
+  `{Entries []<CanonicalMemberInput>}`;
+- every controlled member input is exactly `{Name string; Value <RefType>}` and
+  its constructor is `func New...(name string, value <RefType>) (<Input>, error)`.
+
+Optional fixed structured fields use `Optional[T]`. The selectors `Entries`,
+`Items`, `Name`, `Value`, and `Tag` are reserved in their applicable owner scopes.
+The private conversion plan validates member names, duplicate/fixed/reserved-name
+collisions, tags, finite doubles, null exclusion, recursion and aggregate bounds,
+then returns canonical private values; it never exposes a map, `any`, interface
+escape hatch, or raw `Value`.
+
+Output ownership is exact. All 893 `exported_const` rows go to
+`zz_generated_telemetry_ids.go`. Structured declarations and all GenAI family
+declarations go to the GenAI builder file; security families to the security file;
+operations families to the operations file. The reviewed row partition is
+893/282/212/386 respectively. Catalog, producer, and fixture files contain only
+private generated plans/tests and own no additional symbol-table row. Every one of
+the 1,773 declaration keys appears in exactly one `GoFilePlanIR`.
+
+The index retains `materialized_view_sha256` and separately computes
+`candidate_render_index_sha256` over the complete enriched descriptors and
+`GoAPIPlanIR`. Its digest input is the ASCII domain prefix
+`DefenseClaw CandidateRenderIndex v1`, one NUL byte, and the same deterministic
+typed canonical JSON encoding used for the immutable view. The hashed canonical
+index record explicitly includes `materialized_view_sha256` alongside the
+enriched descriptors and `GoAPIPlanIR`; it is not metadata appended after hashing,
+so the candidate digest cryptographically binds the exact source view. Every generated Go
+file header and manifest entry carries both digests plus the Go-symbol-table
+digest. The renderer coordinator compares the complete in-memory seven-file set
+and manifest before publication; the filesystem transaction remains
+format-agnostic and enforces path/ownership/atomicity only.
+
 ##### Builder context in examples
 
 Every `ExampleIR` gains required `builder_context`. A valid example uses the
@@ -1132,7 +1345,12 @@ impossible.
 The compiler adds immutable `MandatoryRuleIR`, `StructuredTypeIR`,
 `StructuredBindingIR`, `GoSymbolPolicyIR`, `GoSymbolIR`, `BuilderContextIR`, and
 typed occurrence/fact IR. All are retained recursively in
-`MaterializedRegistryView` and its typed digest.
+`MaterializedRegistryView` and its typed digest. The enrichment pass additionally
+creates `EnrichedFieldDescriptor`, `EnrichedContainerDescriptor`,
+`EnrichedFamilyDescriptor`, `EnrichedTraceDescriptor`,
+`EnrichedMetricDescriptor`, `ResolvedMandatoryProgramIR`, parsed
+`SpanNamePartIR`, expanded producer-row descriptors, and the complete
+`GoAPIPlanIR`; these are candidate-index output, not duplicate registry source.
 
 Before any candidate renderer runs, exactly one `CandidateRenderIndex` is derived
 from that view. It contains:
@@ -1141,15 +1359,16 @@ from that view. It contains:
   event/link use and every expanded structured concrete scalar leaf, joining
   canonical upstream ownership, primitive type, effective and per-use constraints,
   requirement/condition, class, sensitivity, cardinality, lifecycle, derivation
-  source, origin, and exact payload-rooted leaf path;
+  source, input placement, exact Go selector/type/conversion when public, origin,
+  and exact payload-rooted leaf path;
 - one `EnrichedContainerDescriptor` for every object, array, tagged-union variant,
   and structured-reference edge, retaining closed shape, bounds, requirement,
   lifecycle, origin, and child links but carrying no field class, sensitivity, or
   scalar normalization;
 - exact active/historical family identities, outcomes, dynamic mandatory rules,
-  span name parts/kinds/events/links, metric instruments, expanded producer
-  identity sets/mappings, semantic profiles, conditions, value catalogs, and Go
-  symbols;
+  parsed span name parts/kinds/events/links, metric instruments, expanded producer
+  identity rows with selected-family mandatory programs, semantic profiles,
+  conditions, value catalogs, Go symbols, and the exact Go API/file plans;
 - the four exact upstream structural-input paths, pinned commit, SHA-256 digests,
   and complete property-disposition table; exactly four structured bindings; and
   every fixed/dynamic member, dynamic-variant exclusion, canonical-JSON recursion
@@ -1161,12 +1380,13 @@ from that view. It contains:
   representation.
 
 The index is recursively immutable, complete, sorted only where the source
-declares set semantics, and domain-separated-digested against the materialized-view
-digest. Bundle, catalog, Markdown, normalized examples, OTLP fixtures, Go IDs,
+declares set semantics, and has a separate domain-separated digest that includes
+and binds the materialized-view digest. Bundle, catalog, Markdown, normalized examples, OTLP fixtures, Go IDs,
 catalog, producer maps, builders, and fixture tests receive this same index
 instance. A renderer may not read registry YAML, current public schemas, current
 handwritten Go registries, prior generated bytes, or recompute inheritance,
-ownership, constraint intersection, symbol names, or structured bindings.
+ownership, constraint intersection, value sources, parsed span names, public
+selectors/signatures, file ownership, symbol names, or structured bindings.
 
 The compiler validates each example ID against `^[a-z][a-z0-9-]{0,127}$` and
 materializes canonical repository-relative POSIX output-path facts in the index.
@@ -1220,17 +1440,24 @@ or direct schema-derived-constructor call outside `family_builder.go`.
 
 Candidate generation MUST remain incomplete until all of these are resolved:
 
-1. `registry.yaml` and the compiler currently have no mandatory-rule catalog,
-   structured-type/binding grammar, or Go symbol policy/override grammar.
-2. `ExampleIR` has no builder context, so condition and mandatory truth would have
-   to be inferred tautologically and occurrence output would be nondeterministic.
-3. The four digest-pinned upstream GenAI inputs are not yet compiled into the
-   bounded canonical-JSON exception, fixed/dynamic property dispositions, and
-   sealed public Go union/member types.
-4. The materialized view preserves validated facts but has no single enriched
-   `CandidateRenderIndex`; separate renderer-side joins can drift.
-5. The seven generated Go outputs and complete symbol table do not yet exist, and
-   the placeholder static test rejects all exported builder methods.
+1. The five non-overlay derived-value bindings and constant scope schema URL
+   specified above are not yet authored/compiled; scope/resource/link values still
+   exist only in handwritten kernel tests. Scope name is already the authored and
+   compiler-validated P-069 constant `defenseclaw.telemetry`; only its schema URL
+   is missing from source authority.
+2. `CandidateRenderIndex` exists but does not yet materialize the promised
+   enriched field/container/family/trace/metric descriptors, parsed span names,
+   resolved mandatory programs, expanded producer rows, or independent digest.
+3. `GoAPIPlanIR` does not yet exist, so a renderer would have to invent scoped
+   field selectors, public layouts/signatures, structured conversion operations,
+   private descriptor bindings, and output-file ownership.
+4. The private kernel does not yet carry component-scoped condition facts or a
+   generated private resolved mandatory result; its test descriptor remains the
+   only complete trace descriptor witness.
+5. The exact seven generated Go outputs do not yet exist. The transaction now
+   rejects desired or prior strict subsets, but the future renderer coordinator
+   must still validate their common candidate/view/symbol digests and complete
+   manifest agreement before publication.
 6. Current portable candidate artifacts remain candidate-only and the twenty-one
    existing public schema paths, mirrors, embeds, handwritten event/classification
    registries, metric callsites, Galileo, and local-observability consumers remain
@@ -1246,6 +1473,15 @@ allowed contextual identities, severity policy, mandatory-floor rules, companion
 rules, and compatibility lifecycle. It references registered log identities and
 MUST NOT define a body schema, override a referenced family's bucket, or create an
 implicit family.
+
+For mandatory-floor purposes, a mapping's `mandatory_rules` field is frozen
+pre-cutover compatibility metadata only. After contextual identity selection, the
+generated producer row evaluates only the selected canonical family's
+`ResolvedMandatoryProgramIR` against the typed broad transition carrier.
+Compatibility-only default identities carry no canonical floor and cannot be
+selected by a v8 generated family builder. This distinction lets a generic
+lifecycle producer select `authentication.failed` and correctly apply its
+protected-boundary floor without also making every lifecycle event mandatory.
 
 To keep this exact mapping inventory reviewable, a repeated closed contextual set
 is declared once as a named producer-identity set and mappings reference exactly

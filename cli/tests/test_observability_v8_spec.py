@@ -319,6 +319,15 @@ def test_observability_v8_generated_builder_source_contract_is_normative() -> No
     assert "`CandidateRenderIndex`" in schemas
     assert "`EnrichedFieldDescriptor`" in schemas
     assert "`EnrichedContainerDescriptor`" in schemas
+    assert "`GoAPIPlanIR`" in schemas
+    assert "The 1,773-row symbol table is the package-declaration ABI" in schemas
+    assert "`service.version <- provenance.binary_version`" in schemas
+    assert "`trace_scope.version <- provenance.binary_version`" in schemas
+    assert "selected canonical family is the sole floor authority" in schemas
+    assert "`Condition<FactName>`" in schemas
+    assert "`Mandatory<FactName>`" in schemas
+    assert "No generated public field" in schemas
+    assert "`candidate_render_index_sha256`" in schemas
     assert "carrying no field class, sensitivity, or" in schemas
     assert "`ConditionIR.enforcement.fact` tokens" in schemas
     assert "never condition IDs, display names, or Go" in schemas
@@ -342,6 +351,9 @@ def test_observability_v8_generated_builder_source_contract_is_normative() -> No
     assert "Candidate generation MUST remain incomplete" in schemas
     assert "Generated-builder source authority" in verification
     assert "exactly version 1 and its eleven" in verification
+    assert "Expanded producer-row tests" in verification
+    assert "Derived-value fixtures cover all eleven trace derivations" in verification
+    assert "complete compiler-owned `GoAPIPlanIR`" in verification
     assert "accepted together or none is accepted" in verification
 
 
