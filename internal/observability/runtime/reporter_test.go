@@ -21,6 +21,7 @@ import (
 
 	"github.com/defenseclaw/defenseclaw/internal/audit"
 	"github.com/defenseclaw/defenseclaw/internal/config"
+	"github.com/defenseclaw/defenseclaw/internal/observability"
 	"github.com/defenseclaw/defenseclaw/internal/observability/redaction"
 	"github.com/defenseclaw/defenseclaw/internal/observability/runtimegraph"
 	_ "modernc.org/sqlite"
@@ -93,6 +94,15 @@ func TestReloadReporterPersistsExactGraphAndDeduplicatesStableDelivery(t *testin
 		FieldPath: runtimegraph.FieldLocalPath, Generation: 1,
 		OccurredAt: now, DeliverySequence: 99, DeliveryIndex: 0,
 	}
+	rejectedRecord, err := reporter.buildRecord(manager.Active(), report, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertReloadReporterGeneratedRecord(t, rejectedRecord,
+		observability.BucketComplianceActivity, "config.reload.rejected",
+		observability.OutcomeRejected, "validate",
+		map[string]any{"defenseclaw.admin.operation": "reload_restart_required"},
+	)
 	if err := reporter.ComplianceActivity(manager.Active(), report); err != nil {
 		t.Fatal(err)
 	}
@@ -103,6 +113,19 @@ func TestReloadReporterPersistsExactGraphAndDeduplicatesStableDelivery(t *testin
 		Code: runtimegraph.ReportCleanupFailed, Outcome: "failed", ComponentName: "local-log",
 		Generation: 1, OccurredAt: now, DeliverySequence: 100, DeliveryIndex: 0,
 	}
+	healthRecord, err := reporter.buildRecord(manager.Active(), health, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertReloadReporterGeneratedRecord(t, healthRecord,
+		observability.BucketPlatformHealth, "subsystem.degraded",
+		observability.OutcomeFailed, "drain",
+		map[string]any{
+			"defenseclaw.health.subsystem":  "local-log",
+			"defenseclaw.health.state":      "failed",
+			"defenseclaw.schema.error_code": "reload_cleanup_failed",
+		},
+	)
 	if err := reporter.PlatformHealth(manager.Active(), health); err != nil {
 		t.Fatal(err)
 	}
@@ -112,21 +135,21 @@ func TestReloadReporterPersistsExactGraphAndDeduplicatesStableDelivery(t *testin
 		t.Fatal(err)
 	}
 	defer reader.Close() //nolint:errcheck
-	rows, err := reader.Query(`SELECT bucket, event_name, action, projected_record_json,
+	rows, err := reader.Query(`SELECT id, bucket, event_name, action, projected_record_json,
 		content_hash, generation, timestamp FROM audit_events ORDER BY rowid`)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer rows.Close() //nolint:errcheck
 	type persisted struct {
-		bucket, event, action, projected, digest, timestamp string
-		generation                                          int64
+		id, bucket, event, action, projected, digest, timestamp string
+		generation                                              int64
 	}
 	var got []persisted
 	for rows.Next() {
 		var row persisted
 		if err := rows.Scan(
-			&row.bucket, &row.event, &row.action, &row.projected,
+			&row.id, &row.bucket, &row.event, &row.action, &row.projected,
 			&row.digest, &row.generation, &row.timestamp,
 		); err != nil {
 			t.Fatal(err)
@@ -139,16 +162,74 @@ func TestReloadReporterPersistsExactGraphAndDeduplicatesStableDelivery(t *testin
 	if len(got) != 3 {
 		t.Fatalf("persisted reports = %d, want initial + deduplicated rejection + health", len(got))
 	}
+	counts := make(map[string]int, len(got))
+	ids := make(map[string]struct{}, len(got))
+	for _, row := range got {
+		counts[row.event]++
+		if _, duplicate := ids[row.id]; duplicate {
+			t.Fatalf("duplicate persisted record id %q", row.id)
+		}
+		ids[row.id] = struct{}{}
+	}
+	for _, event := range []string{"config.change.applied", "config.reload.rejected", "subsystem.degraded"} {
+		if counts[event] != 1 {
+			t.Fatalf("persisted %s records = %d, want exactly 1; all=%v", event, counts[event], counts)
+		}
+	}
 	if got[0].bucket != "compliance.activity" || got[0].event != "config.change.applied" ||
 		got[1].event != "config.reload.rejected" || got[2].bucket != "platform.health" ||
 		got[2].event != "subsystem.degraded" {
 		t.Fatalf("persisted identities = %#v", got)
+	}
+	for index, required := range []string{
+		`"defenseclaw.admin.operation":"reload_applied"`,
+		`"defenseclaw.admin.operation":"reload_restart_required"`,
+		`"defenseclaw.schema.error_code":"reload_cleanup_failed"`,
+	} {
+		if !strings.Contains(got[index].projected, required) {
+			t.Fatalf("persisted generated family %s missing %s: %s", got[index].event, required, got[index].projected)
+		}
 	}
 	for _, row := range got {
 		if row.digest != plan.Digest() || row.generation != 1 ||
 			!strings.Contains(row.projected, `"redaction_profile":"none"`) ||
 			!strings.Contains(row.timestamp, "2026-07-04") {
 			t.Fatalf("persisted graph binding = %#v", row)
+		}
+	}
+}
+
+func assertReloadReporterGeneratedRecord(
+	t *testing.T,
+	record observability.Record,
+	bucket observability.Bucket,
+	event observability.EventName,
+	outcome observability.Outcome,
+	phase string,
+	wantBody map[string]any,
+) {
+	t.Helper()
+	if record.Bucket() != bucket || record.EventName() != event ||
+		record.Signal() != observability.SignalLogs || record.Outcome() != outcome ||
+		record.Phase() != phase || !record.Mandatory() || !record.SchemaDerivedFieldClasses() {
+		t.Fatalf("generated record identity = bucket=%s event=%s signal=%s outcome=%s phase=%s mandatory=%t schema_derived=%t",
+			record.Bucket(), record.EventName(), record.Signal(), record.Outcome(), record.Phase(),
+			record.Mandatory(), record.SchemaDerivedFieldClasses())
+	}
+	body, present := record.Body()
+	if !present {
+		t.Fatal("generated record body is absent")
+	}
+	gotBody, err := body.Object()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(gotBody) != len(wantBody) {
+		t.Fatalf("generated record body = %#v, want %#v", gotBody, wantBody)
+	}
+	for key, want := range wantBody {
+		if gotBody[key] != want {
+			t.Fatalf("generated record body[%q] = %#v, want %#v; body=%#v", key, gotBody[key], want, gotBody)
 		}
 	}
 }

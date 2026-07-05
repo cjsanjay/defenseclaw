@@ -160,66 +160,74 @@ func (reporter *ReloadReporter) buildRecord(
 	health bool,
 ) (observability.Record, error) {
 	recordID := reporter.recordID(report)
-	builder, err := observability.NewRecordBuilder(
+	builder, err := observability.NewFamilyBuilder(
 		observability.ClockFunc(func() time.Time { return report.OccurredAt.UTC() }),
 		observability.OccurrenceIDGeneratorFunc(func() (string, error) { return recordID, nil }),
 	)
 	if err != nil {
 		return observability.Record{}, err
 	}
-	bucket := observability.BucketComplianceActivity
-	eventName := observability.EventName("config.reload.rejected")
-	severity := "INFO"
-	facts := observability.MandatoryFacts{ControlPlaneMutation: true}
-	if report.Code == runtimegraph.ReportReloadApplied {
-		eventName = "config.change.applied"
-	}
-	if health {
-		bucket = observability.BucketPlatformHealth
-		eventName = "subsystem.degraded"
-		severity = "HIGH"
-		facts = observability.MandatoryFacts{DurableHealthTransition: true}
-	}
 	outcome, ok := runtimeReportOutcome(report.Outcome)
 	if !ok {
 		return observability.Record{}, &ReporterError{}
 	}
-	return builder.BuildClassifiedLog(observability.ClassifiedLogInput{
-		ProducerKind: observability.ProducerGatewayEvent,
-		ProducerKey:  "lifecycle",
-		ClassificationContext: observability.ClassificationContext{
-			Bucket: bucket, EventName: eventName, RawSeverity: severity, MandatoryFacts: facts,
-		},
-		ObservedAt: &report.OccurredAt,
+	envelope := observability.FamilyEnvelopeInput{
+		ObservedAt: observability.Present(report.OccurredAt),
 		Source:     observability.SourceSystem,
-		Action:     string(eventName),
-		Outcome:    outcome,
+		Phase:      runtimeReportPhase(report.Code),
 		Correlation: observability.Correlation{
 			RunID: reporter.processRunID,
 		},
-		Provenance: observability.Provenance{
+		Provenance: observability.FamilyProvenanceInput{
 			Producer: "observability_runtime", BinaryVersion: reporter.binary,
-			RegistrySchemaVersion: observability.CurrentRecordSchemaVersion,
-			ConfigGeneration:      int64(report.Generation),
-			ConfigDigest:          graph.Digest(),
+			ConfigGeneration: int64(report.Generation), ConfigDigest: graph.Digest(),
 		},
-		Body: map[string]any{
-			"code":              string(report.Code),
-			"component_name":    report.ComponentName,
-			"delivery_index":    report.DeliveryIndex,
-			"delivery_sequence": report.DeliverySequence,
-			"field_path":        report.FieldPath,
-			"generation":        report.Generation,
-		},
-		FieldClasses: map[string]observability.FieldClass{
-			"/code":              observability.FieldClassMetadata,
-			"/component_name":    observability.FieldClassMetadata,
-			"/delivery_index":    observability.FieldClassMetadata,
-			"/delivery_sequence": observability.FieldClassMetadata,
-			"/field_path":        observability.FieldClassMetadata,
-			"/generation":        observability.FieldClassMetadata,
-		},
+	}
+	if health {
+		envelope.Action = "subsystem.degraded"
+		subsystem := report.ComponentName
+		if subsystem == "" {
+			subsystem = "observability_runtime"
+		}
+		return builder.BuildLogSubsystemDegraded(observability.LogSubsystemDegradedInput{
+			Envelope: envelope, Severity: observability.Present(observability.SeverityHigh),
+			Outcome: outcome, DefenseClawHealthSubsystem: subsystem,
+			DefenseClawHealthState:           "failed",
+			DefenseClawSchemaErrorCode:       observability.Present(string(report.Code)),
+			MandatoryDurableHealthTransition: true,
+		})
+	}
+
+	adminOperation := string(report.Code)
+	if report.Code == runtimegraph.ReportReloadApplied {
+		envelope.Action = "config.change.applied"
+		return builder.BuildLogConfigChangeApplied(observability.LogConfigChangeAppliedInput{
+			Envelope: envelope, Severity: observability.Present(observability.SeverityInfo),
+			LogLevel: observability.Present(observability.LogLevelInfo), Outcome: outcome,
+			DefenseClawAdminOperation: adminOperation, MandatoryControlPlaneMutation: true,
+		})
+	}
+	envelope.Action = "config.reload.rejected"
+	return builder.BuildLogConfigReloadRejected(observability.LogConfigReloadRejectedInput{
+		Envelope: envelope, Severity: observability.Present(observability.SeverityInfo),
+		LogLevel: observability.Present(observability.LogLevelInfo), Outcome: outcome,
+		DefenseClawAdminOperation: adminOperation, MandatoryControlPlaneMutation: true,
 	})
+}
+
+func runtimeReportPhase(code runtimegraph.ReportCode) string {
+	switch code {
+	case runtimegraph.ReportReloadApplied:
+		return "swap"
+	case runtimegraph.ReportValidationRejected, runtimegraph.ReportRestartRequired:
+		return "validate"
+	case runtimegraph.ReportInitializationFail:
+		return "build"
+	case runtimegraph.ReportCleanupFailed, runtimegraph.ReportDrainFailed:
+		return "drain"
+	default:
+		return "validate"
+	}
 }
 
 func (reporter *ReloadReporter) recordID(report runtimegraph.Report) string {
