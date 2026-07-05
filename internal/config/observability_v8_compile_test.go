@@ -738,14 +738,14 @@ func TestCompileObservabilityV8ClassifiesRegisteredCoreAndCanonicalizesEqualAlia
 	if !reflect.DeepEqual(snapshot.ResourceAttributes, wantAttributes) {
 		t.Fatalf("normalized resource attributes = %+v, want %+v", snapshot.ResourceAttributes, wantAttributes)
 	}
-	if !reflect.DeepEqual(snapshot.ResourceAttributeEntries, []ObservabilityV8EffectiveResourceAttribute{{
-		Key: "organization.unit", Value: "security",
-	}}) {
+	if !reflect.DeepEqual(snapshot.ResourceAttributeEntries.Values(), map[string]string{
+		"organization.unit": "security",
+	}) || !snapshot.ResourceAttributeEntries.CompatibilityAliasesEnabled() {
 		t.Fatalf("custom resource entries = %+v", snapshot.ResourceAttributeEntries)
 	}
 }
 
-func TestCompileObservabilityV8ResourceAttributeEntriesAreSortedAndCopySafe(t *testing.T) {
+func TestCompileObservabilityV8ResourceAttributeEntriesAreSealedAndCopySafe(t *testing.T) {
 	attributes := map[string]string{
 		"z.custom": "last",
 		"A.custom": "uppercase-first",
@@ -754,22 +754,36 @@ func TestCompileObservabilityV8ResourceAttributeEntriesAreSortedAndCopySafe(t *t
 	plan := mustCompileObservabilityV8(t, &ObservabilityV8Source{
 		Resource: ObservabilityV8ResourceSource{Attributes: attributes},
 	})
-	want := []ObservabilityV8EffectiveResourceAttribute{
-		{Key: "A.custom", Value: "uppercase-first"},
-		{Key: "a.custom", Value: "lowercase-second"},
-		{Key: "z.custom", Value: "last"},
+	want := map[string]string{
+		"A.custom": "uppercase-first",
+		"a.custom": "lowercase-second",
+		"z.custom": "last",
 	}
 	snapshot := plan.Snapshot()
-	if !reflect.DeepEqual(snapshot.ResourceAttributeEntries, want) {
+	if !reflect.DeepEqual(snapshot.ResourceAttributeEntries.Values(), want) {
 		t.Fatalf("resource entries = %+v, want %+v", snapshot.ResourceAttributeEntries, want)
 	}
 	digest := plan.Digest()
 	attributes["A.custom"] = "source-mutated"
-	snapshot.ResourceAttributeEntries[0].Value = "mutated"
+	detached := snapshot.ResourceAttributeEntries.Values()
+	detached["A.custom"] = "mutated"
 	snapshot.ResourceAttributes["A.custom"] = "mutated"
 	again := plan.Snapshot()
-	if !reflect.DeepEqual(again.ResourceAttributeEntries, want) || plan.Digest() != digest {
+	if !reflect.DeepEqual(again.ResourceAttributeEntries.Values(), want) || plan.Digest() != digest {
 		t.Fatal("mutating a resource projection changed the immutable plan")
+	}
+}
+
+func TestCompileObservabilityV8ResourceAttributeEntriesBindCompatibilityAliases(t *testing.T) {
+	disabled := false
+	plan := mustCompileObservabilityV8(t, &ObservabilityV8Source{
+		TracePolicy: ObservabilityV8TracePolicySource{CompatibilityAliases: &disabled},
+		Resource: ObservabilityV8ResourceSource{Attributes: map[string]string{
+			"organization.unit": "security",
+		}},
+	})
+	if plan.Snapshot().ResourceAttributeEntries.CompatibilityAliasesEnabled() {
+		t.Fatal("sealed resource attributes enabled compatibility aliases against trace policy")
 	}
 }
 

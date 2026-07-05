@@ -136,6 +136,109 @@ type V8ProviderOptions struct {
 	SamplingObserver func(SamplingDecisionDebug)
 }
 
+// V8ResourceContext is the immutable, process-stable v8 resource snapshot used
+// by every signal in one plan generation. Its accessors always return detached
+// values so producers and destination preparation cannot mutate provider state.
+type V8ResourceContext struct {
+	schemaURL                      string
+	values                         map[string]string
+	custom                         observability.TelemetryCustomResourceAttributes
+	resourceDroppedAttributesCount uint32
+}
+
+// V8TraceResourceFields is the typed projection consumed by generated trace
+// builders. ServiceVersion is intentionally absent: the generated registry
+// derives it from the record's trusted binary-version provenance.
+type V8TraceResourceFields struct {
+	Resource                              observability.TraceResourceInput
+	ServiceName                           string
+	ServiceNamespace                      string
+	ServiceInstanceID                     string
+	DeploymentEnvironmentName             string
+	HostName                              observability.Optional[string]
+	HostArch                              observability.Optional[string]
+	OSType                                observability.Optional[string]
+	TenantID                              observability.Optional[string]
+	WorkspaceID                           observability.Optional[string]
+	DefenseClawDeploymentMode             observability.Optional[string]
+	DefenseClawClawMode                   observability.Optional[string]
+	DefenseClawInstanceID                 string
+	DefenseClawDevicePublicKeyFingerprint observability.Optional[string]
+}
+
+func (context V8ResourceContext) SchemaURL() string { return context.schemaURL }
+
+// ResourceDroppedAttributesCount is always zero for a locally constructed
+// resource. The OTel SDK resource model cannot represent a nonzero count.
+func (context V8ResourceContext) ResourceDroppedAttributesCount() uint32 {
+	return context.resourceDroppedAttributesCount
+}
+
+func (context V8ResourceContext) Values() map[string]string {
+	return cloneV8ResourceValues(context.values)
+}
+
+// TraceResourceFields returns a fresh structural resource input with the same
+// sealed custom attributes and alias policy used by the physical SDK resource.
+func (context V8ResourceContext) TraceResourceFields() V8TraceResourceFields {
+	value := func(key string) observability.Optional[string] {
+		if candidate := context.values[key]; candidate != "" {
+			return observability.Present(candidate)
+		}
+		return observability.Absent[string]()
+	}
+	resourceInput := observability.WithTelemetryCustomResourceAttributes(
+		observability.TraceResourceInput{
+			SchemaURL: context.schemaURL,
+		},
+		context.custom,
+	)
+	return V8TraceResourceFields{
+		Resource:                  resourceInput,
+		ServiceName:               context.values["service.name"],
+		ServiceNamespace:          context.values["service.namespace"],
+		ServiceInstanceID:         context.values["service.instance.id"],
+		DeploymentEnvironmentName: context.values["deployment.environment.name"],
+		HostName:                  value("host.name"), HostArch: value("host.arch"), OSType: value("os.type"),
+		TenantID: value("tenant.id"), WorkspaceID: value("workspace.id"),
+		DefenseClawDeploymentMode:             value("defenseclaw.deployment.mode"),
+		DefenseClawClawMode:                   value("defenseclaw.claw.mode"),
+		DefenseClawInstanceID:                 context.values["defenseclaw.instance.id"],
+		DefenseClawDevicePublicKeyFingerprint: value("defenseclaw.device.public_key_fingerprint"),
+	}
+}
+
+func (context V8ResourceContext) sdkResource() *resource.Resource {
+	keys := make([]string, 0, len(context.values))
+	for key, value := range context.values {
+		if value != "" {
+			keys = append(keys, key)
+		}
+	}
+	sort.Strings(keys)
+	attrs := make([]attribute.KeyValue, 0, len(keys))
+	for _, key := range keys {
+		attrs = append(attrs, attribute.String(key, context.values[key]))
+	}
+	return resource.NewWithAttributes(context.schemaURL, attrs...)
+}
+
+func (context V8ResourceContext) clone() V8ResourceContext {
+	context.values = cloneV8ResourceValues(context.values)
+	return context
+}
+
+func cloneV8ResourceValues(source map[string]string) map[string]string {
+	if source == nil {
+		return nil
+	}
+	result := make(map[string]string, len(source))
+	for key, value := range source {
+		result[key] = value
+	}
+	return result
+}
+
 // V8ProviderErrorCode is a closed, content-free provider failure identity.
 type V8ProviderErrorCode string
 
@@ -203,6 +306,7 @@ type v8ProviderState struct {
 	canaryAck     func(destination, traceID string) bool
 	handoff       *v8SpanHandoff
 	spanProcessor *v8CompositeSpanProcessor
+	resource      V8ResourceContext
 }
 
 // MetricBucketEnabled is the collection-before-construction predicate for
@@ -254,6 +358,15 @@ func (p *Provider) V8PlanBinding() (digest string, generation uint64, ok bool) {
 		return "", 0, false
 	}
 	return p.v8.planDigest, p.v8.generation, true
+}
+
+// V8ResourceContext returns the exact immutable resource snapshot bound to this
+// provider generation. The returned context has detached map state.
+func (p *Provider) V8ResourceContext() (V8ResourceContext, bool) {
+	if p == nil || p.v8 == nil {
+		return V8ResourceContext{}, false
+	}
+	return p.v8.resource.clone(), true
 }
 
 // TraceBucketEnabled is the collection-before-construction predicate. For a
@@ -324,6 +437,18 @@ func NewProviderV8Inactive(
 	generation uint64,
 	options V8ProviderOptions,
 ) (*Provider, error) {
+	identity := captureV8ResourceProcessIdentity(options)
+	return newProviderV8Inactive(ctx, plan, generation, options, identity, nil)
+}
+
+func newProviderV8Inactive(
+	ctx context.Context,
+	plan *config.ObservabilityV8Plan,
+	generation uint64,
+	options V8ProviderOptions,
+	identity v8ResourceProcessIdentity,
+	preparedResource *V8ResourceContext,
+) (*Provider, error) {
 	if ctx == nil || plan == nil || generation == 0 {
 		return nil, errors.New("telemetry: invalid v8 provider input")
 	}
@@ -351,9 +476,8 @@ func NewProviderV8Inactive(
 		}
 	}
 	resourceEnvironment := strings.TrimSpace(snapshot.ResourceAttributes["deployment.environment.name"])
-	if len(traceCollect) > 0 &&
-		(strings.TrimSpace(options.Version) == "" ||
-			(strings.TrimSpace(options.Environment) == "" && resourceEnvironment == "")) {
+	if strings.TrimSpace(options.Version) == "" ||
+		(strings.TrimSpace(options.Environment) == "" && resourceEnvironment == "") {
 		return nil, newV8ProviderError(V8ProviderErrorInitialization, nil)
 	}
 	metricSpec := v8MetricReaderSpec(snapshot.MetricPolicy)
@@ -364,7 +488,18 @@ func NewProviderV8Inactive(
 		return nil, err
 	}
 
-	res := buildV8Resource(snapshot, options)
+	var resourceContext V8ResourceContext
+	var resourceErr error
+	if preparedResource != nil {
+		resourceContext = preparedResource.clone()
+		resourceErr = validateV8ResourceContext(resourceContext)
+	} else {
+		resourceContext, resourceErr = newV8ResourceContext(snapshot, options, identity)
+	}
+	if resourceErr != nil {
+		return nil, resourceErr
+	}
+	res := resourceContext.sdkResource()
 	limits := snapshot.TracePolicy.Limits
 	preparedProcessors := make([]sdktrace.SpanProcessor, 0, 2)
 	preparedReaders := make([]sdkmetric.Reader, 0, len(options.MetricReaderFactories))
@@ -524,6 +659,7 @@ func NewProviderV8Inactive(
 				return composite.handoff
 			}(),
 			spanProcessor: composite,
+			resource:      resourceContext,
 		},
 	}, nil
 }
@@ -658,7 +794,16 @@ func NewV8PeriodicMetricReader(exporter sdkmetric.Exporter, spec V8MetricReaderS
 	), nil
 }
 
-func buildV8Resource(snapshot config.ObservabilityV8EffectivePlan, options V8ProviderOptions) *resource.Resource {
+type v8ResourceProcessIdentity struct {
+	serviceInstanceID     string
+	defenseClawInstanceID string
+	hostName              string
+	hostArch              string
+	osType                string
+	deviceFingerprint     string
+}
+
+func captureV8ResourceProcessIdentity(options V8ProviderOptions) v8ResourceProcessIdentity {
 	hostname, _ := os.Hostname()
 	instanceID := strings.TrimSpace(options.ServiceInstanceID)
 	if instanceID == "" {
@@ -668,20 +813,95 @@ func buildV8Resource(snapshot config.ObservabilityV8EffectivePlan, options V8Pro
 	if defenseClawInstanceID == "" {
 		defenseClawInstanceID = instanceID
 	}
+	return v8ResourceProcessIdentity{
+		serviceInstanceID: instanceID, defenseClawInstanceID: defenseClawInstanceID,
+		hostName: v8OTelHostName(hostname), hostArch: v8OTelHostArch(runtime.GOARCH),
+		osType:            v8OTelOSType(runtime.GOOS),
+		deviceFingerprint: deviceFingerprint(strings.TrimSpace(options.DeviceKeyFile)),
+	}
+}
+
+// The Go runtime and OTel semantic conventions use different platform
+// vocabularies. Optional resource fields are omitted when there is no exact,
+// reviewed mapping instead of publishing a non-canonical value that the
+// generated resource contract would reject.
+func v8OTelHostArch(goarch string) string {
+	switch strings.ToLower(strings.TrimSpace(goarch)) {
+	case "amd64":
+		return "amd64"
+	case "386", "x86":
+		return "x86"
+	case "arm", "arm32":
+		return "arm32"
+	case "arm64":
+		return "arm64"
+	case "ppc64", "ppc64le":
+		return "ppc64"
+	case "s390x":
+		return "s390x"
+	default:
+		return ""
+	}
+}
+
+func v8OTelOSType(goos string) string {
+	switch strings.ToLower(strings.TrimSpace(goos)) {
+	case "aix", "darwin", "freebsd", "linux", "netbsd", "openbsd", "solaris", "windows":
+		return strings.ToLower(strings.TrimSpace(goos))
+	case "dragonfly", "dragonflybsd":
+		return "dragonflybsd"
+	case "illumos":
+		return "solaris"
+	case "zos", "z_os":
+		return "z_os"
+	default:
+		return ""
+	}
+}
+
+func v8OTelHostName(hostname string) string {
+	hostname = strings.TrimSpace(hostname)
+	if len(hostname) == 0 || len(hostname) > 256 || !v8OTelResourceIdentifierStart(hostname[0]) {
+		return ""
+	}
+	for index := 1; index < len(hostname); index++ {
+		character := hostname[index]
+		if !v8OTelResourceIdentifierStart(character) && character != '.' && character != '_' &&
+			character != ':' && character != '/' && character != '-' {
+			return ""
+		}
+	}
+	return hostname
+}
+
+func v8OTelResourceIdentifierStart(character byte) bool {
+	return character >= 'A' && character <= 'Z' || character >= 'a' && character <= 'z' ||
+		character >= '0' && character <= '9'
+}
+
+func newV8ResourceContext(
+	snapshot config.ObservabilityV8EffectivePlan,
+	options V8ProviderOptions,
+	identity v8ResourceProcessIdentity,
+) (V8ResourceContext, error) {
 	values := map[string]string{
 		"service.name":            "defenseclaw",
 		"service.version":         strings.TrimSpace(options.Version),
 		"service.namespace":       "defenseclaw",
-		"service.instance.id":     instanceID,
-		"host.name":               hostname,
-		"host.arch":               runtime.GOARCH,
-		"os.type":                 runtime.GOOS,
-		"defenseclaw.instance.id": defenseClawInstanceID,
+		"service.instance.id":     identity.serviceInstanceID,
+		"host.name":               identity.hostName,
+		"host.arch":               identity.hostArch,
+		"os.type":                 identity.osType,
+		"defenseclaw.instance.id": identity.defenseClawInstanceID,
 	}
-	for key, value := range snapshot.ResourceAttributes {
-		if v8AlwaysProcessOwnedResourceKeys[key] {
-			continue
+	for _, key := range []string{
+		"service.name", "deployment.environment.name", "tenant.id", "workspace.id",
+	} {
+		if value := strings.TrimSpace(snapshot.ResourceAttributes[key]); value != "" {
+			values[key] = value
 		}
+	}
+	for key, value := range snapshot.ResourceAttributeEntries.Values() {
 		values[key] = value
 	}
 	setTrusted := func(key, value string) {
@@ -692,60 +912,94 @@ func buildV8Resource(snapshot config.ObservabilityV8EffectivePlan, options V8Pro
 	setTrusted("tenant.id", options.TenantID)
 	setTrusted("workspace.id", options.WorkspaceID)
 	setTrusted("defenseclaw.deployment.mode", options.DeploymentMode)
-	setTrusted("deployment.mode", options.DeploymentMode)
 	setTrusted("defenseclaw.claw.mode", options.ConnectorMode)
-	setTrusted("discovery.source", options.DiscoverySource)
 	environment := strings.TrimSpace(values["deployment.environment.name"])
 	if environment == "" {
 		environment = strings.TrimSpace(options.Environment)
 	}
 	if environment != "" {
 		values["deployment.environment.name"] = environment
-		values["deployment.environment"] = environment
 	}
-	if fingerprint := deviceFingerprint(strings.TrimSpace(options.DeviceKeyFile)); fingerprint != "" {
-		values["defenseclaw.device.public_key_fingerprint"] = fingerprint
-		values["defenseclaw.device.id"] = fingerprint
+	if identity.deviceFingerprint != "" {
+		values["defenseclaw.device.public_key_fingerprint"] = identity.deviceFingerprint
 	}
-	keys := make([]string, 0, len(values))
-	for key := range values {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	attrs := make([]attribute.KeyValue, 0, len(keys))
-	for _, key := range keys {
-		if values[key] != "" {
-			attrs = append(attrs, attribute.String(key, values[key]))
+	if snapshot.ResourceAttributeEntries.CompatibilityAliasesEnabled() {
+		for canonical, legacy := range map[string]string{
+			"deployment.environment.name":               "deployment.environment",
+			"defenseclaw.deployment.mode":               "deployment.mode",
+			"defenseclaw.device.public_key_fingerprint": "defenseclaw.device.id",
+		} {
+			if value := values[canonical]; value != "" {
+				values[legacy] = value
+			}
 		}
 	}
-	return resource.NewWithAttributes(v8ResourceSchemaURL, attrs...)
+	for key, value := range values {
+		if value == "" {
+			delete(values, key)
+		}
+	}
+	context := V8ResourceContext{
+		schemaURL: v8ResourceSchemaURL,
+		values:    values,
+		custom:    snapshot.ResourceAttributeEntries,
+	}
+	if err := validateV8ResourceContext(context); err != nil {
+		return V8ResourceContext{}, err
+	}
+	return context, nil
 }
 
-var v8AlwaysProcessOwnedResourceKeys = map[string]bool{
-	"service.version": true, "service.namespace": true, "service.instance.id": true,
-	"host.name": true, "host.arch": true, "os.type": true,
-	"defenseclaw.instance.id":     true,
-	"defenseclaw.deployment.mode": true, "defenseclaw.claw.mode": true,
-	"defenseclaw.claw.home_dir": true, "discovery.source": true,
-	"defenseclaw.device.public_key_fingerprint": true,
-	"deployment.mode": true, "deployment.environment": true, "defenseclaw.device.id": true,
+func validateV8ResourceContext(context V8ResourceContext) error {
+	attributes := make(map[string]any, len(context.values))
+	for key, value := range context.values {
+		attributes[key] = value
+	}
+	if err := observability.ValidateTelemetryResourceAttributes(attributes); err != nil {
+		return newV8ProviderError(V8ProviderErrorInitialization, nil)
+	}
+	return nil
 }
 
 // V8ProviderFactory owns the process-stable service.instance.id while each
 // Prepare call creates a fresh generation-owned SDK provider and processor.
 type V8ProviderFactory struct {
-	options V8ProviderOptions
+	options  V8ProviderOptions
+	identity v8ResourceProcessIdentity
 }
 
 func NewV8ProviderFactory(options V8ProviderOptions) *V8ProviderFactory {
-	if strings.TrimSpace(options.ServiceInstanceID) == "" {
-		options.ServiceInstanceID = uuid.NewString()
-	}
+	identity := captureV8ResourceProcessIdentity(options)
+	options.ServiceInstanceID = identity.serviceInstanceID
+	options.DefenseClawInstanceID = identity.defenseClawInstanceID
 	options.MetricReaderFactories = append([]V8MetricReaderFactory(nil), options.MetricReaderFactories...)
-	return &V8ProviderFactory{options: options}
+	return &V8ProviderFactory{options: options, identity: identity}
 }
 
 func (*V8ProviderFactory) Name() string { return V8ProviderComponentName }
+
+// ResourceContext resolves the exact v8 resource for a plan using the process
+// identity captured once by this factory. Repeated calls are value-equivalent
+// and return detached state, which lets destination preparation share the same
+// authority without re-reading host or device identity.
+func (factory *V8ProviderFactory) ResourceContext(
+	plan *config.ObservabilityV8Plan,
+) (V8ResourceContext, error) {
+	if factory == nil || plan == nil {
+		return V8ResourceContext{}, errors.New("telemetry: invalid v8 resource context input")
+	}
+	snapshot := plan.Snapshot()
+	if strings.TrimSpace(factory.options.Version) == "" ||
+		(strings.TrimSpace(factory.options.Environment) == "" &&
+			strings.TrimSpace(snapshot.ResourceAttributes["deployment.environment.name"]) == "") {
+		return V8ResourceContext{}, newV8ProviderError(V8ProviderErrorInitialization, nil)
+	}
+	context, err := newV8ResourceContext(snapshot, factory.options, factory.identity)
+	if err != nil {
+		return V8ResourceContext{}, err
+	}
+	return context.clone(), nil
+}
 
 func (factory *V8ProviderFactory) Prepare(
 	ctx context.Context,
@@ -755,7 +1009,13 @@ func (factory *V8ProviderFactory) Prepare(
 	if factory == nil {
 		return nil, errors.New("telemetry: nil v8 provider factory")
 	}
-	provider, err := NewProviderV8Inactive(ctx, input.Config.Plan, input.Generation, factory.options)
+	resourceContext, err := factory.ResourceContext(input.Config.Plan)
+	if err != nil {
+		return nil, err
+	}
+	provider, err := newProviderV8Inactive(
+		ctx, input.Config.Plan, input.Generation, factory.options, factory.identity, &resourceContext,
+	)
 	if err != nil {
 		return nil, err
 	}

@@ -163,7 +163,7 @@ func activeV8MetricProvider(
 	var spec V8MetricReaderSpec
 	factory, readerPointer := manualMetricReaderFactory(t, &spec)
 	provider, err := NewProviderV8Inactive(context.Background(), plan, 1, V8ProviderOptions{
-		Version: "test", ServiceInstanceID: "metric-test",
+		Version: "test", Environment: "test", ServiceInstanceID: "metric-test",
 		MetricReaderFactories: []V8MetricReaderFactory{factory},
 	})
 	if err != nil {
@@ -255,7 +255,7 @@ func TestV8ShutdownRetryWaitsForTimedOutExporterCleanup(t *testing.T) {
 	exporter := &v8BlockingShutdownExporter{started: make(chan struct{}), release: make(chan struct{})}
 	provider, err := NewProviderV8Inactive(
 		context.Background(), metricPlanForTest(t, observability.BucketAssetScan), 1,
-		V8ProviderOptions{MetricReaderFactories: []V8MetricReaderFactory{
+		V8ProviderOptions{Version: "test", Environment: "test", MetricReaderFactories: []V8MetricReaderFactory{
 			func(_ uint64, spec V8MetricReaderSpec) (sdkmetric.Reader, error) {
 				return NewV8PeriodicMetricReader(exporter, spec)
 			},
@@ -287,6 +287,7 @@ func TestV8NoSelectedMetricsBuildsNoProviderReaderOrInstruments(t *testing.T) {
 	plan := metricPlanForTest(t)
 	var factoryCalls int
 	provider, err := NewProviderV8Inactive(context.Background(), plan, 1, V8ProviderOptions{
+		Version: "test", Environment: "test",
 		MetricReaderFactories: []V8MetricReaderFactory{func(uint64, V8MetricReaderSpec) (sdkmetric.Reader, error) {
 			factoryCalls++
 			return nil, errors.New("must not run")
@@ -309,7 +310,7 @@ func TestV8RejectedReaderCandidateCleansPreviouslyPreparedReaders(t *testing.T) 
 	reader := sdkmetric.NewManualReader()
 	_, err := NewProviderV8Inactive(
 		context.Background(), metricPlanForTest(t, observability.BucketAssetScan), 1,
-		V8ProviderOptions{MetricReaderFactories: []V8MetricReaderFactory{
+		V8ProviderOptions{Version: "test", Environment: "test", MetricReaderFactories: []V8MetricReaderFactory{
 			func(uint64, V8MetricReaderSpec) (sdkmetric.Reader, error) { return reader, nil },
 			func(uint64, V8MetricReaderSpec) (sdkmetric.Reader, error) {
 				return nil, errors.New("private reader initialization detail")
@@ -355,6 +356,7 @@ func TestV8RejectedReaderCandidateCleanupIsDeadlineBounded(t *testing.T) {
 	_, err := NewProviderV8Inactive(
 		context.Background(), metricPlanForTest(t, observability.BucketAssetScan), 1,
 		V8ProviderOptions{
+			Version: "test", Environment: "test",
 			PrepareCleanupTimeout: 20 * time.Millisecond,
 			MetricReaderFactories: []V8MetricReaderFactory{
 				func(_ uint64, spec V8MetricReaderSpec) (sdkmetric.Reader, error) {

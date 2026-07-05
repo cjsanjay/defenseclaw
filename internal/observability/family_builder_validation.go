@@ -647,6 +647,77 @@ func validateFamilyString(value string, constraints familyFieldConstraints) erro
 	return nil
 }
 
+func mergeFamilyTraceResource(
+	resource TraceResourceInput,
+	fixed familyFieldValues,
+	contract familyResourceDynamicContract,
+) (TraceResourceInput, []familyFieldDescriptor, error) {
+	if contract.maxItems <= 0 || contract.maxValueUTF8Bytes <= 0 ||
+		contract.maxAggregateUTF8Bytes <= 0 || !IsFieldClass(contract.fieldClass) ||
+		contract.validate == nil || contract.prometheusKey == nil ||
+		len(resource.customValues) > contract.maxItems {
+		return TraceResourceInput{}, nil, familyBuildFailure(FamilyBuildInvalidDescriptor)
+	}
+
+	descriptors := make([]familyFieldDescriptor, 0, len(resource.customValues)+len(contract.aliases))
+	values := make(familyFieldValues, 0, len(resource.customValues)+len(fixed)+len(contract.aliases))
+	normalizedKeys := make(map[string]struct{}, len(resource.customValues))
+	totalBytes := 0
+	previousKey := ""
+	for _, entry := range resource.customValues {
+		value, ok := entry.value.(string)
+		if !ok || !entry.present {
+			return TraceResourceInput{}, nil, familyBuildFailure(FamilyBuildInvalidType)
+		}
+		if err := contract.validate(entry.key, value); err != nil {
+			return TraceResourceInput{}, nil, err
+		}
+		if previousKey != "" && entry.key <= previousKey {
+			if entry.key == previousKey {
+				return TraceResourceInput{}, nil, familyBuildFailure(FamilyBuildDuplicateField)
+			}
+			return TraceResourceInput{}, nil, familyBuildFailure(FamilyBuildConstraint)
+		}
+		previousKey = entry.key
+		normalized := contract.prometheusKey(entry.key)
+		if _, duplicate := normalizedKeys[normalized]; duplicate {
+			return TraceResourceInput{}, nil, familyBuildFailure(FamilyBuildDuplicateField)
+		}
+		normalizedKeys[normalized] = struct{}{}
+		totalBytes += len(entry.key) + len(value)
+		if totalBytes > contract.maxAggregateUTF8Bytes {
+			return TraceResourceInput{}, nil, familyBuildFailure(FamilyBuildConstraint)
+		}
+		values = append(values, familyFieldValue{key: entry.key, value: value, present: true})
+		descriptors = append(descriptors, familyFieldDescriptor{
+			key:         entry.key,
+			typeOf:      familyFieldString,
+			requirement: familyRequirementRecommended,
+			fieldClass:  contract.fieldClass,
+			constraints: familyFieldConstraints{maxUTF8Bytes: contract.maxValueUTF8Bytes},
+			source:      familyValueInput,
+		})
+	}
+
+	values = append(values, fixed...)
+	if resource.compatibilityAliases {
+		for _, alias := range contract.aliases {
+			for _, entry := range fixed {
+				if entry.key != alias.canonical || !entry.present {
+					continue
+				}
+				values = append(values, familyFieldValue{
+					key: alias.descriptor.key, value: entry.value, present: true,
+				})
+				descriptors = append(descriptors, alias.descriptor)
+				break
+			}
+		}
+	}
+	resource.values = values
+	return resource, descriptors, nil
+}
+
 type familyStructuredStats struct {
 	items             int
 	properties        int

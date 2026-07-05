@@ -714,11 +714,20 @@ Required cases:
   carries one runtime-graph lease coherently from start through canonical end and
   reload, migrates the PR #403 root/subagent/model/tool producers and Galileo
   projection, preserves the PR #412 Tempo/resource compatibility aliases, and
-  proves diagnostic canaries enter Tempo but not Agent360 spanmetrics.
+  proves the exact Boolean-marked generated pair retains its canonical
+  `agent.lifecycle`/`model.io` families in Tempo but does not enter Agent360
+  spanmetrics. The independent single-span `span.diagnostic.canary` family is not
+  substituted for either member of that pair.
 - Resource coverage proves 0/1/64 custom entries, exact key/value/aggregate
   boundaries, bytewise deterministic output, accessor mutation isolation, and
   content-free collision/secret/path/process-key failures. Every generated span
   family receives the same immutable resource set and exact field classes.
+- Portable resource validation runs both ordinary JSON Schema and the generated
+  `x-defenseclaw-dynamic-member-contract` semantic validator. Tests prove that
+  schema-valid inputs still fail closed for a 65th custom member, aggregate UTF-8
+  overflow, byte-versus-code-point overflow, normalized custom/custom collision,
+  and whitespace-prefixed path or credential material; no destination accepts a
+  record by treating the extension as descriptive-only metadata.
 - `compatibility_aliases` true/false coverage proves the three documented aliases
   equal their canonical source or are absent across canonical records, SDK traces,
   OTLP logs/traces/metrics, Galileo, and reload generations. Handoff rejects any

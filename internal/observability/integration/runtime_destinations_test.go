@@ -39,6 +39,7 @@ import (
 	"github.com/defenseclaw/defenseclaw/internal/observability/router"
 	observabilityruntime "github.com/defenseclaw/defenseclaw/internal/observability/runtime"
 	"github.com/defenseclaw/defenseclaw/internal/observability/runtimegraph"
+	"github.com/defenseclaw/defenseclaw/internal/telemetry"
 	collectorlogpb "go.opentelemetry.io/proto/otlp/collector/logs/v1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
@@ -361,6 +362,9 @@ func TestRuntimeRealDestinationBoundaryExactlyOnceAndReloadRemoval(t *testing.T)
 			}),
 		},
 	)
+	initialSource.Resource.Attributes = map[string]string{
+		"team.name": "integration-security",
+	}
 	plan, err := config.CompileObservabilityV8(initialSource)
 	if err != nil {
 		t.Fatal(err)
@@ -383,12 +387,21 @@ func TestRuntimeRealDestinationBoundaryExactlyOnceAndReloadRemoval(t *testing.T)
 		t.Fatal(err)
 	}
 	deliveryHealth := &integrationDeliveryHealth{}
+	providerFactory := telemetry.NewV8ProviderFactory(telemetry.V8ProviderOptions{
+		Version: "integration-test", Environment: "test",
+		ServiceInstanceID: "integration-service-instance", DefenseClawInstanceID: "integration-defenseclaw-instance",
+	})
+	expectedResource, err := providerFactory.ResourceContext(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
 	runtime, err := observabilityruntime.New(
 		context.Background(), runtimegraph.ConfigFromPlan(plan, false),
 		observabilityruntime.Options{
 			Store: store, Engine: engine, RecordBuilder: failureBuilder,
 			Reporter: &discardReporter{}, RetentionController: retention,
 			DestinationAdapterFactory: factory, DestinationObserver: deliveryHealth,
+			TelemetryProviderFactory: providerFactory,
 		},
 	)
 	if err != nil {
@@ -513,6 +526,12 @@ func TestRuntimeRealDestinationBoundaryExactlyOnceAndReloadRemoval(t *testing.T)
 	splunkProjection, splunkEvent, splunkSourceType := readSplunkProjection(t, splunk.body)
 	otlpProjection := readOTLPProjection(t, otlpRequest.body)
 	grpcOTLPProjection := readOTLPLogRequest(t, grpcRemote.request, "defenseclaw.integration.grpc")
+	var httpOTLPRequest collectorlogpb.ExportLogsServiceRequest
+	if err := proto.Unmarshal(otlpRequest.body, &httpOTLPRequest); err != nil {
+		t.Fatal(err)
+	}
+	assertExactOTLPLogResource(t, &httpOTLPRequest, expectedResource)
+	assertExactOTLPLogResource(t, grpcRemote.request, expectedResource)
 	projections := map[string][]byte{
 		"sqlite": sqliteProjection, "jsonl": jsonlProjection,
 		"console": consoleProjection, "http": archiveProjection,
@@ -824,6 +843,43 @@ func readOTLPLogRequest(t *testing.T, request *collectorlogpb.ExportLogsServiceR
 		t.Fatalf("OTLP scope = %q", got)
 	}
 	return []byte(request.ResourceLogs[0].ScopeLogs[0].LogRecords[0].Body.GetStringValue())
+}
+
+func assertExactOTLPLogResource(
+	t *testing.T,
+	request *collectorlogpb.ExportLogsServiceRequest,
+	expected telemetry.V8ResourceContext,
+) {
+	t.Helper()
+	if request == nil || len(request.ResourceLogs) != 1 || request.ResourceLogs[0] == nil ||
+		request.ResourceLogs[0].Resource == nil {
+		t.Fatalf("missing OTLP log resource: %+v", request)
+	}
+	resourceLogs := request.ResourceLogs[0]
+	if resourceLogs.SchemaUrl != expected.SchemaURL() ||
+		resourceLogs.Resource.DroppedAttributesCount != expected.ResourceDroppedAttributesCount() {
+		t.Fatalf("OTLP resource schema/dropped mismatch: schema=%q dropped=%d want=%d", resourceLogs.SchemaUrl, resourceLogs.Resource.DroppedAttributesCount, expected.ResourceDroppedAttributesCount())
+	}
+	got := make(map[string]string, len(resourceLogs.Resource.Attributes))
+	for _, attribute := range resourceLogs.Resource.Attributes {
+		if attribute == nil || attribute.Value == nil {
+			t.Fatal("OTLP resource contains nil attribute")
+		}
+		got[attribute.Key] = attribute.Value.GetStringValue()
+	}
+	want := expected.Values()
+	if len(got) != len(want) {
+		t.Fatalf("OTLP resource attribute count=%d want=%d got=%+v want=%+v", len(got), len(want), got, want)
+	}
+	for key, value := range want {
+		if got[key] != value {
+			t.Fatalf("OTLP resource %q=%q want=%q", key, got[key], value)
+		}
+	}
+	if got["team.name"] != "integration-security" ||
+		got["deployment.environment"] != got["deployment.environment.name"] {
+		t.Fatalf("OTLP resource lost custom/compatibility attributes: %+v", got)
+	}
 }
 
 func assertProjectionIdentity(

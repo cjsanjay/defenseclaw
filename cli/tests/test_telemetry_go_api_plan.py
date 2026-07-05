@@ -592,14 +592,25 @@ def test_real_candidate_index_compiles_complete_semantic_plan() -> None:
     second = plan.compile_go_api_plan(index)
 
     assert first == second
-    assert first.api_plan_sha256 == "e5dc9a7faadc654391c5ef410582d7337bbed3e18e6b64c36a32daca8ecc24ce"
-    assert len(first.declarations) == 1781
+    assert first.api_plan_sha256 == "7b3f4faf92cc1a6c4f7c79b5d0b58bf55cef363b58cbe338d9c3dbe5cbec5bc6"
+    assert len(first.declarations) == 1785
     assert len(first.inputs) == len(first.callables) == 421
     assert len(first.descriptors) == 243
     assert len(first.structured) == 21
     assert len(first.fixtures) == 12
     assert sum(len(item.fields) for item in first.inputs) == 4762
     assert len(first.private_declarations) == 741
+    assert first.resource_attributes.validator_symbol == "ValidateTelemetryResourceAttributes"
+    assert len(first.resource_attributes.fixed_descriptors) == 14
+    assert sum(
+        descriptor.requirement == "required"
+        for descriptor in first.resource_attributes.fixed_descriptors
+    ) == 6
+    assert next(
+        declaration
+        for declaration in first.declarations
+        if declaration.kind == "resource_attributes_validator"
+    ).symbol == "ValidateTelemetryResourceAttributes"
     assert tuple(helper.symbol for helper in first.kernel_helpers) == (
         "buildGeneratedMetric",
         "buildGeneratedResolvedLog",
@@ -758,7 +769,7 @@ def test_real_candidate_index_compiles_complete_semantic_plan() -> None:
     assert counts["internal/observability/zz_generated_telemetry_ids.go"] == 901
     assert counts["internal/observability/zz_generated_telemetry_builders_genai.go"] == 282
     assert counts["internal/observability/zz_generated_telemetry_builders_security.go"] == 212
-    assert counts["internal/observability/zz_generated_telemetry_builders_operations.go"] == 386
+    assert counts["internal/observability/zz_generated_telemetry_builders_operations.go"] == 390
     assert all(
         file.private_declarations == tuple(item for item in first.private_declarations if item.output_file == file.path)
         for file in first.files
@@ -1337,7 +1348,7 @@ def partition_index(*, wrong_domain: bool = False) -> SimpleNamespace:
     )
 
 
-def test_exact_1781_row_partition_and_every_declaration_file_assignment() -> None:
+def test_exact_1781_legacy_fixture_partition_and_every_declaration_file_assignment() -> None:
     compiled = plan.compile_go_api_plan(partition_index())
     counts = {item.path: len(item.declarations) for item in compiled.files}
     assert counts["internal/observability/zz_generated_telemetry_ids.go"] == 901

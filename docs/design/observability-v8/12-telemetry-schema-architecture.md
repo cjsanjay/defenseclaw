@@ -1298,6 +1298,25 @@ kernel. The generated dynamic descriptor assigns every custom pointer its exact
 types, secret/path/process-owned names or values, and aggregate overflow.
 No generated public field is added manually to a handwritten common type.
 
+Standard JSON Schema is the portable structural view of this dynamic contract,
+not the only validator. It expresses the fixed members, common string shape,
+reserved and forbidden key patterns, and the
+`x-defenseclaw-dynamic-member-contract` extension. JSON Schema cannot portably
+count only unmatched custom members, count UTF-8 bytes rather than code points,
+sum aggregate key/value bytes, or compare distinct keys after Prometheus
+normalization. DefenseClaw consumers therefore MUST run the generated semantic
+resource validator in addition to ordinary JSON Schema validation before
+accepting a resource for canonical construction or destination projection. That
+validator is normative for the 64-member, 16-KiB, byte-bound,
+normalized-collision, and forbidden path/credential-value rules. A schema-valid
+document that fails the generated semantic validator is invalid; adapters MUST
+NOT treat the extension keywords as descriptive-only annotations.
+The generated `ValidateTelemetryResourceAttributes(map[string]any) error` entry
+point exists only at untrusted record/destination boundaries so it can reject
+non-string forged values. It returns no constructed resource, mutates nothing,
+and cannot attach data to `TraceResourceInput`; it is therefore not an alternate
+free-form construction API.
+
 A condition fact lives with the smallest generated component whose presence
 activates it: family/metric/resource/scope conditions on the family input, event
 conditions on the typed event input, and link conditions on the typed link input.
@@ -1520,14 +1539,16 @@ Production activation still depends on the generated two-span canary,
 runtime-generation lease E2E, complete producer migration, and destination
 projection gates tracked by `spec.md`; renderers MUST NOT substitute handwritten
 state for any of those remaining inputs.
-5. The exact seven generated Go outputs do not yet exist. The transaction now
-   rejects desired or prior strict subsets, but the future renderer coordinator
-   must still validate their common candidate/view/symbol digests and complete
-   manifest agreement before publication.
-6. Current portable candidate artifacts remain candidate-only and the twenty-one
-   existing public schema paths, mirrors, embeds, handwritten event/classification
-   registries, metric callsites, Galileo, and local-observability consumers remain
-   authoritative until their separate parity/cutover gates pass.
+5. The exact seven generated Go outputs exist and are published through the
+   manifest-last transaction. The renderer coordinator validates their common
+   candidate/view/symbol digests and complete manifest agreement before
+   publication; desired or prior strict subsets remain invalid.
+6. The twenty-one public schema paths, their mirrors and embeds, and the generated
+   event/classification registries are cut over to generated authority. Portable
+   candidate artifacts remain non-runtime review products. Producer call sites,
+   Galileo, and local-observability consumers retain their explicit downstream
+   parity and activation gates; those gates cannot restore handwritten schema
+   authority.
 
 ### 5.3 Canonical families and producer mappings
 

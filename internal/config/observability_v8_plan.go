@@ -184,14 +184,6 @@ type ObservabilityV8Provenance struct {
 	Column int    `json:"column,omitempty"`
 }
 
-// ObservabilityV8EffectiveResourceAttribute is one validated custom resource
-// attribute. The compiler stores these entries in bytewise key order so
-// runtime consumers never depend on Go map iteration order.
-type ObservabilityV8EffectiveResourceAttribute struct {
-	Key   string `json:"key"`
-	Value string `json:"value"`
-}
-
 // ObservabilityV8EffectivePlan is a detached snapshot. Mutating it cannot alter
 // the immutable plan returned by CompileObservabilityV8.
 type ObservabilityV8EffectivePlan struct {
@@ -199,18 +191,18 @@ type ObservabilityV8EffectivePlan struct {
 	// ResourceAttributes is the normalized registered-core plus custom resource
 	// map. Compatibility aliases are canonicalized before the plan is frozen.
 	ResourceAttributes map[string]string `json:"resource_attributes"`
-	// ResourceAttributeEntries is the validated deterministic custom-only
-	// projection. Runtime builders combine it with typed registered-core inputs;
-	// it is JSON-neutral so plan digests retain one canonical map representation.
-	ResourceAttributeEntries []ObservabilityV8EffectiveResourceAttribute `json:"-"`
-	TracePolicy              ObservabilityV8EffectiveTracePolicy         `json:"trace_policy"`
-	MetricPolicy             ObservabilityV8EffectiveMetricPolicy        `json:"metric_policy"`
-	Local                    ObservabilityV8EffectiveLocal               `json:"local"`
-	Buckets                  []ObservabilityV8EffectiveBucket            `json:"buckets"`
-	Profiles                 []ObservabilityV8EffectiveProfile           `json:"redaction_profiles"`
-	Destinations             []ObservabilityV8EffectiveDestination       `json:"destinations"`
-	Warnings                 []ObservabilityV8Warning                    `json:"warnings"`
-	Provenance               []ObservabilityV8Provenance                 `json:"provenance"`
+	// ResourceAttributeEntries is the generated, sealed custom-only projection.
+	// Runtime builders combine it with typed registered-core inputs. It is
+	// JSON-neutral so plan digests retain one canonical map representation.
+	ResourceAttributeEntries observability.TelemetryCustomResourceAttributes `json:"-"`
+	TracePolicy              ObservabilityV8EffectiveTracePolicy             `json:"trace_policy"`
+	MetricPolicy             ObservabilityV8EffectiveMetricPolicy            `json:"metric_policy"`
+	Local                    ObservabilityV8EffectiveLocal                   `json:"local"`
+	Buckets                  []ObservabilityV8EffectiveBucket                `json:"buckets"`
+	Profiles                 []ObservabilityV8EffectiveProfile               `json:"redaction_profiles"`
+	Destinations             []ObservabilityV8EffectiveDestination           `json:"destinations"`
+	Warnings                 []ObservabilityV8Warning                        `json:"warnings"`
+	Provenance               []ObservabilityV8Provenance                     `json:"provenance"`
 }
 
 // ObservabilityV8Plan keeps all mutable representation private. Every accessor
@@ -311,10 +303,9 @@ func (plan *ObservabilityV8Plan) RuntimeDestination(name string) (ObservabilityV
 func cloneObservabilityV8EffectivePlan(source ObservabilityV8EffectivePlan) ObservabilityV8EffectivePlan {
 	result := source
 	result.ResourceAttributes = cloneStringMap(source.ResourceAttributes)
-	result.ResourceAttributeEntries = append(
-		[]ObservabilityV8EffectiveResourceAttribute(nil),
-		source.ResourceAttributeEntries...,
-	)
+	// TelemetryCustomResourceAttributes is immutable: its constructor owns its
+	// private copy and Values always returns a detached map.
+	result.ResourceAttributeEntries = source.ResourceAttributeEntries
 	result.Buckets = append([]ObservabilityV8EffectiveBucket(nil), source.Buckets...)
 	result.Profiles = make([]ObservabilityV8EffectiveProfile, len(source.Profiles))
 	for index, profile := range source.Profiles {

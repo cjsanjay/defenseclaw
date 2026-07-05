@@ -9433,16 +9433,16 @@ def test_canonical_go_symbol_table_matches_digest_addressed_reviewed_baseline(
     table = ir.go_symbol_table
     baseline_digest = module._validate_reviewed_go_symbol_baseline(ROOT, table)
 
-    assert len(table.rows) == 1781
+    assert len(table.rows) == 1785
     assert dict(table.kind_counts) == module.EXPECTED_GO_SYMBOL_KIND_COUNTS
     assert dict(table.declaration_form_counts) == {
         "exported_const": 901,
-        "exported_type": 459,
-        "exported_function": 178,
+        "exported_type": 460,
+        "exported_function": 181,
         "family_builder_method": 243,
     }
-    assert table.table_sha256 == "4a8563120e248a344683b87999620dac744bbda4b9794214d15197d0abde2f54"
-    assert baseline_digest.sha256 == "1f01353b8adf5021e42fef2675e0d3b690f2bcde2af9d22558d66f62c841e9e7"
+    assert table.table_sha256 == "31a90343cae2631aa76808bd6337d48af59ef09481fbc9c396a3c0d7b3790d4a"
+    assert baseline_digest.sha256 == "511bc88b89217ced2c8a1349c9cd05a66f77cf41a67c9d0a622814243e16d4e8"
     assert baseline_digest.path.endswith(f"/{baseline_digest.sha256}.json")
     rank = {kind: index for index, kind in enumerate(module.GO_SYMBOL_KIND_ORDER)}
     assert list(table.rows) == sorted(
@@ -9501,10 +9501,12 @@ def test_go_symbol_file_domain_ownership_counts_are_frozen(
             ownership["ids"] += 1
         elif row.kind.startswith("structured_"):
             ownership["genai"] += 1
+        elif row.source_id == "resource.core" and row.kind.startswith("resource_attributes_"):
+            ownership["operations"] += 1
         else:
             family_id = row.source_id.split("#", 1)[0]
             ownership[family_domains[family_id]] += 1
-    assert ownership == {"ids": 901, "genai": 282, "security": 212, "operations": 386}
+    assert ownership == {"ids": 901, "genai": 282, "security": 212, "operations": 390}
 
 
 def test_go_symbol_policy_and_table_are_materialized_and_row_order_is_digest_significant(

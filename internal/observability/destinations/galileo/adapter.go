@@ -262,8 +262,9 @@ type projectedBody struct {
 }
 
 type projectedResource struct {
-	Attributes map[string]any `json:"attributes"`
-	SchemaURL  string         `json:"schema_url,omitempty"`
+	Attributes             map[string]any `json:"attributes"`
+	SchemaURL              string         `json:"schema_url,omitempty"`
+	DroppedAttributesCount json.Number    `json:"dropped_attributes_count,omitempty"`
 }
 
 type projectedScope struct {
@@ -392,6 +393,10 @@ func (wire projectedWire) otlp(destination string) (
 	if !ok {
 		return nil, nil, nil, "", "", false
 	}
+	resourceDroppedAttributes, ok := unsigned(wire.Body.Resource.DroppedAttributesCount, 32)
+	if !ok {
+		return nil, nil, nil, "", "", false
+	}
 	scope, ok := requiredScope(wire.Body.Scope)
 	if !ok {
 		return nil, nil, nil, "", "", false
@@ -427,25 +432,35 @@ func (wire projectedWire) otlp(destination string) (
 		Events: events, DroppedEventsCount: uint32(droppedEvents),
 		Links: links, DroppedLinksCount: uint32(droppedLinks), Status: status,
 	}
-	return &resourcepb.Resource{Attributes: resourceAttributes}, span, scope,
+	return &resourcepb.Resource{
+			Attributes: resourceAttributes, DroppedAttributesCount: uint32(resourceDroppedAttributes),
+		}, span, scope,
 		wire.Body.Resource.SchemaURL, wire.Body.Scope.SchemaURL, true
 }
 
 func requiredResourceAttributes(input map[string]any) ([]*commonpb.KeyValue, bool) {
-	for _, key := range []string{
-		"service.name", "service.version", "service.namespace", "service.instance.id",
-		"defenseclaw.instance.id",
-	} {
-		value, ok := input[key].(string)
-		if !ok || strings.TrimSpace(value) == "" {
-			return nil, false
-		}
-	}
-	if stringMap(input, "deployment.environment.name") == "" &&
-		stringMap(input, "deployment.environment") == "" {
+	if observability.ValidateTelemetryResourceAttributes(input) != nil {
 		return nil, false
 	}
-	return attributes(input)
+	keys := make([]string, 0, len(input))
+	for key, raw := range input {
+		value, ok := raw.(string)
+		if key == "" || !utf8.ValidString(key) || !ok || !utf8.ValidString(value) {
+			return nil, false
+		}
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	output := make([]*commonpb.KeyValue, 0, len(keys))
+	for _, key := range keys {
+		output = append(output, &commonpb.KeyValue{
+			Key: key,
+			Value: &commonpb.AnyValue{Value: &commonpb.AnyValue_StringValue{
+				StringValue: input[key].(string),
+			}},
+		})
+	}
+	return output, true
 }
 
 func requiredScope(input projectedScope) (*commonpb.InstrumentationScope, bool) {

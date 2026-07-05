@@ -13,9 +13,13 @@ package telemetry
 import (
 	"context"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"math"
+	"os"
+	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -24,7 +28,9 @@ import (
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/defenseclaw/defenseclaw/internal/config"
@@ -196,6 +202,25 @@ func v8HandoffRecord(
 	resourceProvider *Provider,
 ) observability.Record {
 	t.Helper()
+	return v8HandoffRecordWithResourceDroppedCount(
+		t, traceID, spanID, start, end, configDigest, parentSpanID, traceState, flags,
+		observability.Absent[uint32](), resourceProvider,
+	)
+}
+
+func v8HandoffRecordWithResourceDroppedCount(
+	t *testing.T,
+	traceID trace.TraceID,
+	spanID trace.SpanID,
+	start, end time.Time,
+	configDigest string,
+	parentSpanID string,
+	traceState observability.Optional[string],
+	flags uint32,
+	resourceDroppedAttributesCount observability.Optional[uint32],
+	resourceProvider *Provider,
+) observability.Record {
+	t.Helper()
 	builder, err := observability.NewFamilyBuilder(
 		observability.ClockFunc(func() time.Time { return end }),
 		observability.OccurrenceIDGeneratorFunc(func() (string, error) {
@@ -205,6 +230,28 @@ func v8HandoffRecord(
 	if err != nil {
 		t.Fatal(err)
 	}
+	resourceFields := V8TraceResourceFields{
+		Resource: observability.TraceResourceInput{
+			SchemaURL: "https://opentelemetry.io/schemas/1.42.0",
+		},
+		ServiceName: "defenseclaw", ServiceNamespace: "defenseclaw",
+		ServiceInstanceID: "instance-001", DeploymentEnvironmentName: "test",
+		DefenseClawInstanceID: "instance-001",
+		HostName:              observability.Absent[string](), HostArch: observability.Absent[string](),
+		OSType: observability.Absent[string](), TenantID: observability.Absent[string](),
+		WorkspaceID:                           observability.Absent[string](),
+		DefenseClawDeploymentMode:             observability.Absent[string](),
+		DefenseClawClawMode:                   observability.Absent[string](),
+		DefenseClawDevicePublicKeyFingerprint: observability.Absent[string](),
+	}
+	if resourceProvider != nil {
+		context, ok := resourceProvider.V8ResourceContext()
+		if !ok {
+			t.Fatal("v8 resource context unavailable")
+		}
+		resourceFields = context.TraceResourceFields()
+	}
+	resourceFields.Resource.DroppedAttributesCount = resourceDroppedAttributesCount
 	record, err := builder.BuildSpanDiagnosticCanary(observability.SpanDiagnosticCanaryInput{
 		Envelope: observability.FamilyEnvelopeInput{
 			Source: observability.SourceGateway,
@@ -224,26 +271,22 @@ func v8HandoffRecord(
 			}
 			return observability.Present(parentSpanID)
 		}(), TraceState: traceState, Flags: flags, Status: observability.NewTraceStatusUnset(),
-		Resource: observability.TraceResourceInput{
-			SchemaURL: "https://opentelemetry.io/schemas/1.42.0",
-		},
-		Scope:                             observability.TraceScopeInput{},
-		ResourceServiceName:               "defenseclaw",
-		ResourceServiceNamespace:          "defenseclaw",
-		ResourceServiceInstanceID:         "instance-001",
-		ResourceDeploymentEnvironmentName: "test",
-		ResourceHostName:                  v8OptionalResourceAttribute(resourceProvider, "host.name"),
-		ResourceHostArch:                  v8OptionalResourceAttribute(resourceProvider, "host.arch"),
-		ResourceOsType:                    v8OptionalResourceAttribute(resourceProvider, "os.type"),
-		ResourceTenantID:                  v8OptionalResourceAttribute(resourceProvider, "tenant.id"),
-		ResourceWorkspaceID:               v8OptionalResourceAttribute(resourceProvider, "workspace.id"),
-		ResourceDefenseClawDeploymentMode: v8OptionalResourceAttribute(resourceProvider, "defenseclaw.deployment.mode"),
-		ResourceDefenseClawClawMode:       v8OptionalResourceAttribute(resourceProvider, "defenseclaw.claw.mode"),
-		ResourceDefenseClawInstanceID:     "instance-001",
-		ResourceDefenseClawDevicePublicKeyFingerprint: v8OptionalResourceAttribute(
-			resourceProvider, "defenseclaw.device.public_key_fingerprint",
-		),
-		ConditionOperationTerminal: true,
+		Resource:                                      resourceFields.Resource,
+		Scope:                                         observability.TraceScopeInput{},
+		ResourceServiceName:                           resourceFields.ServiceName,
+		ResourceServiceNamespace:                      resourceFields.ServiceNamespace,
+		ResourceServiceInstanceID:                     resourceFields.ServiceInstanceID,
+		ResourceDeploymentEnvironmentName:             resourceFields.DeploymentEnvironmentName,
+		ResourceHostName:                              resourceFields.HostName,
+		ResourceHostArch:                              resourceFields.HostArch,
+		ResourceOsType:                                resourceFields.OSType,
+		ResourceTenantID:                              resourceFields.TenantID,
+		ResourceWorkspaceID:                           resourceFields.WorkspaceID,
+		ResourceDefenseClawDeploymentMode:             resourceFields.DefenseClawDeploymentMode,
+		ResourceDefenseClawClawMode:                   resourceFields.DefenseClawClawMode,
+		ResourceDefenseClawInstanceID:                 resourceFields.DefenseClawInstanceID,
+		ResourceDefenseClawDevicePublicKeyFingerprint: resourceFields.DefenseClawDevicePublicKeyFingerprint,
+		ConditionOperationTerminal:                    true,
 	})
 	if err != nil {
 		t.Fatalf("build generated trace record: %v", err)
@@ -251,13 +294,142 @@ func v8HandoffRecord(
 	return record
 }
 
-func v8OptionalResourceAttribute(provider *Provider, key string) observability.Optional[string] {
-	if provider != nil {
-		if value := resourceAttribute(provider, key); value != "" {
-			return observability.Present(value)
-		}
+func TestV8ResourceContextExactlyMatchesGeneratedCanonicalResource(t *testing.T) {
+	for _, aliases := range []bool{false, true} {
+		t.Run(fmt.Sprintf("aliases_%t", aliases), func(t *testing.T) {
+			deviceKeyFile := filepath.Join(t.TempDir(), "device.pem")
+			seed := make([]byte, 32)
+			seed[0] = 1
+			if err := os.WriteFile(
+				deviceKeyFile,
+				pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: seed}),
+				0o600,
+			); err != nil {
+				t.Fatal(err)
+			}
+			plan := v8PlanForTest(t, "always_on", "", func(source *config.ObservabilityV8Source) {
+				source.TracePolicy.CompatibilityAliases = &aliases
+				source.Resource.Attributes = map[string]string{
+					"deployment.environment.name": "test",
+					"operator.profile":            "soc",
+				}
+			})
+			provider, err := NewProviderV8Inactive(
+				context.Background(), plan, v8HandoffTestGeneration,
+				V8ProviderOptions{
+					Version: "8.0.0", ServiceInstanceID: "instance-001",
+					DefenseClawInstanceID: "instance-001", DeploymentMode: "unmanaged",
+					DeviceKeyFile: deviceKeyFile,
+				},
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = provider.Shutdown(context.Background()) })
+			resourceContext, ok := provider.V8ResourceContext()
+			if !ok {
+				t.Fatal("resource context unavailable")
+			}
+			record := v8HandoffRecord(
+				t,
+				trace.TraceID{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16},
+				trace.SpanID{1, 2, 3, 4, 5, 6, 7, 8},
+				time.Unix(1_783_080_000, 0).UTC(), time.Unix(1_783_080_000, 1).UTC(),
+				plan.Digest(), "", observability.Absent[string](), 0x101, provider,
+			)
+			canonical := mustV8CanonicalEndedSpan(t, record)
+			if got, want := canonical.resourceAttributes, resourceContext.Values(); !reflect.DeepEqual(got, want) {
+				t.Fatalf("generated/physical resource mismatch:\n generated=%v\n physical=%v", got, want)
+			}
+			_, hasEnvironmentAlias := canonical.resourceAttributes["deployment.environment"]
+			_, hasModeAlias := canonical.resourceAttributes["deployment.mode"]
+			_, hasDeviceAlias := canonical.resourceAttributes["defenseclaw.device.id"]
+			if hasEnvironmentAlias != aliases || hasModeAlias != aliases || hasDeviceAlias != aliases {
+				t.Fatalf(
+					"alias presence environment/mode/device=%t/%t/%t, want %t",
+					hasEnvironmentAlias, hasModeAlias, hasDeviceAlias, aliases,
+				)
+			}
+			if _, found := canonical.resourceAttributes["discovery.source"]; found {
+				t.Fatal("generated resource retained discovery.source")
+			}
+		})
 	}
-	return observability.Absent[string]()
+}
+
+func TestV8PhysicalResourceRequiresExactStringSet(t *testing.T) {
+	canonical := V8CanonicalEndedSpan{
+		resourceSchemaURL: v8ResourceSchemaURL,
+		resourceAttributes: map[string]string{
+			"service.name": "defenseclaw", "custom.safe": "value",
+		},
+	}
+	physical := func(schemaURL string, attrs ...attribute.KeyValue) sdktrace.ReadOnlySpan {
+		return tracetest.SpanStub{
+			Resource: resource.NewWithAttributes(schemaURL, attrs...),
+		}.Snapshot()
+	}
+	if !v8PhysicalResourceMatches(canonical, physical(
+		v8ResourceSchemaURL,
+		attribute.String("service.name", "defenseclaw"),
+		attribute.String("custom.safe", "value"),
+	)) {
+		t.Fatal("exact resource set did not match")
+	}
+	for name, candidate := range map[string]sdktrace.ReadOnlySpan{
+		"missing":    physical(v8ResourceSchemaURL, attribute.String("service.name", "defenseclaw")),
+		"changed":    physical(v8ResourceSchemaURL, attribute.String("service.name", "defenseclaw"), attribute.String("custom.safe", "changed")),
+		"non-string": physical(v8ResourceSchemaURL, attribute.String("service.name", "defenseclaw"), attribute.Int("custom.safe", 1)),
+		"extra":      physical(v8ResourceSchemaURL, attribute.String("service.name", "defenseclaw"), attribute.String("custom.safe", "value"), attribute.String("extra", "value")),
+		"schema":     physical("https://example.test/wrong", attribute.String("service.name", "defenseclaw"), attribute.String("custom.safe", "value")),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if v8PhysicalResourceMatches(canonical, candidate) {
+				t.Fatal("non-exact resource matched")
+			}
+		})
+	}
+}
+
+func TestV8SDKHandoffRejectsNonzeroResourceDroppedCountBeforeCanonicalFanout(t *testing.T) {
+	consumer := &v8HandoffConsumer{}
+	rig := newV8HandoffRig(t, V8GenerationSpanPipeline{Destination: "canonical", Canonical: consumer})
+	start := time.Unix(1_783_080_010, 0).UTC()
+	end := start.Add(time.Millisecond)
+
+	zeroSpan, _ := v8StartHandoffSpan(t, rig, start, end, nil)
+	zeroRecord := v8HandoffRecordWithResourceDroppedCount(
+		t, zeroSpan.SpanContext().TraceID(), zeroSpan.SpanContext().SpanID(), start, end,
+		rig.provider.v8.planDigest, "", observability.Absent[string](), 0x101,
+		observability.Present(uint32(0)), rig.provider,
+	)
+	zeroCanonical, ok := newV8CanonicalEndedSpan(zeroRecord)
+	if !ok || zeroCanonical.ResourceDroppedAttributesCount() != 0 {
+		t.Fatalf("explicit-zero canonical resource count = %d/%t", zeroCanonical.ResourceDroppedAttributesCount(), ok)
+	}
+	if got := rig.provider.EndV8CanonicalSpan(zeroSpan, zeroRecord); got != V8CanonicalSpanRegistered {
+		t.Fatalf("explicit-zero handoff = %s", got)
+	}
+	if delivered := consumer.snapshot(); len(delivered) != 1 || delivered[0].ResourceDroppedAttributesCount() != 0 {
+		t.Fatalf("explicit-zero fanout = %+v", delivered)
+	}
+
+	nonzeroSpan, _ := v8StartHandoffSpan(t, rig, end, end.Add(time.Millisecond), nil)
+	nonzeroRecord := v8HandoffRecordWithResourceDroppedCount(
+		t, nonzeroSpan.SpanContext().TraceID(), nonzeroSpan.SpanContext().SpanID(), end, end.Add(time.Millisecond),
+		rig.provider.v8.planDigest, "", observability.Absent[string](), 0x101,
+		observability.Present(uint32(7)), rig.provider,
+	)
+	nonzeroCanonical, ok := newV8CanonicalEndedSpan(nonzeroRecord)
+	if !ok || nonzeroCanonical.ResourceDroppedAttributesCount() != 7 {
+		t.Fatalf("inbound canonical resource count = %d/%t, want 7/true", nonzeroCanonical.ResourceDroppedAttributesCount(), ok)
+	}
+	if got := rig.provider.EndV8CanonicalSpan(nonzeroSpan, nonzeroRecord); got != V8CanonicalSpanInvalidRecord {
+		t.Fatalf("nonzero SDK handoff = %s, want %s", got, V8CanonicalSpanInvalidRecord)
+	}
+	if len(consumer.snapshot()) != 1 || len(rig.composite.handoff.pending) != 0 {
+		t.Fatalf("nonzero resource count reached fanout or leaked handoff: delivered=%d pending=%d", len(consumer.snapshot()), len(rig.composite.handoff.pending))
+	}
 }
 
 func mustV8CanonicalEndedSpan(t *testing.T, record observability.Record) V8CanonicalEndedSpan {
@@ -905,7 +1077,7 @@ func TestV8ProviderRejectsTestProcessorFactoryCombinedWithNamedPipelines(t *test
 	}
 }
 
-func TestV8ProviderRequiresHonestVersionAndEnvironmentOnlyWhenTracesCollected(t *testing.T) {
+func TestV8ProviderRequiresHonestVersionAndEnvironmentForEverySignal(t *testing.T) {
 	plan := v8PlanForTest(t, "always_on", "", nil)
 	for _, options := range []V8ProviderOptions{{Environment: "test"}, {Version: "8.0.0"}} {
 		provider, err := NewProviderV8Inactive(context.Background(), plan, 1, options)
@@ -930,10 +1102,9 @@ func TestV8ProviderRequiresHonestVersionAndEnvironmentOnlyWhenTracesCollected(t 
 		source.Defaults.Collect.Traces = &no
 	})
 	provider, err = NewProviderV8Inactive(context.Background(), metricsOnly, 1, V8ProviderOptions{})
-	if err != nil {
-		t.Fatalf("metrics-only provider rejected optional trace identity: %v", err)
+	if provider != nil || err == nil {
+		t.Fatalf("metrics-only provider accepted missing required resource identity: %v/%v", provider, err)
 	}
-	_ = provider.Shutdown(context.Background())
 }
 
 func TestV8CanonicalStatusParity(t *testing.T) {

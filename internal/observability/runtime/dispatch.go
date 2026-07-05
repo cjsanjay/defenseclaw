@@ -21,6 +21,7 @@ import (
 	"github.com/defenseclaw/defenseclaw/internal/observability/delivery"
 	"github.com/defenseclaw/defenseclaw/internal/observability/pipeline"
 	"github.com/defenseclaw/defenseclaw/internal/observability/runtimegraph"
+	"github.com/defenseclaw/defenseclaw/internal/telemetry"
 )
 
 // DestinationDispatchComponentName is the generation-owned optional-log
@@ -42,20 +43,24 @@ const (
 type DestinationAdapterCleanup func(context.Context) error
 
 // DestinationAdapterFactory is process-stable. PrepareDestination receives an
-// unmasked, detached runtime destination and must finish all fallible adapter
-// initialization before returning. It must not retain or mutate the supplied
-// value. Concrete transport implementations are deliberately outside the
-// common dispatch runtime.
+// unmasked, detached runtime destination and the exact resource snapshot
+// resolved by the plan generation's TelemetryProviderFactory. The resource is
+// required for OTLP logs and is the zero value for other destination kinds.
+// Preparation must finish all fallible adapter initialization before returning
+// and must not retain or mutate supplied values. Concrete transports remain
+// outside the common dispatch runtime.
 type DestinationAdapterFactory interface {
 	PrepareDestination(
 		context.Context,
 		config.ObservabilityV8EffectiveDestination,
+		telemetry.V8ResourceContext,
 	) (delivery.Adapter, DestinationAdapterCleanup, error)
 }
 
 type destinationDispatchFactory struct {
-	adapters DestinationAdapterFactory
-	observer *safeDeliveryObserver
+	adapters  DestinationAdapterFactory
+	resources *telemetry.V8ProviderFactory
+	observer  *safeDeliveryObserver
 }
 
 func (*destinationDispatchFactory) Name() string { return DestinationDispatchComponentName }
@@ -77,6 +82,8 @@ func (factory *destinationDispatchFactory) Prepare(
 		byName:   make(map[string]*destinationDispatcher),
 		observer: factory.observer,
 	}
+	var resourceContext telemetry.V8ResourceContext
+	resourceReady := false
 	for _, displayed := range input.Config.Plan.Destinations() {
 		if displayed.Kind == config.ObservabilityV8DestinationLocalSQLite ||
 			!displayed.Enabled || !destinationSelectsLogs(displayed) {
@@ -90,7 +97,18 @@ func (factory *destinationDispatchFactory) Prepare(
 			!destination.Enabled || !destinationSelectsLogs(destination) {
 			return nil, &destinationDispatchError{}
 		}
-		adapter, cleanup, err := factory.adapters.PrepareDestination(ctx, destination)
+		if destination.Kind == config.ObservabilityV8DestinationOTLP && !resourceReady {
+			if factory.resources == nil {
+				return nil, &destinationDispatchError{}
+			}
+			var err error
+			resourceContext, err = factory.resources.ResourceContext(input.Config.Plan)
+			if err != nil {
+				return nil, &destinationDispatchError{}
+			}
+			resourceReady = true
+		}
+		adapter, cleanup, err := factory.adapters.PrepareDestination(ctx, destination, resourceContext)
 		if cleanup == nil {
 			return nil, &destinationDispatchError{}
 		}

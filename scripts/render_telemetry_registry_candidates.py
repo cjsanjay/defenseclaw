@@ -368,6 +368,10 @@ _GO_SYMBOL_KIND_ORDER: Final = (
     "structured_arm",
     "structured_member_input",
     "structured_member_constructor",
+    "resource_attributes_type",
+    "resource_attributes_constructor",
+    "resource_attributes_attach",
+    "resource_attributes_validator",
     "family_input",
     "family_builder",
     "span_event_input",
@@ -392,6 +396,10 @@ _GO_SYMBOL_KIND_COUNTS: Final = {
     "structured_arm": 17,
     "structured_member_input": 17,
     "structured_member_constructor": 17,
+    "resource_attributes_type": 1,
+    "resource_attributes_constructor": 1,
+    "resource_attributes_attach": 1,
+    "resource_attributes_validator": 1,
     "family_input": 243,
     "family_builder": 243,
     "span_event_input": 61,
@@ -401,11 +409,11 @@ _GO_SYMBOL_KIND_COUNTS: Final = {
 }
 _GO_SYMBOL_DECLARATION_COUNTS: Final = {
     "exported_const": 901,
-    "exported_type": 459,
-    "exported_function": 178,
+    "exported_type": 460,
+    "exported_function": 181,
     "family_builder_method": 243,
 }
-_GO_SYMBOL_DOMAIN_COUNTS: Final = {"ids": 901, "genai": 282, "security": 212, "operations": 386}
+_GO_SYMBOL_DOMAIN_COUNTS: Final = {"ids": 901, "genai": 282, "security": 212, "operations": 390}
 _GO_SYMBOL_DECLARATION_BY_KIND: Final = {
     "attribute": "exported_const",
     "family": "exported_const",
@@ -423,6 +431,10 @@ _GO_SYMBOL_DECLARATION_BY_KIND: Final = {
     "structured_arm": "exported_type",
     "structured_member_input": "exported_type",
     "structured_member_constructor": "exported_function",
+    "resource_attributes_type": "exported_type",
+    "resource_attributes_constructor": "exported_function",
+    "resource_attributes_attach": "exported_function",
+    "resource_attributes_validator": "exported_function",
     "family_input": "exported_type",
     "family_builder": "family_builder_method",
     "span_event_input": "exported_type",
@@ -430,9 +442,9 @@ _GO_SYMBOL_DECLARATION_BY_KIND: Final = {
     "span_link_input": "exported_type",
     "span_link_constructor": "exported_function",
 }
-_GO_SYMBOL_ROW_COUNT: Final = 1781
+_GO_SYMBOL_ROW_COUNT: Final = 1785
 _GO_SYMBOL_TABLE_DIGEST_DOMAIN: Final = b"DefenseClaw GoSymbolTableIR v1\x00"
-_GO_SYMBOL_TABLE_SHA256: Final = "4a8563120e248a344683b87999620dac744bbda4b9794214d15197d0abde2f54"
+_GO_SYMBOL_TABLE_SHA256: Final = "31a90343cae2631aa76808bd6337d48af59ef09481fbc9c396a3c0d7b3790d4a"
 
 
 def _normalized_candidate_path(raw: str) -> str:
@@ -647,6 +659,32 @@ _GO_SYMBOL_FIELDS: Final = frozenset({"kind", "source_id", "symbol", "declaratio
 _GO_SYMBOL_TABLE_FIELDS: Final = frozenset(
     {"version", "package", "rows", "kind_counts", "declaration_form_counts", "table_sha256"}
 )
+_RESOURCE_DYNAMIC_MEMBERS_FIELDS: Final = frozenset(
+    {
+        "ordering",
+        "field_class",
+        "sensitivity",
+        "cardinality",
+        "stability_scope",
+        "value_utf8_policy",
+        "value_blank_policy",
+        "value_control_character_policy",
+        "prometheus_key_normalization",
+        "prometheus_normalized_collision_policy",
+        "key_pattern",
+        "max_items",
+        "max_key_ascii_bytes",
+        "min_value_utf8_bytes",
+        "max_value_utf8_bytes",
+        "max_aggregate_utf8_bytes",
+        "duplicate_key_policy",
+        "fixed_key_collision_policy",
+        "forbidden_key_segments",
+        "reserved_keys",
+        "forbidden_value_classes",
+    }
+)
+_RESOURCE_COMPATIBILITY_ALIAS_FIELDS: Final = frozenset({"alias", "canonical"})
 _GROUP_FIELDS: Final = frozenset(
     {
         "id",
@@ -680,6 +718,8 @@ _GROUP_FIELDS: Final = frozenset(
         "mandatory_floor",
         "route_selector",
         "compatibility_profiles",
+        "resource_dynamic_members",
+        "resource_compatibility_aliases",
         "legacy_bindings",
         "introduced_in",
         "deprecated_in",
@@ -2604,6 +2644,7 @@ class _ProvisionalCandidateEnrichment:
     go_symbol_policy: CandidateGoSymbolPolicy
     go_symbol_table: CandidateGoSymbolTable
     structured_types: Mapping[str, Mapping[str, FrozenJSON]]
+    groups: Mapping[str, Mapping[str, FrozenJSON]]
     examples: tuple[Mapping[str, FrozenJSON], ...]
     enriched_fields: Mapping[str, EnrichedFieldDescriptor]
     enriched_containers: Mapping[str, EnrichedContainerDescriptor]
@@ -2763,6 +2804,10 @@ def _validate_go_symbol_sources(
     """Reconcile compiler-owned symbol sources without deriving public names."""
 
     expected: dict[str, set[str]] = {kind: set() for kind in _GO_SYMBOL_KIND_ORDER}
+    expected["resource_attributes_type"].add("resource.core")
+    expected["resource_attributes_constructor"].add("resource.core")
+    expected["resource_attributes_attach"].add("resource.core")
+    expected["resource_attributes_validator"].add("resource.core")
 
     expected["attribute"].update(attributes)
     for family in families:
@@ -2917,6 +2962,9 @@ def _validate_go_symbol_sources(
             continue
         if row.kind.startswith("structured_"):
             domain_counts["genai"] += 1
+            continue
+        if row.kind.startswith("resource_attributes_"):
+            domain_counts["operations"] += 1
             continue
         family_id = row.source_id.split("#", 1)[0]
         domain = family_domains.get(family_id)
@@ -5248,6 +5296,78 @@ def build_candidate_render_index(view: object) -> CandidateRenderIndex:
                 _validated_constraint_map(direct_use["constraints"], "direct-use constraints")
             if group["attribute_refs"] != tuple(direct_refs):
                 raise CandidateRenderError("materialized direct attribute refs disagree")
+            dynamic = group["resource_dynamic_members"]
+            aliases = group["resource_compatibility_aliases"]
+            if group_id == "resource.core":
+                if dynamic is None and aliases is None:
+                    groups[group_id] = group
+                    continue
+                dynamic = _tagged(dynamic, "ResourceDynamicMembersIR", _RESOURCE_DYNAMIC_MEMBERS_FIELDS)
+                expected_dynamic = {
+                    "ordering": "bytewise_key_ascending",
+                    "field_class": "metadata",
+                    "sensitivity": "internal",
+                    "cardinality": "bounded",
+                    "stability_scope": "process",
+                    "value_utf8_policy": "require_valid",
+                    "value_blank_policy": "reject_trimmed_empty",
+                    "value_control_character_policy": "reject",
+                    "prometheus_key_normalization": "dot_dash_to_underscore",
+                    "prometheus_normalized_collision_policy": "reject",
+                    "key_pattern": r"^[A-Za-z][A-Za-z0-9_.-]{0,127}$",
+                    "max_items": 64,
+                    "max_key_ascii_bytes": 128,
+                    "min_value_utf8_bytes": 1,
+                    "max_value_utf8_bytes": 1024,
+                    "max_aggregate_utf8_bytes": 16384,
+                    "duplicate_key_policy": "reject",
+                    "fixed_key_collision_policy": "reject",
+                    "forbidden_key_segments": (
+                        "authorization",
+                        "credential",
+                        "credentials",
+                        "password",
+                        "passwd",
+                        "secret",
+                        "token",
+                        "apikey",
+                        "cookie",
+                        "cwd",
+                        "dir",
+                        "directory",
+                        "file",
+                        "filepath",
+                        "home",
+                        "path",
+                        "workdir",
+                    ),
+                    "reserved_keys": (
+                        "defenseclaw.claw.home_dir",
+                        "defenseclaw.gateway.host",
+                        "defenseclaw.gateway.port",
+                        "defenseclaw.preset",
+                        "defenseclaw.preset_name",
+                        "discovery.source",
+                        "telemetry.sdk.language",
+                        "telemetry.sdk.name",
+                        "telemetry.sdk.version",
+                    ),
+                    "forbidden_value_classes": ("filesystem_path", "credential_material"),
+                }
+                if dict(dynamic) != expected_dynamic or not isinstance(aliases, tuple):
+                    raise CandidateRenderError("materialized resource dynamic-member contract is invalid")
+                alias_rows = tuple(
+                    _tagged(item, "ResourceCompatibilityAliasIR", _RESOURCE_COMPATIBILITY_ALIAS_FIELDS)
+                    for item in aliases
+                )
+                if tuple((row["alias"], row["canonical"]) for row in alias_rows) != (
+                    ("deployment.environment", "deployment.environment.name"),
+                    ("deployment.mode", "defenseclaw.deployment.mode"),
+                    ("defenseclaw.device.id", "defenseclaw.device.public_key_fingerprint"),
+                ):
+                    raise CandidateRenderError("materialized resource compatibility aliases are invalid")
+            elif dynamic is not None or aliases is not None:
+                raise CandidateRenderError("resource dynamic-member ownership escaped resource.core")
             groups[group_id] = group
             group_type = group["type"]
             if group_type in {"log", "span", "metric"}:
@@ -5573,6 +5693,7 @@ def build_candidate_render_index(view: object) -> CandidateRenderIndex:
         go_symbol_policy=go_symbol_policy,
         go_symbol_table=go_symbol_table,
         structured_types=frozen_structured_types,
+        groups=MappingProxyType({key: _freeze(_plain_ir(groups[key])) for key in sorted(groups)}),
         examples=frozen_examples,
         enriched_fields=enriched_fields,
         enriched_containers=enriched_containers,
@@ -5752,6 +5873,87 @@ def _uses_schema(
     return result
 
 
+def _resource_uses_schema(model: CandidateRenderIndex, group: Mapping[str, FrozenJSON]) -> JSONObject:
+    result = _uses_schema(model, group["resolved_uses"])
+    dynamic = group["resource_dynamic_members"]
+    raw_aliases = group["resource_compatibility_aliases"]
+    if dynamic is None and raw_aliases is None:
+        return result
+    if not isinstance(dynamic, Mapping) or set(dynamic) != _RESOURCE_DYNAMIC_MEMBERS_FIELDS:
+        raise CandidateRenderError("candidate resource dynamic-member contract is malformed")
+    if not isinstance(raw_aliases, tuple) or any(
+        not isinstance(item, Mapping) or set(item) != _RESOURCE_COMPATIBILITY_ALIAS_FIELDS
+        for item in raw_aliases
+    ):
+        raise CandidateRenderError("candidate resource alias contract is malformed")
+    aliases = tuple(raw_aliases)
+    properties = result["properties"]
+    for alias in aliases:
+        canonical = _string(alias["canonical"], "resource alias canonical")
+        alias_name = _string(alias["alias"], "resource alias name")
+        schema = _attribute_schema(model.attributes[canonical])
+        schema["x-defenseclaw-compatibility-alias-of"] = canonical
+        schema["x-defenseclaw-requirement-level"] = "optional"
+        properties[alias_name] = schema
+
+    exact_excluded = tuple(properties) + tuple(dynamic["reserved_keys"])
+    normalized_excluded = tuple(
+        item.replace(".", "_").replace("-", "_") for item in exact_excluded
+    )
+    excluded = exact_excluded + normalized_excluded
+    if len(excluded) != len(set(excluded)):
+        raise CandidateRenderError("resource dynamic schema exclusion inventory contains duplicates")
+    negative = "|".join(re.escape(item) for item in sorted(set(excluded), key=str.encode))
+    segments = "|".join(re.escape(item) for item in dynamic["forbidden_key_segments"])
+    authored = _string(dynamic["key_pattern"], "resource custom key pattern")
+    if not authored.startswith("^") or not authored.endswith("$"):
+        raise CandidateRenderError("resource custom key pattern must be anchored")
+    custom_pattern = (
+        f"^(?!(?:{negative})$)"
+        f"(?!(?:.*[._-])?(?:{segments})(?:[._-].*)?$)"
+        f"(?!(?:.*[._-])?api[._-]key(?:[._-].*)?$)"
+        f"{authored[1:]}"
+    )
+    custom_value: JSONObject = {
+        "type": "string",
+        "minLength": dynamic["min_value_utf8_bytes"],
+        "maxLength": dynamic["max_value_utf8_bytes"],
+        "x-defenseclaw-max-utf8-bytes": dynamic["max_value_utf8_bytes"],
+        "x-defenseclaw-field-class": dynamic["field_class"],
+        "x-defenseclaw-sensitivity": dynamic["sensitivity"],
+        "x-defenseclaw-cardinality": dynamic["cardinality"],
+        "x-defenseclaw-stability-scope": dynamic["stability_scope"],
+        "x-defenseclaw-value-utf8-policy": dynamic["value_utf8_policy"],
+        "x-defenseclaw-value-blank-policy": dynamic["value_blank_policy"],
+        "x-defenseclaw-value-control-character-policy": dynamic["value_control_character_policy"],
+        "pattern": r"^(?=.*\S)[^\u0000-\u001f\u007f-\u009f]+$",
+    }
+    result.update(
+        {
+            "additionalProperties": False,
+            "patternProperties": {custom_pattern: custom_value},
+            "propertyNames": {"pattern": authored},
+            "maxProperties": len(properties) + dynamic["max_items"],
+            "x-defenseclaw-dynamic-member-contract": {
+                "owner": "resource.core",
+                "max_items": dynamic["max_items"],
+                "max_aggregate_utf8_bytes": dynamic["max_aggregate_utf8_bytes"],
+                "ordering": dynamic["ordering"],
+                "duplicate_key_policy": dynamic["duplicate_key_policy"],
+                "fixed_key_collision_policy": dynamic["fixed_key_collision_policy"],
+                "prometheus_key_normalization": dynamic["prometheus_key_normalization"],
+                "prometheus_normalized_collision_policy": dynamic[
+                    "prometheus_normalized_collision_policy"
+                ],
+                "reserved_keys": list(dynamic["reserved_keys"]),
+                "forbidden_key_segments": list(dynamic["forbidden_key_segments"]),
+                "forbidden_value_classes": list(dynamic["forbidden_value_classes"]),
+            },
+        }
+    )
+    return result
+
+
 def _object_schema(
     model: CandidateRenderIndex, raw_object: FrozenJSON, definition_names: Mapping[str, str]
 ) -> JSONObject:
@@ -5883,7 +6085,7 @@ def _family_definition(
         body_properties["resource"] = {
             "allOf": [
                 {"$ref": f"#/$defs/{trace_defs['trace_resource']}"},
-                {"properties": {"attributes": _uses_schema(model, resource_group["resolved_uses"])}},
+                {"properties": {"attributes": _resource_uses_schema(model, resource_group)}},
             ]
         }
         body_properties["scope"] = {
@@ -6159,6 +6361,7 @@ def _family_catalog_entry(model: CandidateRenderIndex, family: Mapping[str, Froz
 
 def _render_catalog(model: CandidateRenderIndex, marker: JSONObject) -> JSONObject:
     contract = _tagged(model.fields["structural_contract"], "StructuralContractIR")
+    resource_group = model.groups["resource.core"]
     return {
         "x-defenseclaw-generated": marker,
         "format": "defenseclaw-telemetry-catalog-v1",
@@ -6200,6 +6403,12 @@ def _render_catalog(model: CandidateRenderIndex, marker: JSONObject) -> JSONObje
         "structured_types": [_plain(model.structured_types[key]) for key in model.structured_types],
         "structured_bindings": [_plain(model.structured_bindings[key]) for key in model.structured_bindings],
         "structured_property_dispositions": _plain(model.structured_property_dispositions),
+        "resource_attributes": {
+            "owner": "resource.core",
+            "fixed_keys": list(resource_group["attribute_refs"]),
+            "dynamic_members": _plain(resource_group["resource_dynamic_members"]),
+            "compatibility_aliases": _plain(resource_group["resource_compatibility_aliases"]),
+        },
         "value_catalogs": [
             _plain_ir(_tagged(item, "ValueCatalogIR", _VALUE_CATALOG_FIELDS)) for item in model.fields["value_catalogs"]
         ],

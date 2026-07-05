@@ -112,7 +112,10 @@ func CompileObservabilityV8(source *ObservabilityV8Source) (*ObservabilityV8Plan
 	if err != nil {
 		return nil, err
 	}
-	resourceAttributeMap, resourceAttributes, err := compileObservabilityV8ResourceAttributes(source.Resource.Attributes)
+	resourceAttributeMap, resourceAttributes, err := compileObservabilityV8ResourceAttributes(
+		source.Resource.Attributes,
+		tracePolicy.CompatibilityAliases,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -1286,9 +1289,10 @@ func validateObservabilityV8Headers(source map[string]ObservabilityV8HeaderValue
 
 func compileObservabilityV8ResourceAttributes(
 	attributes map[string]string,
-) (map[string]string, []ObservabilityV8EffectiveResourceAttribute, error) {
+	compatibilityAliases bool,
+) (map[string]string, observability.TelemetryCustomResourceAttributes, error) {
 	if len(attributes) > ObservabilityV8MaxResourceAttributes {
-		return nil, nil, fmt.Errorf(
+		return nil, observability.TelemetryCustomResourceAttributes{}, fmt.Errorf(
 			"observability.resource.attributes: got %d entries, maximum is %d",
 			len(attributes),
 			ObservabilityV8MaxResourceAttributes,
@@ -1298,84 +1302,94 @@ func compileObservabilityV8ResourceAttributes(
 	normalizedNames := make(map[string]string, len(attributes))
 	for name := range attributes {
 		if !utf8.ValidString(name) {
-			return nil, nil, fmt.Errorf("observability.resource.attributes: attribute names must be valid UTF-8")
+			return nil, observability.TelemetryCustomResourceAttributes{}, fmt.Errorf("observability.resource.attributes: attribute names must be valid UTF-8")
 		}
 		normalized := norm.NFC.String(name)
 		if first, exists := normalizedNames[normalized]; exists && first != name {
-			return nil, nil, fmt.Errorf("observability.resource.attributes: attribute names collide after NFC normalization")
+			return nil, observability.TelemetryCustomResourceAttributes{}, fmt.Errorf("observability.resource.attributes: attribute names collide after NFC normalization")
 		}
 		normalizedNames[normalized] = name
 		names = append(names, name)
 	}
 	sort.Strings(names)
 	if err := validateObservabilityV8ResourceAliasConflicts(attributes); err != nil {
-		return nil, nil, err
+		return nil, observability.TelemetryCustomResourceAttributes{}, err
 	}
 	var normalizedAttributes map[string]string
-	var custom []ObservabilityV8EffectiveResourceAttribute
+	var custom map[string]string
 	if len(names) > 0 {
 		normalizedAttributes = make(map[string]string, len(attributes))
-		custom = make([]ObservabilityV8EffectiveResourceAttribute, 0, len(names))
+		custom = make(map[string]string, len(names))
 	}
 	totalBytes := 0
 	for _, name := range names {
 		value := attributes[name]
 		if !utf8.ValidString(name) || len(name) > ObservabilityV8MaxResourceKeyBytes ||
 			!observabilityV8ResourceKeyPattern.MatchString(name) {
-			return nil, nil, fmt.Errorf(
+			return nil, observability.TelemetryCustomResourceAttributes{}, fmt.Errorf(
 				"observability.resource.attributes: attribute names must match %s and contain at most %d ASCII bytes",
 				observabilityV8ResourceKeyPattern,
 				ObservabilityV8MaxResourceKeyBytes,
 			)
 		}
 		if !utf8.ValidString(value) {
-			return nil, nil, fmt.Errorf("observability.resource.attributes.%s: value must be valid UTF-8", name)
+			return nil, observability.TelemetryCustomResourceAttributes{}, fmt.Errorf("observability.resource.attributes.%s: value must be valid UTF-8", name)
 		}
 		if len(value) == 0 || len(value) > ObservabilityV8MaxResourceValueBytes {
-			return nil, nil, fmt.Errorf(
+			return nil, observability.TelemetryCustomResourceAttributes{}, fmt.Errorf(
 				"observability.resource.attributes.%s: value must contain 1 through %d UTF-8 bytes",
 				name,
 				ObservabilityV8MaxResourceValueBytes,
 			)
 		}
 		if strings.TrimSpace(value) == "" {
-			return nil, nil, fmt.Errorf("observability.resource.attributes.%s: value must not be blank", name)
+			return nil, observability.TelemetryCustomResourceAttributes{}, fmt.Errorf("observability.resource.attributes.%s: value must not be blank", name)
 		}
 		if strings.IndexFunc(value, unicode.IsControl) >= 0 {
-			return nil, nil, fmt.Errorf("observability.resource.attributes.%s: value must not contain control characters", name)
+			return nil, observability.TelemetryCustomResourceAttributes{}, fmt.Errorf("observability.resource.attributes.%s: value must not contain control characters", name)
 		}
 		if observabilityV8SecretBearingResourceKey(name) {
-			return nil, nil, fmt.Errorf("observability.resource.attributes.%s: secret-bearing resource attributes are prohibited", name)
+			return nil, observability.TelemetryCustomResourceAttributes{}, fmt.Errorf("observability.resource.attributes.%s: secret-bearing resource attributes are prohibited", name)
 		}
 		if observabilityV8PathBearingResourceKey(name) || observabilityV8LooksFilesystemPathResourceValue(value) {
-			return nil, nil, fmt.Errorf("observability.resource.attributes.%s: filesystem and home-directory paths are prohibited", name)
+			return nil, observability.TelemetryCustomResourceAttributes{}, fmt.Errorf("observability.resource.attributes.%s: filesystem and home-directory paths are prohibited", name)
 		}
 		if observabilityV8LooksSecretResourceValue(value) {
-			return nil, nil, fmt.Errorf("observability.resource.attributes.%s: value resembles credential material and is prohibited", name)
+			return nil, observability.TelemetryCustomResourceAttributes{}, fmt.Errorf("observability.resource.attributes.%s: value resembles credential material and is prohibited", name)
 		}
 		canonicalName := name
 		if name == "deployment.environment" {
 			canonicalName = "deployment.environment.name"
 		}
 		if observabilityV8ReservedResourceKey(name) && !observabilityV8ConfigurableCoreResourceKey(name) {
-			return nil, nil, fmt.Errorf(
+			return nil, observability.TelemetryCustomResourceAttributes{}, fmt.Errorf(
 				"observability.resource.attributes.%s: registered, process-owned, and compatibility-alias keys cannot be configured as custom attributes",
 				name,
 			)
 		}
 		totalBytes += len(name) + len(value)
 		if totalBytes > ObservabilityV8MaxResourceTotalBytes {
-			return nil, nil, fmt.Errorf(
+			return nil, observability.TelemetryCustomResourceAttributes{}, fmt.Errorf(
 				"observability.resource.attributes: aggregate key and value data exceeds %d UTF-8 bytes",
 				ObservabilityV8MaxResourceTotalBytes,
 			)
 		}
 		normalizedAttributes[canonicalName] = value
 		if !observabilityV8ConfigurableCoreResourceKey(name) {
-			custom = append(custom, ObservabilityV8EffectiveResourceAttribute{Key: name, Value: value})
+			custom[name] = value
 		}
 	}
-	return normalizedAttributes, custom, nil
+	sealed, err := observability.NewTelemetryCustomResourceAttributes(custom, compatibilityAliases)
+	if err != nil {
+		// The generated registry owns the runtime contract. Config keeps its
+		// actionable path-specific checks above, and treats any disagreement as a
+		// closed validation failure rather than admitting an unbuildable plan.
+		return nil, observability.TelemetryCustomResourceAttributes{}, fmt.Errorf(
+			"observability.resource.attributes: attributes violate the generated telemetry resource contract: %w",
+			err,
+		)
+	}
+	return normalizedAttributes, sealed, nil
 }
 
 func validateObservabilityV8ResourceAliasConflicts(attributes map[string]string) error {

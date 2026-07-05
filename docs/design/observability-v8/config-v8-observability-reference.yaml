@@ -42,16 +42,12 @@ observability:
   # Optional in source. Version 8 currently resolves catalog 1; pin it only
   # when deliberately binding the file to this reviewed bucket taxonomy.
   bucket_catalog_version: 1
-  # Custom OpenTelemetry resource attributes shared by emitted signals. Keep
-  # values bounded and non-secret; process-owned identity and compatibility
-  # aliases are derived by DefenseClaw and credentials belong in environment
-  # references.
+  # OpenTelemetry resource attributes shared by emitted signals. Keep values
+  # bounded and non-secret; credentials belong in environment references.
   resource:
     attributes:
       service.name: defenseclaw-gateway
-      deployment.environment.name: production
-      organization.unit: security
-      deployment.region: us-east-1
+      deployment.environment: production
   # Process-wide trace sampling, semantic-convention profile, compatibility
   # aliases, and hard payload limits. Bucket collection runs before sampling.
   trace_policy:

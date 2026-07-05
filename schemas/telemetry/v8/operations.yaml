@@ -1916,6 +1916,63 @@ groups:
     requirement_level: recommended
   body_fields: []
   x-defenseclaw:
+    custom_resource_attributes:
+      ordering: bytewise_key_ascending
+      field_class: metadata
+      sensitivity: internal
+      cardinality: bounded
+      stability_scope: process
+      value_utf8_policy: require_valid
+      value_blank_policy: reject_trimmed_empty
+      value_control_character_policy: reject
+      prometheus_key_normalization: dot_dash_to_underscore
+      prometheus_normalized_collision_policy: reject
+      key_pattern: ^[A-Za-z][A-Za-z0-9_.-]{0,127}$
+      max_items: 64
+      max_key_ascii_bytes: 128
+      min_value_utf8_bytes: 1
+      max_value_utf8_bytes: 1024
+      max_aggregate_utf8_bytes: 16384
+      duplicate_key_policy: reject
+      fixed_key_collision_policy: reject
+      forbidden_key_segments:
+      - authorization
+      - credential
+      - credentials
+      - password
+      - passwd
+      - secret
+      - token
+      - apikey
+      - cookie
+      - cwd
+      - dir
+      - directory
+      - file
+      - filepath
+      - home
+      - path
+      - workdir
+      reserved_keys:
+      - defenseclaw.claw.home_dir
+      - defenseclaw.gateway.host
+      - defenseclaw.gateway.port
+      - defenseclaw.preset
+      - defenseclaw.preset_name
+      - discovery.source
+      - telemetry.sdk.language
+      - telemetry.sdk.name
+      - telemetry.sdk.version
+      forbidden_value_classes:
+      - filesystem_path
+      - credential_material
+    compatibility_aliases:
+    - alias: deployment.environment
+      canonical: deployment.environment.name
+    - alias: deployment.mode
+      canonical: defenseclaw.deployment.mode
+    - alias: defenseclaw.device.id
+      canonical: defenseclaw.device.public_key_fingerprint
     legacy_bindings:
     - source: schemas/otel/resource.schema.json
       disposition: preserved

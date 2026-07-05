@@ -23,6 +23,8 @@ import re
 import stat
 import string
 import sys
+import unicodedata
+import urllib.parse
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, is_dataclass, replace
 from dataclasses import fields as dataclass_fields
@@ -325,6 +327,10 @@ GO_SYMBOL_KIND_ORDER: Final = (
     "structured_arm",
     "structured_member_input",
     "structured_member_constructor",
+    "resource_attributes_type",
+    "resource_attributes_constructor",
+    "resource_attributes_attach",
+    "resource_attributes_validator",
     "family_input",
     "family_builder",
     "span_event_input",
@@ -349,6 +355,10 @@ EXPECTED_GO_SYMBOL_KIND_COUNTS: Final = {
     "structured_arm": 17,
     "structured_member_input": 17,
     "structured_member_constructor": 17,
+    "resource_attributes_type": 1,
+    "resource_attributes_constructor": 1,
+    "resource_attributes_attach": 1,
+    "resource_attributes_validator": 1,
     "family_input": 243,
     "family_builder": 243,
     "span_event_input": 61,
@@ -358,15 +368,15 @@ EXPECTED_GO_SYMBOL_KIND_COUNTS: Final = {
 }
 EXPECTED_GO_SYMBOL_DECLARATION_COUNTS: Final = {
     "exported_const": 901,
-    "exported_type": 459,
-    "exported_function": 178,
+    "exported_type": 460,
+    "exported_function": 181,
     "family_builder_method": 243,
 }
-EXPECTED_GO_SYMBOL_COUNT: Final = 1781
-EXPECTED_GO_SYMBOL_TABLE_SHA256: Final = "4a8563120e248a344683b87999620dac744bbda4b9794214d15197d0abde2f54"
+EXPECTED_GO_SYMBOL_COUNT: Final = 1785
+EXPECTED_GO_SYMBOL_TABLE_SHA256: Final = "31a90343cae2631aa76808bd6337d48af59ef09481fbc9c396a3c0d7b3790d4a"
 GO_SYMBOL_TABLE_BASELINES: Final = Path("schemas/telemetry/v8/baselines/go-symbol-table")
 GO_SYMBOL_TABLE_BASELINE_FORMAT: Final = "defenseclaw-go-symbol-table-baseline-v1"
-EXPECTED_GO_SYMBOL_TABLE_BASELINE_SHA256: Final = "1f01353b8adf5021e42fef2675e0d3b690f2bcde2af9d22558d66f62c841e9e7"
+EXPECTED_GO_SYMBOL_TABLE_BASELINE_SHA256: Final = "511bc88b89217ced2c8a1349c9cd05a66f77cf41a67c9d0a622814243e16d4e8"
 _GO_IDENTIFIER = re.compile(r"^[A-Za-z][A-Za-z0-9]*$")
 _GO_SOURCE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:/#-]{0,511}$")
 _GO_SOURCE_ID_PART = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,255}$")
@@ -2001,6 +2011,37 @@ class SpanNamePartIR:
 
 
 @dataclass(frozen=True, slots=True)
+class ResourceDynamicMembersIR:
+    ordering: str
+    field_class: str
+    sensitivity: str
+    cardinality: str
+    stability_scope: str
+    value_utf8_policy: str
+    value_blank_policy: str
+    value_control_character_policy: str
+    prometheus_key_normalization: str
+    prometheus_normalized_collision_policy: str
+    key_pattern: str
+    max_items: int
+    max_key_ascii_bytes: int
+    min_value_utf8_bytes: int
+    max_value_utf8_bytes: int
+    max_aggregate_utf8_bytes: int
+    duplicate_key_policy: str
+    fixed_key_collision_policy: str
+    forbidden_key_segments: tuple[str, ...]
+    reserved_keys: tuple[str, ...]
+    forbidden_value_classes: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class ResourceCompatibilityAliasIR:
+    alias: str
+    canonical: str
+
+
+@dataclass(frozen=True, slots=True)
 class GroupIR:
     id: str
     type: str
@@ -2033,6 +2074,8 @@ class GroupIR:
     mandatory_floor: tuple[str, ...] | None
     route_selector: bool | None
     compatibility_profiles: tuple[str, ...] | None
+    resource_dynamic_members: ResourceDynamicMembersIR | None
+    resource_compatibility_aliases: tuple[ResourceCompatibilityAliasIR, ...] | None
     legacy_bindings: tuple[LegacyBindingIR, ...] | None
     introduced_in: str | None
     deprecated_in: str | None
@@ -6028,6 +6071,147 @@ def _parse_metric_projections(value: Any, path: str) -> tuple[MetricProjectionIR
     return tuple(projections)
 
 
+def _parse_resource_dynamic_members(value: Any, path: str) -> ResourceDynamicMembersIR:
+    if not isinstance(value, dict):
+        raise RegistryError(f"{path}: expected mapping")
+    fields = {
+        "ordering",
+        "field_class",
+        "sensitivity",
+        "cardinality",
+        "stability_scope",
+        "value_utf8_policy",
+        "value_blank_policy",
+        "value_control_character_policy",
+        "prometheus_key_normalization",
+        "prometheus_normalized_collision_policy",
+        "key_pattern",
+        "max_items",
+        "max_key_ascii_bytes",
+        "min_value_utf8_bytes",
+        "max_value_utf8_bytes",
+        "max_aggregate_utf8_bytes",
+        "duplicate_key_policy",
+        "fixed_key_collision_policy",
+        "forbidden_key_segments",
+        "reserved_keys",
+        "forbidden_value_classes",
+    }
+    _exact_keys(value, fields, set(), path)
+    parsed = ResourceDynamicMembersIR(
+        _string(value["ordering"], f"{path}.ordering"),
+        _string(value["field_class"], f"{path}.field_class"),
+        _string(value["sensitivity"], f"{path}.sensitivity"),
+        _string(value["cardinality"], f"{path}.cardinality"),
+        _string(value["stability_scope"], f"{path}.stability_scope"),
+        _string(value["value_utf8_policy"], f"{path}.value_utf8_policy"),
+        _string(value["value_blank_policy"], f"{path}.value_blank_policy"),
+        _string(value["value_control_character_policy"], f"{path}.value_control_character_policy"),
+        _string(value["prometheus_key_normalization"], f"{path}.prometheus_key_normalization"),
+        _string(
+            value["prometheus_normalized_collision_policy"],
+            f"{path}.prometheus_normalized_collision_policy",
+        ),
+        _string(value["key_pattern"], f"{path}.key_pattern"),
+        _integer(value["max_items"], f"{path}.max_items", minimum=1),
+        _integer(value["max_key_ascii_bytes"], f"{path}.max_key_ascii_bytes", minimum=1),
+        _integer(value["min_value_utf8_bytes"], f"{path}.min_value_utf8_bytes", minimum=1),
+        _integer(value["max_value_utf8_bytes"], f"{path}.max_value_utf8_bytes", minimum=1),
+        _integer(value["max_aggregate_utf8_bytes"], f"{path}.max_aggregate_utf8_bytes", minimum=1),
+        _string(value["duplicate_key_policy"], f"{path}.duplicate_key_policy"),
+        _string(value["fixed_key_collision_policy"], f"{path}.fixed_key_collision_policy"),
+        _string_list(value["forbidden_key_segments"], f"{path}.forbidden_key_segments", allow_empty=False),
+        _string_list(value["reserved_keys"], f"{path}.reserved_keys", allow_empty=False),
+        _string_list(value["forbidden_value_classes"], f"{path}.forbidden_value_classes", allow_empty=False),
+    )
+    expected = ResourceDynamicMembersIR(
+        "bytewise_key_ascending",
+        "metadata",
+        "internal",
+        "bounded",
+        "process",
+        "require_valid",
+        "reject_trimmed_empty",
+        "reject",
+        "dot_dash_to_underscore",
+        "reject",
+        r"^[A-Za-z][A-Za-z0-9_.-]{0,127}$",
+        64,
+        128,
+        1,
+        1024,
+        16384,
+        "reject",
+        "reject",
+        (
+            "authorization",
+            "credential",
+            "credentials",
+            "password",
+            "passwd",
+            "secret",
+            "token",
+            "apikey",
+            "cookie",
+            "cwd",
+            "dir",
+            "directory",
+            "file",
+            "filepath",
+            "home",
+            "path",
+            "workdir",
+        ),
+        (
+            "defenseclaw.claw.home_dir",
+            "defenseclaw.gateway.host",
+            "defenseclaw.gateway.port",
+            "defenseclaw.preset",
+            "defenseclaw.preset_name",
+            "discovery.source",
+            "telemetry.sdk.language",
+            "telemetry.sdk.name",
+            "telemetry.sdk.version",
+        ),
+        ("filesystem_path", "credential_material"),
+    )
+    if parsed != expected:
+        raise RegistryError(f"{path}: custom resource member contract differs from the canonical v8 contract")
+    return parsed
+
+
+def _parse_resource_compatibility_aliases(
+    value: Any,
+    path: str,
+) -> tuple[ResourceCompatibilityAliasIR, ...]:
+    if not isinstance(value, list):
+        raise RegistryError(f"{path}: expected sequence")
+    result: list[ResourceCompatibilityAliasIR] = []
+    for index, item in enumerate(value):
+        item_path = f"{path}[{index}]"
+        if not isinstance(item, dict):
+            raise RegistryError(f"{item_path}: expected mapping")
+        _exact_keys(item, {"alias", "canonical"}, set(), item_path)
+        result.append(
+            ResourceCompatibilityAliasIR(
+                _string(item["alias"], f"{item_path}.alias", pattern=_ID),
+                _string(item["canonical"], f"{item_path}.canonical", pattern=_ID),
+            )
+        )
+    expected = (
+        ResourceCompatibilityAliasIR("deployment.environment", "deployment.environment.name"),
+        ResourceCompatibilityAliasIR("deployment.mode", "defenseclaw.deployment.mode"),
+        ResourceCompatibilityAliasIR(
+            "defenseclaw.device.id",
+            "defenseclaw.device.public_key_fingerprint",
+        ),
+    )
+    parsed = tuple(result)
+    if parsed != expected:
+        raise RegistryError(f"{path}: compatibility aliases differ from the canonical v8 mapping")
+    return parsed
+
+
 def _parse_group(value: Any, path: str, mandatory_rule_ids: frozenset[str]) -> GroupIR:
     if not isinstance(value, dict):
         raise RegistryError(f"{path}: expected mapping")
@@ -6169,6 +6353,8 @@ def _parse_group(value: Any, path: str, mandatory_rule_ids: frozenset[str]) -> G
     mandatory_floor: tuple[str, ...] | None = None
     route_selector: bool | None = None
     compatibility_profiles: tuple[str, ...] | None = None
+    resource_dynamic_members: ResourceDynamicMembersIR | None = None
+    resource_compatibility_aliases: tuple[ResourceCompatibilityAliasIR, ...] | None = None
     legacy_bindings: tuple[LegacyBindingIR, ...] | None = None
     if "x-defenseclaw" in value:
         extension = value["x-defenseclaw"]
@@ -6187,10 +6373,28 @@ def _parse_group(value: Any, path: str, mandatory_rule_ids: frozenset[str]) -> G
                 "mandatory_floor",
                 "route_selector",
                 "compatibility_profiles",
+                "custom_resource_attributes",
+                "compatibility_aliases",
                 "legacy_bindings",
             },
             f"{path}.x-defenseclaw",
         )
+        if "custom_resource_attributes" in extension:
+            if group_type != "resource" or group_id != "resource.core":
+                raise RegistryError(
+                    f"{path}.x-defenseclaw.custom_resource_attributes: allowed only on resource.core"
+                )
+            resource_dynamic_members = _parse_resource_dynamic_members(
+                extension["custom_resource_attributes"],
+                f"{path}.x-defenseclaw.custom_resource_attributes",
+            )
+        if "compatibility_aliases" in extension:
+            if group_type != "resource" or group_id != "resource.core":
+                raise RegistryError(f"{path}.x-defenseclaw.compatibility_aliases: allowed only on resource.core")
+            resource_compatibility_aliases = _parse_resource_compatibility_aliases(
+                extension["compatibility_aliases"],
+                f"{path}.x-defenseclaw.compatibility_aliases",
+            )
         if "bucket" in extension:
             bucket = _string(extension["bucket"], f"{path}.x-defenseclaw.bucket", pattern=_ID)
             if bucket not in EXPECTED_BUCKETS:
@@ -6246,6 +6450,28 @@ def _parse_group(value: Any, path: str, mandatory_rule_ids: frozenset[str]) -> G
             raise RegistryError(f"{path}.x-defenseclaw.bucket: required for signal families")
         if not isinstance(value.get("x-defenseclaw"), dict) or "family_schema_version" not in value["x-defenseclaw"]:
             raise RegistryError(f"{path}.x-defenseclaw.family_schema_version: required for signal families")
+    if group_id == "resource.core":
+        production_fixed = {
+            "service.name", "service.version", "service.namespace", "service.instance.id",
+            "deployment.environment.name", "host.name", "host.arch", "os.type", "tenant.id", "workspace.id",
+            "defenseclaw.deployment.mode", "defenseclaw.claw.mode", "defenseclaw.instance.id",
+            "defenseclaw.device.public_key_fingerprint",
+        }
+        if (resource_dynamic_members is None) != (resource_compatibility_aliases is None):
+            raise RegistryError(f"{path}.x-defenseclaw: resource custom members and aliases must be declared together")
+        if set(attribute_refs) == production_fixed and resource_dynamic_members is None:
+            raise RegistryError(f"{path}.x-defenseclaw: canonical resource.core requires custom members and aliases")
+        if resource_dynamic_members is None:
+            pass
+        else:
+            assert resource_compatibility_aliases is not None
+            fixed = set(attribute_refs)
+            aliases = {item.alias for item in resource_compatibility_aliases}
+            canonicals = {item.canonical for item in resource_compatibility_aliases}
+            if not canonicals.issubset(fixed) or aliases & fixed:
+                raise RegistryError(f"{path}.x-defenseclaw.compatibility_aliases: fixed resource ownership mismatch")
+            if aliases & set(resource_dynamic_members.reserved_keys):
+                raise RegistryError(f"{path}.x-defenseclaw: aliases and additional reserved keys must be disjoint")
     if "introduced_in" not in value:
         raise RegistryError(f"{path}.introduced_in: required for every group")
     introduced_in = None
@@ -6295,6 +6521,8 @@ def _parse_group(value: Any, path: str, mandatory_rule_ids: frozenset[str]) -> G
         mandatory_floor,
         route_selector,
         compatibility_profiles,
+        resource_dynamic_members,
+        resource_compatibility_aliases,
         legacy_bindings,
         introduced_in,
         deprecated_in,
@@ -6981,6 +7209,117 @@ def _registered_dynamic_fields(
     return len(errors.codes) == initial_error_count
 
 
+def _resource_dynamic_fields(
+    payload: Any,
+    group: GroupIR,
+    *,
+    local_attributes: Mapping[str, AttributeIR],
+    upstream_extensions: Mapping[str, AttributeExtensionIR],
+    upstream_attributes: Mapping[str, tuple[str, SnapshotAttribute]],
+    errors: _ExampleErrorCollector,
+) -> bool:
+    initial_error_count = len(errors.codes)
+    if not isinstance(payload, dict):
+        errors.add("dynamic_attribute_object_required")
+        return False
+    contract = group.resource_dynamic_members
+    aliases = group.resource_compatibility_aliases
+    if contract is None or aliases is None:
+        return _registered_dynamic_fields(
+            payload,
+            group,
+            error_code="resource_attribute_not_registered",
+            local_attributes=local_attributes,
+            upstream_extensions=upstream_extensions,
+            upstream_attributes=upstream_attributes,
+            errors=errors,
+        )
+    uses = {use.ref: use for use in group.resolved_uses}
+    alias_sources = {item.alias: item.canonical for item in aliases}
+    registered = set(uses) | set(alias_sources)
+    custom: list[tuple[str, str]] = []
+    normalized = {
+        key.replace(".", "_").replace("-", "_")
+        for key in registered | set(contract.reserved_keys)
+    }
+    for reference, value in payload.items():
+        canonical = alias_sources.get(reference, reference)
+        use = uses.get(canonical)
+        if use is not None:
+            local = local_attributes.get(canonical)
+            extension = upstream_extensions.get(canonical)
+            if local is not None and (
+                not _attribute_type_accepts(value, local.field_type)
+                or not _normalization_accepts(value, local.normalization)
+            ):
+                errors.add("dynamic_attribute_value_invalid")
+            if extension is not None:
+                upstream = upstream_attributes.get(canonical)
+                if (
+                    upstream is None
+                    or not _upstream_attribute_type_accepts(value, upstream[1])
+                    or not _normalization_accepts(value, extension.normalization)
+                ):
+                    errors.add("dynamic_attribute_value_invalid")
+            if not _constraints_accept(value, use.constraints):
+                errors.add("dynamic_attribute_value_invalid")
+            continue
+        if not isinstance(reference, str) or re.fullmatch(contract.key_pattern, reference) is None:
+            errors.add("resource_attribute_not_registered")
+            continue
+        segments = tuple(item for item in re.split(r"[._-]", reference.lower()) if item)
+        forbidden_segments = set(contract.forbidden_key_segments)
+        if (
+            reference in contract.reserved_keys
+            or any(segment in forbidden_segments for segment in segments)
+            or any(left == "api" and right == "key" for left, right in zip(segments, segments[1:]))
+        ):
+            errors.add("resource_attribute_not_registered")
+            continue
+        normalized_key = reference.replace(".", "_").replace("-", "_")
+        if normalized_key in normalized:
+            errors.add("resource_attribute_not_registered")
+            continue
+        normalized.add(normalized_key)
+        if not isinstance(value, str):
+            errors.add("dynamic_attribute_value_invalid")
+            continue
+        try:
+            value_bytes = len(value.encode("utf-8"))
+        except UnicodeEncodeError:
+            errors.add("dynamic_attribute_value_invalid")
+            continue
+        trimmed = value.strip()
+        lower = trimmed.lower()
+        parsed = urllib.parse.urlsplit(trimmed)
+        path_like = (
+            trimmed.startswith(("/", "~/", "\\\\"))
+            or lower.startswith("file://")
+            or re.match(r"^[A-Za-z]:[\\/]", trimmed) is not None
+        )
+        credential_like = (
+            "private key" in lower and "-----begin" in lower
+            or lower.startswith(("bearer ", "basic "))
+            or parsed.username is not None
+        )
+        if (
+            not contract.min_value_utf8_bytes <= value_bytes <= contract.max_value_utf8_bytes
+            or not trimmed
+            or any(unicodedata.category(character) == "Cc" for character in value)
+            or path_like
+            or credential_like
+        ):
+            errors.add("dynamic_attribute_value_invalid")
+            continue
+        custom.append((reference, value))
+    for reference, use in uses.items():
+        if use.requirement_level == "required" and reference not in payload:
+            errors.add("family_required_attribute_missing")
+    if len(custom) > contract.max_items or sum(len(key.encode()) + len(value.encode()) for key, value in custom) > contract.max_aggregate_utf8_bytes:
+        errors.add("dynamic_attribute_value_invalid")
+    return len(errors.codes) == initial_error_count
+
+
 def _compile_span_name_parts(pattern: str) -> tuple[SpanNamePartIR, ...] | None:
     try:
         parsed = tuple(string.Formatter().parse(pattern))
@@ -7208,10 +7547,9 @@ def _validate_example_record(
             scope = body.get("scope")
             resource_group = groups["resource.core"]
             scope_group = groups["scope.core"]
-            _registered_dynamic_fields(
+            _resource_dynamic_fields(
                 resource.get("attributes") if isinstance(resource, dict) else None,
                 resource_group,
-                error_code="resource_attribute_not_registered",
                 local_attributes=local_attributes,
                 upstream_extensions=upstream_extensions,
                 upstream_attributes=upstream_attributes,
@@ -7396,6 +7734,7 @@ def _validate_example_field_classes(
         prefix: str,
         projections: Mapping[str, str] = MappingProxyType({}),
         empty_container_class: str = "metadata",
+        resource_group: GroupIR | None = None,
     ) -> None:
         if not isinstance(dynamic, dict):
             raise RegistryError(f"{path}: valid {signal} example has no dynamic attribute mapping")
@@ -7407,7 +7746,21 @@ def _validate_example_field_classes(
                 raise RegistryError(f"{path}: dynamic attribute names must be strings")
             reference = projections.get(wire_name, wire_name)
             if reference not in references:
-                raise RegistryError(f"{path}: unregistered dynamic field {wire_name!r}")
+                alias_sources = {
+                    item.alias: item.canonical
+                    for item in (resource_group.resource_compatibility_aliases or ())
+                } if resource_group is not None else {}
+                alias_reference = alias_sources.get(reference)
+                if alias_reference in references:
+                    reference = alias_reference
+                elif resource_group is not None and resource_group.resource_dynamic_members is not None:
+                    field_class = resource_group.resource_dynamic_members.field_class
+                    base_pointer = prefix + _rfc6901_token(wire_name)
+                    for pointer in _json_leaf_pointers(dynamic[wire_name], base_pointer):
+                        expected[pointer] = field_class
+                    continue
+                else:
+                    raise RegistryError(f"{path}: unregistered dynamic field {wire_name!r}")
             local = local_attributes.get(reference)
             extension = upstream_extensions.get(reference)
             if local is not None:
@@ -7512,6 +7865,7 @@ def _validate_example_field_classes(
             empty_container_class=(
                 _structural_field(structural_contract.trace_resource, "attributes").field_class or "metadata"
             ),
+            resource_group=resource_group,
         )
         scope = body.get("scope")
         if not isinstance(scope, dict) or not isinstance(scope.get("attributes"), dict):
@@ -8609,6 +8963,10 @@ def _go_override_has_required_shape(kind: str, default: str, symbol: str) -> boo
         "structured_arm": ("TelemetryStructuredArm", ""),
         "structured_member_input": ("", "MemberInput"),
         "structured_member_constructor": ("New", "Member"),
+        "resource_attributes_type": ("TelemetryCustomResource", "Attributes"),
+        "resource_attributes_constructor": ("NewTelemetryCustomResource", "Attributes"),
+        "resource_attributes_attach": ("WithTelemetryCustomResource", "Attributes"),
+        "resource_attributes_validator": ("ValidateTelemetryResource", "Attributes"),
         "span_event_input": ("Span", "EventInput"),
         "span_event_constructor": ("NewSpan", "Event"),
         "span_link_input": ("Span", "LinkInput"),
@@ -8886,6 +9244,31 @@ def _build_go_symbol_table(
             "New" + type_name + member_name + "Member",
             "exported_function",
         )
+
+    add(
+        "resource_attributes_type",
+        "resource.core",
+        "TelemetryCustomResourceAttributes",
+        "exported_type",
+    )
+    add(
+        "resource_attributes_constructor",
+        "resource.core",
+        "NewTelemetryCustomResourceAttributes",
+        "exported_function",
+    )
+    add(
+        "resource_attributes_attach",
+        "resource.core",
+        "WithTelemetryCustomResourceAttributes",
+        "exported_function",
+    )
+    add(
+        "resource_attributes_validator",
+        "resource.core",
+        "ValidateTelemetryResourceAttributes",
+        "exported_function",
+    )
 
     for group in families:
         signal_name = {"log": "Log", "span": "Span", "metric": "Metric"}[group.type]

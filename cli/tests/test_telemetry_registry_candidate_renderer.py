@@ -783,13 +783,13 @@ def test_candidate_index_consumes_reviewed_go_symbol_contract_immutably_and_pres
         "otel": "OTel",
     }
     assert index.go_symbol_overrides == ()
-    assert len(table.rows) == 1781
-    assert table.table_sha256 == "4a8563120e248a344683b87999620dac744bbda4b9794214d15197d0abde2f54"
+    assert len(table.rows) == 1785
+    assert table.table_sha256 == "31a90343cae2631aa76808bd6337d48af59ef09481fbc9c396a3c0d7b3790d4a"
     assert table.kind_counts == renderer._GO_SYMBOL_KIND_COUNTS
     assert table.declaration_form_counts == {
         "exported_const": 901,
-        "exported_type": 459,
-        "exported_function": 178,
+        "exported_type": 460,
+        "exported_function": 181,
         "family_builder_method": 243,
     }
     assert rows[("family", "span.model.chat")].symbol == "TelemetryFamilyModelChat"
@@ -1531,6 +1531,83 @@ def test_bundle_is_complete_draft_2020_12_and_examples_have_exact_dispositions(
                 "occurrence": None,
             }
     assert observed == {True: 7, False: 5}
+
+
+def test_custom_resource_schema_and_semantic_contract_are_exact(
+    generator: ModuleType,
+    artifacts: Mapping[str, Any],
+) -> None:
+    schema = _json(artifacts, "telemetry.schema.json")
+    validator = jsonschema.Draft202012Validator(schema)
+    base = _json(
+        artifacts,
+        "examples/valid/valid-model-chat-with-honest-missing-content-and-usage.json",
+    )["record"]
+    valid = json.loads(json.dumps(base))
+    valid["body"]["resource"]["attributes"]["operator.profile"] = "soc"
+    valid["field_classes"]["/resource/attributes/operator.profile"] = "metadata"
+    assert validator.is_valid(valid)
+
+    for rejected_key in (
+        "service_name",
+        "deployment_mode",
+        "discovery_source",
+        "operator.profile.file",
+        "operator.token.kind",
+    ):
+        rejected = json.loads(json.dumps(valid))
+        rejected["body"]["resource"]["attributes"].pop("operator.profile")
+        rejected["field_classes"].pop("/resource/attributes/operator.profile")
+        rejected["body"]["resource"]["attributes"][rejected_key] = "opaque"
+        rejected["field_classes"][f"/resource/attributes/{rejected_key}"] = "metadata"
+        assert not validator.is_valid(rejected), rejected_key
+
+    ir = generator.compile_registry(ROOT)
+    groups = {group.id: group for domain in ir.domains for group in domain.groups}
+    local = {attribute.id: attribute for domain in ir.domains for attribute in domain.attributes}
+    extensions = {
+        extension.ref: extension for domain in ir.domains for extension in domain.attribute_extensions
+    }
+    upstream = {
+        attribute.id: (dependency.id, attribute)
+        for dependency in ir.dependencies
+        for attribute in dependency.snapshot.attributes
+    }
+    resource = groups["resource.core"]
+    base_values = dict(base["body"]["resource"]["attributes"])
+
+    def semantic_errors(extra: Mapping[str, Any]) -> tuple[str, ...]:
+        collector = generator._ExampleErrorCollector([])
+        generator._resource_dynamic_fields(
+            {**base_values, **extra},
+            resource,
+            local_attributes=local,
+            upstream_extensions=extensions,
+            upstream_attributes=upstream,
+            errors=collector,
+        )
+        return collector.result()
+
+    assert semantic_errors({"operator.profile": "soc"}) == ()
+    assert semantic_errors({"profile.kind": "soc"}) == ()  # segment matching is not substring matching
+    for extra, expected in (
+        ({"service_name": "other"}, "resource_attribute_not_registered"),
+        ({"deployment_mode": "edge"}, "resource_attribute_not_registered"),
+        ({"discovery_source": "runtime"}, "resource_attribute_not_registered"),
+        ({"operator.profile.file": "opaque"}, "resource_attribute_not_registered"),
+        ({"operator.profile": "/private/location"}, "dynamic_attribute_value_invalid"),
+        ({"operator.profile": "  /private/location  "}, "dynamic_attribute_value_invalid"),
+        ({"operator.profile": "  Bearer opaque  "}, "dynamic_attribute_value_invalid"),
+        ({"operator.profile": "\u2003Basic opaque\u2003"}, "dynamic_attribute_value_invalid"),
+        ({"operator.profile": 7}, "dynamic_attribute_value_invalid"),
+        (
+            {"operator.profile-name": "one", "operator.profile.name": "two"},
+            "resource_attribute_not_registered",
+        ),
+    ):
+        assert semantic_errors(extra) == (expected,)
+    aggregate = {f"operator.profile{index}": "x" * 1000 for index in range(17)}
+    assert semantic_errors(aggregate) == ("dynamic_attribute_value_invalid",)
 
 
 def test_canonical_json_is_a_closed_recursive_non_null_union(

@@ -14,11 +14,13 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
+	"math/big"
 	"sort"
 	"strconv"
 	"strings"
 	"unicode/utf8"
 
+	"github.com/defenseclaw/defenseclaw/internal/observability"
 	"github.com/defenseclaw/defenseclaw/internal/observability/redaction"
 )
 
@@ -67,7 +69,10 @@ func Project(input redaction.Projection, configured Limits) Result {
 	projectedAttributes = trimAttributes(
 		projectedAttributes, requiredAttributeKeys(contract), limits.MaxAttributesPerSpan,
 	)
-	body := projectBody(envelope.Body, projectedAttributes, limits)
+	body, ok := projectBody(envelope.Body, projectedAttributes, limits)
+	if !ok {
+		return rejected(ReasonInvalidProjection)
+	}
 	output := outputEnvelope{
 		Profile: ProfileID, Shape: contract.shape,
 		SchemaVersion: envelope.SchemaVersion, BucketCatalogVersion: envelope.BucketCatalogVersion,
@@ -310,7 +315,7 @@ func normalizedSpanKind(value any) (string, bool) {
 	}
 }
 
-func projectBody(input, attributes map[string]any, limits Limits) map[string]any {
+func projectBody(input, attributes map[string]any, limits Limits) (map[string]any, bool) {
 	output := make(map[string]any)
 	for _, key := range []string{
 		"kind", "parent_span_id", "start_time_unix_nano", "end_time_unix_nano", "duration_nano",
@@ -333,46 +338,73 @@ func projectBody(input, attributes map[string]any, limits Limits) map[string]any
 	if status := projectStatus(input["status"], limits.MaxAttributeValueBytes); len(status) > 0 {
 		output["status"] = status
 	}
-	if resource := projectResource(input["resource"], limits.MaxAttributeValueBytes); len(resource) > 0 {
+	if resourceValue, present := input["resource"]; present {
+		resource, valid := projectResource(resourceValue, limits.MaxAttributeValueBytes)
+		if !valid {
+			return nil, false
+		}
 		output["resource"] = resource
 	}
 	if scope := projectScope(input["scope"], limits.MaxAttributeValueBytes); len(scope) > 0 {
 		output["scope"] = scope
 	}
-	return output
+	return output, true
 }
 
-func projectResource(value any, maximum int) map[string]any {
+func projectResource(value any, maximum int) (map[string]any, bool) {
 	resource, ok := object(value)
 	if !ok {
-		return nil
+		return nil, false
+	}
+	for key := range resource {
+		switch key {
+		case "attributes", "schema_url", "dropped_attributes_count":
+		default:
+			return nil, false
+		}
 	}
 	attributes, ok := object(resource["attributes"])
 	if !ok {
-		return nil
+		return nil, false
 	}
-	allowed := map[string]struct{}{
-		"service.name": {}, "service.version": {}, "service.namespace": {}, "service.instance.id": {},
-		"deployment.environment.name": {}, "deployment.environment": {}, "host.name": {},
-		"host.arch": {}, "os.type": {}, "tenant.id": {}, "workspace.id": {},
-		"defenseclaw.instance.id": {}, "deployment.mode": {}, "defenseclaw.claw.mode": {},
-		"discovery.source": {}, "defenseclaw.device.id": {},
+	if err := observability.ValidateTelemetryResourceAttributes(attributes); err != nil {
+		return nil, false
 	}
-	projected := make(map[string]any)
+	projected := make(map[string]any, len(attributes))
 	for _, key := range sortedKeys(attributes) {
-		if _, ok := allowed[key]; !ok || !valueWithinLimit(attributes[key], maximum) {
-			continue
+		text, valid := boundedString(attributes[key], maximum)
+		if key == "" || !utf8.ValidString(key) || !valid {
+			return nil, false
 		}
-		projected[key] = cloneJSON(attributes[key])
+		projected[strings.Clone(key)] = strings.Clone(text)
 	}
 	if len(projected) == 0 {
-		return nil
+		return nil, false
 	}
 	output := map[string]any{"attributes": projected}
-	if schemaURL, ok := boundedString(resource["schema_url"], maximum); ok {
+	if schemaValue, present := resource["schema_url"]; present {
+		schemaURL, valid := boundedString(schemaValue, maximum)
+		if !valid || strings.TrimSpace(schemaURL) == "" {
+			return nil, false
+		}
 		output["schema_url"] = schemaURL
 	}
-	return output
+	if droppedValue, present := resource["dropped_attributes_count"]; present {
+		dropped, valid := droppedValue.(json.Number)
+		if !valid || !validUnsignedJSONNumber(dropped, 32) {
+			return nil, false
+		}
+		output["dropped_attributes_count"] = json.Number(strings.Clone(dropped.String()))
+	}
+	return output, true
+}
+
+func validUnsignedJSONNumber(value json.Number, bits int) bool {
+	if _, err := strconv.ParseUint(value.String(), 10, bits); err == nil {
+		return true
+	}
+	rational, ok := new(big.Rat).SetString(value.String())
+	return ok && rational.IsInt() && rational.Sign() >= 0 && rational.Num().BitLen() <= bits
 }
 
 func projectScope(value any, maximum int) map[string]any {

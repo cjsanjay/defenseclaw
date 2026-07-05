@@ -582,7 +582,11 @@ def _render_catalog_body(plan: Any) -> bytes:
         path = f"GoAPIPlanIR.descriptors[{position}]"
         catalog = _read(descriptor, "catalog_contract", path)
         symbol = _identifier(_read(catalog, "descriptor_type_symbol", path), f"{path}.descriptor_type_symbol")
-        lines.extend((f"type {symbol} struct{{}}", ""))
+        trace = _read(catalog, "trace", path)
+        if trace is None:
+            lines.extend((f"type {symbol} struct{{}}", ""))
+        else:
+            lines.extend((f"type {symbol} struct {{", "\tdynamicResourceFields []familyFieldDescriptor", "}", ""))
         base = _read(catalog, "base", path)
         lines.extend(
             (
@@ -592,7 +596,6 @@ def _render_catalog_body(plan: Any) -> bytes:
                 "",
             )
         )
-        trace = _read(catalog, "trace", path)
         if trace is not None:
             events = _sequence(_read(trace, "allowed_events", path), f"{path}.events", maximum=1024)
             links = _sequence(_read(trace, "allowed_links", path), f"{path}.links", maximum=1024)
@@ -601,7 +604,7 @@ def _render_catalog_body(plan: Any) -> bytes:
             )
             lines.extend(
                 (
-                    f"func ({symbol}) familyTraceContract() familyTraceContract {{",
+                    f"func (descriptor {symbol}) familyTraceContract() familyTraceContract {{",
                     "\treturn familyTraceContract{",
                     f"\t\tfamilyDescriptorContract: {symbol}{{}}.familyDescriptorContract(),",
                     "\t\tallowedKinds: []string{"
@@ -612,7 +615,7 @@ def _render_catalog_body(plan: Any) -> bytes:
                     + "},",
                     f"\t\tspanName: {_span_name_literal(_read(trace, 'span_name', path), path)},",
                     f"\t\tattributeLimits: {_limits_literal(_read(trace, 'attribute_limits', path), path)},",
-                    f"\t\tresourceFields: {_field_descriptor_slice(_read(trace, 'resource_fields', path), path)},",
+                    f"\t\tresourceFields: append({_field_descriptor_slice(_read(trace, 'resource_fields', path), path)}, descriptor.dynamicResourceFields...),",
                     f"\t\tresourceLimits: {_limits_literal(_read(trace, 'resource_limits', path), path)},",
                     f"\t\tscopeFields: {_field_descriptor_slice(_read(trace, 'scope_fields', path), path)},",
                     f"\t\tscopeLimits: {_limits_literal(_read(trace, 'scope_limits', path), path)},",
@@ -875,8 +878,8 @@ def _render_family_callable(callable_plan: Any, body: Any, input_plan: Any, desc
     elif arm == "family_span":
         lines.extend(
             (
-                "\tresource := input.Resource",
-                f"\tresource.values = {resource_values}",
+                f"\tresource, dynamicResourceFields, err := mergeFamilyTraceResource(input.Resource, {resource_values}, generatedTelemetryResourceContract())",
+                "\tif err != nil { return Record{}, err }",
                 "\tprivateInput := familyTraceBuildInput{",
                 "\t\tenvelope: input.Envelope,",
                 "\t\toutcome: Present(input.Outcome),",
@@ -897,7 +900,7 @@ def _render_family_callable(callable_plan: Any, body: Any, input_plan: Any, desc
                 "\t\tdroppedLinksCount: input.DroppedLinksCount,",
                 "\t\tdroppedAttributesCount: input.DroppedAttributesCount,",
                 "\t}",
-                f"\treturn builder.buildGeneratedTrace({descriptor_type}{{}}, privateInput)",
+                f"\treturn builder.buildGeneratedTrace({descriptor_type}{{dynamicResourceFields: dynamicResourceFields}}, privateInput)",
             )
         )
     elif arm == "family_metric":
@@ -1145,6 +1148,454 @@ def _render_structured_encoder(structured: Any, path: str) -> list[str]:
     return lines
 
 
+def _resource_string_switch(values: Sequence[str], path: str) -> list[str]:
+    ordered = sorted(values, key=lambda item: item.encode("ascii"))
+    if len(ordered) != len(set(ordered)):
+        raise GoRenderError(f"{path}: duplicate generated resource key")
+    result: list[str] = []
+    for item in ordered:
+        result.extend((f"\tcase {_go_string(item, path)}:", "\t\treturn true"))
+    return result
+
+
+def _render_resource_type(resource: Any, symbol: str, path: str) -> list[str]:
+    expected = _identifier(_read(resource, "type_symbol", path), f"{path}.type_symbol")
+    if symbol != expected:
+        raise GoRenderError(f"{path}: custom resource type symbol disagrees with the plan")
+    return [
+        f"type {symbol} struct {{",
+        "\tentries familyFieldValues",
+        "\tcompatibilityAliases bool",
+        "}",
+        "",
+        f"func (attributes {symbol}) Values() map[string]string {{",
+        "\tvalues := make(map[string]string, len(attributes.entries))",
+        "\tfor _, entry := range attributes.entries {",
+        "\t\tvalue, ok := entry.value.(string)",
+        "\t\tif ok && entry.present {",
+        "\t\t\tvalues[entry.key] = value",
+        "\t\t}",
+        "\t}",
+        "\treturn values",
+        "}",
+        "",
+        f"func (attributes {symbol}) CompatibilityAliasesEnabled() bool {{",
+        "\treturn attributes.compatibilityAliases",
+        "}",
+        "",
+    ]
+
+
+def _render_resource_constructor(resource: Any, symbol: str, path: str) -> list[str]:
+    expected = _identifier(_read(resource, "constructor_symbol", path), f"{path}.constructor_symbol")
+    result_type = _identifier(_read(resource, "type_symbol", path), f"{path}.type_symbol")
+    if symbol != expected:
+        raise GoRenderError(f"{path}: custom resource constructor symbol disagrees with the plan")
+    max_items = _read(resource, "max_items", path)
+    max_total = _read(resource, "max_aggregate_utf8_bytes", path)
+    if type(max_items) is not int or type(max_total) is not int:
+        raise GoRenderError(f"{path}: invalid custom resource bounds")
+    return [
+        f"func {symbol}(values map[string]string, compatibilityAliases bool) ({result_type}, error) {{",
+        f"\tif len(values) > {max_items} {{",
+        f"\t\treturn {result_type}{{}}, familyBuildFailure(FamilyBuildConstraint)",
+        "\t}",
+        "\tcloned := make(map[string]string, len(values))",
+        "\tfor key, value := range values {",
+        "\t\tcloned[key] = value",
+        "\t}",
+        "\tkeys := make([]string, 0, len(cloned))",
+        "\tfor key := range cloned {",
+        "\t\tkeys = append(keys, key)",
+        "\t}",
+        "\tfor index := 1; index < len(keys); index++ {",
+        "\t\tfor cursor := index; cursor > 0 && keys[cursor] < keys[cursor-1]; cursor-- {",
+        "\t\t\tkeys[cursor], keys[cursor-1] = keys[cursor-1], keys[cursor]",
+        "\t\t}",
+        "\t}",
+        "\tnormalizedKeys := make(map[string]struct{}, len(cloned))",
+        "\ttotalBytes := 0",
+        "\tfor _, key := range keys {",
+        "\t\tvalue := cloned[key]",
+        "\t\tif err := generatedValidateTelemetryResourceAttribute(key, value); err != nil {",
+        f"\t\t\treturn {result_type}{{}}, err",
+        "\t\t}",
+        "\t\ttotalBytes += len(key) + len(value)",
+        f"\t\tif totalBytes > {max_total} {{",
+        f"\t\t\treturn {result_type}{{}}, familyBuildFailure(FamilyBuildConstraint)",
+        "\t\t}",
+        "\t\tnormalized := generatedTelemetryResourcePrometheusKey(key)",
+        "\t\tif _, duplicate := normalizedKeys[normalized]; duplicate {",
+        f"\t\t\treturn {result_type}{{}}, familyBuildFailure(FamilyBuildDuplicateField)",
+        "\t\t}",
+        "\t\tnormalizedKeys[normalized] = struct{}{}",
+        "\t}",
+        "\tentries := make(familyFieldValues, 0, len(keys))",
+        "\tfor _, key := range keys {",
+        "\t\tentries = append(entries, familyFieldValue{key: key, value: cloned[key], present: true})",
+        "\t}",
+        f"\treturn {result_type}{{entries: entries, compatibilityAliases: compatibilityAliases}}, nil",
+        "}",
+        "",
+    ]
+
+
+def _render_resource_attach(resource: Any, symbol: str, path: str) -> list[str]:
+    expected = _identifier(_read(resource, "attach_symbol", path), f"{path}.attach_symbol")
+    value_type = _identifier(_read(resource, "type_symbol", path), f"{path}.type_symbol")
+    if symbol != expected:
+        raise GoRenderError(f"{path}: custom resource attach symbol disagrees with the plan")
+    return [
+        f"func {symbol}(resource TraceResourceInput, attributes {value_type}) TraceResourceInput {{",
+        "\tresource.customValues = append(familyFieldValues(nil), attributes.entries...)",
+        "\tresource.compatibilityAliases = attributes.compatibilityAliases",
+        "\treturn resource",
+        "}",
+        "",
+    ]
+
+
+def _render_resource_validator(resource: Any, symbol: str, path: str) -> list[str]:
+    expected = _identifier(_read(resource, "validator_symbol", path), f"{path}.validator_symbol")
+    if symbol != expected:
+        raise GoRenderError(f"{path}: resource validator symbol disagrees with the plan")
+    fixed = _sequence(_read(resource, "fixed_descriptors", path), f"{path}.fixed_descriptors", maximum=64)
+    aliases = _sequence(_read(resource, "aliases", path), f"{path}.aliases", maximum=16)
+    alias_literals = tuple(
+        _go_string(_read(alias, "alias", f"{path}.aliases[{position}]"), f"{path}.aliases[{position}]")
+        for position, alias in enumerate(aliases)
+    )
+    alias_width = max((len(item) for item in alias_literals), default=0)
+    lines = [
+        f"func {symbol}(values map[string]any) error {{",
+        "\tcontract := generatedTelemetryResourceContract()",
+        "\tfixed := []familyFieldDescriptor{",
+    ]
+    for position, descriptor in enumerate(fixed):
+        lines.append(
+            f"\t\t{_field_descriptor_literal(descriptor, f'{path}.fixed_descriptors[{position}]')},"
+        )
+    lines.extend(
+        (
+            "\t}",
+            "\tif err := validateFamilyFieldDescriptors(fixed); err != nil { return err }",
+            "\tfixedByKey := make(map[string]familyFieldDescriptor, len(fixed))",
+            "\tfor _, descriptor := range fixed {",
+            "\t\tfixedByKey[descriptor.key] = descriptor",
+            "\t}",
+            "\taliasCanonical := map[string]string{",
+        )
+    )
+    for position, alias in enumerate(aliases):
+        alias_path = f"{path}.aliases[{position}]"
+        literal = alias_literals[position]
+        lines.append(
+            f"\t\t{literal}:{' ' * (alias_width - len(literal) + 1)}"
+            f"{_go_string(_read(alias, 'canonical', alias_path), alias_path)},"
+        )
+    lines.extend(("\t}", "\taliasDescriptors := map[string]familyFieldDescriptor{"))
+    for position, alias in enumerate(aliases):
+        alias_path = f"{path}.aliases[{position}]"
+        literal = alias_literals[position]
+        lines.append(
+            f"\t\t{literal}:{' ' * (alias_width - len(literal) + 1)}"
+            f"{_field_descriptor_literal(_read(alias, 'descriptor', alias_path), f'{alias_path}.descriptor')},"
+        )
+    lines.extend(("\t}", "\taliasOrder := []string{"))
+    for position, alias in enumerate(aliases):
+        alias_path = f"{path}.aliases[{position}]"
+        lines.append(f"\t\t{_go_string(_read(alias, 'alias', alias_path), alias_path)},")
+    lines.extend(
+        (
+            "\t}",
+            "\tseenFixed := make(map[string]struct{}, len(fixed))",
+            "\taliasValues := make(map[string]string, len(aliasCanonical))",
+            "\tnormalizedCustom := make(map[string]struct{})",
+            "\tcustomCount := 0",
+            "\ttotalBytes := 0",
+            "\tkeys := make([]string, 0, len(values))",
+            "\tfor key := range values {",
+            "\t\tkeys = append(keys, key)",
+            "\t}",
+            "\tfor index := 1; index < len(keys); index++ {",
+            "\t\tfor cursor := index; cursor > 0 && keys[cursor] < keys[cursor-1]; cursor-- {",
+            "\t\t\tkeys[cursor], keys[cursor-1] = keys[cursor-1], keys[cursor]",
+            "\t\t}",
+            "\t}",
+            "\tfor _, key := range keys {",
+            "\t\tvalue := values[key]",
+            "\t\tif descriptor, ok := fixedByKey[key]; ok {",
+            "\t\t\tif err := validateFamilyFieldValue(descriptor, value); err != nil { return err }",
+            "\t\t\tseenFixed[key] = struct{}{}",
+            "\t\t\tcontinue",
+            "\t\t}",
+            "\t\tif descriptor, ok := aliasDescriptors[key]; ok {",
+            "\t\t\tif err := validateFamilyFieldValue(descriptor, value); err != nil { return err }",
+            "\t\t\taliasValues[key] = value.(string)",
+            "\t\t\tcontinue",
+            "\t\t}",
+            "\t\ttext, ok := value.(string)",
+            "\t\tif !ok { return familyBuildFailure(FamilyBuildInvalidType) }",
+            "\t\tif err := contract.validate(key, text); err != nil { return err }",
+            "\t\tnormalized := contract.prometheusKey(key)",
+            "\t\tif _, duplicate := normalizedCustom[normalized]; duplicate {",
+            "\t\t\treturn familyBuildFailure(FamilyBuildDuplicateField)",
+            "\t\t}",
+            "\t\tnormalizedCustom[normalized] = struct{}{}",
+            "\t\tcustomCount++",
+            "\t\ttotalBytes += len(key) + len(text)",
+            "\t\tif customCount > contract.maxItems || totalBytes > contract.maxAggregateUTF8Bytes {",
+            "\t\t\treturn familyBuildFailure(FamilyBuildConstraint)",
+            "\t\t}",
+            "\t}",
+            "\tfor _, descriptor := range fixed {",
+            "\t\tif descriptor.requirement != familyRequirementRequired { continue }",
+            "\t\tif _, present := seenFixed[descriptor.key]; !present {",
+            "\t\t\treturn familyBuildFailure(FamilyBuildMissingRequired)",
+            "\t\t}",
+            "\t}",
+            "\tfor _, alias := range aliasOrder {",
+            "\t\taliasValue, aliasPresent := aliasValues[alias]",
+            "\t\tif !aliasPresent { continue }",
+            "\t\tcanonicalValue, present := values[aliasCanonical[alias]]",
+            "\t\tif !present { return familyBuildFailure(FamilyBuildMissingRequired) }",
+            "\t\tcanonicalText, ok := canonicalValue.(string)",
+            "\t\tif !ok { return familyBuildFailure(FamilyBuildInvalidType) }",
+            "\t\tif canonicalText != aliasValue { return familyBuildFailure(FamilyBuildConstraint) }",
+            "\t}",
+            "\treturn nil",
+            "}",
+            "",
+        )
+    )
+    return lines
+
+
+def _render_resource_helpers(resource: Any, path: str) -> list[str]:
+    fixed = tuple(_read(resource, "fixed_keys", path))
+    reserved = tuple(_read(resource, "reserved_keys", path))
+    aliases = _sequence(_read(resource, "aliases", path), f"{path}.aliases", maximum=16)
+    alias_keys = tuple(_read(alias, "alias", path) for alias in aliases)
+    forbidden_segments = tuple(_read(resource, "forbidden_key_segments", path))
+    max_items = _read(resource, "max_items", path)
+    max_key = _read(resource, "max_key_ascii_bytes", path)
+    min_value = _read(resource, "min_value_utf8_bytes", path)
+    max_value = _read(resource, "max_value_utf8_bytes", path)
+    max_total = _read(resource, "max_aggregate_utf8_bytes", path)
+    key_pattern = _read(resource, "key_pattern", path)
+    if any(type(item) is not int for item in (max_items, max_key, min_value, max_value, max_total)):
+        raise GoRenderError(f"{path}: custom resource helper bounds are invalid")
+    if (
+        _read(resource, "field_class", path) != "metadata"
+        or _read(resource, "sensitivity", path) != "internal"
+        or _read(resource, "cardinality", path) != "bounded"
+        or _read(resource, "stability_scope", path) != "process"
+        or _read(resource, "value_utf8_policy", path) != "require_valid"
+        or _read(resource, "value_blank_policy", path) != "reject_trimmed_empty"
+        or _read(resource, "value_control_character_policy", path) != "reject"
+        or _read(resource, "prometheus_key_normalization", path) != "dot_dash_to_underscore"
+        or _read(resource, "prometheus_normalized_collision_policy", path) != "reject"
+    ):
+        raise GoRenderError(f"{path}: unsupported custom resource field class")
+    exact_forbidden = fixed + alias_keys + reserved
+    normalized_forbidden = tuple(
+        item.replace(".", "_").replace("-", "_") for item in exact_forbidden
+    )
+    lines = [
+        "func generatedTelemetryResourceExactKeyForbidden(key string) bool {",
+        "\tswitch key {",
+        *_resource_string_switch(exact_forbidden, f"{path}.exact_forbidden"),
+        "\tdefault:",
+        "\t\treturn false",
+        "\t}",
+        "}",
+        "",
+        "func generatedTelemetryResourceNormalizedKeyForbidden(key string) bool {",
+        "\tswitch key {",
+        *_resource_string_switch(normalized_forbidden, f"{path}.normalized_forbidden"),
+        "\tdefault:",
+        "\t\treturn false",
+        "\t}",
+        "}",
+        "",
+        "func generatedTelemetryResourceSegmentForbidden(segment string) bool {",
+        "\tswitch segment {",
+        *_resource_string_switch(forbidden_segments, f"{path}.forbidden_segments"),
+        "\tdefault:",
+        "\t\treturn false",
+        "\t}",
+        "}",
+        "",
+        "func generatedTelemetryResourceASCIIAlpha(value byte) bool {",
+        "\treturn value >= 'A' && value <= 'Z' || value >= 'a' && value <= 'z'",
+        "}",
+        "",
+        "func generatedTelemetryResourceASCIILower(value string) string {",
+        "\tresult := []byte(value)",
+        "\tfor index, character := range result {",
+        "\t\tif character >= 'A' && character <= 'Z' {",
+        "\t\t\tresult[index] = character + ('a' - 'A')",
+        "\t\t}",
+        "\t}",
+        "\treturn string(result)",
+        "}",
+        "",
+        "func generatedTelemetryResourcePrometheusKey(value string) string {",
+        "\tresult := []byte(value)",
+        "\tfor index, character := range result {",
+        "\t\tif character == '.' || character == '-' { result[index] = '_' }",
+        "\t}",
+        "\treturn string(result)",
+        "}",
+        "",
+        "func generatedTelemetryResourceHasPrefix(value, prefix string) bool {",
+        "\treturn len(value) >= len(prefix) && value[:len(prefix)] == prefix",
+        "}",
+        "",
+        "func generatedTelemetryResourceContains(value, target string) bool {",
+        "\tif target == \"\" { return true }",
+        "\tfor index := 0; index+len(target) <= len(value); index++ {",
+        "\t\tif value[index:index+len(target)] == target { return true }",
+        "\t}",
+        "\treturn false",
+        "}",
+        "",
+        "func generatedTelemetryResourceKeyShapeValid(key string) bool {",
+        f"\tif len(key) < 1 || len(key) > {max_key} || !generatedTelemetryResourceASCIIAlpha(key[0]) {{",
+        "\t\treturn false",
+        "\t}",
+        "\tprevious := \"\"",
+        "\tstart := 0",
+        "\tfor index := 0; index <= len(key); index++ {",
+        "\t\tif index < len(key) {",
+        "\t\t\tcharacter := key[index]",
+        "\t\t\tif generatedTelemetryResourceASCIIAlpha(character) || character >= '0' && character <= '9' {",
+        "\t\t\t\tcontinue",
+        "\t\t\t}",
+        "\t\t\tif character != '.' && character != '_' && character != '-' { return false }",
+        "\t\t}",
+        "\t\tsegment := generatedTelemetryResourceASCIILower(key[start:index])",
+        "\t\tif generatedTelemetryResourceSegmentForbidden(segment) || previous == \"api\" && segment == \"key\" {",
+        "\t\t\treturn false",
+        "\t\t}",
+        "\t\tprevious = segment",
+        "\t\tstart = index + 1",
+        "\t}",
+        "\treturn true",
+        "}",
+        "",
+        "func generatedTelemetryResourceValueForbidden(value string) bool {",
+        "\tvalue = generatedTelemetryResourceTrimmed(value)",
+        "\tlower := generatedTelemetryResourceASCIILower(value)",
+        "\tif generatedTelemetryResourceHasPrefix(value, \"/\") ||",
+        "\t\tgeneratedTelemetryResourceHasPrefix(value, \"~/\") ||",
+        "\t\tgeneratedTelemetryResourceHasPrefix(value, `\\\\`) ||",
+        "\t\tgeneratedTelemetryResourceHasPrefix(lower, \"file://\") ||",
+        "\t\tlen(value) >= 3 && generatedTelemetryResourceASCIIAlpha(value[0]) && value[1] == ':' &&",
+        "\t\t\t(value[2] == '/' || value[2] == '\\\\') {",
+        "\t\treturn true",
+        "\t}",
+        "\tif generatedTelemetryResourceContains(lower, \"private key\") &&",
+        "\t\tgeneratedTelemetryResourceContains(lower, \"-----begin\") ||",
+        "\t\tgeneratedTelemetryResourceHasPrefix(lower, \"bearer \") ||",
+        "\t\tgeneratedTelemetryResourceHasPrefix(lower, \"basic \") {",
+        "\t\treturn true",
+        "\t}",
+        "\tif scheme := generatedTelemetryResourceSchemeBoundary(lower); scheme >= 0 {",
+        "\t\tauthority := lower[scheme+3:]",
+        "\t\tfor index, character := range []byte(authority) {",
+        "\t\t\tif character == '/' || character == '?' || character == '#' { break }",
+        "\t\t\tif character == '@' && index > 0 { return true }",
+        "\t\t}",
+        "\t}",
+        "\treturn false",
+        "}",
+        "",
+        "func generatedTelemetryResourceSchemeBoundary(value string) int {",
+        "\tfor index := 1; index+2 < len(value); index++ {",
+        "\t\tif value[index:index+3] == \"://\" { return index }",
+        "\t}",
+        "\treturn -1",
+        "}",
+        "",
+        "func generatedTelemetryResourceTrimSpace(character rune) bool {",
+        "\treturn character >= 0x09 && character <= 0x0d || character == 0x20 || character == 0x85 ||",
+        "\t\tcharacter == 0xa0 || character == 0x1680 || character >= 0x2000 && character <= 0x200a ||",
+        "\t\tcharacter == 0x2028 || character == 0x2029 || character == 0x202f || character == 0x205f ||",
+        "\t\tcharacter == 0x3000",
+        "}",
+        "",
+        "func generatedTelemetryResourceTrimmed(value string) string {",
+        "\tstart := -1",
+        "\tend := 0",
+        "\tfor index, character := range value {",
+        "\t\twidth := len(string(character))",
+        "\t\tif !generatedTelemetryResourceTrimSpace(character) {",
+        "\t\t\tif start < 0 { start = index }",
+        "\t\t\tend = index + width",
+        "\t\t}",
+        "\t}",
+        "\tif start < 0 { return \"\" }",
+        "\treturn value[start:end]",
+        "}",
+        "",
+        "func generatedValidateTelemetryResourceAttribute(key, value string) error {",
+        f"\tif !generatedTelemetryResourceKeyShapeValid(key) || len(value) < {min_value} ||",
+        f"\t\tvalidateFamilyString(value, familyFieldConstraints{{maxUTF8Bytes: {max_value}}}) != nil {{",
+        "\t\treturn familyBuildFailure(FamilyBuildConstraint)",
+        "\t}",
+        "\tnonblank := false",
+        "\tfor _, character := range value {",
+        "\t\tif character < 0x20 || character >= 0x7f && character <= 0x9f {",
+        "\t\t\treturn familyBuildFailure(FamilyBuildConstraint)",
+        "\t\t}",
+        "\t\tif !generatedTelemetryResourceTrimSpace(character) { nonblank = true }",
+        "\t}",
+        "\tif !nonblank { return familyBuildFailure(FamilyBuildConstraint) }",
+        "\tif generatedTelemetryResourceExactKeyForbidden(key) ||",
+        "\t\tgeneratedTelemetryResourceNormalizedKeyForbidden(generatedTelemetryResourcePrometheusKey(key)) ||",
+        "\t\tgeneratedTelemetryResourceValueForbidden(value) {",
+        "\t\treturn familyBuildFailure(FamilyBuildForbiddenField)",
+        "\t}",
+        "\treturn nil",
+        "}",
+        "",
+        "func generatedTelemetryResourceContract() familyResourceDynamicContract {",
+        "\treturn familyResourceDynamicContract{",
+        f"\t\tmaxItems: {max_items},",
+        f"\t\tmaxValueUTF8Bytes: {max_value},",
+        f"\t\tmaxAggregateUTF8Bytes: {max_total},",
+        "\t\tfieldClass: FieldClassMetadata,",
+        "\t\taliases: []familyResourceCompatibilityAlias{",
+    ]
+    for position, alias in enumerate(aliases):
+        alias_path = f"{path}.aliases[{position}]"
+        canonical = _read(alias, "canonical", alias_path)
+        descriptor = _field_descriptor_literal(_read(alias, "descriptor", alias_path), f"{alias_path}.descriptor")
+        lines.extend(
+            (
+                "\t\t\t{",
+                f"\t\t\t\tcanonical: {_go_string(canonical, alias_path)},",
+                f"\t\t\t\tdescriptor: {descriptor},",
+                "\t\t\t},",
+            )
+        )
+    lines.extend(
+        (
+            "\t\t},",
+            "\t\tvalidate: generatedValidateTelemetryResourceAttribute,",
+            "\t\tprometheusKey: generatedTelemetryResourcePrometheusKey,",
+            "\t}",
+            "}",
+            "",
+            f"// generatedTelemetryResourceKeyPattern documents the validated source contract: {_go_string(key_pattern, path)}.",
+            "const generatedTelemetryResourceKeyPattern = " + _go_string(key_pattern, path),
+            "",
+        )
+    )
+    return lines
+
+
 def _render_domain_body(plan: Any, file_plan: Any, path: str) -> bytes:
     declarations = _sequence(_read(file_plan, "declarations", path), f"{path}.declarations", maximum=4096)
     inputs = {
@@ -1171,6 +1622,7 @@ def _render_domain_body(plan: Any, file_plan: Any, path: str) -> bytes:
         _read(item, "family_id", path): item
         for item in _sequence(_read(plan, "descriptors", path), f"{path}.descriptors", maximum=4096)
     }
+    resource = _read(plan, "resource_attributes", "GoAPIPlanIR")
     lines = ["package observability", ""]
     rendered: set[tuple[str, str]] = set()
     for position, declaration in enumerate(declarations):
@@ -1180,7 +1632,9 @@ def _render_domain_body(plan: Any, file_plan: Any, path: str) -> bytes:
         form = _read(declaration, "declaration_form", declaration_path)
         if form == "exported_type":
             input_plan = inputs.get(key)
-            if key[0] == "structured_type":
+            if key[0] == "resource_attributes_type":
+                lines.extend(_render_resource_type(resource, symbol, declaration_path))
+            elif key[0] == "structured_type":
                 structured_plan = structured.get(key[1])
                 if structured_plan is None:
                     raise GoRenderError(f"{declaration_path}: structured plan is missing")
@@ -1205,6 +1659,18 @@ def _render_domain_body(plan: Any, file_plan: Any, path: str) -> bytes:
             else:
                 raise GoRenderError(f"{declaration_path}: exported type has no input or structured plan")
         elif form in {"exported_function", "family_builder_method"}:
+            if key[0] == "resource_attributes_constructor":
+                lines.extend(_render_resource_constructor(resource, symbol, declaration_path))
+                rendered.add(key)
+                continue
+            if key[0] == "resource_attributes_attach":
+                lines.extend(_render_resource_attach(resource, symbol, declaration_path))
+                rendered.add(key)
+                continue
+            if key[0] == "resource_attributes_validator":
+                lines.extend(_render_resource_validator(resource, symbol, declaration_path))
+                rendered.add(key)
+                continue
             callable_plan = callables.get(key)
             if callable_plan is None:
                 raise GoRenderError(f"{declaration_path}: callable plan is missing")
@@ -1236,6 +1702,8 @@ def _render_domain_body(plan: Any, file_plan: Any, path: str) -> bytes:
             marker = _identifier(_read(arm_plan, "marker_method", path), path)
             lines.extend((f"func ({symbol}) {marker}() {{", "}", ""))
         lines.extend(_render_structured_encoder(structured_plan, f"{path}.structured[{source_id}]"))
+    if any(_read(item, "kind", path).startswith("resource_attributes_") for item in declarations):
+        lines.extend(_render_resource_helpers(resource, f"{path}.resource_attributes"))
     return _go_source(lines)
 
 
@@ -2154,8 +2622,8 @@ def render_go_candidate(index: Any, plan: Any | None = None) -> GoRenderCandidat
     )
     files = _validate_file_plans(plan, declarations)
     _validate_private_declaration_coverage(plan, files)
-    if len(declarations) != 1781:
-        raise GoRenderError("GoAPIPlanIR.declarations: exact 1,781-declaration inventory is required")
+    if len(declarations) != 1785:
+        raise GoRenderError("GoAPIPlanIR.declarations: exact 1,784-declaration inventory is required")
     if len(_sequence(_read(plan, "private_declarations", "GoAPIPlanIR"), "private declarations", maximum=4096)) != 741:
         raise GoRenderError("GoAPIPlanIR.private_declarations: exact 741-declaration inventory is required")
     producer = compile_go_producer_plan(index)

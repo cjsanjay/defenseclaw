@@ -428,6 +428,174 @@ func TestProjectNeverRecoversRawContentAndDestinationProjectionsRemainIndependen
 	}
 }
 
+func TestProjectPreservesCanonicalResourceAttributesAndDroppedCount(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name    string
+		aliases map[string]any
+	}{
+		{name: "aliases present", aliases: map[string]any{
+			"deployment.environment": "test",
+			"deployment.mode":        "gateway",
+			"defenseclaw.device.id":  "device-fingerprint",
+		}},
+		{name: "aliases absent", aliases: map[string]any{}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			resourceAttributes := canonicalResourceAttributes()
+			for key, value := range test.aliases {
+				resourceAttributes[key] = value
+			}
+			body := map[string]any{
+				"kind": "CLIENT",
+				"attributes": map[string]any{
+					"gen_ai.operation.name": "chat", "gen_ai.provider.name": "openai",
+					"gen_ai.input.messages":  messages("user", "safe"),
+					"gen_ai.output.messages": messages("assistant", "safe"),
+				},
+				"resource": map[string]any{
+					"schema_url": "https://opentelemetry.io/schemas/1.42.0",
+					"attributes": resourceAttributes, "dropped_attributes_count": uint32(7),
+				},
+			}
+			record := newTraceRecord(t, observability.BucketModelIO, "span.model.chat", "chat fixture", body)
+			rawProjection := redactRecord(t, record, redaction.ProfileNone)
+			strictProjection := redactRecord(t, record, redaction.ProfileStrict)
+			rawBefore, _ := rawProjection.Bytes()
+			strictBefore, _ := strictProjection.Bytes()
+
+			rawResult := Project(rawProjection, Limits{})
+			strictResult := Project(strictProjection, Limits{})
+			if !rawResult.Eligible() || !strictResult.Eligible() {
+				t.Fatalf("raw=%q strict=%q", rawResult.Reason(), strictResult.Reason())
+			}
+			rawResource := resultWire(t, rawResult)["body"].(map[string]any)["resource"].(map[string]any)
+			gotAttributes := rawResource["attributes"].(map[string]any)
+			for key, want := range resourceAttributes {
+				if got := gotAttributes[key]; got != want {
+					t.Errorf("resource %q = %#v, want %#v", key, got, want)
+				}
+			}
+			if got := rawResource["dropped_attributes_count"]; got != json.Number("7") {
+				t.Fatalf("resource dropped_attributes_count = %#v", got)
+			}
+			for key := range map[string]struct{}{
+				"deployment.environment": {}, "deployment.mode": {}, "defenseclaw.device.id": {},
+			} {
+				_, present := gotAttributes[key]
+				_, wantPresent := test.aliases[key]
+				if present != wantPresent {
+					t.Errorf("alias %q presence = %v, want %v", key, present, wantPresent)
+				}
+			}
+			rawAfter, _ := rawProjection.Bytes()
+			strictAfter, _ := strictProjection.Bytes()
+			if !bytes.Equal(rawBefore, rawAfter) || !bytes.Equal(strictBefore, strictAfter) {
+				t.Fatal("resource projection mutated its source or sibling projection")
+			}
+		})
+	}
+}
+
+func TestProjectRejectsForgedResourceAttributes(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		mutate func(map[string]any)
+	}{
+		{name: "secret key", mutate: func(attributes map[string]any) {
+			attributes["resource.secret"] = "opaque"
+		}},
+		{name: "absolute path value", mutate: func(attributes map[string]any) {
+			attributes["operator.location"] = "/private/location"
+		}},
+		{name: "reserved process key", mutate: func(attributes map[string]any) {
+			attributes["discovery.source"] = "connector"
+		}},
+		{name: "non string value", mutate: func(attributes map[string]any) {
+			attributes["operator.level"] = json.Number("7")
+		}},
+		{name: "sixty five custom attributes", mutate: func(attributes map[string]any) {
+			for index := 0; index < 65; index++ {
+				attributes[fmt.Sprintf("operator.extra.%02d", index)] = "x"
+			}
+		}},
+		{name: "custom aggregate above limit", mutate: func(attributes map[string]any) {
+			for index := 0; index < 17; index++ {
+				attributes[fmt.Sprintf("operator.aggregate.%02d", index)] = strings.Repeat("x", 1000)
+			}
+		}},
+		{name: "prometheus normalized collision", mutate: func(attributes map[string]any) {
+			attributes["operator.profile-name"] = "one"
+			attributes["operator.profile.name"] = "two"
+		}},
+		{name: "alias mismatch", mutate: func(attributes map[string]any) {
+			attributes["deployment.environment"] = "production"
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			attributes := canonicalResourceAttributes()
+			test.mutate(attributes)
+			projection := projectRecord(t, observability.BucketModelIO, "span.model.chat", "chat fixture", map[string]any{
+				"kind": "CLIENT",
+				"attributes": map[string]any{
+					"gen_ai.operation.name": "chat", "gen_ai.provider.name": "openai",
+					"gen_ai.input.messages":  messages("user", "safe"),
+					"gen_ai.output.messages": messages("assistant", "safe"),
+				},
+				"resource": map[string]any{
+					"schema_url": "https://opentelemetry.io/schemas/1.42.0", "attributes": attributes,
+				},
+			}, redaction.ProfileNone)
+			before, _ := projection.Bytes()
+			result := Project(projection, Limits{})
+			if result.Eligible() || result.Reason() != ReasonInvalidProjection {
+				t.Fatalf("result = eligible:%v reason:%q", result.Eligible(), result.Reason())
+			}
+			after, _ := projection.Bytes()
+			if !bytes.Equal(before, after) {
+				t.Fatal("rejected resource validation mutated its source projection")
+			}
+		})
+	}
+}
+
+func TestProjectRejectsNonCanonicalResourceShapes(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name     string
+		resource map[string]any
+	}{
+		{name: "unknown resource member", resource: map[string]any{
+			"attributes": canonicalResourceAttributes(), "future": "value",
+		}},
+		{name: "invalid dropped count", resource: map[string]any{
+			"attributes": canonicalResourceAttributes(), "dropped_attributes_count": -1,
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			projection := projectRecord(t, observability.BucketModelIO, "span.model.chat", "chat fixture", map[string]any{
+				"kind": "CLIENT",
+				"attributes": map[string]any{
+					"gen_ai.operation.name": "chat", "gen_ai.provider.name": "openai",
+					"gen_ai.input.messages":  messages("user", "safe"),
+					"gen_ai.output.messages": messages("assistant", "safe"),
+				},
+				"resource": test.resource,
+			}, redaction.ProfileNone)
+			result := Project(projection, Limits{})
+			if result.Eligible() || result.Reason() != ReasonInvalidProjection {
+				t.Fatalf("result = eligible:%v reason:%q", result.Eligible(), result.Reason())
+			}
+		})
+	}
+}
+
 func TestProjectCanarySurfaceIsExact(t *testing.T) {
 	t.Parallel()
 	base := map[string]any{
@@ -583,6 +751,21 @@ func TestProjectRejectsZeroProjectionWithoutRawFallback(t *testing.T) {
 func messages(role, content string) string {
 	encoded, _ := json.Marshal([]map[string]string{{"role": role, "content": content}})
 	return string(encoded)
+}
+
+func canonicalResourceAttributes() map[string]any {
+	return map[string]any{
+		"service.name":                              "defenseclaw",
+		"service.version":                           "v8-test",
+		"service.namespace":                         "cisco.ai-defense",
+		"service.instance.id":                       "instance-1",
+		"deployment.environment.name":               "test",
+		"defenseclaw.instance.id":                   "instance-1",
+		"defenseclaw.deployment.mode":               "gateway",
+		"defenseclaw.device.public_key_fingerprint": "device-fingerprint",
+		"team.owner":                                "runtime-security",
+		"region.site":                               "east-lab",
+	}
 }
 
 func messagesMany(count int) string {

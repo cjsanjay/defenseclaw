@@ -3,7 +3,7 @@
     "artifact": "examples/valid/valid-telemetry-rejection-without-raw-payload.json",
     "authority": "candidate-not-public-authority",
     "generator": "defenseclaw-telemetry-candidate-renderer-v1",
-    "materialized_view_sha256": "191557b76fca6d94576eee0fc9127d1f37360d5f9db1dc9ebbfb48278708121b",
+    "materialized_view_sha256": "68181521d95f93da355c484482f9c034dd4690d020b078047686652d683778e4",
     "registry_version": 1
   },
   "base_example": null,
@@ -61,7 +61,7 @@
     "/defenseclaw.telemetry.signal": "metadata"
   },
   "id": "valid-telemetry-rejection-without-raw-payload",
-  "materialized_view_sha256": "191557b76fca6d94576eee0fc9127d1f37360d5f9db1dc9ebbfb48278708121b",
+  "materialized_view_sha256": "68181521d95f93da355c484482f9c034dd4690d020b078047686652d683778e4",
   "mutation": null,
   "record": {
     "body": {

@@ -35,6 +35,7 @@ import (
 	"github.com/defenseclaw/defenseclaw/internal/observability/destinations/otlp"
 	"github.com/defenseclaw/defenseclaw/internal/observability/destinations/push"
 	observabilityruntime "github.com/defenseclaw/defenseclaw/internal/observability/runtime"
+	"github.com/defenseclaw/defenseclaw/internal/telemetry"
 	collectorlogpb "go.opentelemetry.io/proto/otlp/collector/logs/v1"
 	commonpb "go.opentelemetry.io/proto/otlp/common/v1"
 	"google.golang.org/grpc"
@@ -213,6 +214,45 @@ func compileDestination(
 	return compiled
 }
 
+func testResourceContext(t *testing.T) telemetry.V8ResourceContext {
+	return testResourceContextWith(t, nil, true)
+}
+
+func testResourceContextWith(
+	t *testing.T,
+	attributes map[string]string,
+	compatibilityAliases bool,
+) telemetry.V8ResourceContext {
+	t.Helper()
+	plan, err := config.CompileObservabilityV8(&config.ObservabilityV8Source{
+		Resource: config.ObservabilityV8ResourceSource{Attributes: attributes},
+		TracePolicy: config.ObservabilityV8TracePolicySource{
+			CompatibilityAliases: &compatibilityAliases,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	context, err := telemetry.NewV8ProviderFactory(telemetry.V8ProviderOptions{
+		Version: "factory-test", Environment: "test", ServiceInstanceID: "factory-test-instance",
+		DefenseClawInstanceID: "factory-test-defenseclaw",
+	}).ResourceContext(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return context
+}
+
+func protoResourceValues(attributes []*commonpb.KeyValue) map[string]string {
+	result := make(map[string]string, len(attributes))
+	for _, attribute := range attributes {
+		if attribute != nil && attribute.Value != nil {
+			result[attribute.Key] = attribute.Value.GetStringValue()
+		}
+	}
+	return result
+}
+
 func deliverOne(t *testing.T, name string, adapter delivery.Adapter, projection string) delivery.Counters {
 	return deliverOneWithAttempts(t, name, adapter, projection, 1)
 }
@@ -318,7 +358,7 @@ func TestFactoryPreparesLocalAndPushAdaptersWithoutStartingDelivery(t *testing.T
 	adapters := make([]delivery.Adapter, 0, len(destinations))
 	cleanups := make([]observabilityruntime.DestinationAdapterCleanup, 0, len(destinations))
 	for _, destination := range destinations {
-		adapter, cleanup, err := factory.PrepareDestination(context.Background(), destination)
+		adapter, cleanup, err := factory.PrepareDestination(context.Background(), destination, testResourceContext(t))
 		if err != nil || adapter == nil || cleanup == nil {
 			t.Fatalf("prepare %s: adapter=%T cleanup=%v error=%v", destination.Name, adapter, cleanup != nil, err)
 		}
@@ -420,7 +460,7 @@ func TestFactoryErrorsAreContentFreeAndAlwaysReturnCleanup(t *testing.T) {
 		Endpoint: "https://collector.example.test/events?api_key=query-secret", BearerEnv: "LEAKY_SECRET_REF",
 	})
 	before := cloneDestination(t, missingSecret)
-	adapter, cleanup, err := factory.PrepareDestination(context.Background(), missingSecret)
+	adapter, cleanup, err := factory.PrepareDestination(context.Background(), missingSecret, telemetry.V8ResourceContext{})
 	if adapter != nil || cleanup == nil || !IsError(err, ErrorSecretUnavailable) {
 		t.Fatalf("missing secret adapter=%T cleanup=%v error=%v", adapter, cleanup != nil, err)
 	}
@@ -447,7 +487,7 @@ func TestFactoryErrorsAreContentFreeAndAlwaysReturnCleanup(t *testing.T) {
 		Endpoint: "https://collector.example.test/events?credential=hidden",
 		TLS:      config.ObservabilityV8TLSSource{CACert: "/secret/tenant-ca.pem"},
 	})
-	adapter, cleanup, err = factory.PrepareDestination(context.Background(), caFailure)
+	adapter, cleanup, err = factory.PrepareDestination(context.Background(), caFailure, telemetry.V8ResourceContext{})
 	if adapter != nil || cleanup == nil || !IsError(err, ErrorCALoadFailed) {
 		t.Fatalf("CA failure adapter=%T cleanup=%v error=%v", adapter, cleanup != nil, err)
 	}
@@ -467,7 +507,7 @@ func TestFactoryErrorsAreContentFreeAndAlwaysReturnCleanup(t *testing.T) {
 		Name: "file", Kind: config.ObservabilityV8DestinationJSONL, Path: t.TempDir() + "/events.jsonl",
 	})
 	invalidPath.Transport.Path = "relative/private/events.jsonl"
-	adapter, cleanup, err = factory.PrepareDestination(context.Background(), invalidPath)
+	adapter, cleanup, err = factory.PrepareDestination(context.Background(), invalidPath, telemetry.V8ResourceContext{})
 	if adapter != nil || cleanup == nil || !IsError(err, ErrorInvalidDestination) ||
 		strings.Contains(err.Error(), "relative/private") {
 		t.Fatalf("path failure adapter=%T cleanup=%v error=%v", adapter, cleanup != nil, err)
@@ -498,12 +538,12 @@ func TestFactoryObservesSecretRotationOnlyAtPrepareBoundary(t *testing.T) {
 		NetworkSafety: config.ObservabilityV8NetworkSafetySource{AllowPrivateNetworks: true},
 	})
 	before := cloneDestination(t, destination)
-	first, firstCleanup, err := factory.PrepareDestination(context.Background(), destination)
+	first, firstCleanup, err := factory.PrepareDestination(context.Background(), destination, telemetry.V8ResourceContext{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	secrets.set("ARCHIVE_TOKEN", "second-token")
-	second, secondCleanup, err := factory.PrepareDestination(context.Background(), destination)
+	second, secondCleanup, err := factory.PrepareDestination(context.Background(), destination, telemetry.V8ResourceContext{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -557,7 +597,7 @@ func TestFactoryLoadsCABundleOnceAndDoesNotRequestDuringPrepare(t *testing.T) {
 		Endpoint: server.URL, TLS: config.ObservabilityV8TLSSource{CACert: "/trusted/collector-ca.pem"},
 		NetworkSafety: config.ObservabilityV8NetworkSafetySource{AllowPrivateNetworks: true},
 	})
-	adapter, cleanup, err := factory.PrepareDestination(context.Background(), destination)
+	adapter, cleanup, err := factory.PrepareDestination(context.Background(), destination, telemetry.V8ResourceContext{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -619,7 +659,10 @@ func TestFactoryPreparesHTTPOTLPLogsWithDetachedSecretsCAOverridesAndExactRetry(
 		Batch:         config.ObservabilityV8BatchSource{ScheduledDelayMS: 1},
 	})
 	before := cloneDestination(t, destination)
-	adapter, cleanup, err := factory.PrepareDestination(context.Background(), destination)
+	resourceContext := testResourceContextWith(t, map[string]string{
+		"team.name": "security-platform",
+	}, true)
+	adapter, cleanup, err := factory.PrepareDestination(context.Background(), destination, resourceContext)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -651,6 +694,16 @@ func TestFactoryPreparesHTTPOTLPLogsWithDetachedSecretsCAOverridesAndExactRetry(
 		t.Fatal(err)
 	}
 	record := decoded.ResourceLogs[0].ScopeLogs[0].LogRecords[0]
+	resourceLogs := decoded.ResourceLogs[0]
+	if resourceLogs.SchemaUrl != resourceContext.SchemaURL() || resourceLogs.Resource == nil ||
+		resourceLogs.Resource.DroppedAttributesCount != resourceContext.ResourceDroppedAttributesCount() ||
+		!reflect.DeepEqual(protoResourceValues(resourceLogs.Resource.Attributes), resourceContext.Values()) {
+		t.Fatalf("OTLP HTTP resource mismatch: got=%+v want=%+v", resourceLogs, resourceContext.Values())
+	}
+	if got := protoResourceValues(resourceLogs.Resource.Attributes); got["team.name"] != "security-platform" ||
+		got["deployment.environment"] != got["deployment.environment.name"] {
+		t.Fatalf("OTLP HTTP custom/alias resource mismatch: %+v", got)
+	}
 	if record.Body.GetStringValue() != projection || decoded.ResourceLogs[0].ScopeLogs[0].Scope.Name != "defenseclaw.factory" ||
 		protoAttribute(record.Attributes, "defenseclaw.record.id") != "record" ||
 		protoAttribute(record.Attributes, "defenseclaw.bucket") != "diagnostic" ||
@@ -665,6 +718,23 @@ func TestFactoryPreparesHTTPOTLPLogsWithDetachedSecretsCAOverridesAndExactRetry(
 	}
 	if err := cleanup(context.Background()); err != nil {
 		t.Fatalf("idempotent cleanup: %v", err)
+	}
+}
+
+func TestFactoryRejectsOTLPLogsWithoutSharedProviderResource(t *testing.T) {
+	factory := newTestFactory(t, io.Discard, nil, nil, net.Dialer{}, nil)
+	destination := compileDestination(t, config.ObservabilityV8DestinationSource{
+		Name: "otel-missing-resource", Kind: config.ObservabilityV8DestinationOTLP,
+		Protocol: "http/protobuf", Endpoint: "https://8.8.8.8:4318",
+		Send: &config.ObservabilityV8SendSource{
+			Signals: []observability.Signal{observability.SignalLogs}, Buckets: []observability.Bucket{"*"},
+		},
+	})
+	adapter, cleanup, err := factory.PrepareDestination(
+		context.Background(), destination, telemetry.V8ResourceContext{},
+	)
+	if adapter != nil || cleanup == nil || !IsError(err, ErrorInvalidDependencies) {
+		t.Fatalf("adapter=%T cleanup=%t error=%v", adapter, cleanup != nil, err)
 	}
 }
 
@@ -689,7 +759,10 @@ func TestFactoryHTTPOTLPLogOverrideAndUnsafeWarnings(t *testing.T) {
 			observability.SignalLogs: {Path: "/tenant/logs"},
 		},
 	})
-	adapter, cleanup, err := factory.PrepareDestination(context.Background(), destination)
+	resourceContext := testResourceContextWith(t, map[string]string{
+		"team.name": "runtime-security",
+	}, false)
+	adapter, cleanup, err := factory.PrepareDestination(context.Background(), destination, resourceContext)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -736,7 +809,10 @@ func TestFactoryOTLPDefaultAllSignalsBuildsOnlyItsLogAdapter(t *testing.T) {
 		len(destination.SelectedSignals) != 3 {
 		t.Fatalf("default OTLP signals = %v", destination.SelectedSignals)
 	}
-	adapter, cleanup, err := factory.PrepareDestination(context.Background(), destination)
+	resourceContext := testResourceContextWith(t, map[string]string{
+		"team.name": "runtime-security",
+	}, false)
+	adapter, cleanup, err := factory.PrepareDestination(context.Background(), destination, resourceContext)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -764,7 +840,7 @@ func TestFactoryRejectsInvalidOTLPCABundleAfterSingleResolution(t *testing.T) {
 		Send: &config.ObservabilityV8SendSource{Signals: []observability.Signal{observability.SignalLogs}, Buckets: []observability.Bucket{"*"}},
 		TLS:  config.ObservabilityV8TLSSource{CACert: caPath},
 	})
-	adapter, cleanup, err := factory.PrepareDestination(context.Background(), destination)
+	adapter, cleanup, err := factory.PrepareDestination(context.Background(), destination, testResourceContext(t))
 	if adapter != nil || cleanup == nil || !IsError(err, ErrorAdapterPrepare) || loader.callCount(caPath) != 1 {
 		t.Fatalf("adapter=%T cleanup=%t error=%v CA calls=%d", adapter, cleanup != nil, err, loader.callCount(caPath))
 	}
@@ -803,7 +879,10 @@ func TestFactoryPreparesGRPCOTLPLogsAndCleanupClosesGenerationConnection(t *test
 		LoggerName: "defenseclaw.grpc.factory", TLS: config.ObservabilityV8TLSSource{Insecure: true},
 		NetworkSafety: config.ObservabilityV8NetworkSafetySource{AllowPrivateNetworks: true},
 	})
-	adapter, cleanup, err := factory.PrepareDestination(context.Background(), destination)
+	resourceContext := testResourceContextWith(t, map[string]string{
+		"team.name": "runtime-security",
+	}, false)
+	adapter, cleanup, err := factory.PrepareDestination(context.Background(), destination, resourceContext)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -813,6 +892,16 @@ func TestFactoryPreparesGRPCOTLPLogsAndCleanupClosesGenerationConnection(t *test
 	}
 	select {
 	case request := <-capture.requests:
+		resourceLogs := request.ResourceLogs[0]
+		if resourceLogs.SchemaUrl != resourceContext.SchemaURL() || resourceLogs.Resource == nil ||
+			resourceLogs.Resource.DroppedAttributesCount != resourceContext.ResourceDroppedAttributesCount() ||
+			!reflect.DeepEqual(protoResourceValues(resourceLogs.Resource.Attributes), resourceContext.Values()) {
+			t.Fatalf("OTLP gRPC resource mismatch: got=%+v want=%+v", resourceLogs, resourceContext.Values())
+		}
+		if got := protoResourceValues(resourceLogs.Resource.Attributes); got["team.name"] != "runtime-security" ||
+			got["deployment.environment"] != "" || got["deployment.mode"] != "" || got["defenseclaw.device.id"] != "" {
+			t.Fatalf("OTLP gRPC alias-disabled resource mismatch: %+v", got)
+		}
 		record := request.ResourceLogs[0].ScopeLogs[0].LogRecords[0]
 		if request.ResourceLogs[0].ScopeLogs[0].Scope.Name != "defenseclaw.grpc.factory" ||
 			record.Body.GetStringValue() != projection || protoAttribute(record.Attributes, "defenseclaw.record.id") != "record" {
@@ -869,7 +958,7 @@ func TestFactoryPushCleanupClosesIdleConnectionAndIsIdempotent(t *testing.T) {
 		Name: "archive", Kind: config.ObservabilityV8DestinationHTTPJSONL, Endpoint: server.URL,
 		NetworkSafety: config.ObservabilityV8NetworkSafetySource{AllowPrivateNetworks: true},
 	})
-	adapter, cleanup, err := factory.PrepareDestination(context.Background(), destination)
+	adapter, cleanup, err := factory.PrepareDestination(context.Background(), destination, testResourceContext(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -913,7 +1002,7 @@ func TestFactoryRejectsUnownedKindsAndInvalidCompiledDestinations(t *testing.T) 
 	})
 	unknown.Kind = config.ObservabilityV8DestinationKind("future_logs")
 	for _, destination := range []config.ObservabilityV8EffectiveDestination{prometheus, otlp, unknown} {
-		adapter, cleanup, err := factory.PrepareDestination(context.Background(), destination)
+		adapter, cleanup, err := factory.PrepareDestination(context.Background(), destination, testResourceContext(t))
 		if adapter != nil || cleanup == nil || !IsError(err, ErrorUnsupportedKind) {
 			t.Fatalf("kind %s adapter=%T cleanup=%v error=%v", destination.Kind, adapter, cleanup != nil, err)
 		}
@@ -949,7 +1038,7 @@ func TestFactoryRejectsUnownedKindsAndInvalidCompiledDestinations(t *testing.T) 
 		}(),
 	}
 	for index, destination := range invalidCases {
-		adapter, cleanup, err := factory.PrepareDestination(context.Background(), destination)
+		adapter, cleanup, err := factory.PrepareDestination(context.Background(), destination, testResourceContext(t))
 		if adapter != nil || cleanup == nil || !IsError(err, ErrorInvalidDestination) {
 			t.Fatalf("invalid %d adapter=%T cleanup=%v error=%v", index, adapter, cleanup != nil, err)
 		}
@@ -970,7 +1059,7 @@ func TestFactoryStrictSecretValidationAndDeterministicHeaderResolution(t *testin
 			"A-First": config.ObservabilityV8EnvironmentHeader("A_SECRET"),
 		},
 	})
-	adapter, cleanup, err := factory.PrepareDestination(context.Background(), destination)
+	adapter, cleanup, err := factory.PrepareDestination(context.Background(), destination, testResourceContext(t))
 	if adapter != nil || cleanup == nil || !IsError(err, ErrorSecretUnavailable) {
 		t.Fatalf("adapter=%T cleanup=%v error=%v", adapter, cleanup != nil, err)
 	}
@@ -985,7 +1074,7 @@ func TestFactoryStrictSecretValidationAndDeterministicHeaderResolution(t *testin
 	malformed.Transport.Headers["A-First"] = config.ObservabilityV8HeaderValue{
 		Static: &static, Secret: &config.ObservabilityV8SecretRef{Env: "A_SECRET"},
 	}
-	adapter, cleanup, err = factory.PrepareDestination(context.Background(), malformed)
+	adapter, cleanup, err = factory.PrepareDestination(context.Background(), malformed, testResourceContext(t))
 	if adapter != nil || cleanup == nil || !IsError(err, ErrorInvalidDestination) {
 		t.Fatalf("malformed union adapter=%T cleanup=%v error=%v", adapter, cleanup != nil, err)
 	}
@@ -1046,7 +1135,7 @@ func TestFactoryDependencyAndCleanupContracts(t *testing.T) {
 	}
 
 	var nilFactory *Factory
-	adapter, nilCleanup, err := nilFactory.PrepareDestination(context.Background(), config.ObservabilityV8EffectiveDestination{})
+	adapter, nilCleanup, err := nilFactory.PrepareDestination(context.Background(), config.ObservabilityV8EffectiveDestination{}, telemetry.V8ResourceContext{})
 	if adapter != nil || nilCleanup == nil || !IsError(err, ErrorInvalidDependencies) {
 		t.Fatalf("nil factory adapter=%T cleanup=%v error=%v", adapter, nilCleanup != nil, err)
 	}
@@ -1070,7 +1159,7 @@ func TestFactoryConsoleStreamChoiceAndPanickingCALoader(t *testing.T) {
 	console := compileDestination(t, config.ObservabilityV8DestinationSource{
 		Name: "terminal", Kind: config.ObservabilityV8DestinationConsole,
 	})
-	adapter, cleanup, err := factory.PrepareDestination(context.Background(), console)
+	adapter, cleanup, err := factory.PrepareDestination(context.Background(), console, telemetry.V8ResourceContext{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1090,7 +1179,7 @@ func TestFactoryConsoleStreamChoiceAndPanickingCALoader(t *testing.T) {
 		Endpoint: "https://collector.example.test",
 		TLS:      config.ObservabilityV8TLSSource{CACert: "/trusted/ca.pem"},
 	})
-	adapter, cleanup, err = factory.PrepareDestination(context.Background(), caDestination)
+	adapter, cleanup, err = factory.PrepareDestination(context.Background(), caDestination, telemetry.V8ResourceContext{})
 	if adapter != nil || cleanup == nil || !IsError(err, ErrorCALoadFailed) ||
 		strings.Contains(err.Error(), "sensitive") || strings.Contains(err.Error(), "/trusted") {
 		t.Fatalf("panic masking adapter=%T cleanup=%v error=%v", adapter, cleanup != nil, err)
@@ -1108,7 +1197,7 @@ func TestFactoryConsoleStreamChoiceAndPanickingCALoader(t *testing.T) {
 		Name: "archive", Kind: config.ObservabilityV8DestinationHTTPJSONL,
 		Endpoint: "https://collector.example.test",
 	})
-	adapter, cleanup, err = resolverFactory.PrepareDestination(context.Background(), resolverDestination)
+	adapter, cleanup, err = resolverFactory.PrepareDestination(context.Background(), resolverDestination, telemetry.V8ResourceContext{})
 	if adapter != nil || cleanup == nil || !IsError(err, ErrorAdapterPrepare) || strings.Contains(err.Error(), "sensitive") {
 		t.Fatalf("resolver panic adapter=%T cleanup=%v error=%v", adapter, cleanup != nil, err)
 	}

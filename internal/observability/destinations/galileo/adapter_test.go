@@ -161,6 +161,18 @@ func TestAdapterExportsRichRedactedCanaryAndAcknowledgesExactTrace(t *testing.T)
 			resource.ScopeSpans[0].SchemaUrl == "" {
 			t.Fatalf("resource/scope lost: %+v", resource)
 		}
+		for key, want := range map[string]string{
+			"team.owner": "runtime-security", "region.site": "east-lab",
+			"deployment.environment": "test", "deployment.mode": "gateway",
+			"defenseclaw.device.id": "device-fingerprint",
+		} {
+			if got := attrs[key].GetStringValue(); got != want {
+				t.Errorf("resource %q = %q, want %q", key, got, want)
+			}
+		}
+		if resource.Resource.DroppedAttributesCount != 7 {
+			t.Errorf("resource dropped attributes = %d, want 7", resource.Resource.DroppedAttributesCount)
+		}
 	}
 	if got := observer.snapshot(); !reflect.DeepEqual(got, []otlp.CanaryAcknowledgement{{
 		Destination: "galileo", TraceID: testTraceID,
@@ -373,6 +385,12 @@ func TestAdapterRejectsMissingOrMismatchedCanonicalEndedIdentityBeforeNetwork(t 
 		{name: "mismatched Galileo profile", mutate: func(t *testing.T, wire map[string]any) {
 			projectedScopeAttributes(t, wire)["defenseclaw.galileo.compatibility_profile"] = "galileo-rich-v3"
 		}},
+		{name: "non string resource attribute", mutate: func(t *testing.T, wire map[string]any) {
+			projectedResourceAttributes(t, wire)["custom.count"] = json.Number("3")
+		}},
+		{name: "invalid resource dropped count", mutate: func(t *testing.T, wire map[string]any) {
+			projectedResourceObject(t, wire)["dropped_attributes_count"] = json.Number("-1")
+		}},
 	}
 	for index, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -392,6 +410,47 @@ func TestAdapterRejectsMissingOrMismatchedCanonicalEndedIdentityBeforeNetwork(t 
 			test.mutate(t, forged)
 			assertForgedProjectionRejectedBeforeNetwork(t, forged, "galileo-"+spanID)
 		})
+	}
+}
+
+func TestProjectedResourceCompatibilityAliasesRemainPolicyControlled(t *testing.T) {
+	t.Parallel()
+	const spanID = "7172737475767778"
+	result := makeResult(t, testTraceID, spanID, "chat", false, true)
+	encoded, err := result.Bytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wire map[string]any
+	decoder := json.NewDecoder(bytes.NewReader(encoded))
+	decoder.UseNumber()
+	if err := decoder.Decode(&wire); err != nil {
+		t.Fatal(err)
+	}
+	resourceAttributes := projectedResourceAttributes(t, wire)
+	for _, key := range []string{"deployment.environment", "deployment.mode", "defenseclaw.device.id"} {
+		delete(resourceAttributes, key)
+	}
+	encoded, err = json.Marshal(wire)
+	if err != nil {
+		t.Fatal(err)
+	}
+	projected, ok := decodeProjection(encoded)
+	if !ok {
+		t.Fatal("valid alias-free projection rejected")
+	}
+	resource, _, _, _, _, ok := projected.otlp("galileo")
+	if !ok {
+		t.Fatal("valid alias-free resource rejected")
+	}
+	attributes := protoAttributes(resource.Attributes)
+	for _, key := range []string{"deployment.environment", "deployment.mode", "defenseclaw.device.id"} {
+		if _, present := attributes[key]; present {
+			t.Errorf("disabled compatibility alias %q was reconstructed", key)
+		}
+	}
+	if got := attributes["team.owner"].GetStringValue(); got != "runtime-security" {
+		t.Fatalf("custom resource attribute = %q", got)
 	}
 }
 
@@ -545,6 +604,28 @@ func projectedAttributes(t *testing.T, wire map[string]any) map[string]any {
 	return attributes
 }
 
+func projectedResourceObject(t *testing.T, wire map[string]any) map[string]any {
+	t.Helper()
+	body, ok := wire["body"].(map[string]any)
+	if !ok {
+		t.Fatal("test projection missing body")
+	}
+	resource, ok := body["resource"].(map[string]any)
+	if !ok {
+		t.Fatal("test projection missing resource")
+	}
+	return resource
+}
+
+func projectedResourceAttributes(t *testing.T, wire map[string]any) map[string]any {
+	t.Helper()
+	attributes, ok := projectedResourceObject(t, wire)["attributes"].(map[string]any)
+	if !ok {
+		t.Fatal("test projection missing resource attributes")
+	}
+	return attributes
+}
+
 func projectedScopeAttributes(t *testing.T, wire map[string]any) map[string]any {
 	t.Helper()
 	body, ok := wire["body"].(map[string]any)
@@ -632,12 +713,18 @@ func makeResult(
 	if transportReady {
 		body["start_time_unix_nano"] = uint64(1_000_000_000)
 		body["end_time_unix_nano"] = uint64(1_100_000_000)
-		body["resource"] = map[string]any{"schema_url": "https://opentelemetry.io/schemas/1.42.0", "attributes": map[string]any{
-			"service.name": "defenseclaw", "service.version": "v8-test", "service.namespace": "defenseclaw",
-			"service.instance.id": "instance", "deployment.environment.name": "test",
-			"defenseclaw.instance.id": "defenseclaw-instance", "host.arch": "test-arch",
-			"authorization.secret": testRawPII,
-		}}
+		body["resource"] = map[string]any{
+			"schema_url": "https://opentelemetry.io/schemas/1.42.0", "dropped_attributes_count": uint32(7),
+			"attributes": map[string]any{
+				"service.name": "defenseclaw", "service.version": "v8-test", "service.namespace": "defenseclaw",
+				"service.instance.id": "instance", "deployment.environment.name": "test",
+				"defenseclaw.instance.id": "defenseclaw-instance", "host.arch": "amd64",
+				"team.owner": "runtime-security", "region.site": "east-lab",
+				"defenseclaw.deployment.mode":               "gateway",
+				"defenseclaw.device.public_key_fingerprint": "device-fingerprint",
+				"deployment.environment":                    "test", "deployment.mode": "gateway",
+				"defenseclaw.device.id": "device-fingerprint",
+			}}
 		body["scope"] = map[string]any{
 			"name": "defenseclaw.telemetry", "version": "v8-test",
 			"schema_url": "https://defenseclaw.example/schemas/trace/v1",

@@ -70,14 +70,14 @@ def test_real_candidate_renders_exact_complete_deterministic_outputs(
     assert repeated == rendered
     assert tuple(item.path for item in rendered.outputs) == coordinator.EXACT_GO_OUTPUT_PATHS
     assert tuple(item.path for item in rendered.declaration_inventory) == coordinator.EXACT_GO_OUTPUT_PATHS
-    assert len(rendered.expected_declaration_keys) == 1781
+    assert len(rendered.expected_declaration_keys) == 1785
     assert tuple(len(item.declaration_keys) for item in rendered.declaration_inventory) == (
         901,
         0,
         0,
         282,
         212,
-        386,
+        390,
         0,
     )
     assert all(isinstance(item, coordinator.RenderedGoOutput) for item in rendered.outputs)
@@ -93,8 +93,9 @@ def test_real_candidate_renders_exact_complete_deterministic_outputs(
     assert producer.count(b"generatedProducerIdentity{") >= 8038
     domains = b"".join(payloads[path] for path in coordinator.EXACT_GO_OUTPUT_PATHS[3:6])
     assert domains.count(b"func (builder *FamilyBuilder) Build") == 243
-    assert domains.count(b"func New") == 178
-    assert domains.count(b"type ") >= 459
+    assert domains.count(b"func New") == 179
+    assert domains.count(b"func ValidateTelemetryResourceAttributes") == 1
+    assert domains.count(b"type ") >= 460
     fixtures = payloads[coordinator.EXACT_GO_OUTPUT_PATHS[6]]
     assert fixtures.count(b"func TestGeneratedTelemetry") == 427
     assert b"const generatedFamilyBuilderMethodContractsJSON = " in fixtures

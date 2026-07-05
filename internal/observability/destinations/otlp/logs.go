@@ -18,6 +18,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptrace"
+	"sort"
 	"strings"
 	"sync/atomic"
 	"unicode/utf8"
@@ -45,6 +46,8 @@ const (
 type LogAdapter struct {
 	config        signalConfig
 	loggerName    string
+	resource      *resourcepb.Resource
+	resourceURL   string
 	httpClient    *http.Client
 	httpTransport *http.Transport
 	connection    *grpc.ClientConn
@@ -55,11 +58,28 @@ type LogAdapter struct {
 	closed        bool
 }
 
+// LogResourceSnapshot is the complete generation-bound OTLP resource attached
+// to every log request prepared by one adapter. NewLogAdapter copies Values and
+// converts them into immutable protobuf state before it returns; callers may
+// therefore reuse or mutate their input map without changing queued delivery.
+//
+// The destination assembly layer supplies this from telemetry.V8ResourceContext.
+// It must never be reconstructed from a projected log body.
+type LogResourceSnapshot struct {
+	SchemaURL              string
+	Values                 map[string]string
+	DroppedAttributesCount uint32
+}
+
 // NewLogAdapter creates a synchronous delivery.Adapter. The common delivery
 // dispatcher owns batching/retry; this adapter encodes only immutable
 // destination-projected bytes and never receives a canonical record.
-func (factory *Factory) NewLogAdapter(ctx context.Context) (*LogAdapter, error) {
+func (factory *Factory) NewLogAdapter(ctx context.Context, snapshot LogResourceSnapshot) (*LogAdapter, error) {
 	if ctx == nil {
+		return nil, newError(ErrorInvalidConfig, nil)
+	}
+	resource, schemaURL, ok := cloneLogResourceSnapshot(snapshot)
+	if !ok {
 		return nil, newError(ErrorInvalidConfig, nil)
 	}
 	config, err := factory.claim(observability.SignalLogs)
@@ -70,6 +90,8 @@ func (factory *Factory) NewLogAdapter(ctx context.Context) (*LogAdapter, error) 
 		config: config, loggerName: factory.config.LoggerName,
 		maxBytes: factory.config.Batch.MaxExportBatchBytes, gate: make(chan struct{}, 1),
 	}
+	adapter.resource = resource
+	adapter.resourceURL = schemaURL
 	adapter.gate <- struct{}{}
 	if config.protocol == ProtocolHTTP {
 		adapter.httpClient, adapter.httpTransport = newHTTPClient(config)
@@ -82,6 +104,27 @@ func (factory *Factory) NewLogAdapter(ctx context.Context) (*LogAdapter, error) 
 	adapter.connection = connection
 	adapter.grpcClient = collectorlogpb.NewLogsServiceClient(connection)
 	return adapter, nil
+}
+
+func cloneLogResourceSnapshot(snapshot LogResourceSnapshot) (*resourcepb.Resource, string, bool) {
+	if !utf8.ValidString(snapshot.SchemaURL) || strings.TrimSpace(snapshot.SchemaURL) == "" || len(snapshot.Values) == 0 {
+		return nil, "", false
+	}
+	keys := make([]string, 0, len(snapshot.Values))
+	for key, value := range snapshot.Values {
+		if !utf8.ValidString(key) || !utf8.ValidString(value) || strings.TrimSpace(key) == "" || value == "" {
+			return nil, "", false
+		}
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	attributes := make([]*commonpb.KeyValue, 0, len(keys))
+	for _, key := range keys {
+		attributes = append(attributes, stringAttribute(key, snapshot.Values[key]))
+	}
+	return &resourcepb.Resource{
+		Attributes: attributes, DroppedAttributesCount: snapshot.DroppedAttributesCount,
+	}, snapshot.SchemaURL, true
 }
 
 // EncodedSize conservatively accounts for the complete protobuf request. The
@@ -144,8 +187,12 @@ func (adapter *LogAdapter) buildRequest(batch delivery.Batch) (*collectorlogpb.E
 			},
 		})
 	}
+	resource, ok := proto.Clone(adapter.resource).(*resourcepb.Resource)
+	if !ok || resource == nil {
+		return nil, false
+	}
 	return &collectorlogpb.ExportLogsServiceRequest{ResourceLogs: []*logspb.ResourceLogs{{
-		Resource: &resourcepb.Resource{},
+		Resource: resource, SchemaUrl: adapter.resourceURL,
 		ScopeLogs: []*logspb.ScopeLogs{{
 			Scope:      &commonpb.InstrumentationScope{Name: adapter.loggerName},
 			LogRecords: records,

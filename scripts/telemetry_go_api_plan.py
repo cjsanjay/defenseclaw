@@ -427,6 +427,46 @@ class GoTraceContractPlanIR:
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
+class GoResourceCompatibilityAliasPlanIR:
+    alias: str
+    canonical: str
+    descriptor: GoKernelFieldDescriptorIR
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class GoResourceAttributesPlanIR:
+    owner_id: str
+    type_symbol: str
+    constructor_symbol: str
+    attach_symbol: str
+    validator_symbol: str
+    ordering: str
+    field_class: str
+    sensitivity: str
+    cardinality: str
+    stability_scope: str
+    value_utf8_policy: str
+    value_blank_policy: str
+    value_control_character_policy: str
+    prometheus_key_normalization: str
+    prometheus_normalized_collision_policy: str
+    key_pattern: str
+    max_items: int
+    max_key_ascii_bytes: int
+    min_value_utf8_bytes: int
+    max_value_utf8_bytes: int
+    max_aggregate_utf8_bytes: int
+    duplicate_key_policy: str
+    fixed_key_collision_policy: str
+    fixed_keys: tuple[str, ...]
+    fixed_descriptors: tuple[GoKernelFieldDescriptorIR, ...]
+    forbidden_key_segments: tuple[str, ...]
+    reserved_keys: tuple[str, ...]
+    forbidden_value_classes: tuple[str, ...]
+    aliases: tuple[GoResourceCompatibilityAliasPlanIR, ...]
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
 class GoDescriptorPlanIR:
     family_id: str
     signal: str
@@ -537,6 +577,7 @@ class GoAPIPlanIR:
     callables: tuple[GoCallablePlanIR, ...]
     structured: tuple[GoStructuredPlanIR, ...]
     descriptors: tuple[GoDescriptorPlanIR, ...]
+    resource_attributes: GoResourceAttributesPlanIR
     declarations: tuple[GoDeclarationPlanIR, ...]
     private_declarations: tuple[GoPrivateDeclarationPlanIR, ...]
     kernel_helpers: tuple[GoKernelHelperRefIR, ...]
@@ -557,7 +598,7 @@ class GoAPIPlanIR:
 
 _GO_API_PLAN_DIGEST_DOMAIN: Final = b"DefenseClaw GoAPIPlanIR v1\x00"
 _GO_SYMBOL_TABLE_DIGEST_DOMAIN: Final = b"DefenseClaw GoSymbolTableIR v1\x00"
-_CANONICAL_SYMBOL_TABLE_SHA256: Final = "4a8563120e248a344683b87999620dac744bbda4b9794214d15197d0abde2f54"
+_CANONICAL_SYMBOL_TABLE_SHA256: Final = "31a90343cae2631aa76808bd6337d48af59ef09481fbc9c396a3c0d7b3790d4a"
 _SHA256: Final = re.compile(r"^[0-9a-f]{64}$")
 _GO_IDENTIFIER: Final = re.compile(r"^[A-Za-z][A-Za-z0-9]*$")
 
@@ -578,6 +619,10 @@ _GO_SYMBOL_KIND_ORDER: Final = (
     "structured_arm",
     "structured_member_input",
     "structured_member_constructor",
+    "resource_attributes_type",
+    "resource_attributes_constructor",
+    "resource_attributes_attach",
+    "resource_attributes_validator",
     "family_input",
     "family_builder",
     "span_event_input",
@@ -610,6 +655,7 @@ _FORM_BY_KIND: Final = {
             "structured_type",
             "structured_arm",
             "structured_member_input",
+            "resource_attributes_type",
             "family_input",
             "span_event_input",
             "span_link_input",
@@ -619,6 +665,9 @@ _FORM_BY_KIND: Final = {
         kind: "exported_function"
         for kind in (
             "structured_member_constructor",
+            "resource_attributes_constructor",
+            "resource_attributes_attach",
+            "resource_attributes_validator",
             "span_event_constructor",
             "span_link_constructor",
         )
@@ -645,6 +694,12 @@ GO_OUTPUT_FILES: Final = (
     _FIXTURES_FILE,
 )
 _EXPECTED_REVIEWED_PARTITION: Final = {
+    _IDS_FILE: 901,
+    _DOMAIN_FILES["genai"]: 282,
+    _DOMAIN_FILES["security"]: 212,
+    _DOMAIN_FILES["operations"]: 390,
+}
+_EXPECTED_LEGACY_FIXTURE_PARTITION: Final = {
     _IDS_FILE: 901,
     _DOMAIN_FILES["genai"]: 282,
     _DOMAIN_FILES["security"]: 212,
@@ -1230,6 +1285,13 @@ def _symbol_table(index: Any) -> tuple[tuple[_Symbol, ...], str]:
         kind_counts[row.kind] += 1
         declaration_counts[row.declaration_form] += 1
     materialized_kind_counts = dict(_read(raw, "kind_counts", "go_symbol_table"))
+    for optional_kind in (
+        "resource_attributes_type",
+        "resource_attributes_constructor",
+        "resource_attributes_attach",
+        "resource_attributes_validator",
+    ):
+        materialized_kind_counts.setdefault(optional_kind, 0)
     materialized_declaration_counts = dict(_read(raw, "declaration_form_counts", "go_symbol_table"))
     if materialized_kind_counts != kind_counts or materialized_declaration_counts != declaration_counts:
         raise GoAPIPlanError("go_symbol_table: materialized counts disagree with rows")
@@ -3128,6 +3190,12 @@ def _file_assignments(
         "structured_member_input",
         "structured_member_constructor",
     }
+    resource_kinds = {
+        "resource_attributes_type",
+        "resource_attributes_constructor",
+        "resource_attributes_attach",
+        "resource_attributes_validator",
+    }
     family_kinds = {
         "family_input",
         "family_builder",
@@ -3141,6 +3209,8 @@ def _file_assignments(
             path = _IDS_FILE
         elif row.kind in structured_kinds:
             path = _DOMAIN_FILES["genai"]
+        elif row.kind in resource_kinds:
+            path = _DOMAIN_FILES["operations"]
         elif row.kind in family_kinds:
             family_id = _family_source_for_row(row)
             try:
@@ -3154,10 +3224,15 @@ def _file_assignments(
     expected = [(row.kind, row.source_id) for row in rows]
     if len(flattened) != len(set(flattened)) or set(flattened) != set(expected):
         raise GoAPIPlanError("Go declaration file assignment is incomplete or duplicated")
-    if len(rows) == 1781:
-        counts = {path: len(assigned[path]) for path in _EXPECTED_REVIEWED_PARTITION}
-        if counts != _EXPECTED_REVIEWED_PARTITION:
-            raise GoAPIPlanError("reviewed Go declaration partition is not 901/282/212/386")
+    expected_partition = {
+        1781: _EXPECTED_LEGACY_FIXTURE_PARTITION,
+        1785: _EXPECTED_REVIEWED_PARTITION,
+    }.get(len(rows))
+    if expected_partition is not None:
+        counts = {path: len(assigned[path]) for path in expected_partition}
+        if counts != expected_partition:
+            expected_counts = "/".join(str(expected_partition[path]) for path in expected_partition)
+            raise GoAPIPlanError(f"reviewed Go declaration partition is not {expected_counts}")
     return {path: tuple(assigned[path]) for path in GO_OUTPUT_FILES}
 
 
@@ -3177,7 +3252,13 @@ def _declaration_owner(row: _Symbol) -> str:
         "span_link_input",
         "span_link_constructor",
     }
-    if row.kind in structured_kinds or row.kind in family_kinds:
+    resource_kinds = {
+        "resource_attributes_type",
+        "resource_attributes_constructor",
+        "resource_attributes_attach",
+        "resource_attributes_validator",
+    }
+    if row.kind in structured_kinds or row.kind in family_kinds or row.kind in resource_kinds:
         return row.source_id.split("#", 1)[0]
     return "package"
 
@@ -3627,6 +3708,271 @@ def _fixture_plans(index: Any, inputs: Sequence[GoInputPlanIR]) -> tuple[GoFixtu
     return tuple(fixtures)
 
 
+def _compile_resource_attributes(
+    index: Any,
+    *,
+    symbols: Mapping[tuple[str, str], _Symbol],
+    fields: Mapping[str, _Field],
+) -> tuple[GoResourceAttributesPlanIR, set[DeclarationKeyIR]]:
+    groups = _optional(index, "groups")
+    if groups is None:
+        # Older compiler unit fixtures predate group ownership facts. Keep those
+        # fixtures useful by deriving the minimal resource inventory from their
+        # enriched field table; production candidates always carry groups.
+        groups = {
+            "resource.core": {
+                "attribute_refs": tuple(
+                    sorted(
+                        field.semantic_source_id
+                        for field in fields.values()
+                        if field.component == "resource"
+                    )
+                ),
+                "resource_dynamic_members": None,
+                "resource_compatibility_aliases": None,
+            }
+        }
+    elif not isinstance(groups, Mapping):
+        raise GoAPIPlanError("candidate.groups: expected mapping")
+    owner_id = "resource.core"
+    group = groups.get(owner_id)
+    if group is None:
+        raise GoAPIPlanError("candidate.groups: resource.core is missing")
+    dynamic = _read(group, "resource_dynamic_members", owner_id)
+    raw_aliases = _read(group, "resource_compatibility_aliases", owner_id)
+    if dynamic is None and raw_aliases is None:
+        dynamic = {
+            "ordering": "bytewise_key_ascending",
+            "field_class": "metadata",
+            "sensitivity": "internal",
+            "cardinality": "bounded",
+            "stability_scope": "process",
+            "value_utf8_policy": "require_valid",
+            "value_blank_policy": "reject_trimmed_empty",
+            "value_control_character_policy": "reject",
+            "prometheus_key_normalization": "dot_dash_to_underscore",
+            "prometheus_normalized_collision_policy": "reject",
+            "key_pattern": r"^[A-Za-z][A-Za-z0-9_.-]{0,127}$",
+            "max_items": 64,
+            "max_key_ascii_bytes": 128,
+            "min_value_utf8_bytes": 1,
+            "max_value_utf8_bytes": 1024,
+            "max_aggregate_utf8_bytes": 16384,
+            "duplicate_key_policy": "reject",
+            "fixed_key_collision_policy": "reject",
+            "forbidden_key_segments": (
+                "authorization", "credential", "credentials", "password", "passwd", "secret", "token",
+                "apikey", "cookie", "cwd", "dir", "directory", "file", "filepath", "home", "path", "workdir",
+            ),
+            "reserved_keys": (
+                "defenseclaw.claw.home_dir", "defenseclaw.gateway.host", "defenseclaw.gateway.port",
+                "defenseclaw.preset", "defenseclaw.preset_name", "discovery.source", "telemetry.sdk.language",
+                "telemetry.sdk.name", "telemetry.sdk.version",
+            ),
+            "forbidden_value_classes": ("filesystem_path", "credential_material"),
+        }
+        raw_aliases = ()
+    if dynamic is None or not isinstance(raw_aliases, Sequence) or isinstance(raw_aliases, (str, bytes, bytearray)):
+        raise GoAPIPlanError("resource.core: custom-resource ownership contract is incomplete")
+
+    fixed_keys = tuple(
+        _string(item, "resource.core.attribute_refs")
+        for item in _sequence(_read(group, "attribute_refs", owner_id), "resource.core.attribute_refs")
+    )
+    if len(fixed_keys) != len(set(fixed_keys)):
+        raise GoAPIPlanError("resource.core: fixed key inventory contains duplicates")
+
+    fixed_descriptors: list[GoKernelFieldDescriptorIR] = []
+    for position, fixed_key in enumerate(fixed_keys):
+        matches = [
+            field
+            for field in fields.values()
+            if field.component == "resource" and field.semantic_source_id == fixed_key
+        ]
+        if not matches:
+            raise GoAPIPlanError(f"resource.core fixed field {fixed_key}: generated descriptor is missing")
+        source = _kernel_field(matches[0])
+        comparable = (
+            source.field_type,
+            source.requirement,
+            source.field_class,
+            source.typed_constraints,
+        )
+        if any(
+            (
+                candidate.field_type,
+                candidate.requirement,
+                candidate.field_class,
+                candidate.typed_constraints,
+            )
+            != comparable
+            for candidate in (_kernel_field(item) for item in matches[1:])
+        ):
+            raise GoAPIPlanError(f"resource.core fixed field {fixed_key}: descriptors disagree across spans")
+        fixed_descriptors.append(
+            dataclasses.replace(
+                source,
+                descriptor_id=f"resource_fixed:{fixed_key}",
+                order=position,
+            )
+        )
+
+    aliases: list[GoResourceCompatibilityAliasPlanIR] = []
+    for position, raw_alias in enumerate(raw_aliases):
+        path = f"resource.core.resource_compatibility_aliases[{position}]"
+        alias = _string(_read(raw_alias, "alias", path), f"{path}.alias")
+        canonical = _string(_read(raw_alias, "canonical", path), f"{path}.canonical")
+        matches = [
+            field
+            for field in fields.values()
+            if field.component == "resource" and field.semantic_source_id == canonical
+        ]
+        if not matches:
+            raise GoAPIPlanError(f"{path}.canonical: no generated resource descriptor owns the source")
+        source = matches[0]
+        if source.primitive_type != "string" or source.structured_type is not None:
+            raise GoAPIPlanError(f"{path}.canonical: alias source must be a scalar string")
+        source_contract = _kernel_field(source)
+        for candidate in matches[1:]:
+            candidate_contract = _kernel_field(candidate)
+            if (
+                candidate_contract.field_type,
+                candidate_contract.field_class,
+                candidate_contract.typed_constraints,
+            ) != (
+                source_contract.field_type,
+                source_contract.field_class,
+                source_contract.typed_constraints,
+            ):
+                raise GoAPIPlanError(f"{path}.canonical: source descriptors disagree across span families")
+        descriptor = dataclasses.replace(
+            source_contract,
+            descriptor_id=f"resource_alias:{alias}",
+            key=alias,
+            requirement="recommended",
+            condition_id=None,
+            condition_fact=None,
+            false_requirement=None,
+            value_source="input",
+            target_slot="resource",
+            order=len(fixed_keys) + position,
+            requirement_ref=_typed_symbol("familyRequirement", "familyRequirementRecommended"),
+            false_requirement_ref=None,
+            source_ref=_typed_symbol("familyValueSource", "familyValueInput"),
+        )
+        aliases.append(GoResourceCompatibilityAliasPlanIR(alias, canonical, descriptor))
+
+    expected_aliases = (
+        ("deployment.environment", "deployment.environment.name"),
+        ("deployment.mode", "defenseclaw.deployment.mode"),
+        ("defenseclaw.device.id", "defenseclaw.device.public_key_fingerprint"),
+    )
+    if aliases and tuple((item.alias, item.canonical) for item in aliases) != expected_aliases:
+        raise GoAPIPlanError("resource.core: compatibility alias inventory differs from the canonical contract")
+
+    resource_symbol_keys = (
+        ("resource_attributes_type", owner_id),
+        ("resource_attributes_constructor", owner_id),
+        ("resource_attributes_attach", owner_id),
+        ("resource_attributes_validator", owner_id),
+    )
+    present_symbols = tuple(symbols.get(key) for key in resource_symbol_keys)
+    if any(item is None for item in present_symbols) and any(item is not None for item in present_symbols):
+        raise GoAPIPlanError("resource.core: generated resource API symbol ownership is partial")
+    type_symbol, constructor_symbol, attach_symbol, validator_symbol = (
+        (
+            "TelemetryCustomResourceAttributes",
+            "NewTelemetryCustomResourceAttributes",
+            "WithTelemetryCustomResourceAttributes",
+            "ValidateTelemetryResourceAttributes",
+        )
+        if present_symbols[0] is None
+        else tuple(item.symbol for item in present_symbols if item is not None)
+    )
+    plan = GoResourceAttributesPlanIR(
+        owner_id=owner_id,
+        type_symbol=type_symbol,
+        constructor_symbol=constructor_symbol,
+        attach_symbol=attach_symbol,
+        validator_symbol=validator_symbol,
+        ordering=_string(_read(dynamic, "ordering", owner_id), "resource dynamic ordering"),
+        field_class=_string(_read(dynamic, "field_class", owner_id), "resource dynamic field class"),
+        sensitivity=_string(_read(dynamic, "sensitivity", owner_id), "resource dynamic sensitivity"),
+        cardinality=_string(_read(dynamic, "cardinality", owner_id), "resource dynamic cardinality"),
+        stability_scope=_string(_read(dynamic, "stability_scope", owner_id), "resource dynamic stability scope"),
+        value_utf8_policy=_string(_read(dynamic, "value_utf8_policy", owner_id), "resource UTF-8 policy"),
+        value_blank_policy=_string(_read(dynamic, "value_blank_policy", owner_id), "resource blank policy"),
+        value_control_character_policy=_string(
+            _read(dynamic, "value_control_character_policy", owner_id), "resource control-character policy"
+        ),
+        prometheus_key_normalization=_string(
+            _read(dynamic, "prometheus_key_normalization", owner_id), "resource Prometheus normalization"
+        ),
+        prometheus_normalized_collision_policy=_string(
+            _read(dynamic, "prometheus_normalized_collision_policy", owner_id),
+            "resource Prometheus collision policy",
+        ),
+        key_pattern=_string(_read(dynamic, "key_pattern", owner_id), "resource dynamic key pattern"),
+        max_items=_integer(_read(dynamic, "max_items", owner_id), "resource max items", minimum=1),
+        max_key_ascii_bytes=_integer(
+            _read(dynamic, "max_key_ascii_bytes", owner_id), "resource max key bytes", minimum=1
+        ),
+        min_value_utf8_bytes=_integer(
+            _read(dynamic, "min_value_utf8_bytes", owner_id), "resource min value bytes", minimum=1
+        ),
+        max_value_utf8_bytes=_integer(
+            _read(dynamic, "max_value_utf8_bytes", owner_id), "resource max value bytes", minimum=1
+        ),
+        max_aggregate_utf8_bytes=_integer(
+            _read(dynamic, "max_aggregate_utf8_bytes", owner_id), "resource aggregate bytes", minimum=1
+        ),
+        duplicate_key_policy=_string(
+            _read(dynamic, "duplicate_key_policy", owner_id), "resource duplicate policy"
+        ),
+        fixed_key_collision_policy=_string(
+            _read(dynamic, "fixed_key_collision_policy", owner_id), "resource collision policy"
+        ),
+        fixed_keys=fixed_keys,
+        fixed_descriptors=tuple(fixed_descriptors),
+        forbidden_key_segments=tuple(
+            _string(item, "resource forbidden segment")
+            for item in _sequence(_read(dynamic, "forbidden_key_segments", owner_id), "resource forbidden segments")
+        ),
+        reserved_keys=tuple(
+            _string(item, "resource reserved key")
+            for item in _sequence(_read(dynamic, "reserved_keys", owner_id), "resource reserved keys")
+        ),
+        forbidden_value_classes=tuple(
+            _string(item, "resource forbidden value class")
+            for item in _sequence(
+                _read(dynamic, "forbidden_value_classes", owner_id), "resource forbidden value classes"
+            )
+        ),
+        aliases=tuple(aliases),
+    )
+    if (
+        plan.ordering != "bytewise_key_ascending"
+        or plan.field_class != "metadata"
+        or plan.sensitivity != "internal"
+        or plan.cardinality != "bounded"
+        or plan.stability_scope != "process"
+        or plan.value_utf8_policy != "require_valid"
+        or plan.value_blank_policy != "reject_trimmed_empty"
+        or plan.value_control_character_policy != "reject"
+        or plan.prometheus_key_normalization != "dot_dash_to_underscore"
+        or plan.prometheus_normalized_collision_policy != "reject"
+        or plan.key_pattern != r"^[A-Za-z][A-Za-z0-9_.-]{0,127}$"
+        or (plan.max_items, plan.max_key_ascii_bytes, plan.min_value_utf8_bytes,
+            plan.max_value_utf8_bytes, plan.max_aggregate_utf8_bytes) != (64, 128, 1, 1024, 16384)
+        or plan.duplicate_key_policy != "reject"
+        or plan.fixed_key_collision_policy != "reject"
+        or plan.forbidden_value_classes != ("filesystem_path", "credential_material")
+    ):
+        raise GoAPIPlanError("resource.core: custom resource plan differs from the exact generator contract")
+    planned = set(resource_symbol_keys) if present_symbols[0] is not None else set()
+    return plan, planned
+
+
 def compile_go_api_plan(index: Any) -> GoAPIPlanIR:
     """Compile one complete immutable Go API plan from enriched candidate facts."""
 
@@ -3637,13 +3983,14 @@ def compile_go_api_plan(index: Any) -> GoAPIPlanIR:
     rows, symbol_digest = _symbol_table(index)
     symbols = _symbol_index(rows)
     fields = _fields(index)
+    resource_attributes, resource_planned = _compile_resource_attributes(index, symbols=symbols, fields=fields)
     structured, structured_inputs, structured_callables, structured_planned = _compile_structured(
         index, policy=policy, symbols=symbols, fields=fields
     )
     family_inputs, family_callables, descriptors, family_planned, family_domains = _compile_families(
         index, policy=policy, symbols=symbols, fields=fields
     )
-    planned = structured_planned | family_planned
+    planned = structured_planned | family_planned | resource_planned
     expected_nonconstants = {(row.kind, row.source_id) for row in rows if row.declaration_form != "exported_const"}
     if planned != expected_nonconstants:
         raise GoAPIPlanError("Go API plans do not cover every non-constant declaration exactly once")
@@ -3715,6 +4062,7 @@ def compile_go_api_plan(index: Any) -> GoAPIPlanIR:
         callables,
         structured,
         descriptors,
+        resource_attributes,
         declarations,
         private_declarations,
         kernel_helpers,

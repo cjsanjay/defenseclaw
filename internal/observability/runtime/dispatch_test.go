@@ -18,18 +18,21 @@ import (
 	"github.com/defenseclaw/defenseclaw/internal/observability/delivery"
 	"github.com/defenseclaw/defenseclaw/internal/observability/router"
 	"github.com/defenseclaw/defenseclaw/internal/observability/runtimegraph"
+	"github.com/defenseclaw/defenseclaw/internal/telemetry"
 )
 
 type runtimeAdapterFactoryFunc func(
 	context.Context,
 	config.ObservabilityV8EffectiveDestination,
+	telemetry.V8ResourceContext,
 ) (delivery.Adapter, DestinationAdapterCleanup, error)
 
 func (function runtimeAdapterFactoryFunc) PrepareDestination(
 	ctx context.Context,
 	destination config.ObservabilityV8EffectiveDestination,
+	resource telemetry.V8ResourceContext,
 ) (delivery.Adapter, DestinationAdapterCleanup, error) {
-	return function(ctx, destination)
+	return function(ctx, destination, resource)
 }
 
 type runtimeDeliveredItem struct {
@@ -102,6 +105,18 @@ func runtimeConsoleDestination(name, profile string, queueSize int) config.Obser
 		destination.Batch.MaxQueueSize = queueSize
 	}
 	return destination
+}
+
+func runtimeOTLPLogDestination(name string) config.ObservabilityV8DestinationSource {
+	return config.ObservabilityV8DestinationSource{
+		Name: name, Kind: config.ObservabilityV8DestinationOTLP,
+		Protocol: "http/protobuf", Endpoint: "https://8.8.8.8:4318",
+		Send: &config.ObservabilityV8SendSource{
+			Signals: []observability.Signal{observability.SignalLogs},
+			Buckets: []observability.Bucket{"*"}, RedactionProfile: "none",
+		},
+		Batch: config.ObservabilityV8BatchSource{ScheduledDelayMS: 1},
+	}
 }
 
 func runtimeWithAdapterFactory(
@@ -184,6 +199,7 @@ func TestRuntimeDispatchesOneProjectionPerMatchingDestinationAfterSQLite(t *test
 	factory := runtimeAdapterFactoryFunc(func(
 		_ context.Context,
 		destination config.ObservabilityV8EffectiveDestination,
+		_ telemetry.V8ResourceContext,
 	) (delivery.Adapter, DestinationAdapterCleanup, error) {
 		adapter := newRuntimeRecordingAdapter(2)
 		mutex.Lock()
@@ -274,6 +290,7 @@ func TestRuntimeAdapterFactoryReceivesDetachedUnmaskedRuntimeDestination(t *test
 	factory := runtimeAdapterFactoryFunc(func(
 		_ context.Context,
 		destination config.ObservabilityV8EffectiveDestination,
+		_ telemetry.V8ResourceContext,
 	) (delivery.Adapter, DestinationAdapterCleanup, error) {
 		header := destination.Transport.Headers["X-Test-Key"]
 		if destination.Transport.Endpoint != "https://collector.example.test/v1/logs?tenant=secret-value" ||
@@ -312,6 +329,7 @@ func TestRuntimeOptionalQueueFullAndDeliveryFailureNeverFailProducerOrPeer(t *te
 	factory := runtimeAdapterFactoryFunc(func(
 		_ context.Context,
 		destination config.ObservabilityV8EffectiveDestination,
+		_ telemetry.V8ResourceContext,
 	) (delivery.Adapter, DestinationAdapterCleanup, error) {
 		if destination.Name == "blocked" {
 			return blocked, func(context.Context) error { return nil }, nil
@@ -400,6 +418,7 @@ func TestRuntimeBlockingOrPanickingHealthObserverCannotBlockProducer(t *testing.
 	factory := runtimeAdapterFactoryFunc(func(
 		context.Context,
 		config.ObservabilityV8EffectiveDestination,
+		telemetry.V8ResourceContext,
 	) (delivery.Adapter, DestinationAdapterCleanup, error) {
 		return adapter, func(context.Context) error { return nil }, nil
 	})
@@ -458,6 +477,7 @@ func TestRuntimeRemovedDestinationDrainsOldGenerationAndCancellationDoesNotFanou
 	factory := runtimeAdapterFactoryFunc(func(
 		_ context.Context,
 		_ config.ObservabilityV8EffectiveDestination,
+		_ telemetry.V8ResourceContext,
 	) (delivery.Adapter, DestinationAdapterCleanup, error) {
 		return adapter, func(context.Context) error { cleanups.Add(1); return nil }, nil
 	})
@@ -535,6 +555,156 @@ func TestRuntimeRemovedDestinationDrainsOldGenerationAndCancellationDoesNotFanou
 	}
 }
 
+func TestRuntimeOTLPLogResourceIsProviderBoundAndRetainedAcrossReload(t *testing.T) {
+	dependencies := newRuntimeTestDependencies(t)
+	makePlan := func(generation string, aliases bool) *config.ObservabilityV8Plan {
+		return runtimeTestPlan(t, dependencies.storePath, dependencies.judgePath, 90,
+			func(source *config.ObservabilityV8Source) {
+				source.Resource.Attributes = map[string]string{"team.generation": generation}
+				source.TracePolicy.CompatibilityAliases = &aliases
+				source.Destinations = []config.ObservabilityV8DestinationSource{
+					runtimeOTLPLogDestination("otel-logs"),
+				}
+			},
+		)
+	}
+	oldRelease := make(chan struct{})
+	var mutex sync.Mutex
+	var adapters []*runtimeRecordingAdapter
+	var resources []telemetry.V8ResourceContext
+	factory := runtimeAdapterFactoryFunc(func(
+		_ context.Context,
+		destination config.ObservabilityV8EffectiveDestination,
+		resource telemetry.V8ResourceContext,
+	) (delivery.Adapter, DestinationAdapterCleanup, error) {
+		if destination.Kind != config.ObservabilityV8DestinationOTLP || resource.SchemaURL() == "" {
+			return nil, func(context.Context) error { return nil }, errors.New("missing provider resource")
+		}
+		adapter := newRuntimeRecordingAdapter(2)
+		mutex.Lock()
+		if len(adapters) == 0 {
+			adapter.release = oldRelease
+		}
+		adapters = append(adapters, adapter)
+		resources = append(resources, resource)
+		mutex.Unlock()
+		return adapter, func(context.Context) error { return nil }, nil
+	})
+	initial := makePlan("generation-one", true)
+	options := dependencies.options()
+	options.DestinationAdapterFactory = factory
+	options.TelemetryProviderFactory = telemetry.NewV8ProviderFactory(telemetry.V8ProviderOptions{
+		Version: "runtime-resource-test", Environment: "test",
+		ServiceInstanceID: "runtime-resource-instance", DefenseClawInstanceID: "runtime-resource-defenseclaw",
+	})
+	runtime, err := New(t.Context(), runtimegraph.ConfigFromPlan(initial, false), options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		closeContext, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = runtime.Close(closeContext)
+	})
+
+	if _, err := runtime.Emit(
+		t.Context(), diagnosticMetadata(t), runtimeContentRecordBuilder("runtime-resource-old", "old"),
+	); err != nil {
+		t.Fatal(err)
+	}
+	mutex.Lock()
+	oldAdapter := adapters[0]
+	mutex.Unlock()
+	_ = receiveRuntimeDelivery(t, oldAdapter)
+
+	reloadDone := make(chan error, 1)
+	go func() {
+		result, graphErr := runtime.Reload(
+			context.Background(), runtimegraph.ConfigFromPlan(makePlan("generation-two", false), false),
+		)
+		var reloadErr error
+		if graphErr != nil {
+			reloadErr = graphErr
+		}
+		if reloadErr == nil && result.Status() != runtimegraph.ReloadApplied {
+			reloadErr = fmt.Errorf("reload status=%s", result.Status())
+		}
+		reloadDone <- reloadErr
+	}()
+	deadline := time.Now().Add(5 * time.Second)
+	for runtime.Active().Generation() == 1 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if runtime.Active().Generation() != 2 {
+		t.Fatal("new resource generation did not publish while old OTLP log queue drained")
+	}
+	mutex.Lock()
+	if len(resources) != 2 || len(adapters) != 2 {
+		mutex.Unlock()
+		t.Fatalf("prepared resources=%d adapters=%d", len(resources), len(adapters))
+	}
+	oldValues := resources[0].Values()
+	newValues := resources[1].Values()
+	oldDropped := resources[0].ResourceDroppedAttributesCount()
+	newDropped := resources[1].ResourceDroppedAttributesCount()
+	newAdapter := adapters[1]
+	mutex.Unlock()
+	if oldValues["team.generation"] != "generation-one" ||
+		oldValues["deployment.environment"] != oldValues["deployment.environment.name"] ||
+		oldDropped != 0 {
+		t.Fatalf("old OTLP resource=%+v", oldValues)
+	}
+	if newValues["team.generation"] != "generation-two" ||
+		newValues["deployment.environment"] != "" || newValues["deployment.mode"] != "" ||
+		newValues["defenseclaw.device.id"] != "" || newDropped != 0 {
+		t.Fatalf("new OTLP resource=%+v", newValues)
+	}
+	if _, err := runtime.Emit(
+		t.Context(), diagnosticMetadata(t), runtimeContentRecordBuilder("runtime-resource-new", "new"),
+	); err != nil {
+		t.Fatal(err)
+	}
+	_ = receiveRuntimeDelivery(t, newAdapter)
+	if got := resources[0].Values()["team.generation"]; got != "generation-one" {
+		t.Fatalf("old queued generation resource changed after reload: %q", got)
+	}
+	close(oldRelease)
+	select {
+	case err := <-reloadDone:
+		if err != nil {
+			t.Fatalf("reload error type=%T value=%#v", err, err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("reload did not finish after old OTLP log queue drained")
+	}
+}
+
+func TestRuntimeRejectsOTLPLogDestinationWithoutProviderResourceFactory(t *testing.T) {
+	dependencies := newRuntimeTestDependencies(t)
+	plan := runtimeTestPlan(t, dependencies.storePath, dependencies.judgePath, 90,
+		func(source *config.ObservabilityV8Source) {
+			source.Destinations = []config.ObservabilityV8DestinationSource{
+				runtimeOTLPLogDestination("otel-logs"),
+			}
+		},
+	)
+	var called atomic.Bool
+	factory := runtimeAdapterFactoryFunc(func(
+		context.Context,
+		config.ObservabilityV8EffectiveDestination,
+		telemetry.V8ResourceContext,
+	) (delivery.Adapter, DestinationAdapterCleanup, error) {
+		called.Store(true)
+		return newRuntimeRecordingAdapter(1), func(context.Context) error { return nil }, nil
+	})
+	options := dependencies.options()
+	options.DestinationAdapterFactory = factory
+	runtime, err := New(t.Context(), runtimegraph.ConfigFromPlan(plan, false), options)
+	if runtime != nil || err == nil || called.Load() {
+		t.Fatalf("runtime=%p error=%v adapter-called=%t", runtime, err, called.Load())
+	}
+}
+
 func TestRuntimeReloadKeepsOldProjectedBytesWithOldQueueGeneration(t *testing.T) {
 	dependencies := newRuntimeTestDependencies(t)
 	makePlan := func(profile string) *config.ObservabilityV8Plan {
@@ -553,6 +723,7 @@ func TestRuntimeReloadKeepsOldProjectedBytesWithOldQueueGeneration(t *testing.T)
 	factory := runtimeAdapterFactoryFunc(func(
 		_ context.Context,
 		_ config.ObservabilityV8EffectiveDestination,
+		_ telemetry.V8ResourceContext,
 	) (delivery.Adapter, DestinationAdapterCleanup, error) {
 		adapter := newRuntimeRecordingAdapter(2)
 		factoryMu.Lock()
@@ -630,6 +801,7 @@ func TestRuntimeRejectedDestinationCandidateCleansPreparedAdaptersAndKeepsOldGra
 	factory := runtimeAdapterFactoryFunc(func(
 		_ context.Context,
 		destination config.ObservabilityV8EffectiveDestination,
+		_ telemetry.V8ResourceContext,
 	) (delivery.Adapter, DestinationAdapterCleanup, error) {
 		cleanup := func(context.Context) error {
 			cleanupCalls.Add(1)
@@ -676,6 +848,7 @@ func TestRuntimeDestinationAdaptersCleanupInReverseAcquisitionOrder(t *testing.T
 	factory := runtimeAdapterFactoryFunc(func(
 		_ context.Context,
 		destination config.ObservabilityV8EffectiveDestination,
+		_ telemetry.V8ResourceContext,
 	) (delivery.Adapter, DestinationAdapterCleanup, error) {
 		return newRuntimeRecordingAdapter(1), func(context.Context) error {
 			mutex.Lock()
@@ -712,6 +885,7 @@ func TestRuntimeDispatchConcurrentStressPreservesExactlyOnceLocalAndFanout(t *te
 	factory := runtimeAdapterFactoryFunc(func(
 		_ context.Context,
 		destination config.ObservabilityV8EffectiveDestination,
+		_ telemetry.V8ResourceContext,
 	) (delivery.Adapter, DestinationAdapterCleanup, error) {
 		adapter := newRuntimeRecordingAdapter(128)
 		mutex.Lock()

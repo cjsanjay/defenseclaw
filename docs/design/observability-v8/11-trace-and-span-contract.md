@@ -433,6 +433,16 @@ omit arbitrary resource labels. The local Collector may promote process-stable
 OTLP metric resources downstream, but those promoted keys are not Agent360-required
 labels and normalized-key collisions fail closed.
 
+The local process resource is constructed without truncation: invalid or excess
+members reject the generation instead of incrementing a dropped-member counter.
+Its `dropped_attributes_count` is therefore absent/zero across SDK traces and
+metrics, OTLP logs, generated local canonical spans, and Galileo. SDK handoff
+rejects a locally generated canonical span that claims a nonzero resource dropped
+count because the SDK resource cannot represent that claim. A normalized inbound
+OTLP record may preserve an upstream nonzero count in its canonical record and
+destination projection, but it does not use the local SDK handoff or process
+resource snapshot.
+
 ## 7. Span Family Catalog
 
 The v8 producer registry includes at least these families. The table reproduces
@@ -467,6 +477,13 @@ Required attributes are machine-readable schema contracts.
 | `platform.health` | `span.config.reload` | `config.reload` | INTERNAL | Parse, validate, build, swap, and drain transaction |
 | `compliance.activity` | `span.admin.operation` | `{defenseclaw.admin.operation}` | SERVER or INTERNAL | Authenticated administrative operation |
 | `diagnostic` | `span.diagnostic.canary` | `defenseclaw.telemetry.canary` | INTERNAL | Isolated destination-path canary |
+
+`span.diagnostic.canary` is the ordinary single-span diagnostic family. It is not
+the release-blocking generated GenAI pipeline canary. That exact canary is a
+two-span trace consisting of a marked `span.agent.invoke` root in
+`agent.lifecycle` and a marked `span.model.chat` child in `model.io`; neither span
+is renamed or re-bucketed as `span.diagnostic.canary` by sampling or a destination
+projection.
 
 `security.finding`, health-state changes, and compliance outcomes remain logs when
 they are discrete facts. A span is added only when there is meaningful duration or

@@ -34,6 +34,7 @@ import (
 	"github.com/defenseclaw/defenseclaw/internal/observability/destinations/otlp"
 	"github.com/defenseclaw/defenseclaw/internal/observability/destinations/push"
 	observabilityruntime "github.com/defenseclaw/defenseclaw/internal/observability/runtime"
+	"github.com/defenseclaw/defenseclaw/internal/telemetry"
 )
 
 const (
@@ -161,6 +162,7 @@ func NewFactory(options Options) (*Factory, error) {
 func (factory *Factory) PrepareDestination(
 	ctx context.Context,
 	destination config.ObservabilityV8EffectiveDestination,
+	resourceContext telemetry.V8ResourceContext,
 ) (delivery.Adapter, observabilityruntime.DestinationAdapterCleanup, error) {
 	cleanup := noopCleanup()
 	if factory == nil || ctx == nil || nilInterface(factory.console) || nilInterface(factory.secrets) ||
@@ -176,6 +178,10 @@ func (factory *Factory) PrepareDestination(
 	}
 	if destination.Kind == config.ObservabilityV8DestinationOTLP && !effectiveDestinationSelectsLogs(destination) {
 		return nil, cleanup, newError(ErrorUnsupportedKind)
+	}
+	if destination.Kind == config.ObservabilityV8DestinationOTLP &&
+		(resourceContext.SchemaURL() == "" || len(resourceContext.Values()) == 0) {
+		return nil, cleanup, newError(ErrorInvalidDependencies)
 	}
 	if !validCompiledDestination(destination) {
 		return nil, cleanup, newError(ErrorInvalidDestination)
@@ -212,7 +218,7 @@ func (factory *Factory) PrepareDestination(
 	case config.ObservabilityV8DestinationHTTPJSONL:
 		return factory.prepareHTTPJSONL(ctx, destination, cleanup)
 	case config.ObservabilityV8DestinationOTLP:
-		return factory.prepareOTLPLogs(ctx, destination, cleanup)
+		return factory.prepareOTLPLogs(ctx, destination, resourceContext, cleanup)
 	default:
 		return nil, cleanup, newError(ErrorUnsupportedKind)
 	}
@@ -221,6 +227,7 @@ func (factory *Factory) PrepareDestination(
 func (factory *Factory) prepareOTLPLogs(
 	ctx context.Context,
 	destination config.ObservabilityV8EffectiveDestination,
+	resourceContext telemetry.V8ResourceContext,
 	noResource observabilityruntime.DestinationAdapterCleanup,
 ) (delivery.Adapter, observabilityruntime.DestinationAdapterCleanup, error) {
 	headers, err := factory.resolveHeaders(destination.Transport.Headers)
@@ -262,7 +269,10 @@ func (factory *Factory) prepareOTLPLogs(
 	if prepareErr != nil {
 		return nil, noResource, newError(ErrorAdapterPrepare)
 	}
-	adapter, adapterErr := newOTLPLogAdapterSafely(ctx, prepared)
+	adapter, adapterErr := newOTLPLogAdapterSafely(ctx, prepared, otlp.LogResourceSnapshot{
+		SchemaURL: resourceContext.SchemaURL(), Values: resourceContext.Values(),
+		DroppedAttributesCount: resourceContext.ResourceDroppedAttributesCount(),
+	})
 	if adapterErr != nil {
 		return nil, noResource, newError(ErrorAdapterPrepare)
 	}
@@ -283,7 +293,11 @@ func prepareOTLPSafely(ctx context.Context, config otlp.Config, dependencies otl
 	return otlp.Prepare(ctx, config, dependencies)
 }
 
-func newOTLPLogAdapterSafely(ctx context.Context, factory *otlp.Factory) (adapter *otlp.LogAdapter, err error) {
+func newOTLPLogAdapterSafely(
+	ctx context.Context,
+	factory *otlp.Factory,
+	resource otlp.LogResourceSnapshot,
+) (adapter *otlp.LogAdapter, err error) {
 	defer func() {
 		if recover() != nil {
 			adapter, err = nil, newError(ErrorAdapterPrepare)
@@ -292,7 +306,7 @@ func newOTLPLogAdapterSafely(ctx context.Context, factory *otlp.Factory) (adapte
 	if factory == nil {
 		return nil, newError(ErrorAdapterPrepare)
 	}
-	return factory.NewLogAdapter(ctx)
+	return factory.NewLogAdapter(ctx, resource)
 }
 
 func (factory *Factory) prepareSplunk(

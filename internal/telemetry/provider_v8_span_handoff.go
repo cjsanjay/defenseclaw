@@ -43,32 +43,33 @@ const (
 // SpanProcessor callback, while canonical consumers enqueue work that may
 // outlive that callback. Record returns a fresh immutable clone.
 type V8CanonicalEndedSpan struct {
-	record             observability.Record
-	traceID            trace.TraceID
-	spanID             trace.SpanID
-	parentSpanID       trace.SpanID
-	hasParentSpanID    bool
-	name               string
-	start              time.Time
-	end                time.Time
-	kind               trace.SpanKind
-	statusCode         codes.Code
-	statusDescription  string
-	encodedBytes       int
-	bucket             string
-	configGeneration   int64
-	family             string
-	familyVersion      int64
-	traceSchema        string
-	semanticProfile    string
-	scopeName          string
-	scopeVersion       string
-	scopeSchemaURL     string
-	resourceSchemaURL  string
-	resourceAttributes map[string]string
-	traceState         string
-	traceFlags         byte
-	otlpFlags          uint32
+	record                         observability.Record
+	traceID                        trace.TraceID
+	spanID                         trace.SpanID
+	parentSpanID                   trace.SpanID
+	hasParentSpanID                bool
+	name                           string
+	start                          time.Time
+	end                            time.Time
+	kind                           trace.SpanKind
+	statusCode                     codes.Code
+	statusDescription              string
+	encodedBytes                   int
+	bucket                         string
+	configGeneration               int64
+	family                         string
+	familyVersion                  int64
+	traceSchema                    string
+	semanticProfile                string
+	scopeName                      string
+	scopeVersion                   string
+	scopeSchemaURL                 string
+	resourceSchemaURL              string
+	resourceAttributes             map[string]string
+	resourceDroppedAttributesCount uint32
+	traceState                     string
+	traceFlags                     byte
+	otlpFlags                      uint32
 }
 
 func (span V8CanonicalEndedSpan) Record() observability.Record { return span.record.Clone() }
@@ -85,6 +86,9 @@ func (span V8CanonicalEndedSpan) StatusDescription() string {
 func (span V8CanonicalEndedSpan) TraceState() string { return strings.Clone(span.traceState) }
 func (span V8CanonicalEndedSpan) TraceFlags() byte   { return span.traceFlags }
 func (span V8CanonicalEndedSpan) OTLPFlags() uint32  { return span.otlpFlags }
+func (span V8CanonicalEndedSpan) ResourceDroppedAttributesCount() uint32 {
+	return span.resourceDroppedAttributesCount
+}
 func (span V8CanonicalEndedSpan) ParentSpanID() (trace.SpanID, bool) {
 	return span.parentSpanID, span.hasParentSpanID
 }
@@ -330,6 +334,13 @@ func (p *Provider) EndV8CanonicalSpan(span trace.Span, record observability.Reco
 		return V8CanonicalSpanGenerationInactive
 	}
 	if !canonicalOK {
+		endPhysical(false)
+		return V8CanonicalSpanInvalidRecord
+	}
+	if canonical.resourceDroppedAttributesCount != 0 {
+		// sdk/resource has no dropped-attribute-count representation. Reject the
+		// local SDK handoff before registration while leaving the canonical record
+		// valid for inbound/projection-only consumers.
 		endPhysical(false)
 		return V8CanonicalSpanInvalidRecord
 	}
@@ -713,27 +724,29 @@ func newV8CanonicalEndedSpan(record observability.Record) (V8CanonicalEndedSpan,
 		familyVersion: controls.familyVersion, traceSchema: controls.traceSchema,
 		semanticProfile: controls.semanticProfile,
 		scopeName:       controls.scopeName, scopeVersion: controls.scopeVersion,
-		scopeSchemaURL:     controls.scopeSchemaURL,
-		resourceSchemaURL:  controls.resourceSchemaURL,
-		resourceAttributes: controls.resourceAttributes,
-		traceState:         traceState,
-		traceFlags:         byte(otlpFlags),
-		otlpFlags:          otlpFlags,
+		scopeSchemaURL:                 controls.scopeSchemaURL,
+		resourceSchemaURL:              controls.resourceSchemaURL,
+		resourceAttributes:             controls.resourceAttributes,
+		resourceDroppedAttributesCount: controls.resourceDroppedAttributesCount,
+		traceState:                     traceState,
+		traceFlags:                     byte(otlpFlags),
+		otlpFlags:                      otlpFlags,
 	}, true
 }
 
 type v8CanonicalControls struct {
-	bucket             string
-	configGeneration   int64
-	family             string
-	familyVersion      int64
-	traceSchema        string
-	semanticProfile    string
-	scopeName          string
-	scopeVersion       string
-	scopeSchemaURL     string
-	resourceSchemaURL  string
-	resourceAttributes map[string]string
+	bucket                         string
+	configGeneration               int64
+	family                         string
+	familyVersion                  int64
+	traceSchema                    string
+	semanticProfile                string
+	scopeName                      string
+	scopeVersion                   string
+	scopeSchemaURL                 string
+	resourceSchemaURL              string
+	resourceAttributes             map[string]string
+	resourceDroppedAttributesCount uint32
 }
 
 func v8CanonicalControlAttributes(record observability.Record, body map[string]any) (v8CanonicalControls, bool) {
@@ -755,6 +768,11 @@ func v8CanonicalControlAttributes(record observability.Record, body map[string]a
 	resourceObject, resourceOK := body["resource"].(map[string]any)
 	resourceSchemaURL, resourceSchemaURLOK := resourceObject["schema_url"].(string)
 	resourceRawAttributes, resourceAttributesOK := resourceObject["attributes"].(map[string]any)
+	resourceDroppedAttributesCount := uint32(0)
+	resourceDroppedAttributesOK := true
+	if raw, present := resourceObject["dropped_attributes_count"]; present {
+		resourceDroppedAttributesCount, resourceDroppedAttributesOK = v8CanonicalUint32(raw)
+	}
 	resourceAttributes := make(map[string]string, len(resourceRawAttributes))
 	for key, raw := range resourceRawAttributes {
 		value, stringOK := raw.(string)
@@ -765,7 +783,8 @@ func v8CanonicalControlAttributes(record observability.Record, body map[string]a
 	}
 	if !bucketOK || !familyOK || !generationOK || !familyVersionOK || !scopeOK || !scopeAttributesOK ||
 		!scopeNameOK || !scopeVersionOK || !scopeSchemaURLOK || !traceSchemaOK || !semanticProfileOK ||
-		!resourceOK || !resourceSchemaURLOK || !resourceAttributesOK || bucket != string(record.Bucket()) ||
+		!resourceOK || !resourceSchemaURLOK || !resourceAttributesOK || !resourceDroppedAttributesOK ||
+		bucket != string(record.Bucket()) ||
 		family != string(record.EventName()) || generation != record.Provenance().ConfigGeneration ||
 		familyVersion <= 0 || traceSchema == "" || semanticProfile == "" ||
 		scopeName == "" || scopeVersion != record.Provenance().BinaryVersion || scopeSchemaURL == "" ||
@@ -777,6 +796,7 @@ func v8CanonicalControlAttributes(record observability.Record, body map[string]a
 		familyVersion: familyVersion, traceSchema: traceSchema, semanticProfile: semanticProfile,
 		scopeName: scopeName, scopeVersion: scopeVersion, scopeSchemaURL: scopeSchemaURL,
 		resourceSchemaURL: resourceSchemaURL, resourceAttributes: resourceAttributes,
+		resourceDroppedAttributesCount: resourceDroppedAttributesCount,
 	}, true
 }
 
@@ -895,7 +915,7 @@ func v8CanonicalSpanStatus(value any) (codes.Code, string, bool) {
 }
 
 func v8CanonicalPhysicalParity(canonical V8CanonicalEndedSpan, physical sdktrace.ReadOnlySpan) bool {
-	if physical == nil || !physical.SpanContext().IsSampled() ||
+	if canonical.resourceDroppedAttributesCount != 0 || physical == nil || !physical.SpanContext().IsSampled() ||
 		canonical.traceID != physical.SpanContext().TraceID() ||
 		canonical.spanID != physical.SpanContext().SpanID() ||
 		canonical.name != physical.Name() ||
@@ -967,8 +987,12 @@ func v8PhysicalResourceMatches(canonical V8CanonicalEndedSpan, physical sdktrace
 	if resource == nil || resource.SchemaURL() != canonical.resourceSchemaURL {
 		return false
 	}
-	physicalAttributes := make(map[string]attribute.Value, len(resource.Attributes()))
-	for _, item := range resource.Attributes() {
+	attributes := resource.Attributes()
+	if len(attributes) != len(canonical.resourceAttributes) {
+		return false
+	}
+	physicalAttributes := make(map[string]attribute.Value, len(attributes))
+	for _, item := range attributes {
 		physicalAttributes[string(item.Key)] = item.Value
 	}
 	for key, expected := range canonical.resourceAttributes {
@@ -976,25 +1000,7 @@ func v8PhysicalResourceMatches(canonical V8CanonicalEndedSpan, physical sdktrace
 			return false
 		}
 	}
-	for key := range v8RegisteredResourceCoreKeys {
-		physicalValue, physicallyPresent := physicalAttributes[key]
-		if !physicallyPresent {
-			continue
-		}
-		canonicalValue, canonicallyPresent := canonical.resourceAttributes[key]
-		if !canonicallyPresent || physicalValue.Type() != attribute.STRING || physicalValue.AsString() != canonicalValue {
-			return false
-		}
-	}
 	return true
-}
-
-var v8RegisteredResourceCoreKeys = map[string]struct{}{
-	"service.name": {}, "service.version": {}, "service.namespace": {}, "service.instance.id": {},
-	"deployment.environment.name": {}, "host.name": {}, "host.arch": {}, "os.type": {},
-	"tenant.id": {}, "workspace.id": {}, "defenseclaw.deployment.mode": {},
-	"defenseclaw.claw.mode": {}, "defenseclaw.instance.id": {},
-	"defenseclaw.device.public_key_fingerprint": {},
 }
 
 func v8AttributeStringEquals(values map[string]attribute.Value, key, expected string) bool {

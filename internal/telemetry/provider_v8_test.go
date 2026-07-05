@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -631,7 +632,7 @@ func TestV8ResourceUsesPlanAndSafeProcessMetadataOnly(t *testing.T) {
 		"service.instance.id": "test-instance", "service.version": "test-version",
 		"deployment.environment.name": "configured-environment", "deployment.environment": "configured-environment", "tenant.id": "tenant-a",
 		"workspace.id": "workspace-a", "defenseclaw.deployment.mode": "unmanaged", "deployment.mode": "unmanaged", "defenseclaw.claw.mode": "multi",
-		"defenseclaw.instance.id": "defenseclaw-instance", "discovery.source": "registry",
+		"defenseclaw.instance.id":                   "defenseclaw-instance",
 		"defenseclaw.device.public_key_fingerprint": fingerprint, "defenseclaw.device.id": fingerprint,
 		"custom.safe": "configured",
 	} {
@@ -641,6 +642,100 @@ func TestV8ResourceUsesPlanAndSafeProcessMetadataOnly(t *testing.T) {
 	}
 	if got := resourceAttribute(provider, "defenseclaw.claw.home_dir"); got != "" {
 		t.Fatalf("v8 resource captured ambient home dir %q", got)
+	}
+	if got := resourceAttribute(provider, "discovery.source"); got != "" {
+		t.Fatalf("v8 resource retained non-canonical discovery.source %q", got)
+	}
+}
+
+func TestV8ResourceContextIsCopySafeAndProcessStable(t *testing.T) {
+	plan := v8PlanForTest(t, "always_on", "", func(source *config.ObservabilityV8Source) {
+		source.Resource.Attributes = map[string]string{
+			"deployment.environment.name": "test",
+			"operator.profile":            "soc",
+		}
+	})
+	factory := NewV8ProviderFactory(V8ProviderOptions{Version: "8.0.0"})
+	first, err := factory.ResourceContext(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := factory.ResourceContext(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstValues := first.Values()
+	secondValues := second.Values()
+	if !reflect.DeepEqual(firstValues, secondValues) || firstValues["service.instance.id"] == "" {
+		t.Fatalf("resource contexts are not process-stable: first=%v second=%v", firstValues, secondValues)
+	}
+	firstValues["service.instance.id"] = "mutated"
+	firstValues["operator.profile"] = "mutated"
+	if got := first.Values(); got["service.instance.id"] != secondValues["service.instance.id"] || got["operator.profile"] != "soc" {
+		t.Fatalf("resource context leaked mutable map state: %v", got)
+	}
+	fields := first.TraceResourceFields()
+	if fields.ServiceInstanceID != secondValues["service.instance.id"] || fields.ServiceName != "defenseclaw" {
+		t.Fatalf("typed resource fields diverged from context: %+v", fields)
+	}
+	if count, present := fields.Resource.DroppedAttributesCount.Get(); present || count != 0 ||
+		first.ResourceDroppedAttributesCount() != 0 {
+		t.Fatalf("local resource exposed dropped attributes count=%d/%t context=%d", count, present, first.ResourceDroppedAttributesCount())
+	}
+}
+
+func TestV8ProcessResourceMapsOnlyCanonicalOTelPlatformValues(t *testing.T) {
+	for input, want := range map[string]string{
+		"amd64": "amd64", "386": "x86", "x86": "x86", "arm": "arm32",
+		"arm64": "arm64", "ppc64": "ppc64", "ppc64le": "ppc64", "s390x": "s390x",
+		"riscv64": "", "wasm": "", "": "",
+	} {
+		if got := v8OTelHostArch(input); got != want {
+			t.Errorf("host arch %q = %q, want %q", input, got, want)
+		}
+	}
+	for input, want := range map[string]string{
+		"linux": "linux", "darwin": "darwin", "windows": "windows",
+		"dragonfly": "dragonflybsd", "illumos": "solaris", "zos": "z_os",
+		"plan9": "", "js": "", "": "",
+	} {
+		if got := v8OTelOSType(input); got != want {
+			t.Errorf("os type %q = %q, want %q", input, got, want)
+		}
+	}
+	for input, want := range map[string]string{
+		"host-01.example": "host-01.example", " HOST_01 ": "HOST_01",
+		"": "", "-host": "", "host name": "", "høst": "",
+	} {
+		if got := v8OTelHostName(input); got != want {
+			t.Errorf("host name %q = %q, want %q", input, got, want)
+		}
+	}
+}
+
+func TestV8ResourceContextRejectsCompleteResourceDriftWithoutValues(t *testing.T) {
+	plan := v8PlanForTest(t, "always_on", "", nil)
+	canary := "private invalid service instance"
+	options := V8ProviderOptions{
+		Version: "8.0.0", Environment: "test", ServiceInstanceID: canary,
+	}
+	factory := NewV8ProviderFactory(options)
+	if resourceContext, err := factory.ResourceContext(plan); err == nil || resourceContext.SchemaURL() != "" {
+		t.Fatalf("factory accepted invalid complete resource: returned=%t err=%v", resourceContext.SchemaURL() != "", err)
+	} else {
+		var providerError *V8ProviderError
+		if !errors.As(err, &providerError) || providerError.Code() != V8ProviderErrorInitialization ||
+			strings.Contains(err.Error(), canary) {
+			t.Fatalf("factory validation error=%T/%v", err, err)
+		}
+	}
+	provider, err := NewProviderV8Inactive(context.Background(), plan, 1, options)
+	if provider != nil || err == nil || strings.Contains(err.Error(), canary) {
+		t.Fatalf("provider accepted or disclosed invalid complete resource: provider=%v err=%v", provider, err)
+	}
+	var providerError *V8ProviderError
+	if !errors.As(err, &providerError) || providerError.Code() != V8ProviderErrorInitialization {
+		t.Fatalf("provider validation error=%T/%v", err, err)
 	}
 }
 
@@ -919,6 +1014,7 @@ func TestV8GenerationPipelineFactoryIsSkippedBeforeConstructionWhenSignalsUncoll
 	})
 	var calls atomic.Uint64
 	provider, err := NewProviderV8Inactive(context.Background(), plan, 1, V8ProviderOptions{
+		Version: "test", Environment: "test",
 		GenerationPipelines: func(
 			context.Context,
 			*config.ObservabilityV8Plan,

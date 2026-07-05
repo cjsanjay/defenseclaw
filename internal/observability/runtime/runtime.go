@@ -93,7 +93,9 @@ type Options struct {
 	// TelemetryProviderFactory is optional. When supplied, the exact plan-bound
 	// OTel provider is prepared and retired inside the same runtime graph as
 	// local persistence and destination dispatch; reload can therefore never
-	// pair producers with processors/readers from another generation.
+	// pair producers with processors/readers from another generation. It is
+	// required when an enabled OTLP destination selects logs because that
+	// adapter must use the same generation's immutable v8 resource snapshot.
 	TelemetryProviderFactory *telemetry.V8ProviderFactory
 	// GraphOptions is optional. When supplied, Reporter is still replaced by
 	// the process-stable Reporter above so one runtime cannot split reporting
@@ -170,8 +172,9 @@ func New(ctx context.Context, initial runtimegraph.Config, options Options) (*Ru
 	}
 	destinationObserver := newSafeDeliveryObserver(options.DestinationObserver)
 	dispatchFactory := &destinationDispatchFactory{
-		adapters: options.DestinationAdapterFactory,
-		observer: destinationObserver,
+		adapters:  options.DestinationAdapterFactory,
+		resources: options.TelemetryProviderFactory,
+		observer:  destinationObserver,
 	}
 	factories := []runtimegraph.ComponentFactory{
 		&retentionPolicyFactory{controller: options.RetentionController},

@@ -41,12 +41,23 @@ import (
 	collectormetricpb "go.opentelemetry.io/proto/otlp/collector/metrics/v1"
 	collectortracepb "go.opentelemetry.io/proto/otlp/collector/trace/v1"
 	commonpb "go.opentelemetry.io/proto/otlp/common/v1"
+	resourcepb "go.opentelemetry.io/proto/otlp/resource/v1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 )
+
+func testLogResourceSnapshot() LogResourceSnapshot {
+	return LogResourceSnapshot{
+		SchemaURL: "https://opentelemetry.io/schemas/1.42.0",
+		Values: map[string]string{
+			"service.name":        "defenseclaw",
+			"service.instance.id": "otlp-test-instance",
+		},
+	}
+}
 
 func TestHTTPLogAdapterExportsOnlyProjectedBytesAtExactPathAndHeaders(t *testing.T) {
 	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "https://ambient.invalid.example")
@@ -97,7 +108,7 @@ func TestHTTPLogAdapterExportsOnlyProjectedBytesAtExactPathAndHeaders(t *testing
 			AllowPrivateNetworks: true,
 		},
 	}, Dependencies{})
-	adapter, err := factory.NewLogAdapter(context.Background())
+	adapter, err := factory.NewLogAdapter(context.Background(), testLogResourceSnapshot())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -147,7 +158,7 @@ func TestGRPCLogAdapterUsesGuardedConnectionAndProtobuf(t *testing.T) {
 		Timeout: time.Second, TLS: TLSConfig{Insecure: true},
 		NetworkSafety: NetworkSafety{AllowPrivateNetworks: true},
 	}, Dependencies{})
-	adapter, err := factory.NewLogAdapter(context.Background())
+	adapter, err := factory.NewLogAdapter(context.Background(), testLogResourceSnapshot())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -206,17 +217,41 @@ func TestGRPCTraceAndMetricExporterWireShapes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := spanExporter.ExportSpans(context.Background(), []sdktrace.ReadOnlySpan{testSpan("agent.grpc")}); err != nil {
+	traceResource, traceSource := testCompleteSignalResource()
+	metricResource, metricSource := testCompleteSignalResource()
+	traceSource["service.name"] = "mutated-after-resource-construction"
+	delete(traceSource, "operator.profile")
+	metricSource["unexpected.extra"] = "must-not-appear"
+	if err := spanExporter.ExportSpans(
+		context.Background(),
+		[]sdktrace.ReadOnlySpan{testSpanWithResource("agent.grpc", traceResource)},
+	); err != nil {
 		t.Fatal(err)
 	}
-	if err := metricExporter.Export(context.Background(), testMetricData("defenseclaw.grpc.metric")); err != nil {
+	if err := spanExporter.Shutdown(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	_ = spanExporter.Shutdown(context.Background())
-	_ = metricExporter.Shutdown(context.Background())
+	if err := metricExporter.Export(
+		context.Background(),
+		testMetricDataWithResource("defenseclaw.grpc.metric", metricResource),
+	); err != nil {
+		t.Fatal(err)
+	}
+	if err := metricExporter.ForceFlush(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := metricExporter.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
 
 	select {
 	case request := <-traceCapture.requests:
+		if len(request.ResourceSpans) != 1 {
+			t.Fatalf("resource spans = %d, want 1", len(request.ResourceSpans))
+		}
+		assertExactSignalResource(
+			t, request.ResourceSpans[0].SchemaUrl, request.ResourceSpans[0].Resource,
+		)
 		if got := request.ResourceSpans[0].ScopeSpans[0].Spans[0].Name; got != "agent.grpc" {
 			t.Fatalf("span name = %q", got)
 		}
@@ -225,6 +260,12 @@ func TestGRPCTraceAndMetricExporterWireShapes(t *testing.T) {
 	}
 	select {
 	case request := <-metricCapture.requests:
+		if len(request.ResourceMetrics) != 1 {
+			t.Fatalf("resource metrics = %d, want 1", len(request.ResourceMetrics))
+		}
+		assertExactSignalResource(
+			t, request.ResourceMetrics[0].SchemaUrl, request.ResourceMetrics[0].Resource,
+		)
 		if got := request.ResourceMetrics[0].ScopeMetrics[0].Metrics[0].Name; got != "defenseclaw.grpc.metric" {
 			t.Fatalf("metric name = %q", got)
 		}
@@ -285,14 +326,19 @@ func TestHTTPTraceAndMetricExportersPreserveGeneralGraphAndIndependentShutdown(t
 	if err != nil {
 		t.Fatal(err)
 	}
-	span := testSpan("guardrail.native")
+	traceResource, traceSource := testCompleteSignalResource()
+	metricResource, metricSource := testCompleteSignalResource()
+	traceSource["service.name"] = "mutated-after-resource-construction"
+	delete(traceSource, "operator.profile")
+	metricSource["unexpected.extra"] = "must-not-appear"
+	span := testSpanWithResource("guardrail.native", traceResource)
 	if err := spanExporter.ExportSpans(context.Background(), []sdktrace.ReadOnlySpan{span}); err != nil {
 		t.Fatal(err)
 	}
 	if err := spanExporter.Shutdown(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	metricData := testMetricData("defenseclaw.runtime.test")
+	metricData := testMetricDataWithResource("defenseclaw.runtime.test", metricResource)
 	if err := metricExporter.Export(context.Background(), metricData); err != nil {
 		t.Fatalf("metric export after trace shutdown: %v", err)
 	}
@@ -305,6 +351,12 @@ func TestHTTPTraceAndMetricExportersPreserveGeneralGraphAndIndependentShutdown(t
 
 	select {
 	case request := <-traces:
+		if len(request.ResourceSpans) != 1 {
+			t.Fatalf("resource spans = %d, want 1", len(request.ResourceSpans))
+		}
+		assertExactSignalResource(
+			t, request.ResourceSpans[0].SchemaUrl, request.ResourceSpans[0].Resource,
+		)
 		if got := request.ResourceSpans[0].ScopeSpans[0].Spans[0].Name; got != "guardrail.native" {
 			t.Fatalf("trace name = %q", got)
 		}
@@ -313,6 +365,12 @@ func TestHTTPTraceAndMetricExportersPreserveGeneralGraphAndIndependentShutdown(t
 	}
 	select {
 	case request := <-metrics:
+		if len(request.ResourceMetrics) != 1 {
+			t.Fatalf("resource metrics = %d, want 1", len(request.ResourceMetrics))
+		}
+		assertExactSignalResource(
+			t, request.ResourceMetrics[0].SchemaUrl, request.ResourceMetrics[0].Resource,
+		)
 		if got := request.ResourceMetrics[0].ScopeMetrics[0].Metrics[0].Name; got != "defenseclaw.runtime.test" {
 			t.Fatalf("metric name = %q", got)
 		}
@@ -495,7 +553,7 @@ func TestGuardedHTTPDialBlocksDNSRebindingBeforeConnection(t *testing.T) {
 		Selected: []observability.Signal{observability.SignalLogs}, Timeout: 100 * time.Millisecond,
 		TLS: TLSConfig{Insecure: true},
 	}, Dependencies{Resolver: resolver, Dialer: dialer})
-	adapter, err := factory.NewLogAdapter(context.Background())
+	adapter, err := factory.NewLogAdapter(context.Background(), testLogResourceSnapshot())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -525,7 +583,7 @@ func TestGuardedGRPCDialPreservesUnsafeRebindingClassification(t *testing.T) {
 		Selected: []observability.Signal{observability.SignalLogs}, Timeout: 100 * time.Millisecond,
 		TLS: TLSConfig{Insecure: true},
 	}, Dependencies{Resolver: resolver, Dialer: dialer})
-	adapter, err := factory.NewLogAdapter(context.Background())
+	adapter, err := factory.NewLogAdapter(context.Background(), testLogResourceSnapshot())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -697,7 +755,7 @@ func TestHTTPRedirectIsBlockedWithoutContactingRedirectTarget(t *testing.T) {
 		Selected: []observability.Signal{observability.SignalLogs}, Timeout: time.Second,
 		TLS: TLSConfig{Insecure: true}, NetworkSafety: NetworkSafety{AllowPrivateNetworks: true},
 	}, Dependencies{})
-	adapter, err := factory.NewLogAdapter(context.Background())
+	adapter, err := factory.NewLogAdapter(context.Background(), testLogResourceSnapshot())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -739,7 +797,7 @@ func TestHTTPSCustomCAAndContentFreeFailures(t *testing.T) {
 	for index := range caBundle {
 		caBundle[index] = 0
 	}
-	adapter, err := factory.NewLogAdapter(context.Background())
+	adapter, err := factory.NewLogAdapter(context.Background(), testLogResourceSnapshot())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -967,7 +1025,7 @@ func TestLogFailureClassificationAndMalformedProjection(t *testing.T) {
 				Endpoint: server.URL, Selected: []observability.Signal{observability.SignalLogs}, Timeout: time.Second,
 				TLS: TLSConfig{Insecure: true}, NetworkSafety: NetworkSafety{AllowPrivateNetworks: true},
 			}, Dependencies{})
-			adapter, err := factory.NewLogAdapter(context.Background())
+			adapter, err := factory.NewLogAdapter(context.Background(), testLogResourceSnapshot())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -989,7 +1047,7 @@ func TestLogFailureClassificationAndMalformedProjection(t *testing.T) {
 		Selected: []observability.Signal{observability.SignalLogs}, Timeout: time.Second,
 		TLS: TLSConfig{Insecure: true}, NetworkSafety: NetworkSafety{AllowPrivateNetworks: true},
 	}, Dependencies{})
-	adapter, err := factory.NewLogAdapter(context.Background())
+	adapter, err := factory.NewLogAdapter(context.Background(), testLogResourceSnapshot())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1033,7 +1091,7 @@ func TestLogPartialSuccessReportsExactAcceptedAndRejectedCountsWithoutRetry(t *t
 		Selected: []observability.Signal{observability.SignalLogs}, Timeout: time.Second,
 		TLS: TLSConfig{Insecure: true}, NetworkSafety: NetworkSafety{AllowPrivateNetworks: true},
 	}, Dependencies{Observer: observer})
-	adapter, err := factory.NewLogAdapter(context.Background())
+	adapter, err := factory.NewLogAdapter(context.Background(), testLogResourceSnapshot())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1077,7 +1135,7 @@ func TestMalformedNegativeLogPartialSuccessIsTerminalForHTTPAndGRPC(t *testing.T
 			Selected: []observability.Signal{observability.SignalLogs}, Timeout: time.Second,
 			TLS: TLSConfig{Insecure: true}, NetworkSafety: NetworkSafety{AllowPrivateNetworks: true},
 		}, Dependencies{Observer: observer})
-		adapter, err := factory.NewLogAdapter(context.Background())
+		adapter, err := factory.NewLogAdapter(context.Background(), testLogResourceSnapshot())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1107,7 +1165,7 @@ func TestMalformedNegativeLogPartialSuccessIsTerminalForHTTPAndGRPC(t *testing.T
 			Selected: []observability.Signal{observability.SignalLogs}, Timeout: time.Second,
 			TLS: TLSConfig{Insecure: true}, NetworkSafety: NetworkSafety{AllowPrivateNetworks: true},
 		}, Dependencies{Observer: observer})
-		adapter, err := factory.NewLogAdapter(context.Background())
+		adapter, err := factory.NewLogAdapter(context.Background(), testLogResourceSnapshot())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1134,7 +1192,7 @@ func TestLogPartialSuccessAboveBatchCountClampsToAllRejected(t *testing.T) {
 		Selected: []observability.Signal{observability.SignalLogs}, Timeout: time.Second,
 		TLS: TLSConfig{Insecure: true}, NetworkSafety: NetworkSafety{AllowPrivateNetworks: true},
 	}, Dependencies{})
-	adapter, err := factory.NewLogAdapter(context.Background())
+	adapter, err := factory.NewLogAdapter(context.Background(), testLogResourceSnapshot())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1187,7 +1245,7 @@ func TestHTTPLogAcknowledgementAndPostWriteFailureClassification(t *testing.T) {
 			Resolver: staticResolver{answers: []net.IPAddr{{IP: net.ParseIP("8.8.8.8")}}},
 			Dialer:   dialer,
 		})
-		adapter, err := factory.NewLogAdapter(context.Background())
+		adapter, err := factory.NewLogAdapter(context.Background(), testLogResourceSnapshot())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1215,7 +1273,7 @@ func TestHTTPLogAcknowledgementAndPostWriteFailureClassification(t *testing.T) {
 			Selected: []observability.Signal{observability.SignalLogs}, Timeout: time.Second,
 			TLS: TLSConfig{Insecure: true}, NetworkSafety: NetworkSafety{AllowPrivateNetworks: true},
 		}, Dependencies{})
-		adapter, err := factory.NewLogAdapter(context.Background())
+		adapter, err := factory.NewLogAdapter(context.Background(), testLogResourceSnapshot())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1245,7 +1303,7 @@ func TestHTTPLogAcknowledgementAndPostWriteFailureClassification(t *testing.T) {
 				Selected: []observability.Signal{observability.SignalLogs}, Timeout: time.Second,
 				TLS: TLSConfig{Insecure: true}, NetworkSafety: NetworkSafety{AllowPrivateNetworks: true},
 			}, Dependencies{})
-			adapter, err := factory.NewLogAdapter(context.Background())
+			adapter, err := factory.NewLogAdapter(context.Background(), testLogResourceSnapshot())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -1270,7 +1328,7 @@ func TestHTTPLogAcknowledgementAndPostWriteFailureClassification(t *testing.T) {
 			Selected: []observability.Signal{observability.SignalLogs}, Timeout: time.Second,
 			TLS: TLSConfig{Insecure: true}, NetworkSafety: NetworkSafety{AllowPrivateNetworks: true},
 		}, Dependencies{})
-		adapter, err := factory.NewLogAdapter(context.Background())
+		adapter, err := factory.NewLogAdapter(context.Background(), testLogResourceSnapshot())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1302,7 +1360,7 @@ func TestHTTPLogAcknowledgementAndPostWriteFailureClassification(t *testing.T) {
 			Selected: []observability.Signal{observability.SignalLogs}, Timeout: time.Second,
 			TLS: TLSConfig{Insecure: true}, NetworkSafety: NetworkSafety{AllowPrivateNetworks: true},
 		}, Dependencies{})
-		adapter, err := factory.NewLogAdapter(context.Background())
+		adapter, err := factory.NewLogAdapter(context.Background(), testLogResourceSnapshot())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1716,21 +1774,122 @@ func findProtoAttribute(attributes []*commonpb.KeyValue, key string) string {
 	return ""
 }
 
+const testCompleteSignalResourceSchemaURL = "https://opentelemetry.io/schemas/1.42.0"
+
+func testCompleteSignalResourceValues() map[string]string {
+	return map[string]string{
+		"service.name":                "defenseclaw",
+		"service.version":             "8.0.0-test",
+		"service.namespace":           "defenseclaw",
+		"service.instance.id":         "otlp-test-instance",
+		"deployment.environment.name": "test",
+		"host.name":                   "otlp-test-host",
+		"host.arch":                   "amd64",
+		"os.type":                     "linux",
+		"tenant.id":                   "tenant-test",
+		"workspace.id":                "workspace-test",
+		"defenseclaw.deployment.mode": "unmanaged",
+		"defenseclaw.claw.mode":       "multi",
+		"defenseclaw.instance.id":     "defenseclaw-test-instance",
+		"defenseclaw.device.public_key_fingerprint": "sha256:test-device-fingerprint",
+		"operator.profile":                          "soc",
+		"deployment.environment":                    "test",
+		"deployment.mode":                           "unmanaged",
+		"defenseclaw.device.id":                     "sha256:test-device-fingerprint",
+	}
+}
+
+func testCompleteSignalResource() (*resource.Resource, map[string]string) {
+	values := testCompleteSignalResourceValues()
+	attrs := make([]attribute.KeyValue, 0, len(values))
+	for key, value := range values {
+		attrs = append(attrs, attribute.String(key, value))
+	}
+	return resource.NewWithAttributes(testCompleteSignalResourceSchemaURL, attrs...), values
+}
+
+func assertExactSignalResource(
+	t *testing.T,
+	schemaURL string,
+	got *resourcepb.Resource,
+) {
+	t.Helper()
+	want := testCompleteSignalResourceValues()
+	if schemaURL != testCompleteSignalResourceSchemaURL {
+		t.Fatalf("resource schema URL = %q, want %q", schemaURL, testCompleteSignalResourceSchemaURL)
+	}
+	if got == nil || got.DroppedAttributesCount != 0 || len(got.Attributes) != len(want) {
+		count := -1
+		dropped := uint32(0)
+		if got != nil {
+			count = len(got.Attributes)
+			dropped = got.DroppedAttributesCount
+		}
+		t.Fatalf("resource attributes/dropped = %d/%d, want %d/0", count, dropped, len(want))
+	}
+	seen := make(map[string]struct{}, len(got.Attributes))
+	for _, item := range got.Attributes {
+		if item == nil || item.Value == nil {
+			t.Fatal("resource contains nil attribute")
+		}
+		if _, duplicate := seen[item.Key]; duplicate {
+			t.Fatalf("resource contains duplicate attribute %q", item.Key)
+		}
+		seen[item.Key] = struct{}{}
+		stringValue, ok := item.Value.Value.(*commonpb.AnyValue_StringValue)
+		if !ok {
+			t.Fatalf("resource attribute %q has non-string wire type %T", item.Key, item.Value.Value)
+		}
+		expected, known := want[item.Key]
+		if !known || stringValue.StringValue != expected {
+			t.Fatalf("resource attribute %q = %q known=%t, want %q", item.Key, stringValue.StringValue, known, expected)
+		}
+	}
+	for key := range want {
+		if _, present := seen[key]; !present {
+			t.Fatalf("resource is missing attribute %q", key)
+		}
+	}
+	for alias, canonical := range map[string]string{
+		"deployment.environment": "deployment.environment.name",
+		"deployment.mode":        "defenseclaw.deployment.mode",
+		"defenseclaw.device.id":  "defenseclaw.device.public_key_fingerprint",
+	} {
+		if want[alias] != want[canonical] {
+			t.Fatalf("resource alias %q does not mirror %q", alias, canonical)
+		}
+	}
+}
+
 func testSpan(name string) sdktrace.ReadOnlySpan {
+	return testSpanWithResource(
+		name,
+		resource.NewSchemaless(attribute.String("service.name", "defenseclaw")),
+	)
+}
+
+func testSpanWithResource(name string, signalResource *resource.Resource) sdktrace.ReadOnlySpan {
 	return tracetest.SpanStub{
 		Name: name, SpanContext: trace.NewSpanContext(trace.SpanContextConfig{
 			TraceID: trace.TraceID{1}, SpanID: trace.SpanID{2}, TraceFlags: trace.FlagsSampled,
 		}),
 		StartTime: time.Now().Add(-time.Millisecond), EndTime: time.Now(),
 		Attributes:           []attribute.KeyValue{attribute.String("defenseclaw.bucket", "guardrail.evaluation")},
-		Resource:             resource.NewSchemaless(attribute.String("service.name", "defenseclaw")),
+		Resource:             signalResource,
 		InstrumentationScope: instrumentation.Scope{Name: "defenseclaw", Version: "test"},
 	}.Snapshot()
 }
 
 func testMetricData(name string) *metricdata.ResourceMetrics {
+	return testMetricDataWithResource(
+		name,
+		resource.NewSchemaless(attribute.String("service.name", "defenseclaw")),
+	)
+}
+
+func testMetricDataWithResource(name string, signalResource *resource.Resource) *metricdata.ResourceMetrics {
 	return &metricdata.ResourceMetrics{
-		Resource: resource.NewSchemaless(attribute.String("service.name", "defenseclaw")),
+		Resource: signalResource,
 		ScopeMetrics: []metricdata.ScopeMetrics{{
 			Scope: instrumentation.Scope{Name: "defenseclaw"},
 			Metrics: []metricdata.Metrics{{
