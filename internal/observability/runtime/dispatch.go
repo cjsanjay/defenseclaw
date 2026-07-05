@@ -120,7 +120,7 @@ func (factory *destinationDispatchFactory) Prepare(
 		if err != nil || nilInterface(adapter) {
 			return nil, &destinationDispatchError{}
 		}
-		dispatcherConfig, ok := compiledDispatcherConfig(destination, component.observer)
+		dispatcherConfig, ok := CompiledDispatcherConfig(destination, component.observer)
 		if !ok {
 			return nil, &destinationDispatchError{}
 		}
@@ -146,7 +146,11 @@ func destinationSelectsLogs(destination config.ObservabilityV8EffectiveDestinati
 	return false
 }
 
-func compiledDispatcherConfig(
+// CompiledDispatcherConfig maps one compiler-validated destination transport
+// to the common bounded delivery runtime. Signal-specific destination
+// assemblers use the same mapping so logs and canonical trace projections do
+// not silently diverge in queue, batching, retry, or timeout behavior.
+func CompiledDispatcherConfig(
 	destination config.ObservabilityV8EffectiveDestination,
 	observer delivery.Observer,
 ) (delivery.Config, bool) {

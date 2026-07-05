@@ -254,7 +254,7 @@ func TestQueueOnlyDispatcherSeparatesProjectedQueueBytesFromEncodedWriteBytes(t 
 			},
 		},
 	}
-	compiled, ok := compiledDispatcherConfig(destination, nil)
+	compiled, ok := CompiledDispatcherConfig(destination, nil)
 	if !ok {
 		t.Fatal("queue-only destination did not compile")
 	}

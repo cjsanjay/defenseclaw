@@ -30,9 +30,11 @@ import (
 	"github.com/defenseclaw/defenseclaw/internal/netguard"
 	"github.com/defenseclaw/defenseclaw/internal/observability"
 	"github.com/defenseclaw/defenseclaw/internal/observability/delivery"
+	"github.com/defenseclaw/defenseclaw/internal/observability/destinations/galileo"
 	"github.com/defenseclaw/defenseclaw/internal/observability/destinations/local"
 	"github.com/defenseclaw/defenseclaw/internal/observability/destinations/otlp"
 	"github.com/defenseclaw/defenseclaw/internal/observability/destinations/push"
+	"github.com/defenseclaw/defenseclaw/internal/observability/redaction"
 	observabilityruntime "github.com/defenseclaw/defenseclaw/internal/observability/runtime"
 	"github.com/defenseclaw/defenseclaw/internal/telemetry"
 )
@@ -122,19 +124,29 @@ type Options struct {
 	Resolver      netguard.V8Resolver
 	Dialer        netguard.V8Dialer
 	Warnings      push.WarningObserver
+	// RedactionEngine and the two observers are required only when a compiled
+	// generation enables the Galileo canonical trace preset. Keeping them on
+	// the process-stable factory guarantees every generation uses the same
+	// central redaction key and bounded health reporting seams as log delivery.
+	RedactionEngine  *redaction.Engine
+	DeliveryObserver delivery.Observer
+	GalileoObserver  galileo.CanonicalObserver
 }
 
 // Factory owns no generation resource. Every successful preparation returns a
 // distinct adapter and retryable, idempotent cleanup closure.
 type Factory struct {
-	console  io.Writer
-	secrets  config.ObservabilityV8SecretResolver
-	caLoader CAFileLoader
-	resolver netguard.V8Resolver
-	dialer   netguard.V8Dialer
-	warnings push.WarningObserver
-	canaryMu sync.RWMutex
-	canary   map[uint64]*otlpGenerationCanaryRegistry
+	console          io.Writer
+	secrets          config.ObservabilityV8SecretResolver
+	caLoader         CAFileLoader
+	resolver         netguard.V8Resolver
+	dialer           netguard.V8Dialer
+	warnings         push.WarningObserver
+	redaction        *redaction.Engine
+	deliveryObserver delivery.Observer
+	galileoObserver  galileo.CanonicalObserver
+	canaryMu         sync.RWMutex
+	canary           map[uint64]*otlpGenerationCanaryRegistry
 }
 
 var _ observabilityruntime.DestinationAdapterFactory = (*Factory)(nil)
@@ -156,6 +168,8 @@ func NewFactory(options Options) (*Factory, error) {
 	return &Factory{
 		console: console, secrets: options.Secrets, caLoader: options.CALoader,
 		resolver: options.Resolver, dialer: options.Dialer, warnings: options.Warnings,
+		redaction: options.RedactionEngine, deliveryObserver: options.DeliveryObserver,
+		galileoObserver: options.GalileoObserver,
 	}, nil
 }
 

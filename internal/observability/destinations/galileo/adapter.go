@@ -12,10 +12,9 @@
 // only immutable galileo-rich-v2 results produced from a central redaction
 // Projection; SDK spans and canonical records are intentionally not accepted.
 //
-// Production activation remains fail-closed until the P5 generated trace
-// builders create canonical, field-classed trace records and route-specific
-// redaction projections. This package must never be wired by adapting raw SDK
-// ReadOnlySpan values as a shortcut.
+// Production activation is owned by the generation assembler after every
+// destination has prepared successfully. This package must never be wired by
+// adapting raw SDK ReadOnlySpan values as a shortcut.
 package galileo
 
 import (

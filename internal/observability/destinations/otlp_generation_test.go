@@ -24,6 +24,9 @@ import (
 
 	"github.com/defenseclaw/defenseclaw/internal/config"
 	"github.com/defenseclaw/defenseclaw/internal/observability"
+	"github.com/defenseclaw/defenseclaw/internal/observability/delivery"
+	"github.com/defenseclaw/defenseclaw/internal/observability/destinations/galileo"
+	"github.com/defenseclaw/defenseclaw/internal/observability/redaction"
 	"github.com/defenseclaw/defenseclaw/internal/telemetry"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -354,13 +357,6 @@ func TestOTLPGenerationAssemblerRejectsTransformedAndUnsupportedTracePoliciesBef
 				RedactionProfile: "none",
 			}},
 		}},
-		{name: "galileo", destination: config.ObservabilityV8DestinationSource{
-			Name: "galileo", Kind: config.ObservabilityV8DestinationOTLP, Preset: "galileo",
-			Protocol: "http/protobuf", Endpoint: "https://8.8.8.8:4318",
-			Send: &config.ObservabilityV8SendSource{
-				Signals: []observability.Signal{observability.SignalTraces}, Buckets: []observability.Bucket{"*"}, RedactionProfile: "none",
-			},
-		}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -377,6 +373,72 @@ func TestOTLPGenerationAssemblerRejectsTransformedAndUnsupportedTracePoliciesBef
 	if secrets.callCount("SECRET") != 0 {
 		t.Fatalf("unsupported policies resolved secret %d times", secrets.callCount("SECRET"))
 	}
+}
+
+func TestOTLPGenerationAssemblerPreparesCanonicalGalileoAndNeverRawLegacy(t *testing.T) {
+	capture := &otlpGenerationCapture{}
+	server := httptest.NewServer(http.HandlerFunc(capture.handler))
+	defer server.Close()
+	factory := newTestFactory(t, io.Discard, nil, nil, net.Dialer{}, nil)
+	enableGalileoGeneration(t, factory)
+	destination := traceSend("galileo", server.URL, []observability.Bucket{"*"})
+	destination.Preset = "galileo"
+	plan := compileGenerationPlan(t, destination)
+
+	pipelines, err := factory.PrepareOTLPGenerationPipelines(
+		context.Background(), plan, 21, generationMetricSpec(),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pipelines.SpanPipelines) != 1 || pipelines.SpanPipelines[0].Destination != "galileo" ||
+		pipelines.SpanPipelines[0].Canonical == nil || pipelines.SpanPipelines[0].Legacy != nil ||
+		pipelines.CanaryAcknowledged == nil {
+		t.Fatalf("Galileo pipeline is not canonical XOR: %+v", pipelines)
+	}
+	// A zero handoff is intentionally invalid, but returning failed rather than
+	// closed proves activation happened only after the generation was complete.
+	if result := pipelines.SpanPipelines[0].Canonical.TryEnqueue(telemetry.V8CanonicalEndedSpan{}); result != telemetry.V8CanonicalSpanEnqueueFailed {
+		t.Fatalf("activated canonical consumer result=%s", result)
+	}
+	if traces, _, _ := capture.snapshot(); len(traces) != 0 {
+		t.Fatalf("invalid canonical handoff reached network: %d requests", len(traces))
+	}
+	if err := pipelines.SpanPipelines[0].Canonical.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if factory.OTLPGenerationAcknowledgedCanaryTrace(21, "galileo", "0102030405060708090a0b0c0d0e0f10") {
+		t.Fatal("Galileo canary registry outlived canonical consumer")
+	}
+}
+
+func TestOTLPGenerationAssemblerRejectsGalileoWithoutCentralDependenciesBeforeSecrets(t *testing.T) {
+	secrets := &secretResolver{values: map[string]string{"SECRET": "value"}, calls: map[string]int{}}
+	factory := newTestFactory(t, io.Discard, secrets, nil, net.Dialer{}, nil)
+	destination := traceSend("galileo", "https://8.8.8.8:4318", []observability.Bucket{"*"})
+	destination.Preset = "galileo"
+	destination.Headers = map[string]config.ObservabilityV8HeaderValue{
+		"Authorization": config.ObservabilityV8EnvironmentHeader("SECRET"),
+	}
+	plan := compileGenerationPlan(t, destination)
+	pipelines, err := factory.PrepareOTLPGenerationPipelines(context.Background(), plan, 22, generationMetricSpec())
+	if len(pipelines.SpanPipelines) != 0 || !IsError(err, ErrorInvalidDependencies) {
+		t.Fatalf("pipelines=%+v error=%v", pipelines, err)
+	}
+	if secrets.callCount("SECRET") != 0 {
+		t.Fatalf("missing Galileo dependencies resolved secret %d times", secrets.callCount("SECRET"))
+	}
+}
+
+func enableGalileoGeneration(t *testing.T, factory *Factory) {
+	t.Helper()
+	engine, err := redaction.NewEngine(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	factory.redaction = engine
+	factory.deliveryObserver = delivery.ObserverFunc(func(delivery.HealthTransition) {})
+	factory.galileoObserver = galileo.CanonicalObserverFunc(func(galileo.CanonicalFailure) {})
 }
 
 func TestOTLPGenerationCanaryTargetIsolationAcknowledgementAndSplitBatch(t *testing.T) {
