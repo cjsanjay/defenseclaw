@@ -194,6 +194,17 @@ def enriched_field(
         "link": "trace.link.attributes",
         "structured": "structured.value",
     }[context]
+    constraints = (
+        {
+            "max_utf8_bytes": 4096,
+            "max_item_utf8_bytes": 1024,
+            "max_items": 256,
+            "max_depth": 8,
+            "max_properties": 256,
+        }
+        if structured_type is not None
+        else {}
+    )
     return {
         "id": identifier,
         "owner_id": owner_id,
@@ -206,7 +217,7 @@ def enriched_field(
         "condition_fact": condition_fact,
         "condition_false_requirement": "optional" if condition_fact is not None else None,
         "field_class": "metadata",
-        "effective_constraints": {},
+        "effective_constraints": constraints,
         "value_source": value_source,
         "target_slot": target_slot,
         "input_placement": "private_derived" if value_source != "input" else placement,
@@ -235,6 +246,7 @@ def family(
     outcome_requirement: str | None = None,
     metric_value_type: str = "int64",
     mandatory: dict[str, Any] | None = None,
+    event_name: str | None = None,
 ) -> dict[str, Any]:
     outcome = outcome_requirement or {"log": "required", "span": "required", "metric": "forbidden"}[signal]
     return {
@@ -247,7 +259,7 @@ def family(
         "mandatory_program_id": identifier if signal == "log" else None,
         "allowed_outcomes": () if signal == "metric" else ("completed", "failed"),
         "bucket": {"log": "diagnostic", "span": "agent.lifecycle", "metric": "platform.health"}[signal],
-        "event_name": identifier,
+        "event_name": event_name or identifier,
         "family_schema_version": 1,
     }
 
@@ -306,6 +318,11 @@ def synthetic_candidate_fields() -> dict[str, Any]:
 def rich_index() -> SimpleNamespace:
     rows = [
         symbol("attribute", "gen_ai.request.model", "TelemetryAttributeGenAIRequestModel"),
+        symbol("family", "span.test", "TelemetryFamilySpanTest"),
+        symbol("log_event", "log.test", "TelemetryLogEventLogTest"),
+        symbol("span_event", "content.redacted", "TelemetrySpanEventContentRedacted"),
+        symbol("link_relation", "caused_by", "TelemetryLinkRelationCausedBy"),
+        symbol("metric_instrument", "test.total", "TelemetryMetricInstrumentTestTotal"),
         symbol("structured_type", "gen_ai.box", "TelemetryStructuredGenAIBox"),
         symbol("structured_member", "gen_ai.box#entry", "TelemetryStructuredMemberGenAIBoxEntry"),
         symbol("structured_member_input", "gen_ai.box#entry", "GenAIBoxEntryMemberInput"),
@@ -394,7 +411,14 @@ def rich_index() -> SimpleNamespace:
             field_ids=("log-model", "log-tags", "log-box"),
             mandatory=mandatory_program("operator_mutation"),
         ),
-        family("metric.test", "metric", "operations", field_ids=("metric-kind",), metric_value_type="double"),
+        family(
+            "metric.test",
+            "metric",
+            "operations",
+            field_ids=("metric-kind",),
+            metric_value_type="double",
+            event_name="test.total",
+        ),
         family(
             "span.test",
             "span",
@@ -442,7 +466,13 @@ def rich_index() -> SimpleNamespace:
             "structured:gen_ai.box": SimpleNamespace(
                 child_fields=("structured-content", "structured-entry-name"),
                 child_containers=("structured-edge:gen_ai.box:dynamic:entry",),
-                bounds={},
+                bounds={
+                    "max_utf8_bytes": 4096,
+                    "max_item_utf8_bytes": 1024,
+                    "max_items": 256,
+                    "max_depth": 8,
+                    "max_properties": 256,
+                },
             ),
             "structured-edge:gen_ai.box:dynamic:entry": SimpleNamespace(reference_target="gen_ai.box"),
         },
@@ -503,6 +533,21 @@ def rich_index() -> SimpleNamespace:
                 "TelemetryStructuredMemberGenAIBoxEntry",
                 "entry",
             ),
+            constant_value("family", "span.test", "TelemetryFamilySpanTest", "span.test"),
+            constant_value("log_event", "log.test", "TelemetryLogEventLogTest", "log.test"),
+            constant_value(
+                "span_event",
+                "content.redacted",
+                "TelemetrySpanEventContentRedacted",
+                "content.redacted",
+            ),
+            constant_value("link_relation", "caused_by", "TelemetryLinkRelationCausedBy", "caused_by"),
+            constant_value(
+                "metric_instrument",
+                "test.total",
+                "TelemetryMetricInstrumentTestTotal",
+                "test.total",
+            ),
         ),
     )
 
@@ -529,12 +574,51 @@ def test_real_candidate_index_compiles_complete_semantic_plan() -> None:
     second = plan.compile_go_api_plan(index)
 
     assert first == second
-    assert first.api_plan_sha256 == "dc07a40c4b23412dba411b6acf7c0de4215e08f40508c572a09a0560c92b5a5c"
+    assert first.api_plan_sha256 == "1de7f97800f1c3ab6e217ca7c224a0ee34c5f4d4a685b0b4046c7df04423d8aa"
     assert len(first.declarations) == 1773
     assert len(first.inputs) == len(first.callables) == 421
     assert len(first.descriptors) == 243
     assert len(first.structured) == 21
     assert len(first.fixtures) == 12
+    assert len(first.private_declarations) == 741
+    assert tuple(helper.symbol for helper in first.kernel_helpers) == (
+        "buildGeneratedMetric",
+        "buildGeneratedResolvedLog",
+        "buildGeneratedTrace",
+        "familyDoubleMetricNumber",
+        "familyInt64MetricNumber",
+        "resolveGeneratedLogMandatory",
+        "validateFamilyString",
+    )
+    assert all(file.package_name == "observability" and file.imports == () for file in first.files)
+    assert {
+        arm: sum(item.arm == arm for item in first.private_declarations)
+        for arm in {
+            "family_descriptor_type",
+            "family_descriptor_method",
+            "family_trace_method",
+            "family_metric_method",
+            "event_contract_helper",
+            "structured_marker_method",
+            "structured_encoder",
+        }
+    } == {
+        "family_descriptor_type": 243,
+        "family_descriptor_method": 243,
+        "family_trace_method": 25,
+        "family_metric_method": 131,
+        "event_contract_helper": 61,
+        "structured_marker_method": 17,
+        "structured_encoder": 21,
+    }
+    assert {type(item.body).__name__ for item in first.callables} == {
+        "GoFamilyCallableBodyPlanIR",
+        "GoEventCallableBodyPlanIR",
+        "GoLinkCallableBodyPlanIR",
+        "GoMemberCallableBodyPlanIR",
+    }
+    assert sum(part.arm == "literal" for item in first.descriptors for part in item.span_name_parts) == 25
+    assert sum(part.arm == "field" for item in first.descriptors for part in item.span_name_parts) == 19
     assert sum(len(item.scalar_descriptor_ids) for item in first.structured) == 47
     assert sum(item.trace_contract is not None for item in first.descriptors) == 25
     assert sum(item.metric_attribute_limits is not None for item in first.descriptors) == 131
@@ -563,6 +647,14 @@ def test_real_candidate_index_compiles_complete_semantic_plan() -> None:
     assert counts["internal/observability/zz_generated_telemetry_builders_genai.go"] == 282
     assert counts["internal/observability/zz_generated_telemetry_builders_security.go"] == 212
     assert counts["internal/observability/zz_generated_telemetry_builders_operations.go"] == 386
+    assert all(
+        file.private_declarations == tuple(item for item in first.private_declarations if item.output_file == file.path)
+        for file in first.files
+    )
+    assert all(
+        tuple(item.order for item in file.private_declarations) == tuple(range(len(file.private_declarations)))
+        for file in first.files
+    )
 
 
 def test_compiler_owns_names_types_layouts_signatures_and_constant_values() -> None:
@@ -651,6 +743,117 @@ def test_compiler_owns_names_types_layouts_signatures_and_constant_values() -> N
     )
 
 
+def test_catalog_structured_and_callable_rendering_contracts_are_closed_and_typed() -> None:
+    compiled = plan.compile_go_api_plan(rich_index())
+    log = next(item for item in compiled.descriptors if item.family_id == "log.test")
+    base = log.catalog_contract.base
+    assert log.catalog_contract.descriptor_type_symbol == "generatedLogTestDescriptor"
+    assert base.identity.bucket == plan.GoTypedSymbolRefIR(
+        plan.GoTypeRefIR("named", name="Bucket"),
+        "BucketDiagnostic",
+        None,
+    )
+    assert base.identity.signal.symbol == "SignalLogs"
+    assert base.identity.event_name.symbol == "TelemetryLogEventLogTest"
+    assert base.identity.event_name.conversion_type == plan.GoTypeRefIR("named", name="EventName")
+    model = next(field for field in base.fields if field.descriptor_id == "log-model")
+    assert model.type_ref.symbol == "familyFieldString"
+    assert model.requirement_ref.symbol == "familyRequirementRequired"
+    assert model.field_class_ref.symbol == "FieldClassMetadata"
+    assert model.source_ref.symbol == "familyValueInput"
+    assert model.typed_constraints == plan.GoFieldConstraintsPlanIR(
+        0, 0, 0, "", (), None, None, None, None, None, None, None
+    )
+    box = next(field for field in base.fields if field.descriptor_id == "log-box")
+    assert box.type_ref.symbol == "familyFieldStructured"
+    assert box.requirement_ref.symbol == "familyRequirementConditional"
+    assert box.false_requirement_ref is not None
+    assert box.false_requirement_ref.symbol == "familyFalseOptional"
+    assert box.typed_constraints.structured == plan.GoKernelLimitsIR(4096, 1024, 256, 8, 256)
+
+    log_builder = next(
+        item
+        for item in compiled.callables
+        if item.declaration_kind == "family_builder" and item.declaration_source_id == "log.test"
+    )
+    assert isinstance(log_builder.body, plan.GoFamilyCallableBodyPlanIR)
+    assert log_builder.body.arm == "family_log"
+    assert log_builder.body.kernel_helper.symbol == "buildGeneratedResolvedLog"
+    assert log_builder.body.mandatory_resolver is not None
+    assert log_builder.body.mandatory_resolver.symbol == "resolveGeneratedLogMandatory"
+    assert tuple(value.key for value in log_builder.body.values) == (
+        "gen_ai.request.model",
+        "http.request.headers",
+        "gen_ai.input.box",
+    )
+    assert log_builder.body.values[-1].structured_encoder_symbol == "encodeTelemetryStructuredGenAIBox"
+    assert log_builder.body.conditions == (
+        plan.GoConditionBindingPlanIR(
+            "condition.payload_available",
+            "payload_available",
+            "ConditionPayloadAvailable",
+        ),
+    )
+    assert log_builder.body.mandatory_terms == (
+        plan.GoMandatoryBindingPlanIR("operator_mutation", "MandatoryOperatorMutation"),
+    )
+
+    event = next(item for item in compiled.callables if item.declaration_kind == "span_event_constructor")
+    assert isinstance(event.body, plan.GoEventCallableBodyPlanIR)
+    assert event.body.contract_helper_symbol == "generatedSpanTestContentRedactedEventContract"
+    link = next(item for item in compiled.callables if item.declaration_kind == "span_link_constructor")
+    assert isinstance(link.body, plan.GoLinkCallableBodyPlanIR)
+    assert link.body.relation.symbol == "TelemetryLinkRelationCausedBy"
+    member = next(item for item in compiled.callables if item.declaration_kind == "structured_member_constructor")
+    assert isinstance(member.body, plan.GoMemberCallableBodyPlanIR)
+    assert member.body.validation_helper.symbol == "validateFamilyString"
+
+    structured = compiled.structured[0]
+    assert structured.shape == "object"
+    assert tuple(field.selector for field in structured.declaration_fields) == ("Content", "Entries")
+    assert structured.marker_method is None
+    assert structured.arms == ()
+    assert len(structured.members) == 1
+    assert structured.encoder.symbol == "encodeTelemetryStructuredGenAIBox"
+    assert structured.encoder.result_type == plan.GoTypeRefIR("named", name="familyFieldValue")
+    assert structured.encoder.arm == "object"
+    assert tuple(binding.key for binding in structured.encoder.fixed_fields) == ("content",)
+
+
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    (
+        ("field class", "private-kernel enum mapping"),
+        ("constraint key", "unsupported private-kernel constraint"),
+        ("duplicate enum", "duplicate value"),
+        ("span arm", "unknown arm"),
+    ),
+)
+def test_rendering_contract_rejects_unreviewed_enums_constraints_and_span_arms(mutation: str, message: str) -> None:
+    index = rich_index()
+    fields = list(index.enriched_fields)
+    if mutation == "field class":
+        fields[0] = {**fields[0], "field_class": "invented"}
+        index.enriched_fields = tuple(fields)
+    elif mutation == "constraint key":
+        fields[0] = {**fields[0], "effective_constraints": {"renderer_hint": 1}}
+        index.enriched_fields = tuple(fields)
+    elif mutation == "duplicate enum":
+        fields[0] = {**fields[0], "effective_constraints": {"enum": ("x", "x")}}
+        index.enriched_fields = tuple(fields)
+    else:
+        traces = dict(index.enriched_traces)
+        traces["span.test"] = SimpleNamespace(
+            **{
+                **vars(traces["span.test"]),
+                "span_name_parts": ({"kind": "computed", "field": "gen_ai.operation.name"},),
+            }
+        )
+        index.enriched_traces = traces
+    with pytest.raises(plan.GoAPIPlanError, match=message):
+        plan.compile_go_api_plan(index)
+
+
 @pytest.mark.parametrize(
     ("mutation", "message"),
     (
@@ -723,7 +926,7 @@ def test_integer_declaration_values_use_portable_signed_32_bit_range() -> None:
 def partition_index(*, wrong_domain: bool = False) -> SimpleNamespace:
     rows: list[dict[str, str]] = []
     constants: list[dict[str, Any]] = []
-    for index in range(893):
+    for index in range(594):
         source_id = f"attribute.{index:04d}"
         rows.append(symbol("attribute", source_id, f"TelemetryAttributeA{index:04d}"))
         constants.append(constant_value("attribute", source_id, f"TelemetryAttributeA{index:04d}", source_id))
@@ -752,6 +955,9 @@ def partition_index(*, wrong_domain: bool = False) -> SimpleNamespace:
         family_domains[0] = (family_domains[0][0], "operations")
     for source_id, domain in family_domains:
         suffix = source_id.removeprefix("log.").replace(".", "")
+        event_symbol = "TelemetryLogEvent" + suffix.title()
+        rows.append(symbol("log_event", source_id, event_symbol))
+        constants.append(constant_value("log_event", source_id, event_symbol, source_id))
         rows.append(symbol("family_input", source_id, "Log" + suffix.title() + "Input"))
         rows.append(symbol("family_builder", source_id, "BuildLog" + suffix.title()))
         families.append(family(source_id, "log", domain, outcome_requirement="forbidden"))
@@ -824,3 +1030,36 @@ def test_ir_is_frozen_and_contains_no_renderer_text_type_escape_hatch() -> None:
                 "trace_event",
                 "trace_link",
             }
+    type_refs: list[plan.GoTypeRefIR] = []
+    for input_plan in compiled.inputs:
+        type_refs.extend(field.type_ref for field in input_plan.fields)
+    for callable_plan in compiled.callables:
+        type_refs.extend(type_ref for _, type_ref in callable_plan.parameters)
+        type_refs.extend(callable_plan.results)
+    for private in compiled.private_declarations:
+        type_refs.extend(type_ref for _, type_ref in private.parameters)
+        type_refs.extend(private.results)
+
+    def walk(type_ref: plan.GoTypeRefIR) -> tuple[plan.GoTypeRefIR, ...]:
+        return (type_ref,) + (walk(type_ref.element) if type_ref.element is not None else ())
+
+    flattened = tuple(item for type_ref in type_refs for item in walk(type_ref))
+    assert all(item.arm in {"builtin", "named", "optional", "slice"} for item in flattened)
+    assert all(item.name != "any" for item in flattened)
+    assert {item.arm for item in compiled.private_declarations} <= {
+        "family_descriptor_type",
+        "family_descriptor_method",
+        "family_trace_method",
+        "family_metric_method",
+        "event_contract_helper",
+        "structured_marker_method",
+        "structured_encoder",
+    }
+    assert {item.private_kernel_target for item in compiled.inputs} <= {
+        "structured_member_input",
+        "trace_event_input",
+        "trace_link_input",
+        "family_log_input",
+        "family_span_input",
+        "family_metric_input",
+    }

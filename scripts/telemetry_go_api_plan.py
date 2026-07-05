@@ -64,6 +64,115 @@ class GoFieldPlanIR:
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
+class GoTypedSymbolRefIR:
+    """One exact, typed Go identifier reference.
+
+    ``conversion_type`` is present only when the referenced declaration is a
+    typed string/integer constant whose value must be converted to the private
+    kernel type.  A renderer never derives a runtime constant name from a wire
+    value.
+    """
+
+    type_ref: GoTypeRefIR
+    symbol: str
+    conversion_type: GoTypeRefIR | None
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class GoFieldConstraintsPlanIR:
+    """Exact projection into ``familyFieldConstraints``."""
+
+    max_utf8_bytes: int
+    min_items: int
+    max_items: int
+    pattern: str
+    enum_values: tuple[str, ...]
+    int_min: int | None
+    int_max: int | None
+    uint_min: int | None
+    uint_max: int | None
+    float_min: int | float | None
+    float_max: int | float | None
+    structured: GoKernelLimitsIR | None
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class GoFieldValueBindingPlanIR:
+    descriptor_id: str
+    key: str
+    selector: str
+    presence: str
+    conversion_op: str
+    structured_encoder_symbol: str | None
+    field_type: GoTypedSymbolRefIR | None
+    constraints: GoFieldConstraintsPlanIR | None
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class GoConditionBindingPlanIR:
+    condition_id: str
+    fact_id: str
+    selector: str
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class GoMandatoryBindingPlanIR:
+    fact_id: str
+    selector: str
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class GoKernelHelperRefIR:
+    """Reference to one reviewed private-kernel helper signature."""
+
+    symbol: str
+    receiver_type: GoTypeRefIR | None
+    receiver_pointer: bool
+    parameters: tuple[ParameterIR, ...]
+    results: tuple[GoTypeRefIR, ...]
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class GoFamilyCallableBodyPlanIR:
+    arm: str
+    descriptor_type_symbol: str
+    kernel_helper: GoKernelHelperRefIR
+    private_input_type: GoTypeRefIR
+    values_target: str
+    values: tuple[GoFieldValueBindingPlanIR, ...]
+    resource_values: tuple[GoFieldValueBindingPlanIR, ...]
+    conditions: tuple[GoConditionBindingPlanIR, ...]
+    mandatory_terms: tuple[GoMandatoryBindingPlanIR, ...]
+    mandatory_resolver: GoKernelHelperRefIR | None
+    metric_number_helper: GoKernelHelperRefIR | None
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class GoEventCallableBodyPlanIR:
+    contract_helper_symbol: str
+    values: tuple[GoFieldValueBindingPlanIR, ...]
+    conditions: tuple[GoConditionBindingPlanIR, ...]
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class GoLinkCallableBodyPlanIR:
+    relation: GoTypedSymbolRefIR
+    values: tuple[GoFieldValueBindingPlanIR, ...]
+    conditions: tuple[GoConditionBindingPlanIR, ...]
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class GoMemberCallableBodyPlanIR:
+    name_constraints: GoFieldConstraintsPlanIR
+    validation_helper: GoKernelHelperRefIR
+
+
+GoCallableBodyPlanIR: TypeAlias = (
+    GoFamilyCallableBodyPlanIR | GoEventCallableBodyPlanIR | GoLinkCallableBodyPlanIR | GoMemberCallableBodyPlanIR
+)
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
 class GoInputPlanIR:
     declaration_kind: str
     declaration_source_id: str
@@ -92,6 +201,7 @@ class GoCallablePlanIR:
     results: tuple[GoTypeRefIR, ...]
     error_contract: str
     private_target: str
+    body: GoCallableBodyPlanIR
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -111,6 +221,49 @@ class GoStructuredPlanIR:
     container_descriptor_ids: tuple[str, ...]
     limits: tuple[tuple[str, int], ...]
     conversion_plan: tuple[str, ...]
+    declaration_fields: tuple[GoFieldPlanIR, ...]
+    marker_method: str | None
+    arms: tuple[GoStructuredArmPlanIR, ...]
+    members: tuple[GoStructuredMemberPlanIR, ...]
+    encoder: GoStructuredEncoderPlanIR
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class GoStructuredArmPlanIR:
+    source_id: str
+    symbol: str
+    arm: str
+    fields: tuple[GoFieldPlanIR, ...]
+    marker_method: str
+    encoder_symbol: str | None
+    wire_tag: str | None
+    tag_constraints: GoFieldConstraintsPlanIR | None
+    scalar_constraints: GoFieldConstraintsPlanIR | None
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class GoStructuredMemberPlanIR:
+    source_id: str
+    input_symbol: str
+    constructor_symbol: str
+    fields: tuple[GoFieldPlanIR, ...]
+    name_constraints: GoFieldConstraintsPlanIR
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class GoStructuredEncoderPlanIR:
+    symbol: str
+    input_type: GoTypeRefIR
+    result_type: GoTypeRefIR
+    arm: str
+    fixed_fields: tuple[GoFieldValueBindingPlanIR, ...]
+    item_type: GoTypeRefIR | None
+    item_encoder_symbol: str | None
+    arm_source_ids: tuple[str, ...]
+    dynamic_member_source_ids: tuple[str, ...]
+    discriminator: str | None
+    limits: GoKernelLimitsIR
+    validation_helpers: tuple[GoKernelHelperRefIR, ...]
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -138,6 +291,12 @@ class GoKernelFieldDescriptorIR:
     value_source: str
     target_slot: str
     order: int
+    type_ref: GoTypedSymbolRefIR
+    requirement_ref: GoTypedSymbolRefIR
+    false_requirement_ref: GoTypedSymbolRefIR | None
+    field_class_ref: GoTypedSymbolRefIR
+    source_ref: GoTypedSymbolRefIR
+    typed_constraints: GoFieldConstraintsPlanIR
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -147,6 +306,86 @@ class GoKernelLimitsIR:
     max_items: int
     max_depth: int
     max_properties: int
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class GoSpanNamePartPlanIR:
+    arm: str
+    literal: str | None
+    field_key: str | None
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class GoIdentityContractPlanIR:
+    bucket: GoTypedSymbolRefIR
+    signal: GoTypedSymbolRefIR
+    event_name: GoTypedSymbolRefIR
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class GoOutcomePolicyPlanIR:
+    requirement: GoTypedSymbolRefIR
+    allowed: tuple[GoTypedSymbolRefIR, ...]
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class GoBaseFamilyContractPlanIR:
+    family_id: str
+    identity: GoIdentityContractPlanIR
+    family_schema_version: int
+    outcome: GoOutcomePolicyPlanIR
+    fields: tuple[GoKernelFieldDescriptorIR, ...]
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class GoEventContractPlanIR:
+    source_id: str
+    private_helper_symbol: str
+    event_id: str
+    event_name: GoTypedSymbolRefIR
+    fields: tuple[GoKernelFieldDescriptorIR, ...]
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class GoTraceFamilyContractPlanIR:
+    base: GoBaseFamilyContractPlanIR
+    allowed_kinds: tuple[str, ...]
+    span_name: tuple[GoSpanNamePartPlanIR, ...]
+    attribute_limits: GoKernelLimitsIR
+    resource_fields: tuple[GoKernelFieldDescriptorIR, ...]
+    resource_limits: GoKernelLimitsIR
+    scope_fields: tuple[GoKernelFieldDescriptorIR, ...]
+    scope_limits: GoKernelLimitsIR
+    allowed_events: tuple[GoEventContractPlanIR, ...]
+    event_limits: GoKernelLimitsIR
+    max_events: int
+    allowed_links: tuple[GoTypedSymbolRefIR, ...]
+    link_fields: tuple[GoKernelFieldDescriptorIR, ...]
+    link_limits: GoKernelLimitsIR
+    max_links: int
+    scope_name: str
+    scope_schema_url: str
+    trace_schema_version: str
+    semantic_profile: str
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class GoMetricFamilyContractPlanIR:
+    base: GoBaseFamilyContractPlanIR
+    value_type: GoTypedSymbolRefIR
+    attribute_limits: GoKernelLimitsIR
+    instrument_name: GoTypedSymbolRefIR
+    instrument_type: str
+    unit: str
+    temporality: str
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class GoCatalogContractPlanIR:
+    descriptor_type_symbol: str
+    base: GoBaseFamilyContractPlanIR
+    trace: GoTraceFamilyContractPlanIR | None
+    metric: GoMetricFamilyContractPlanIR | None
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -178,7 +417,7 @@ class GoDescriptorPlanIR:
     enriched_field_descriptor_ids: tuple[str, ...]
     resource_field_descriptor_ids: tuple[str, ...]
     scope_field_descriptor_ids: tuple[str, ...]
-    span_name_parts: tuple[tuple[str, str], ...]
+    span_name_parts: tuple[GoSpanNamePartPlanIR, ...]
     allowed_kinds: tuple[str, ...]
     event_contracts: tuple[tuple[str, str, tuple[str, ...]], ...]
     link_contracts: tuple[tuple[str, tuple[str, ...]], ...]
@@ -191,6 +430,7 @@ class GoDescriptorPlanIR:
     mandatory_constant_terms: tuple[bool, ...]
     mandatory_fact_terms: tuple[tuple[str, str], ...]
     private_kernel_target: str
+    catalog_contract: GoCatalogContractPlanIR
 
 
 DeclarationKeyIR: TypeAlias = tuple[str, str]
@@ -217,10 +457,33 @@ class GoDeclarationPlanIR:
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
+class GoImportPlanIR:
+    path: str
+    alias: str | None
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class GoPrivateDeclarationPlanIR:
+    declaration_id: str
+    symbol: str
+    owner: str
+    output_file: str
+    order: int
+    arm: str
+    receiver_type: GoTypeRefIR | None
+    parameters: tuple[ParameterIR, ...]
+    results: tuple[GoTypeRefIR, ...]
+    body_owner_id: str
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
 class GoFilePlanIR:
     path: str
+    package_name: str
+    imports: tuple[GoImportPlanIR, ...]
     declaration_keys: tuple[DeclarationKeyIR, ...]
     declarations: tuple[GoDeclarationPlanIR, ...]
+    private_declarations: tuple[GoPrivateDeclarationPlanIR, ...]
     private_descriptor_ids: tuple[str, ...]
     private_projection_ids: tuple[str, ...]
     expected_digest_headers: tuple[str, ...]
@@ -252,6 +515,8 @@ class GoAPIPlanIR:
     structured: tuple[GoStructuredPlanIR, ...]
     descriptors: tuple[GoDescriptorPlanIR, ...]
     declarations: tuple[GoDeclarationPlanIR, ...]
+    private_declarations: tuple[GoPrivateDeclarationPlanIR, ...]
+    kernel_helpers: tuple[GoKernelHelperRefIR, ...]
     fixtures: tuple[GoFixturePlanIR, ...]
     files: tuple[GoFilePlanIR, ...]
     api_plan_sha256: str
@@ -471,6 +736,114 @@ _DIGEST_HEADERS: Final = (
     "go_symbol_table_sha256",
 )
 
+_FIELD_TYPE_SYMBOLS: Final = {
+    "string": "familyFieldString",
+    "boolean": "familyFieldBoolean",
+    "int64": "familyFieldInt64",
+    "uint32": "familyFieldUint32",
+    "uint64": "familyFieldUint64",
+    "double": "familyFieldDouble",
+    "string[]": "familyFieldStringArray",
+    "structured": "familyFieldStructured",
+}
+_REQUIREMENT_SYMBOLS: Final = {
+    "required": "familyRequirementRequired",
+    "recommended": "familyRequirementRecommended",
+    "optional": "familyRequirementOptional",
+    "conditional": "familyRequirementConditional",
+    "forbidden": "familyRequirementForbidden",
+}
+_FALSE_REQUIREMENT_SYMBOLS: Final = {
+    "optional": "familyFalseOptional",
+    "forbidden": "familyFalseForbidden",
+}
+_FIELD_CLASS_SYMBOLS: Final = {
+    "metadata": "FieldClassMetadata",
+    "identifier": "FieldClassIdentifier",
+    "content": "FieldClassContent",
+    "reason": "FieldClassReason",
+    "evidence": "FieldClassEvidence",
+    "error": "FieldClassError",
+    "path": "FieldClassPath",
+    "credential": "FieldClassCredential",
+}
+_VALUE_SOURCE_SYMBOLS: Final = {
+    "input": "familyValueInput",
+    "envelope.bucket": "familyValueBucket",
+    "family.id": "familyValueFamily",
+    "family.family_schema_version": "familyValueFamilySchemaVersion",
+    "envelope.source": "familyValueSourceName",
+    "provenance.config_generation": "familyValueConfigGeneration",
+    "envelope.outcome": "familyValueOutcome",
+    "provenance.binary_version": "familyValueBinaryVersion",
+    "semantic_profile.trace_schema_version": "familyValueTraceSchemaVersion",
+    "semantic_profile.id": "familyValueSemanticProfile",
+    "link.relation": "familyValueLinkRelation",
+}
+_BUCKET_SYMBOLS: Final = {
+    "compliance.activity": "BucketComplianceActivity",
+    "security.finding": "BucketSecurityFinding",
+    "guardrail.evaluation": "BucketGuardrailEvaluation",
+    "enforcement.action": "BucketEnforcementAction",
+    "model.io": "BucketModelIO",
+    "tool.activity": "BucketToolActivity",
+    "asset.scan": "BucketAssetScan",
+    "asset.lifecycle": "BucketAssetLifecycle",
+    "network.egress": "BucketNetworkEgress",
+    "agent.lifecycle": "BucketAgentLifecycle",
+    "ai.discovery": "BucketAIDiscovery",
+    "telemetry.ingest": "BucketTelemetryIngest",
+    "platform.health": "BucketPlatformHealth",
+    "diagnostic": "BucketDiagnostic",
+}
+_SIGNAL_SYMBOLS: Final = {"log": "SignalLogs", "span": "SignalTraces", "metric": "SignalMetrics"}
+_OUTCOME_SYMBOLS: Final = {
+    "attempted": "OutcomeAttempted",
+    "validated": "OutcomeValidated",
+    "applied": "OutcomeApplied",
+    "completed": "OutcomeCompleted",
+    "allowed": "OutcomeAllowed",
+    "blocked": "OutcomeBlocked",
+    "denied": "OutcomeDenied",
+    "approved": "OutcomeApproved",
+    "quarantined": "OutcomeQuarantined",
+    "redacted": "OutcomeRedacted",
+    "revoked": "OutcomeRevoked",
+    "released": "OutcomeReleased",
+    "terminated": "OutcomeTerminated",
+    "rejected": "OutcomeRejected",
+    "failed": "OutcomeFailed",
+    "timed_out": "OutcomeTimedOut",
+    "cancelled": "OutcomeCancelled",
+    "partial": "OutcomePartial",
+    "skipped": "OutcomeSkipped",
+    "no_change": "OutcomeNoChange",
+}
+_CALLABLE_BODY_ARMS: Final = frozenset(
+    {"family_log", "family_span", "family_metric", "event", "link", "structured_member"}
+)
+_INPUT_KERNEL_TARGETS: Final = frozenset(
+    {
+        "structured_member_input",
+        "trace_event_input",
+        "trace_link_input",
+        "family_log_input",
+        "family_span_input",
+        "family_metric_input",
+    }
+)
+_PRIVATE_DECLARATION_ARMS: Final = frozenset(
+    {
+        "family_descriptor_type",
+        "family_descriptor_method",
+        "family_trace_method",
+        "family_metric_method",
+        "event_contract_helper",
+        "structured_marker_method",
+        "structured_encoder",
+    }
+)
+
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class _Symbol:
@@ -582,6 +955,128 @@ def _optional_type(element: GoTypeRefIR) -> GoTypeRefIR:
 
 def _slice(element: GoTypeRefIR) -> GoTypeRefIR:
     return GoTypeRefIR("slice", element=element)
+
+
+def _typed_symbol(type_name: str, symbol: str, *, conversion: bool = False) -> GoTypedSymbolRefIR:
+    _validate_identifier(symbol, "typed Go symbol")
+    type_ref = _named(type_name)
+    return GoTypedSymbolRefIR(type_ref, symbol, type_ref if conversion else None)
+
+
+def _closed_symbol(mapping: Mapping[str, str], value: str, type_name: str, path: str) -> GoTypedSymbolRefIR:
+    try:
+        symbol = mapping[value]
+    except KeyError as exc:
+        raise GoAPIPlanError(f"{path}: no reviewed private-kernel symbol") from exc
+    return _typed_symbol(type_name, symbol)
+
+
+def _constraint_number(value: Any, path: str) -> int | float:
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or isinstance(value, float)
+        and not math.isfinite(value)
+    ):
+        raise GoAPIPlanError(f"{path}: expected finite number")
+    return value
+
+
+def _typed_constraints(field: _Field) -> GoFieldConstraintsPlanIR:
+    if field.constraints.arm != "object":
+        raise GoAPIPlanError(f"enriched field {field.id}: constraints must be an object")
+    values = {key: value for key, value in field.constraints.fields}
+    allowed = {
+        "max_utf8_bytes",
+        "min_items",
+        "max_items",
+        "pattern",
+        "enum",
+        "min",
+        "max",
+        "max_item_utf8_bytes",
+        "max_depth",
+        "max_properties",
+    }
+    if set(values) - allowed:
+        raise GoAPIPlanError(f"enriched field {field.id}: unsupported private-kernel constraint")
+
+    def integer(name: str) -> int:
+        value = values.get(name)
+        if value is None:
+            return 0
+        if value.arm != "integer" or value.integer_value is None or value.integer_value < 0:
+            raise GoAPIPlanError(f"enriched field {field.id}.{name}: expected non-negative integer")
+        return value.integer_value
+
+    def text(name: str) -> str:
+        value = values.get(name)
+        if value is None:
+            return ""
+        if value.arm != "string" or value.string_value is None:
+            raise GoAPIPlanError(f"enriched field {field.id}.{name}: expected string")
+        return value.string_value
+
+    enum_value = values.get("enum")
+    enum_values: tuple[str, ...] = ()
+    if enum_value is not None:
+        if enum_value.arm != "sequence" or any(
+            item.arm != "string" or item.string_value is None for item in enum_value.items
+        ):
+            raise GoAPIPlanError(f"enriched field {field.id}.enum: expected string sequence")
+        enum_values = tuple(item.string_value or "" for item in enum_value.items)
+        if len(enum_values) != len(set(enum_values)):
+            raise GoAPIPlanError(f"enriched field {field.id}.enum: duplicate value")
+
+    minimum_value = values.get("min")
+    maximum_value = values.get("max")
+
+    def number(value: GoFactValueIR | None, name: str) -> int | float | None:
+        if value is None:
+            return None
+        if value.arm == "integer" and value.integer_value is not None:
+            return value.integer_value
+        if value.arm == "double" and value.double_value is not None:
+            return value.double_value
+        raise GoAPIPlanError(f"enriched field {field.id}.{name}: expected finite number")
+
+    minimum = number(minimum_value, "min")
+    maximum = number(maximum_value, "max")
+    int_min = int_max = None
+    uint_min = uint_max = None
+    float_min = float_max = None
+    if field.primitive_type == "int64":
+        if any(value is not None and not isinstance(value, int) for value in (minimum, maximum)):
+            raise GoAPIPlanError(f"enriched field {field.id}: int64 bounds must be integers")
+        int_min, int_max = minimum, maximum
+    elif field.primitive_type in {"uint32", "uint64"}:
+        if any(value is not None and (not isinstance(value, int) or value < 0) for value in (minimum, maximum)):
+            raise GoAPIPlanError(f"enriched field {field.id}: unsigned bounds must be non-negative integers")
+        uint_min, uint_max = minimum, maximum
+    elif field.primitive_type == "double":
+        float_min, float_max = minimum, maximum
+    elif minimum is not None or maximum is not None:
+        raise GoAPIPlanError(f"enriched field {field.id}: numeric bounds disagree with field type")
+    structured = None
+    if field.primitive_type == "structured":
+        required = ("max_utf8_bytes", "max_item_utf8_bytes", "max_items", "max_depth", "max_properties")
+        if any(name not in values for name in required):
+            raise GoAPIPlanError(f"enriched field {field.id}: structured bounds are incomplete")
+        structured = GoKernelLimitsIR(*(integer(name) for name in required))
+    return GoFieldConstraintsPlanIR(
+        integer("max_utf8_bytes") if field.primitive_type in {"string", "string[]"} else 0,
+        integer("min_items") if field.primitive_type == "string[]" else 0,
+        integer("max_items") if field.primitive_type == "string[]" else 0,
+        text("pattern") if field.primitive_type in {"string", "string[]"} else "",
+        enum_values if field.primitive_type in {"string", "string[]"} else (),
+        int_min,
+        int_max,
+        uint_min,
+        uint_max,
+        float_min,
+        float_max,
+        structured,
+    )
 
 
 def _validate_identifier(value: str, path: str) -> None:
@@ -876,6 +1371,78 @@ def _common_field(
     )
 
 
+def _kernel_helper(
+    symbol: str,
+    parameters: tuple[ParameterIR, ...],
+    results: tuple[GoTypeRefIR, ...],
+    *,
+    receiver: str | None = None,
+) -> GoKernelHelperRefIR:
+    return GoKernelHelperRefIR(
+        symbol,
+        _named(receiver) if receiver is not None else None,
+        receiver is not None,
+        parameters,
+        results,
+    )
+
+
+def _family_kernel_helper(signal: str) -> GoKernelHelperRefIR:
+    descriptor_type = {
+        "log": "familyDescriptor",
+        "span": "generatedTraceFamilyContract",
+        "metric": "generatedMetricFamilyContract",
+    }[signal]
+    private_input = {"log": "familyLogBuildInput", "span": "familyTraceBuildInput", "metric": "familyMetricBuildInput"}[
+        signal
+    ]
+    parameters: tuple[ParameterIR, ...]
+    symbol: str
+    if signal == "log":
+        symbol = "buildGeneratedResolvedLog"
+        parameters = (
+            ("descriptor", _named(descriptor_type)),
+            ("resolved", _named("resolvedGeneratedLogContract")),
+            ("input", _named(private_input)),
+        )
+    else:
+        symbol = "buildGeneratedTrace" if signal == "span" else "buildGeneratedMetric"
+        parameters = (("descriptor", _named(descriptor_type)), ("input", _named(private_input)))
+    return _kernel_helper(symbol, parameters, (_named("Record"), _builtin("error")), receiver="FamilyBuilder")
+
+
+def _metric_number_helper(value_type: str) -> GoKernelHelperRefIR:
+    if value_type == "int64":
+        return _kernel_helper(
+            "familyInt64MetricNumber",
+            (("value", _builtin("int64")),),
+            (_named("familyMetricNumber"),),
+        )
+    if value_type == "double":
+        return _kernel_helper(
+            "familyDoubleMetricNumber",
+            (("value", _builtin("float64")),),
+            (_named("familyMetricNumber"),),
+        )
+    raise GoAPIPlanError("metric number helper: unsupported value type")
+
+
+def _mandatory_resolver_helper() -> GoKernelHelperRefIR:
+    return _kernel_helper(
+        "resolveGeneratedLogMandatory",
+        (("mandatory", _builtin("bool")),),
+        (_named("resolvedGeneratedLogContract"),),
+    )
+
+
+def _string_validation_helper() -> GoKernelHelperRefIR:
+    return _kernel_helper(
+        "validateFamilyString",
+        (("value", _builtin("string")), ("constraints", _named("familyFieldConstraints"))),
+        (_builtin("error"),),
+    )
+
+
 def _condition_fields(
     owner: str,
     values: Sequence[GoFieldPlanIR],
@@ -951,6 +1518,73 @@ def _validate_owner_fields(fields: Sequence[GoFieldPlanIR]) -> None:
         raise GoAPIPlanError("Go input field orders are not contiguous")
 
 
+def _private_encoder_symbol(structured_symbol: str) -> str:
+    _validate_identifier(structured_symbol, "structured encoder owner")
+    return "encode" + structured_symbol
+
+
+def _contained_named_type(type_ref: GoTypeRefIR) -> str | None:
+    current = type_ref
+    while current.arm in {"optional", "slice"}:
+        if current.element is None:
+            raise GoAPIPlanError("nested Go type is missing its element")
+        current = current.element
+    return current.name if current.arm == "named" else None
+
+
+def _value_bindings(
+    public_fields: Sequence[GoFieldPlanIR],
+    fields: Mapping[str, _Field],
+    symbols: Mapping[tuple[str, str], _Symbol],
+) -> tuple[GoFieldValueBindingPlanIR, ...]:
+    result: list[GoFieldValueBindingPlanIR] = []
+    for public in public_fields:
+        if public.enriched_descriptor_id.startswith(("common:", "condition:", "mandatory:")):
+            continue
+        field = fields.get(public.enriched_descriptor_id)
+        if field is None or field.value_source != "input":
+            continue
+        encoder = None
+        if field.structured_type is not None:
+            encoder = _private_encoder_symbol(
+                _required_symbol(symbols, "structured_type", field.structured_type).symbol
+            )
+        result.append(
+            GoFieldValueBindingPlanIR(
+                field.id,
+                field.semantic_source_id,
+                public.selector,
+                public.presence,
+                public.conversion_op,
+                encoder,
+                _kernel_field(field).type_ref,
+                _typed_constraints(field),
+            )
+        )
+    return tuple(result)
+
+
+def _condition_bindings(
+    owner_fields: Sequence[GoFieldPlanIR], fields: Mapping[str, _Field]
+) -> tuple[GoConditionBindingPlanIR, ...]:
+    selector_by_fact = {
+        field.condition_binding: field.selector for field in owner_fields if field.conversion_op == "condition_fact"
+    }
+    condition_by_fact: dict[str, str] = {}
+    for public in owner_fields:
+        field = fields.get(public.enriched_descriptor_id)
+        if field is None or field.condition_fact is None or field.condition_id is None:
+            continue
+        prior = condition_by_fact.setdefault(field.condition_fact, field.condition_id)
+        if prior != field.condition_id:
+            raise GoAPIPlanError(f"{public.owner}: condition fact maps to multiple condition IDs")
+    if set(selector_by_fact) != set(condition_by_fact):
+        raise GoAPIPlanError("condition selector coverage disagrees with enriched fields")
+    return tuple(
+        GoConditionBindingPlanIR(condition_by_fact[fact], fact, selector_by_fact[fact]) for fact in selector_by_fact
+    )
+
+
 def _field_ids(raw: Any, name: str, path: str, fields: Mapping[str, _Field]) -> tuple[str, ...]:
     ids = tuple(_string(item, f"{path}.{name}") for item in _sequence(_read(raw, name, path), f"{path}.{name}"))
     if len(ids) != len(set(ids)) or any(item not in fields for item in ids):
@@ -960,6 +1594,19 @@ def _field_ids(raw: Any, name: str, path: str, fields: Mapping[str, _Field]) -> 
 
 def _kernel_field(field: _Field) -> GoKernelFieldDescriptorIR:
     field_type = "structured" if field.structured_type is not None else field.primitive_type
+    try:
+        type_symbol = _FIELD_TYPE_SYMBOLS[field_type]
+        requirement_symbol = _REQUIREMENT_SYMBOLS[field.requirement]
+        field_class_symbol = _FIELD_CLASS_SYMBOLS[field.field_class]
+        source_symbol = _VALUE_SOURCE_SYMBOLS[field.value_source]
+    except KeyError as exc:
+        raise GoAPIPlanError(f"enriched field {field.id}: private-kernel enum mapping is missing") from exc
+    false_ref = None
+    if field.false_requirement is not None:
+        try:
+            false_ref = _typed_symbol("familyFalseRequirement", _FALSE_REQUIREMENT_SYMBOLS[field.false_requirement])
+        except KeyError as exc:
+            raise GoAPIPlanError(f"enriched field {field.id}: false-requirement enum mapping is missing") from exc
     return GoKernelFieldDescriptorIR(
         field.id,
         field.semantic_source_id,
@@ -973,6 +1620,12 @@ def _kernel_field(field: _Field) -> GoKernelFieldDescriptorIR:
         field.value_source,
         field.target_slot,
         field.order,
+        _typed_symbol("familyFieldType", type_symbol),
+        _typed_symbol("familyRequirement", requirement_symbol),
+        false_ref,
+        _typed_symbol("FieldClass", field_class_symbol),
+        _typed_symbol("familyValueSource", source_symbol),
+        _typed_constraints(field),
     )
 
 
@@ -1292,6 +1945,7 @@ def _compile_structured(
             raise GoAPIPlanError(f"structured {identifier}: scalar descriptor links are incomplete")
         used_scalar_ids: set[str] = set()
         value_fields: list[GoFieldPlanIR] = []
+        member_plans: list[GoStructuredMemberPlanIR] = []
         for order, raw_field in enumerate(_optional(raw, "fields", ()) or ()):
             name = _string(_read(raw_field, "name", f"structured {identifier}.fields"), "structured field name")
             required = _read(raw_field, "required", f"structured {identifier}.{name}")
@@ -1426,12 +2080,13 @@ def _compile_structured(
                     input_symbol.symbol,
                     _DOMAIN_FILES["genai"],
                     member_fields,
-                    "validateGeneratedStructuredMember",
+                    "structured_member_input",
                     (),
                     (),
                     (),
                 )
             )
+            name_constraints = _typed_constraints(name_descriptor)
             callables.append(
                 GoCallablePlanIR(
                     "structured_member_constructor",
@@ -1444,7 +2099,20 @@ def _compile_structured(
                     (("name", _builtin("string")), ("value", value_type)),
                     (_named(input_symbol.symbol), _builtin("error")),
                     "family_build_error",
-                    "newGeneratedStructuredMember",
+                    "validateFamilyString",
+                    GoMemberCallableBodyPlanIR(
+                        name_constraints,
+                        _string_validation_helper(),
+                    ),
+                )
+            )
+            member_plans.append(
+                GoStructuredMemberPlanIR(
+                    source_id,
+                    input_symbol.symbol,
+                    constructor_symbol.symbol,
+                    member_fields,
+                    name_constraints,
                 )
             )
             dynamic_keys.append(source_id)
@@ -1469,6 +2137,7 @@ def _compile_structured(
             used_scalar_ids.add(discriminator_descriptor.id)
         else:
             discriminator_name = None
+            discriminator_descriptor = None
         if used_scalar_ids != set(scalar_ids):
             raise GoAPIPlanError(f"structured {identifier}: scalar descriptor coverage is incomplete")
         child_container_ids = tuple(
@@ -1499,6 +2168,125 @@ def _compile_structured(
                 limit_values[_string(name, f"structured {identifier}.canonical_limits")] = _integer(
                     value, f"structured {identifier}.{name}", minimum=1
                 )
+        marker_method = "is" + symbol.symbol if arm_types else None
+        declaration_fields = list(value_fields)
+        if dynamic_keys:
+            member_symbol = _required_symbol(symbols, "structured_member_input", dynamic_keys[0]).symbol
+            declaration_fields.append(
+                _common_field(
+                    identifier,
+                    "Entries",
+                    _slice(_named(member_symbol)),
+                    len(declaration_fields),
+                    conversion="structured_encoder",
+                )
+            )
+        if shape == "array":
+            if item_type is None:
+                raise GoAPIPlanError(f"structured {identifier}: array item type is missing")
+            declaration_fields.append(
+                _common_field(
+                    identifier,
+                    "Items",
+                    _slice(item_type),
+                    len(declaration_fields),
+                    conversion="structured_encoder",
+                )
+            )
+        _validate_owner_fields(declaration_fields)
+        arm_plans: list[GoStructuredArmPlanIR] = []
+        for (source_id, value_type), (_, arm_kind, selector) in zip(arm_types, arm_shapes, strict=True):
+            arm_symbol = _required_symbol(symbols, "structured_arm", source_id).symbol
+            arm_fields: list[GoFieldPlanIR] = []
+            if selector == "Tag,Value":
+                arm_fields.append(_common_field(source_id, "Tag", _builtin("string"), 0))
+                arm_fields.append(_common_field(source_id, "Value", value_type, 1, conversion="structured_encoder"))
+            else:
+                arm_fields.append(
+                    _common_field(
+                        source_id,
+                        selector,
+                        value_type,
+                        0,
+                        conversion="structured_encoder" if value_type.arm in {"named", "slice"} else "required_scalar",
+                    )
+                )
+            _validate_owner_fields(arm_fields)
+            nested_arm_type = _contained_named_type(value_type)
+            encoder_symbol = (
+                None
+                if arm_kind == "canonical" and selector == "Entries"
+                else _private_encoder_symbol(nested_arm_type)
+                if nested_arm_type is not None
+                else None
+            )
+            arm_plans.append(
+                GoStructuredArmPlanIR(
+                    source_id,
+                    arm_symbol,
+                    arm_kind,
+                    tuple(arm_fields),
+                    marker_method or "",
+                    encoder_symbol,
+                    None if arm_kind == "dynamic" else source_id.split("#", 1)[1],
+                    _typed_constraints(discriminator_descriptor)
+                    if arm_kind == "dynamic" and discriminator_descriptor is not None
+                    else None,
+                    _typed_constraints(scalar_by_member[f"canonical_arm:{source_id.split('#', 1)[1]}"])
+                    if arm_kind == "canonical"
+                    and source_id.split("#", 1)[1] in {"boolean", "int64", "finite_double", "string"}
+                    else None,
+                )
+            )
+        encoder_bindings: list[GoFieldValueBindingPlanIR] = []
+        for public in value_fields:
+            field = fields.get(public.enriched_descriptor_id)
+            if field is not None:
+                encoder_symbol = None
+                if field.structured_type is not None:
+                    encoder_symbol = _private_encoder_symbol(
+                        _required_symbol(symbols, "structured_type", field.structured_type).symbol
+                    )
+                key = field.semantic_source_id.removeprefix("field:")
+            else:
+                key = public.semantic_source_id
+                nested_field_type = _contained_named_type(public.type_ref)
+                encoder_symbol = _private_encoder_symbol(nested_field_type) if nested_field_type is not None else None
+            encoder_bindings.append(
+                GoFieldValueBindingPlanIR(
+                    public.enriched_descriptor_id,
+                    key,
+                    public.selector,
+                    public.presence,
+                    public.conversion_op,
+                    encoder_symbol,
+                    _kernel_field(field).type_ref if field is not None else None,
+                    _typed_constraints(field) if field is not None else None,
+                )
+            )
+        structured_limits = GoKernelLimitsIR(
+            limit_values.get("max_utf8_bytes", 0),
+            limit_values.get("max_item_utf8_bytes", 0),
+            limit_values.get("max_items", 0),
+            limit_values.get("max_depth", 0),
+            limit_values.get("max_properties", 0),
+        )
+        nested_item_type = _contained_named_type(item_type) if item_type is not None else None
+        item_encoder = _private_encoder_symbol(nested_item_type) if nested_item_type is not None else None
+        encoder = GoStructuredEncoderPlanIR(
+            _private_encoder_symbol(symbol.symbol),
+            _named(symbol.symbol),
+            _named("familyFieldValue"),
+            shape,
+            tuple(encoder_bindings),
+            item_type,
+            item_encoder,
+            tuple(source_id for source_id, _ in arm_types),
+            tuple(dynamic_keys),
+            discriminator_name,
+            structured_limits,
+            (_string_validation_helper(),),
+        )
         plans.append(
             GoStructuredPlanIR(
                 identifier,
@@ -1525,6 +2313,11 @@ def _compile_structured(
                         "encode_canonical_json",
                     ),
                 }[shape],
+                tuple(declaration_fields),
+                marker_method,
+                tuple(arm_plans),
+                tuple(member_plans),
+                encoder,
             )
         )
         planned.add(("structured_type", identifier))
@@ -1594,6 +2387,8 @@ def _compile_families(
         output_file = _DOMAIN_FILES[domain]
         input_symbol = _required_symbol(symbols, "family_input", identifier)
         builder_symbol = _required_symbol(symbols, "family_builder", identifier)
+        descriptor_type_symbol = "generated" + input_symbol.symbol.removesuffix("Input") + "Descriptor"
+        _validate_identifier(descriptor_type_symbol, f"{path}.private_descriptor_type")
         raw_outcome = _optional(raw, "outcome_requirement")
         outcome_requirement = (
             "forbidden" if raw_outcome is None else _string(raw_outcome, f"{path}.outcome_requirement")
@@ -1730,7 +2525,7 @@ def _compile_families(
                     event_symbol.symbol,
                     output_file,
                     event_fields,
-                    "validateGeneratedTraceEvent",
+                    "trace_event_input",
                     (),
                     (),
                     (),
@@ -1748,7 +2543,12 @@ def _compile_families(
                     (("input", _named(event_symbol.symbol)),),
                     (_named("TraceEventInput"), _builtin("error")),
                     "family_build_error",
-                    "newGeneratedTraceEventInput",
+                    "generated_event_literal",
+                    GoEventCallableBodyPlanIR(
+                        "generated" + constructor.symbol.removeprefix("New") + "Contract",
+                        _value_bindings(event_values, fields, symbols),
+                        _condition_bindings(event_fields, fields),
+                    ),
                 )
             )
             event_keys.append(source_id)
@@ -1794,7 +2594,7 @@ def _compile_families(
                     link_symbol.symbol,
                     output_file,
                     link_fields,
-                    "validateGeneratedTraceLink",
+                    "trace_link_input",
                     (),
                     (),
                     (),
@@ -1812,7 +2612,16 @@ def _compile_families(
                     (("input", _named(link_symbol.symbol)),),
                     (_named("TraceLinkInput"), _builtin("error")),
                     "family_build_error",
-                    "newGeneratedTraceLinkInput",
+                    "generated_link_literal",
+                    GoLinkCallableBodyPlanIR(
+                        GoTypedSymbolRefIR(
+                            _builtin("string"),
+                            _required_symbol(symbols, "link_relation", relation).symbol,
+                            _builtin("string"),
+                        ),
+                        _value_bindings(link_values, fields, symbols),
+                        _condition_bindings(link_fields, fields),
+                    ),
                 )
             )
             link_keys.append(source_id)
@@ -1826,9 +2635,9 @@ def _compile_families(
                 output_file,
                 input_fields,
                 {
-                    "log": "familyLogBuildInput",
-                    "span": "familyTraceBuildInput",
-                    "metric": "familyMetricBuildInput",
+                    "log": "family_log_input",
+                    "span": "family_span_input",
+                    "metric": "family_metric_input",
                 }[signal],
                 tuple(event_keys),
                 tuple(link_keys),
@@ -1852,6 +2661,39 @@ def _compile_families(
                     "span": "buildGeneratedTrace",
                     "metric": "buildGeneratedMetric",
                 }[signal],
+                GoFamilyCallableBodyPlanIR(
+                    "family_" + signal,
+                    descriptor_type_symbol,
+                    _family_kernel_helper(signal),
+                    _named(
+                        {
+                            "log": "familyLogBuildInput",
+                            "span": "familyTraceBuildInput",
+                            "metric": "familyMetricBuildInput",
+                        }[signal]
+                    ),
+                    "labels" if signal == "metric" else "values",
+                    _value_bindings(
+                        tuple(
+                            field
+                            for field in values
+                            if not (signal == "span" and field.selector.startswith("Resource"))
+                        ),
+                        fields,
+                        symbols,
+                    ),
+                    _value_bindings(
+                        tuple(field for field in values if signal == "span" and field.selector.startswith("Resource")),
+                        fields,
+                        symbols,
+                    ),
+                    _condition_bindings(input_fields, fields),
+                    tuple(
+                        GoMandatoryBindingPlanIR(field.mandatory_binding or "", field.selector) for field in mandatory
+                    ),
+                    _mandatory_resolver_helper() if signal == "log" else None,
+                    _metric_number_helper(value_type) if signal == "metric" else None,
+                ),
             )
         )
         allowed_outcomes = tuple(
@@ -1863,18 +2705,27 @@ def _compile_families(
             if trace is not None
             else ()
         )
-        span_parts = tuple(
-            (
-                _string(_read(part, "kind", f"{path}.span_name_parts"), "span-name part kind"),
-                _string(
-                    _read(part, "literal", f"{path}.span_name_parts")
-                    if _read(part, "kind", f"{path}.span_name_parts") == "literal"
-                    else _read(part, "field", f"{path}.span_name_parts"),
-                    "span-name part value",
-                ),
-            )
-            for part in raw_span_parts
-        )
+        span_parts_list: list[GoSpanNamePartPlanIR] = []
+        for part in raw_span_parts:
+            kind = _string(_read(part, "kind", f"{path}.span_name_parts"), "span-name part kind")
+            if kind == "literal":
+                literal = _string(_read(part, "literal", f"{path}.span_name_parts"), "span-name literal")
+                if _optional(part, "field") is not None:
+                    raise GoAPIPlanError(f"{path}.span_name_parts: literal arm carries field")
+                span_parts_list.append(GoSpanNamePartPlanIR("literal", literal, None))
+            elif kind == "field":
+                field_key = _string(_read(part, "field", f"{path}.span_name_parts"), "span-name field")
+                if _optional(part, "literal") is not None:
+                    raise GoAPIPlanError(f"{path}.span_name_parts: field arm carries literal")
+                candidates = [
+                    fields[field_id] for field_id in family_ids if fields[field_id].semantic_source_id == field_key
+                ]
+                if len(candidates) != 1 or candidates[0].primitive_type != "string":
+                    raise GoAPIPlanError(f"{path}.span_name_parts: field arm {field_key!r} is not one family string")
+                span_parts_list.append(GoSpanNamePartPlanIR("field", None, field_key))
+            else:
+                raise GoAPIPlanError(f"{path}.span_name_parts: unknown arm")
+        span_parts = tuple(span_parts_list)
         metric_contract = (
             (
                 ("instrument_name", _string(_read(metric, "instrument_name", f"metric {identifier}"), "instrument")),
@@ -1913,6 +2764,80 @@ def _compile_families(
             )
         )
         kernel_fields = tuple(_kernel_field(fields[field_id]) for field_id in kernel_field_ids)
+        kernel_by_id = {field.descriptor_id: field for field in kernel_fields}
+        identity_bucket = _string(_read(raw, "bucket", path), f"{path}.bucket")
+        identity_name = _string(_read(raw, "event_name", path), f"{path}.event_name")
+        identity_kind = {"log": "log_event", "span": "family", "metric": "metric_instrument"}[signal]
+        identity_source = identifier if signal == "span" else identity_name
+        identity_symbol = _required_symbol(symbols, identity_kind, identity_source).symbol
+        try:
+            requirement_ref = _typed_symbol("familyRequirement", _REQUIREMENT_SYMBOLS[outcome_requirement])
+            outcome_refs = tuple(_typed_symbol("Outcome", _OUTCOME_SYMBOLS[outcome]) for outcome in allowed_outcomes)
+        except KeyError as exc:
+            raise GoAPIPlanError(f"{path}: outcome contract has no reviewed kernel symbol") from exc
+        base_contract = GoBaseFamilyContractPlanIR(
+            identifier,
+            GoIdentityContractPlanIR(
+                _closed_symbol(_BUCKET_SYMBOLS, identity_bucket, "Bucket", f"{path}.bucket"),
+                _closed_symbol(_SIGNAL_SYMBOLS, signal, "Signal", f"{path}.signal"),
+                GoTypedSymbolRefIR(_named("EventName"), identity_symbol, _named("EventName")),
+            ),
+            _integer(_read(raw, "family_schema_version", path), f"{path}.family_schema_version", minimum=1),
+            GoOutcomePolicyPlanIR(requirement_ref, outcome_refs),
+            tuple(kernel_by_id[field_id] for field_id in family_ids),
+        )
+        trace_catalog: GoTraceFamilyContractPlanIR | None = None
+        if signal == "span":
+            event_catalog = tuple(
+                GoEventContractPlanIR(
+                    source_id,
+                    "generated"
+                    + _required_symbol(symbols, "span_event_constructor", source_id).symbol.removeprefix("New")
+                    + "Contract",
+                    event_name,
+                    GoTypedSymbolRefIR(
+                        _builtin("string"),
+                        _required_symbol(symbols, "span_event", event_name).symbol,
+                        _builtin("string"),
+                    ),
+                    tuple(kernel_by_id[field_id] for field_id in event_ids),
+                )
+                for source_id, event_name, event_ids in event_contracts
+            )
+            trace_catalog = GoTraceFamilyContractPlanIR(
+                base_contract,
+                tuple(
+                    _string(item, f"{path}.allowed_kinds")
+                    for item in _sequence(_read(trace, "span_kinds", f"trace {identifier}"), f"{path}.allowed_kinds")
+                ),
+                span_parts,
+                trace_defaults.attribute_limits,
+                tuple(kernel_by_id[field_id] for field_id in resource_ids),
+                trace_defaults.resource_limits,
+                tuple(kernel_by_id[field_id] for field_id in scope_ids),
+                trace_defaults.scope_limits,
+                event_catalog,
+                trace_defaults.event_limits,
+                trace_defaults.max_events,
+                tuple(
+                    GoTypedSymbolRefIR(
+                        _builtin("string"),
+                        _required_symbol(symbols, "link_relation", relation).symbol,
+                        _builtin("string"),
+                    )
+                    for relation, _ in link_contracts
+                ),
+                tuple(
+                    kernel_by_id[field_id]
+                    for field_id in dict.fromkeys(field_id for _, link_ids in link_contracts for field_id in link_ids)
+                ),
+                trace_defaults.link_limits,
+                trace_defaults.max_links,
+                trace_defaults.scope_name,
+                trace_defaults.scope_schema_url,
+                trace_defaults.trace_schema_version,
+                trace_defaults.semantic_profile,
+            )
         metric_description = (
             _string(_read(metric, "description", f"metric {identifier}"), "metric description")
             if metric is not None
@@ -1927,6 +2852,32 @@ def _compile_families(
             for value in metric_boundaries
         ):
             raise GoAPIPlanError(f"{path}: metric boundaries are invalid")
+        metric_catalog: GoMetricFamilyContractPlanIR | None = None
+        if signal == "metric":
+            instrument_name = _string(_read(metric, "instrument_name", f"metric {identifier}"), "instrument")
+            metric_value_type = _string(_read(metric, "value_type", f"metric {identifier}"), "metric value type")
+            metric_catalog = GoMetricFamilyContractPlanIR(
+                base_contract,
+                _typed_symbol(
+                    "familyMetricNumberType",
+                    "familyMetricNumberInt64" if metric_value_type == "int64" else "familyMetricNumberDouble",
+                ),
+                metric_attribute_limits,
+                GoTypedSymbolRefIR(
+                    _builtin("string"),
+                    _required_symbol(symbols, "metric_instrument", instrument_name).symbol,
+                    _builtin("string"),
+                ),
+                _string(_read(metric, "instrument_type", f"metric {identifier}"), "instrument type"),
+                _string(_read(metric, "unit", f"metric {identifier}"), "metric unit"),
+                _string(_read(metric, "temporality", f"metric {identifier}"), "temporality"),
+            )
+        catalog_contract = GoCatalogContractPlanIR(
+            descriptor_type_symbol,
+            base_contract,
+            trace_catalog,
+            metric_catalog,
+        )
         descriptors.append(
             GoDescriptorPlanIR(
                 identifier,
@@ -1961,6 +2912,7 @@ def _compile_families(
                 constant_terms,
                 mandatory_terms,
                 callables[-1].private_target,
+                catalog_contract,
             )
         )
         planned.update({("family_input", identifier), ("family_builder", identifier)})
@@ -2102,6 +3054,184 @@ def _declaration_plans(
             )
         )
     return tuple(plans)
+
+
+def _private_declaration_plans(
+    structured: Sequence[GoStructuredPlanIR],
+    descriptors: Sequence[GoDescriptorPlanIR],
+) -> tuple[GoPrivateDeclarationPlanIR, ...]:
+    by_file: dict[str, list[GoPrivateDeclarationPlanIR]] = {path: [] for path in GO_OUTPUT_FILES}
+
+    def add(
+        *,
+        declaration_id: str,
+        symbol: str,
+        owner: str,
+        output_file: str,
+        arm: str,
+        receiver_type: GoTypeRefIR | None = None,
+        parameters: tuple[ParameterIR, ...] = (),
+        results: tuple[GoTypeRefIR, ...] = (),
+        body_owner_id: str,
+    ) -> None:
+        if arm not in _PRIVATE_DECLARATION_ARMS:
+            raise GoAPIPlanError("private declaration has an unknown arm")
+        _validate_identifier(symbol, f"private declaration {declaration_id}")
+        target = by_file[output_file]
+        target.append(
+            GoPrivateDeclarationPlanIR(
+                declaration_id,
+                symbol,
+                owner,
+                output_file,
+                len(target),
+                arm,
+                receiver_type,
+                parameters,
+                results,
+                body_owner_id,
+            )
+        )
+
+    for descriptor in descriptors:
+        contract = descriptor.catalog_contract
+        type_ref = _named(contract.descriptor_type_symbol)
+        add(
+            declaration_id=f"catalog:{descriptor.family_id}:type",
+            symbol=contract.descriptor_type_symbol,
+            owner=descriptor.family_id,
+            output_file=_CATALOG_FILE,
+            arm="family_descriptor_type",
+            body_owner_id=descriptor.family_id,
+        )
+        add(
+            declaration_id=f"catalog:{descriptor.family_id}:base",
+            symbol="familyDescriptorContract",
+            owner=descriptor.family_id,
+            output_file=_CATALOG_FILE,
+            arm="family_descriptor_method",
+            receiver_type=type_ref,
+            results=(_named("familyDescriptorContract"),),
+            body_owner_id=descriptor.family_id,
+        )
+        if contract.trace is not None:
+            add(
+                declaration_id=f"catalog:{descriptor.family_id}:trace",
+                symbol="familyTraceContract",
+                owner=descriptor.family_id,
+                output_file=_CATALOG_FILE,
+                arm="family_trace_method",
+                receiver_type=type_ref,
+                results=(_named("familyTraceContract"),),
+                body_owner_id=descriptor.family_id,
+            )
+            for event in contract.trace.allowed_events:
+                add(
+                    declaration_id=f"catalog:{event.source_id}:event",
+                    symbol=event.private_helper_symbol,
+                    owner=descriptor.family_id,
+                    output_file=_CATALOG_FILE,
+                    arm="event_contract_helper",
+                    results=(_named("familyEventContract"),),
+                    body_owner_id=event.source_id,
+                )
+        if contract.metric is not None:
+            add(
+                declaration_id=f"catalog:{descriptor.family_id}:metric",
+                symbol="familyMetricContract",
+                owner=descriptor.family_id,
+                output_file=_CATALOG_FILE,
+                arm="family_metric_method",
+                receiver_type=type_ref,
+                results=(_named("familyMetricContract"),),
+                body_owner_id=descriptor.family_id,
+            )
+    for structured_plan in structured:
+        for arm_plan in structured_plan.arms:
+            add(
+                declaration_id=f"structured:{arm_plan.source_id}:marker",
+                symbol=arm_plan.marker_method,
+                owner=structured_plan.declaration_source_id,
+                output_file=structured_plan.output_file,
+                arm="structured_marker_method",
+                receiver_type=_named(arm_plan.symbol),
+                body_owner_id=arm_plan.source_id,
+            )
+        encoder = structured_plan.encoder
+        add(
+            declaration_id=f"structured:{structured_plan.declaration_source_id}:encoder",
+            symbol=encoder.symbol,
+            owner=structured_plan.declaration_source_id,
+            output_file=structured_plan.output_file,
+            arm="structured_encoder",
+            parameters=(
+                ("key", _builtin("string")),
+                ("input", encoder.input_type),
+                ("present", _builtin("bool")),
+            ),
+            results=(encoder.result_type, _builtin("error")),
+            body_owner_id=structured_plan.declaration_source_id,
+        )
+    result = tuple(item for path in GO_OUTPUT_FILES for item in by_file[path])
+    ids = [item.declaration_id for item in result]
+    if len(ids) != len(set(ids)):
+        raise GoAPIPlanError("private declaration ownership is duplicated")
+    package_symbols = [
+        item.symbol
+        for item in result
+        if item.arm in {"family_descriptor_type", "event_contract_helper", "structured_encoder"}
+    ]
+    if len(package_symbols) != len(set(package_symbols)):
+        raise GoAPIPlanError("package-scope private declaration symbol is duplicated")
+    for path, items in by_file.items():
+        if tuple(item.order for item in items) != tuple(range(len(items))):
+            raise GoAPIPlanError(f"{path}: private declaration order is not contiguous")
+    return result
+
+
+def _kernel_helper_inventory(
+    callables: Sequence[GoCallablePlanIR], structured: Sequence[GoStructuredPlanIR]
+) -> tuple[GoKernelHelperRefIR, ...]:
+    helpers: list[GoKernelHelperRefIR] = []
+    for callable_plan in callables:
+        body = callable_plan.body
+        if isinstance(body, GoFamilyCallableBodyPlanIR):
+            helpers.append(body.kernel_helper)
+            if body.mandatory_resolver is not None:
+                helpers.append(body.mandatory_resolver)
+            if body.metric_number_helper is not None:
+                helpers.append(body.metric_number_helper)
+        elif isinstance(body, GoMemberCallableBodyPlanIR):
+            helpers.append(body.validation_helper)
+    for structured_plan in structured:
+        helpers.extend(structured_plan.encoder.validation_helpers)
+    by_symbol: dict[str, GoKernelHelperRefIR] = {}
+    for helper in helpers:
+        prior = by_symbol.setdefault(helper.symbol, helper)
+        if prior != helper:
+            raise GoAPIPlanError(f"private kernel helper {helper.symbol}: signature disagreement")
+    return tuple(by_symbol[symbol] for symbol in sorted(by_symbol, key=str.encode))
+
+
+def _validate_render_targets(inputs: Sequence[GoInputPlanIR], callables: Sequence[GoCallablePlanIR]) -> None:
+    if any(item.private_kernel_target not in _INPUT_KERNEL_TARGETS for item in inputs):
+        raise GoAPIPlanError("input plan has an unreviewed private-kernel target")
+    for callable_plan in callables:
+        body = callable_plan.body
+        if isinstance(body, GoFamilyCallableBodyPlanIR):
+            expected = body.kernel_helper.symbol
+            if body.arm not in {"family_log", "family_span", "family_metric"}:
+                raise GoAPIPlanError("family callable body has an unknown arm")
+        elif isinstance(body, GoEventCallableBodyPlanIR):
+            expected = "generated_event_literal"
+        elif isinstance(body, GoLinkCallableBodyPlanIR):
+            expected = "generated_link_literal"
+        elif isinstance(body, GoMemberCallableBodyPlanIR):
+            expected = body.validation_helper.symbol
+        else:  # pragma: no cover - closed union guard
+            raise GoAPIPlanError("callable plan has an unknown body")
+        if callable_plan.private_target != expected:
+            raise GoAPIPlanError("callable plan has an unreviewed private target")
 
 
 def _canonical_node(value: Any) -> Any:
@@ -2259,7 +3389,10 @@ def compile_go_api_plan(index: Any) -> GoAPIPlanIR:
             key=lambda item: (item.declaration_kind, item.declaration_source_id),
         )
     )
+    _validate_render_targets(inputs, callables)
     descriptors = tuple(sorted(descriptors, key=lambda item: item.family_id.encode("ascii")))
+    private_declarations = _private_declaration_plans(structured, descriptors)
+    kernel_helpers = _kernel_helper_inventory(callables, structured)
     fixtures = _fixture_plans(index, inputs)
     if symbol_digest == _CANONICAL_SYMBOL_TABLE_SHA256:
         _validate_canonical_counts(inputs, producer_ids)
@@ -2269,8 +3402,13 @@ def compile_go_api_plan(index: Any) -> GoAPIPlanIR:
     files = tuple(
         GoFilePlanIR(
             path=path,
+            package_name="observability",
+            imports=(),
             declaration_keys=assignments[path],
             declarations=declarations_by_file[path],
+            private_declarations=tuple(
+                declaration for declaration in private_declarations if declaration.output_file == path
+            ),
             private_descriptor_ids=(catalog_descriptor_ids if path == _CATALOG_FILE else ()),
             private_projection_ids=(
                 producer_ids
@@ -2297,6 +3435,8 @@ def compile_go_api_plan(index: Any) -> GoAPIPlanIR:
         structured,
         descriptors,
         declarations,
+        private_declarations,
+        kernel_helpers,
         fixtures,
         files,
         "",
