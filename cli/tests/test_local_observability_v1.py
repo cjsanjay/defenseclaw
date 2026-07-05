@@ -127,6 +127,79 @@ def test_collector_preserves_three_signal_pipeline_and_agent360_dimensions() -> 
     }
 
 
+def _apply_resource_insert_actions(
+    collector: dict,
+    supplied: dict[str, str],
+) -> dict[str, str]:
+    """Model the Collector resource processor's ordered insert semantics."""
+
+    result = dict(supplied)
+    actions = collector["processors"]["resource"]["attributes"]
+    assert actions == compat.EXPECTED_RESOURCE_ATTRIBUTE_ACTIONS
+    for item in actions:
+        assert item["action"] == "insert"
+        key = item["key"]
+        if key in result:
+            continue
+        source = item.get("from_attribute")
+        if source is not None:
+            if source in result:
+                result[key] = result[source]
+            continue
+        result[key] = item["value"]
+    return result
+
+
+def test_collector_environment_alias_preserves_canonical_and_explicit_values() -> None:
+    paths = [compat.COLLECTOR, compat.PACKAGED / "otel-collector/config.yaml"]
+    for path in paths:
+        collector = yaml.safe_load(path.read_text(encoding="utf-8"))
+
+        canonical = _apply_resource_insert_actions(
+            collector,
+            {"deployment.environment.name": "production"},
+        )
+        assert canonical["deployment.environment.name"] == "production"
+        assert canonical["deployment.environment"] == "production"
+
+        explicit_legacy = _apply_resource_insert_actions(
+            collector,
+            {
+                "deployment.environment.name": "production",
+                "deployment.environment": "legacy-production",
+            },
+        )
+        assert explicit_legacy["deployment.environment"] == "legacy-production"
+
+        defaulted = _apply_resource_insert_actions(collector, {})
+        assert defaulted["deployment.environment"] == "local-dev"
+
+
+def test_custom_resource_attributes_are_not_dashboard_required_dimensions() -> None:
+    collector = yaml.safe_load(compat.COLLECTOR.read_text(encoding="utf-8"))
+    custom = {
+        "organization.unit": "security",
+        "custom.resource.label": "stable",
+    }
+    enriched = _apply_resource_insert_actions(
+        collector,
+        {"deployment.environment.name": "production", **custom},
+    )
+    assert {key: enriched[key] for key in custom} == custom
+
+    dimensions = {
+        item["name"]
+        for item in collector["connectors"]["spanmetrics/agent360"]["dimensions"]
+    }
+    inventory = compat.build_inventory(_dashboards())
+    required = inventory["dependencies"]
+    assert custom.keys().isdisjoint(dimensions)
+    assert custom.keys().isdisjoint(required["tempo_attributes"])
+    assert {
+        key.replace(".", "_").replace("-", "_") for key in custom
+    }.isdisjoint(required["prometheus_labels"])
+
+
 def _trace_terminals(collector: dict, span_attributes: dict[str, object]) -> set[str]:
     """Walk the configured trace-connector graph for one representative span."""
 
@@ -237,6 +310,24 @@ def test_collector_validator_rejects_delta_conversion_or_dimension_drift(
 
     assert any("signal pipelines drifted" in error for error in errors)
     assert any("spanmetrics/agent360 dimensions drifted" in error and "trace_id" in error for error in errors)
+
+
+def test_collector_validator_rejects_environment_alias_order_drift(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    collector = yaml.safe_load(compat.COLLECTOR.read_text(encoding="utf-8"))
+    collector["processors"]["resource"]["attributes"].reverse()
+    path = tmp_path / "collector.yaml"
+    path.write_text(yaml.safe_dump(collector), encoding="utf-8")
+    monkeypatch.setattr(compat, "COLLECTOR", path)
+
+    errors = compat._collector_errors()
+
+    assert any(
+        "derive deployment.environment from deployment.environment.name" in error
+        for error in errors
+    )
 
 
 def test_complete_bundle_and_packaged_tree_are_byte_identical() -> None:

@@ -91,6 +91,15 @@ EXPECTED_CANARY_ATTRIBUTE = "defenseclaw.telemetry.canary"
 EXPECTED_CANARY_FILTER_CONDITION = (
     'span.attributes["defenseclaw.telemetry.canary"] == true'
 )
+EXPECTED_RESOURCE_ATTRIBUTE_ACTIONS = [
+    {"key": "service.namespace", "value": "defenseclaw", "action": "insert"},
+    {
+        "key": "deployment.environment",
+        "from_attribute": "deployment.environment.name",
+        "action": "insert",
+    },
+    {"key": "deployment.environment", "value": "local-dev", "action": "insert"},
+]
 EXPECTED_VOLUMES = {"prometheus-data", "loki-data", "tempo-data", "grafana-data"}
 
 # Checked PR #412/P3 baselines.  These are intentionally hashes, not generated
@@ -485,6 +494,12 @@ def _collector_errors() -> list[str]:
     }:
         errors.append(
             "Agent360 canary filter must drop only the exact canonical boolean span attribute",
+        )
+    resource_actions = collector.get("processors", {}).get("resource", {}).get("attributes")
+    if resource_actions != EXPECTED_RESOURCE_ATTRIBUTE_ACTIONS:
+        errors.append(
+            "Collector resource aliases must preserve explicit legacy values, derive "
+            "deployment.environment from deployment.environment.name, and default only when both are absent",
         )
     spanmetrics = collector.get("connectors", {}).get("spanmetrics/agent360", {})
     dimensions = {item.get("name") for item in spanmetrics.get("dimensions", [])}
