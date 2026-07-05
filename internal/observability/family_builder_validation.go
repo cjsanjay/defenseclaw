@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"math"
 	"regexp"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 )
@@ -234,13 +235,16 @@ func validateFamilyCrossFieldValues(
 		}
 		text, textOK := value.(string)
 		number, numberOK := code.(json.Number)
-		integer, integerErr := number.Int64()
-		if !textOK || !numberOK || integerErr != nil {
+		if !textOK || !numberOK {
+			return familyBuildFailure(relation.mismatchCode)
+		}
+		canonicalNumber, numberErr := normalizeJSONNumber(number)
+		if numberErr != nil {
 			return familyBuildFailure(relation.mismatchCode)
 		}
 		matched := false
 		for _, entry := range relation.entries {
-			if entry.value == text && entry.code == integer {
+			if entry.value == text && canonicalFamilyInt64Equal(canonicalNumber, entry.code) {
 				matched = true
 				break
 			}
@@ -250,6 +254,15 @@ func validateFamilyCrossFieldValues(
 		}
 	}
 	return nil
+}
+
+// canonicalFamilyInt64Equal compares exact numeric values after applying the
+// same shortest plain/scientific spelling used by Value normalization. Calling
+// json.Number.Int64 directly is insufficient because canonical integral values
+// such as 1000 are deliberately represented as 1e3.
+func canonicalFamilyInt64Equal(canonical json.Number, expected int64) bool {
+	expectedText, ok := normalizeExactDecimal(strconv.FormatInt(expected, 10))
+	return ok && canonical.String() == expectedText
 }
 
 func familyDerivedSourceType(source familyValueSource) (familyFieldType, bool) {

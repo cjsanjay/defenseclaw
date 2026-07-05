@@ -11,6 +11,7 @@
 package observability
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -137,6 +138,45 @@ func TestFamilyCrossFieldRelationAcceptsMatchAndIgnoresAbsentSide(t *testing.T) 
 		if err := validateFamilyCrossFieldValues(contract.crossFieldRelations, object); err != nil {
 			t.Fatalf("relation error = %v", err)
 		}
+	}
+}
+
+func TestFamilyCrossFieldRelationAcceptsScientificCanonicalInt64Code(t *testing.T) {
+	fields, relation := testPhaseRelationFields()
+	fields[1].constraints.intMax = 1000
+	relation.entries[0].code = 1000
+	contract := testLogFamily().contract
+	contract.fields = fields
+	contract.crossFieldRelations = []familyCrossFieldRelation{relation}
+	if err := validateFamilyDescriptor(contract, familySignalLog); err != nil {
+		t.Fatalf("descriptor error = %v", err)
+	}
+
+	object, _, err := materializeFamilyFields(
+		fields,
+		testPhaseRelationValues(1000),
+		nil,
+		familyDerivationContext{},
+	)
+	if err != nil {
+		t.Fatalf("materialization error = %v", err)
+	}
+	number, ok := object["defenseclaw.agent.phase.code"].(json.Number)
+	if !ok || number.String() != "1e3" {
+		t.Fatalf("canonical phase code = %#v", object["defenseclaw.agent.phase.code"])
+	}
+	if err := validateFamilyCrossFieldValues(contract.crossFieldRelations, object); err != nil {
+		t.Fatalf("matching scientific phase code error = %v", err)
+	}
+
+	object["defenseclaw.agent.phase.code"] = json.Number("2")
+	err = validateFamilyCrossFieldValues(contract.crossFieldRelations, object)
+	if !IsFamilyBuildError(err, FamilyBuildLifecyclePhaseCodeMismatch) {
+		t.Fatalf("mismatched phase code error = %v", err)
+	}
+	if strings.Contains(err.Error(), "planning") || strings.Contains(err.Error(), "1000") ||
+		strings.Contains(err.Error(), "1e3") || strings.Contains(err.Error(), "2") {
+		t.Fatalf("cross-field error leaked values: %v", err)
 	}
 }
 
