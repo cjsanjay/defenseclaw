@@ -598,7 +598,7 @@ class GoAPIPlanIR:
 
 _GO_API_PLAN_DIGEST_DOMAIN: Final = b"DefenseClaw GoAPIPlanIR v1\x00"
 _GO_SYMBOL_TABLE_DIGEST_DOMAIN: Final = b"DefenseClaw GoSymbolTableIR v1\x00"
-_CANONICAL_SYMBOL_TABLE_SHA256: Final = "31a90343cae2631aa76808bd6337d48af59ef09481fbc9c396a3c0d7b3790d4a"
+_CANONICAL_SYMBOL_TABLE_SHA256: Final = "1063fecb9fbed0fa854da6ee58a0b808a9db98f3c2e1db5c7a57aed868441970"
 _SHA256: Final = re.compile(r"^[0-9a-f]{64}$")
 _GO_IDENTIFIER: Final = re.compile(r"^[A-Za-z][A-Za-z0-9]*$")
 
@@ -694,7 +694,7 @@ GO_OUTPUT_FILES: Final = (
     _FIXTURES_FILE,
 )
 _EXPECTED_REVIEWED_PARTITION: Final = {
-    _IDS_FILE: 901,
+    _IDS_FILE: 905,
     _DOMAIN_FILES["genai"]: 282,
     _DOMAIN_FILES["security"]: 212,
     _DOMAIN_FILES["operations"]: 390,
@@ -706,8 +706,8 @@ _EXPECTED_LEGACY_FIXTURE_PARTITION: Final = {
     _DOMAIN_FILES["operations"]: 386,
 }
 _EXPECTED_CANONICAL_PUBLIC_VALUES: Final = {
-    "log": 1427,
-    "span": 778,
+    "log": 1703,
+    "span": 788,
     "resource": 325,
     "metric": 346,
 }
@@ -3226,7 +3226,7 @@ def _file_assignments(
         raise GoAPIPlanError("Go declaration file assignment is incomplete or duplicated")
     expected_partition = {
         1781: _EXPECTED_LEGACY_FIXTURE_PARTITION,
-        1785: _EXPECTED_REVIEWED_PARTITION,
+        1789: _EXPECTED_REVIEWED_PARTITION,
     }.get(len(rows))
     if expected_partition is not None:
         counts = {path: len(assigned[path]) for path in expected_partition}

@@ -592,13 +592,13 @@ def test_real_candidate_index_compiles_complete_semantic_plan() -> None:
     second = plan.compile_go_api_plan(index)
 
     assert first == second
-    assert first.api_plan_sha256 == "7b3f4faf92cc1a6c4f7c79b5d0b58bf55cef363b58cbe338d9c3dbe5cbec5bc6"
-    assert len(first.declarations) == 1785
+    assert first.api_plan_sha256 == "a18f33d144c242b313d72bd133d1726d134f735906c3789d4a0504a766a450a7"
+    assert len(first.declarations) == 1789
     assert len(first.inputs) == len(first.callables) == 421
     assert len(first.descriptors) == 243
     assert len(first.structured) == 21
     assert len(first.fixtures) == 12
-    assert sum(len(item.fields) for item in first.inputs) == 4762
+    assert sum(len(item.fields) for item in first.inputs) == 5046
     assert len(first.private_declarations) == 741
     assert first.resource_attributes.validator_symbol == "ValidateTelemetryResourceAttributes"
     assert len(first.resource_attributes.fixed_descriptors) == 14
@@ -650,7 +650,7 @@ def test_real_candidate_index_compiles_complete_semantic_plan() -> None:
     assert sum(part.arm == "literal" for item in first.descriptors for part in item.span_name_parts) == 25
     assert sum(part.arm == "field" for item in first.descriptors for part in item.span_name_parts) == 19
     model_input = input_by_source(first, "span.model.chat")
-    assert len(model_input.fields) == 103
+    assert len(model_input.fields) == 104
     assert tuple(field.selector for field in model_input.fields if field.conversion_op == "condition_fact") == (
         "ConditionConnectorKnown",
         "ConditionOperationTerminal",
@@ -766,7 +766,7 @@ def test_real_candidate_index_compiles_complete_semantic_plan() -> None:
     assert owned == list(catalog.private_descriptor_ids)
     assert len(owned) == len(set(owned)) == 264
     counts = {item.path: len(item.declarations) for item in first.files}
-    assert counts["internal/observability/zz_generated_telemetry_ids.go"] == 901
+    assert counts["internal/observability/zz_generated_telemetry_ids.go"] == 905
     assert counts["internal/observability/zz_generated_telemetry_builders_genai.go"] == 282
     assert counts["internal/observability/zz_generated_telemetry_builders_security.go"] == 212
     assert counts["internal/observability/zz_generated_telemetry_builders_operations.go"] == 390

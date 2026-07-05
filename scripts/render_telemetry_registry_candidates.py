@@ -380,7 +380,7 @@ _GO_SYMBOL_KIND_ORDER: Final = (
     "span_link_constructor",
 )
 _GO_SYMBOL_KIND_COUNTS: Final = {
-    "attribute": 331,
+    "attribute": 335,
     "family": 243,
     "log_event": 87,
     "span_event": 15,
@@ -408,12 +408,12 @@ _GO_SYMBOL_KIND_COUNTS: Final = {
     "span_link_constructor": 100,
 }
 _GO_SYMBOL_DECLARATION_COUNTS: Final = {
-    "exported_const": 901,
+    "exported_const": 905,
     "exported_type": 460,
     "exported_function": 181,
     "family_builder_method": 243,
 }
-_GO_SYMBOL_DOMAIN_COUNTS: Final = {"ids": 901, "genai": 282, "security": 212, "operations": 390}
+_GO_SYMBOL_DOMAIN_COUNTS: Final = {"ids": 905, "genai": 282, "security": 212, "operations": 390}
 _GO_SYMBOL_DECLARATION_BY_KIND: Final = {
     "attribute": "exported_const",
     "family": "exported_const",
@@ -442,9 +442,9 @@ _GO_SYMBOL_DECLARATION_BY_KIND: Final = {
     "span_link_input": "exported_type",
     "span_link_constructor": "exported_function",
 }
-_GO_SYMBOL_ROW_COUNT: Final = 1785
+_GO_SYMBOL_ROW_COUNT: Final = 1789
 _GO_SYMBOL_TABLE_DIGEST_DOMAIN: Final = b"DefenseClaw GoSymbolTableIR v1\x00"
-_GO_SYMBOL_TABLE_SHA256: Final = "31a90343cae2631aa76808bd6337d48af59ef09481fbc9c396a3c0d7b3790d4a"
+_GO_SYMBOL_TABLE_SHA256: Final = "1063fecb9fbed0fa854da6ee58a0b808a9db98f3c2e1db5c7a57aed868441970"
 
 
 def _normalized_candidate_path(raw: str) -> str:
@@ -3437,7 +3437,7 @@ def _go_declaration_values(
             continue
         value = row.source_id.split("#", 1)[1] if row.kind == "structured_member" else row.source_id
         declarations.append(GoDeclarationValue(row.kind, row.source_id, row.symbol, "string", "string", value))
-    if len(declarations) != 901 or Counter(item.kind for item in declarations) != {
+    if len(declarations) != 905 or Counter(item.kind for item in declarations) != {
         kind: count
         for kind, count in _GO_SYMBOL_KIND_COUNTS.items()
         if _GO_SYMBOL_DECLARATION_BY_KIND[kind] == "exported_const"
@@ -4007,9 +4007,9 @@ def _enriched_field_descriptors(
                     origin=f"structured_types.{type_id}.canonical_json.{arm_id}",
                 )
                 order += 1
-    if len(descriptors) != 2813:
+    if len(descriptors) != 3099:
         raise CandidateRenderError(
-            f"enriched field descriptor inventory is incomplete: expected 2813, got {len(descriptors)}"
+            f"enriched field descriptor inventory is incomplete: expected 3099, got {len(descriptors)}"
         )
     return MappingProxyType({key: descriptors[key] for key in sorted(descriptors)})
 

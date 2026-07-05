@@ -16,6 +16,56 @@ attributes:
     id: identifier-v1
     notes: nonempty bounded
   introduced_in: telemetry-registry-v1
+- id: defenseclaw.hook.event
+  type: string
+  brief: Connector-reported hook event name after bounded canonical normalization.
+  examples:
+  - PreToolUse
+  stability: stable
+  owner: defenseclaw
+  field_class: metadata
+  sensitivity: safe
+  cardinality: bounded
+  normalization:
+    id: bounded-v1
+    notes: nonempty connector event name with bounded UTF-8 length
+  introduced_in: telemetry-registry-v1
+- id: defenseclaw.hook.result
+  type: string
+  brief: Technical completion result of the connector hook handler.
+  examples:
+  - ok
+  - panic
+  stability: stable
+  owner: defenseclaw
+  field_class: metadata
+  sensitivity: safe
+  cardinality: low
+  normalization:
+    id: enum-v1
+    overrides:
+      enum:
+      - ok
+      - panic
+    notes: ok|panic
+  introduced_in: telemetry-registry-v1
+- id: defenseclaw.connector.step_idx
+  type: int64
+  brief: One-based connector step shared by hook events in the same reported turn.
+  examples:
+  - 1
+  stability: stable
+  owner: defenseclaw
+  field_class: metadata
+  sensitivity: safe
+  cardinality: bounded
+  normalization:
+    id: numeric-range-v1
+    overrides:
+      min: 1
+      max: 9223372036854775807
+    notes: positive integer; absent when the connector event has no turn step
+  introduced_in: telemetry-registry-v1
 - id: defenseclaw.finding.id
   type: string
   brief: Finding occurrence identity
@@ -1118,6 +1168,51 @@ groups:
   - ref: defenseclaw.judge.parse_error
     requirement_level: conditional
     conditional: judge-output-parse-failed-v1
+- id: body.hook.decision
+  type: body_group
+  brief: Final connector-facing hook decision with technical handling result and optional evaluation correlation.
+  stability: stable
+  introduced_in: telemetry-registry-v1
+  extends:
+  - correlation.interaction
+  - correlation.agent
+  - correlation.security
+  attributes: []
+  body_fields:
+  - ref: defenseclaw.hook.event
+    requirement_level: required
+  - ref: defenseclaw.hook.result
+    requirement_level: required
+  - ref: defenseclaw.guardrail.effective_action
+    requirement_level: required
+  - ref: defenseclaw.guardrail.raw_action
+    requirement_level: required
+  - ref: defenseclaw.security.severity
+    requirement_level: required
+  - ref: defenseclaw.guardrail.mode
+    requirement_level: required
+  - ref: defenseclaw.guardrail.would_block
+    requirement_level: required
+  - ref: defenseclaw.guardrail.enforced
+    requirement_level: required
+  - ref: defenseclaw.connector.step_idx
+    requirement_level: recommended
+  - ref: defenseclaw.guardrail.latency_ms
+    requirement_level: recommended
+  - ref: defenseclaw.guardrail.reason
+    requirement_level: recommended
+  - ref: defenseclaw.evaluation.id
+    requirement_level: recommended
+  - ref: defenseclaw.guardrail.rule_ids
+    requirement_level: recommended
+  x-defenseclaw:
+    legacy_bindings:
+    - source: 'PR #403 gatewaylog.HookDecisionPayload'
+      disposition: preserved_without_fabricated_evaluation
+      details:
+        evaluation_id: optional because clean and technical hook outcomes may have no guardrail evaluation
+        hook_result: ok|panic is independent of the connector-facing policy action
+        step_idx: optional and one-based when present
 - id: body.approval.resolved
   type: body_group
   brief: Approval resolution compliance body with optional linked enforcement correlation.
@@ -2276,7 +2371,7 @@ groups:
   stability: stable
   introduced_in: telemetry-registry-v1
   extends:
-  - body.guardrail.evaluation
+  - body.hook.decision
   attributes: []
   body_fields: []
   log:

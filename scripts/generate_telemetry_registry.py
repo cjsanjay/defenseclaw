@@ -339,7 +339,7 @@ GO_SYMBOL_KIND_ORDER: Final = (
     "span_link_constructor",
 )
 EXPECTED_GO_SYMBOL_KIND_COUNTS: Final = {
-    "attribute": 331,
+    "attribute": 335,
     "family": 243,
     "log_event": 87,
     "span_event": 15,
@@ -367,16 +367,16 @@ EXPECTED_GO_SYMBOL_KIND_COUNTS: Final = {
     "span_link_constructor": 100,
 }
 EXPECTED_GO_SYMBOL_DECLARATION_COUNTS: Final = {
-    "exported_const": 901,
+    "exported_const": 905,
     "exported_type": 460,
     "exported_function": 181,
     "family_builder_method": 243,
 }
-EXPECTED_GO_SYMBOL_COUNT: Final = 1785
-EXPECTED_GO_SYMBOL_TABLE_SHA256: Final = "31a90343cae2631aa76808bd6337d48af59ef09481fbc9c396a3c0d7b3790d4a"
+EXPECTED_GO_SYMBOL_COUNT: Final = 1789
+EXPECTED_GO_SYMBOL_TABLE_SHA256: Final = "1063fecb9fbed0fa854da6ee58a0b808a9db98f3c2e1db5c7a57aed868441970"
 GO_SYMBOL_TABLE_BASELINES: Final = Path("schemas/telemetry/v8/baselines/go-symbol-table")
 GO_SYMBOL_TABLE_BASELINE_FORMAT: Final = "defenseclaw-go-symbol-table-baseline-v1"
-EXPECTED_GO_SYMBOL_TABLE_BASELINE_SHA256: Final = "511bc88b89217ced2c8a1349c9cd05a66f77cf41a67c9d0a622814243e16d4e8"
+EXPECTED_GO_SYMBOL_TABLE_BASELINE_SHA256: Final = "0633fe15ff0d86c8943c9a6be781fde0e23c5fb8a2718610ba63c62d505d5756"
 _GO_IDENTIFIER = re.compile(r"^[A-Za-z][A-Za-z0-9]*$")
 _GO_SOURCE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:/#-]{0,511}$")
 _GO_SOURCE_ID_PART = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,255}$")

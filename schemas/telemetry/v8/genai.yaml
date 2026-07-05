@@ -342,6 +342,25 @@ attributes:
     id: identifier-v1
     notes: nonempty bounded
   introduced_in: telemetry-registry-v1
+- id: defenseclaw.agent.lineage.provenance
+  type: string
+  brief: Whether logical root, parent, and depth lineage was reported by the connector or inferred by DefenseClaw.
+  examples:
+  - reported
+  - inferred
+  stability: stable
+  owner: defenseclaw
+  field_class: metadata
+  sensitivity: safe
+  cardinality: low
+  normalization:
+    id: enum-v1
+    overrides:
+      enum:
+      - reported
+      - inferred
+    notes: reported|inferred; absent when no lineage claim is made
+  introduced_in: telemetry-registry-v1
 - id: defenseclaw.session.root.id
   type: string
   brief: Root upstream session
@@ -2133,6 +2152,8 @@ groups:
     requirement_level: recommended
   - ref: defenseclaw.agent.parent.id
     requirement_level: recommended
+  - ref: defenseclaw.agent.lineage.provenance
+    requirement_level: recommended
   - ref: defenseclaw.session.root.id
     requirement_level: recommended
   - ref: defenseclaw.session.parent.id
@@ -2539,6 +2560,10 @@ groups:
   introduced_in: telemetry-registry-v1
   extends:
   - lifecycle.agent
+  - correlation.interaction
+  - correlation.model.identity
+  - correlation.tool.identity
+  - cost.agent.reported
   attributes: []
   body_fields:
   - ref: defenseclaw.agent.lifecycle.event
@@ -2555,7 +2580,7 @@ groups:
   stability: stable
   introduced_in: telemetry-registry-v1
   extends:
-  - correlation.request
+  - correlation.interaction
   - correlation.agent
   - content.input
   - content.output
@@ -2574,7 +2599,7 @@ groups:
   stability: stable
   introduced_in: telemetry-registry-v1
   extends:
-  - correlation.request
+  - correlation.interaction
   - correlation.agent
   - genai.tool
   attributes: []

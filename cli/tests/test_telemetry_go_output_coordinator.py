@@ -101,7 +101,7 @@ def test_complete_candidate_is_immutable_and_deterministic(
     assert dataclasses.is_dataclass(first)
     assert first.outputs == tuple(sorted(first.outputs, key=lambda item: module.EXACT_GO_OUTPUT_PATHS.index(item.path)))
     assert tuple(output.path for output in first.outputs) == module.EXACT_GO_OUTPUT_PATHS
-    assert tuple(len(output.declaration_keys) for output in first.outputs) == (901, 0, 0, 282, 212, 390, 0)
+    assert tuple(len(output.declaration_keys) for output in first.outputs) == (905, 0, 0, 282, 212, 390, 0)
     assert sum("#" in key.source_id for key in candidate["keys"]) == 295
     assert first.metadata.format_version == 1
     assert first.metadata.materialized_view_sha256 == MATERIALIZED_DIGEST
@@ -248,7 +248,7 @@ def test_wrong_declaration_partition_is_rejected(module: ModuleType, candidate: 
     inventories[0] = dataclasses.replace(ids, declaration_keys=ids.declaration_keys[:-1])
     inventories[1] = dataclasses.replace(catalog, declaration_keys=(moved,))
 
-    with pytest.raises(module.GoOutputPreflightError, match="901/282/212/390"):
+    with pytest.raises(module.GoOutputPreflightError, match="905/282/212/390"):
         _preflight(module, candidate, declaration_inventory=tuple(inventories))
 
 

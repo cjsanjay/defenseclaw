@@ -375,10 +375,10 @@ def test_candidate_enrichment_is_complete_typed_and_recursively_immutable(
     assert index.materialized_view_sha256 == index.digest == view.typed_canonical_json_sha256
     assert index.candidate_render_index_sha256 != index.materialized_view_sha256
     assert len(index.candidate_render_index_sha256) == 64
-    assert len(index.enriched_fields) == 2813
+    assert len(index.enriched_fields) == 3099
     assert Counter(item.context for item in index.enriched_fields.values()) == {
-        "log": 1427,
-        "span": 928,
+        "log": 1703,
+        "span": 938,
         "metric": 346,
         "resource": 14,
         "scope": 2,
@@ -445,13 +445,13 @@ def test_candidate_enrichment_is_complete_typed_and_recursively_immutable(
     )
     assert all(row.family_id is not None or row.compatibility_only for row in index.expanded_producer_mappings)
 
-    assert len(index.go_declaration_values) == 901
+    assert len(index.go_declaration_values) == 905
     const_rows = tuple(row for row in index.go_symbol_table.rows if row.declaration_form == "exported_const")
     assert tuple((item.kind, item.source_id, item.symbol) for item in index.go_declaration_values) == tuple(
         (row.kind, row.source_id, row.symbol) for row in const_rows
     )
-    assert Counter(item.literal_kind for item in index.go_declaration_values) == {"string": 889, "integer": 12}
-    assert Counter(item.go_type for item in index.go_declaration_values) == {"string": 889, "int": 12}
+    assert Counter(item.literal_kind for item in index.go_declaration_values) == {"string": 893, "integer": 12}
+    assert Counter(item.go_type for item in index.go_declaration_values) == {"string": 893, "int": 12}
     assert (
         next(
             item for item in index.go_declaration_values if item.kind == "phase_code" and item.source_id == "session"
@@ -783,11 +783,11 @@ def test_candidate_index_consumes_reviewed_go_symbol_contract_immutably_and_pres
         "otel": "OTel",
     }
     assert index.go_symbol_overrides == ()
-    assert len(table.rows) == 1785
-    assert table.table_sha256 == "31a90343cae2631aa76808bd6337d48af59ef09481fbc9c396a3c0d7b3790d4a"
+    assert len(table.rows) == 1789
+    assert table.table_sha256 == "1063fecb9fbed0fa854da6ee58a0b808a9db98f3c2e1db5c7a57aed868441970"
     assert table.kind_counts == renderer._GO_SYMBOL_KIND_COUNTS
     assert table.declaration_form_counts == {
-        "exported_const": 901,
+        "exported_const": 905,
         "exported_type": 460,
         "exported_function": 181,
         "family_builder_method": 243,
