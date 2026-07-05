@@ -23,10 +23,13 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPTS = ROOT / "scripts"
-sys.path.insert(0, str(SCRIPTS))
 
 
 def _load(name: str, path: Path) -> Any:
+    existing = sys.modules.get(name)
+    if existing is not None:
+        assert Path(existing.__file__).resolve() == path.resolve()
+        return existing
     spec = importlib.util.spec_from_file_location(name, path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
@@ -35,6 +38,8 @@ def _load(name: str, path: Path) -> Any:
     return module
 
 
+_load("telemetry_canonical_record", SCRIPTS / "telemetry_canonical_record.py")
+_load("telemetry_go_api_plan", SCRIPTS / "telemetry_go_api_plan.py")
 coordinator = _load("telemetry_go_output_coordinator", SCRIPTS / "telemetry_go_output_coordinator.py")
 _load("telemetry_go_producer_plan", SCRIPTS / "telemetry_go_producer_plan.py")
 _load("telemetry_go_fixture_plan", SCRIPTS / "telemetry_go_fixture_plan.py")

@@ -26,27 +26,109 @@ import sys
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, is_dataclass, replace
 from dataclasses import fields as dataclass_fields
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from types import MappingProxyType, ModuleType
 from typing import Any, Final, TypeAlias
 
 import yaml
 from jsonschema import Draft202012Validator
 
+_GENERATOR_PACKAGE_MODE = (
+    __package__ == "scripts" and __spec__ is not None and __spec__.name == "scripts.generate_telemetry_registry"
+)
 
-def _load_transaction_module():  # type: ignore[no-untyped-def]
-    module_name = "telemetry_generated_transaction"
-    existing = sys.modules.get(module_name)
-    if existing is not None:
-        return existing
-    path = Path(__file__).resolve().with_name("telemetry_generated_transaction.py")
-    spec = importlib.util.spec_from_file_location(module_name, path)
-    if spec is None or spec.loader is None:
-        raise RuntimeError("cannot load telemetry generated-output transaction helper")
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[module_name] = module
-    spec.loader.exec_module(module)
+
+def _canonical_sibling_name(module_name: str) -> str:
+    return f"scripts.{module_name}" if _GENERATOR_PACKAGE_MODE else module_name
+
+
+def _validated_local_module(
+    module: Any,
+    *,
+    canonical_name: str,
+    path: Path,
+    purpose: str,
+) -> ModuleType:
+    if not isinstance(module, ModuleType):
+        raise RuntimeError(f"preloaded {purpose} is unsafe")
+    try:
+        module_path = Path(module.__file__).resolve(strict=True)
+        module_spec = module.__spec__
+        if (
+            module.__name__ != canonical_name
+            or module_spec is None
+            or module_spec.name != canonical_name
+            or module_spec.loader is None
+            or module_spec.origin is None
+        ):
+            raise RuntimeError("preloaded module has no canonical import identity")
+        origin_path = Path(module_spec.origin).resolve(strict=True)
+        regular = stat.S_ISREG(module_path.stat().st_mode) and stat.S_ISREG(origin_path.stat().st_mode)
+    except (AttributeError, OSError, RuntimeError, TypeError) as exc:
+        raise RuntimeError(f"preloaded {purpose} is unsafe") from exc
+    if not regular:
+        raise RuntimeError(f"preloaded {purpose} is unsafe")
+    if module_path != path or origin_path != path:
+        raise RuntimeError(f"preloaded {purpose} has foreign provenance")
     return module
+
+
+def _reject_opposite_sibling_identity(module_name: str, path: Path, purpose: str) -> None:
+    opposite_name = module_name if _GENERATOR_PACKAGE_MODE else f"scripts.{module_name}"
+    if _GENERATOR_PACKAGE_MODE:
+        opposite_name = module_name
+    opposite = sys.modules.get(opposite_name)
+    if not isinstance(opposite, ModuleType):
+        return
+    opposite_paths: list[Path] = []
+    try:
+        opposite_paths.append(Path(opposite.__file__).resolve(strict=True))
+    except (AttributeError, OSError, TypeError):
+        pass
+    try:
+        opposite_paths.append(Path(opposite.__spec__.origin).resolve(strict=True))
+    except (AttributeError, OSError, TypeError):
+        pass
+    if path in opposite_paths:
+        raise RuntimeError(f"{purpose} is already loaded under the conflicting identity {opposite_name}")
+
+
+def _load_local_module(module_name: str, purpose: str) -> ModuleType:
+    canonical_name = _canonical_sibling_name(module_name)
+    try:
+        path = Path(__file__).resolve().with_name(module_name + ".py").resolve(strict=True)
+        if not stat.S_ISREG(path.stat().st_mode):
+            raise OSError("module is not a regular file")
+    except (OSError, RuntimeError) as exc:
+        raise RuntimeError(f"cannot load {purpose}") from exc
+    _reject_opposite_sibling_identity(module_name, path, purpose)
+    existing = sys.modules.get(canonical_name)
+    if existing is not None:
+        return _validated_local_module(
+            existing,
+            canonical_name=canonical_name,
+            path=path,
+            purpose=purpose,
+        )
+    spec = importlib.util.spec_from_file_location(canonical_name, path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"cannot load {purpose}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[canonical_name] = module
+    try:
+        spec.loader.exec_module(module)
+    except Exception:
+        if sys.modules.get(canonical_name) is module:
+            del sys.modules[canonical_name]
+        raise
+    return module
+
+
+def _load_transaction_module() -> ModuleType:
+    return _load_local_module(
+        "telemetry_generated_transaction",
+        "telemetry generated-output transaction helper",
+    )
 
 
 generated_transaction = _load_transaction_module()
@@ -54,51 +136,7 @@ generated_transaction = _load_transaction_module()
 
 def _load_sibling_module(module_name: str):  # type: ignore[no-untyped-def]
     """Load one renderer dependency under its canonical process-wide identity."""
-
-    try:
-        path = Path(__file__).resolve().with_name(module_name + ".py").resolve(strict=True)
-        if not stat.S_ISREG(path.stat().st_mode):
-            raise OSError("renderer dependency is not a regular file")
-    except (OSError, RuntimeError) as exc:
-        raise RuntimeError(f"cannot load telemetry renderer dependency {module_name}") from exc
-    existing = sys.modules.get(module_name)
-    if existing is not None:
-        if not isinstance(existing, ModuleType):
-            raise RuntimeError(f"preloaded telemetry renderer dependency {module_name} is unsafe")
-        try:
-            existing_path = Path(existing.__file__).resolve(strict=True)
-            existing_spec = existing.__spec__
-            if (
-                existing.__name__ != module_name
-                or existing_spec is None
-                or existing_spec.name != module_name
-                or existing_spec.loader is None
-                or existing_spec.origin is None
-            ):
-                raise RuntimeError("preloaded renderer has no canonical import identity")
-            origin_path = Path(existing_spec.origin).resolve(strict=True)
-            existing_is_regular = stat.S_ISREG(existing_path.stat().st_mode) and stat.S_ISREG(
-                origin_path.stat().st_mode
-            )
-        except (AttributeError, OSError, RuntimeError, TypeError) as exc:
-            raise RuntimeError(f"preloaded telemetry renderer dependency {module_name} is unsafe") from exc
-        if not existing_is_regular:
-            raise RuntimeError(f"preloaded telemetry renderer dependency {module_name} is unsafe")
-        if existing_path != path or origin_path != path:
-            raise RuntimeError(f"preloaded telemetry renderer dependency {module_name} has foreign provenance")
-        return existing
-    spec = importlib.util.spec_from_file_location(module_name, path)
-    if spec is None or spec.loader is None:
-        raise RuntimeError(f"cannot load telemetry renderer dependency {module_name}")
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[module_name] = module
-    try:
-        spec.loader.exec_module(module)
-    except Exception:
-        if sys.modules.get(module_name) is module:
-            del sys.modules[module_name]
-        raise
-    return module
+    return _load_local_module(module_name, f"telemetry renderer dependency {module_name}")
 
 
 def _load_candidate_renderers():  # type: ignore[no-untyped-def]
@@ -107,6 +145,7 @@ def _load_candidate_renderers():  # type: ignore[no-untyped-def]
     # The Go renderer constructs coordinator dataclasses and the coordinator
     # validates them with isinstance, so these names must never be path-loaded
     # under competing module identities.
+    _load_sibling_module("telemetry_canonical_record")
     coordinator = _load_sibling_module("telemetry_go_output_coordinator")
     _load_sibling_module("telemetry_go_api_plan")
     _load_sibling_module("telemetry_go_producer_plan")
@@ -121,6 +160,59 @@ NORMALIZED_SNAPSHOT_FORMAT: Final = "defenseclaw-normalized-semconv-v1"
 MAX_AUTHORED_JSON_NESTING: Final = 256
 EXPECTED_IMPORTS: Final = ("genai.yaml", "security.yaml", "operations.yaml")
 EXPECTED_DEPENDENCIES: Final = ("otel_core", "otel_genai", "openinference")
+PUBLIC_VIEWS_SOURCE: Final = Path("schemas/telemetry/v8/public-views.yaml")
+PUBLIC_VIEWS_BASELINE_ROOT: Final = Path("schemas/telemetry/v8/baselines")
+PUBLIC_VIEWS_BASELINE_PATH: Final = Path("schemas/telemetry/v8/baselines/public-schemas-v7.normalized.json")
+PUBLIC_VIEWS_BASELINE_SHA256: Final = "d44ea610e9e82b142788babce9c8853713aa004a037c6bd2684502c80a1ca2b3"
+PUBLIC_VIEWS_BASELINE_ID: Final = "public-schemas-v7"
+PUBLIC_VIEWS_BASELINE_AUTHORITY: Final = "pre_cutover"
+PUBLIC_VIEWS_BASELINE_CANONICALIZATION: Final = "defenseclaw-lossless-json-v1"
+PUBLIC_VIEWS_BASELINE_SOURCE_COMMIT: Final = "e309dffc369d8f0c722d74ace848cec74ff40e3c"
+PUBLIC_VIEWS_BASELINE_SOURCE_TREE: Final = "e63356679501ae178fd3f3411ed909a231eb54fd"
+PUBLIC_VIEWS_COMPATIBILITY_EPOCH: Final = "public-schemas-v7-marker-only-v1"
+PUBLIC_VIEW_CANDIDATE_AUTHORITY: Final = "candidate-not-public-authority"
+PUBLIC_VIEW_MARKER_KEY: Final = "x-defenseclaw-generated"
+PUBLIC_VIEW_MARKER_GENERATOR: Final = "scripts/generate_telemetry_registry.py"
+PUBLIC_VIEW_DISPOSITIONS: Final = frozenset({"preserved", "renamed", "removed", "corrected"})
+PUBLIC_VIEW_SOURCE_KINDS: Final = frozenset({"canonical_attribute", "transport_only"})
+PUBLIC_VIEW_DYNAMIC_KEYWORDS: Final = frozenset({"additionalProperties", "patternProperties", "unevaluatedProperties"})
+PUBLIC_VIEW_OBJECT_KEYWORDS: Final = frozenset(
+    {
+        "properties",
+        "required",
+        "patternProperties",
+        "additionalProperties",
+        "unevaluatedProperties",
+        "propertyNames",
+        "minProperties",
+        "maxProperties",
+        "dependencies",
+        "dependentRequired",
+        "dependentSchemas",
+    }
+)
+PUBLIC_VIEW_DYNAMIC_POLICIES: Final = frozenset(
+    {
+        "additional-properties-default-allow",
+        "additional-properties-explicit-allow",
+        "additional-properties-schema",
+        "pattern-properties-schema",
+        "unevaluated-properties-explicit-allow",
+        "unevaluated-properties-schema",
+    }
+)
+PUBLIC_VIEW_SUBSCHEMA_DIGEST_DOMAIN: Final = b"DefenseClaw PublicView Subschema v1\x00"
+PUBLIC_VIEW_AUTHORITY_DIGEST_DOMAIN: Final = b"DefenseClaw PublicView Render Authority v1\x00"
+PUBLIC_VIEW_AUTHORITY_SHA256: Final = "8b617e6145719eef96625b41c6ca961dd0c16c060ef7d453b2f35888b489f171"
+PUBLIC_VIEW_MIRROR_TARGETS: Final = MappingProxyType(
+    {
+        "schemas/activity-event.json": ("internal/gatewaylog/schemas/activity-event.json",),
+        "schemas/gateway-event-envelope.json": ("internal/gatewaylog/schemas/gateway-event-envelope.json",),
+        "schemas/scan-event.json": ("internal/gatewaylog/schemas/scan-event.json",),
+        "schemas/scan-finding-event.json": ("internal/gatewaylog/schemas/scan-finding-event.json",),
+        "schemas/scan-result.json": ("internal/cli/embed/scan-result.json",),
+    }
+)
 EXPECTED_STRUCTURAL_INPUTS: Final = (
     (
         "model/gen-ai/gen-ai-input-messages.json",
@@ -280,6 +372,7 @@ EXPECTED_GO_SYMBOL_TABLE_BASELINE_SHA256: Final = "ee63f1aed1d6940f7315bc309db82
 _GO_IDENTIFIER = re.compile(r"^[A-Za-z][A-Za-z0-9]*$")
 _GO_SOURCE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:/#-]{0,511}$")
 _GO_SOURCE_ID_PART = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,255}$")
+_JSON_NUMBER_TOKEN = re.compile(r"^-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?$")
 _GO_RESERVED_IDENTIFIERS: Final = frozenset(
     {
         "break",
@@ -1199,6 +1292,145 @@ class SourceFileIR:
 
 
 @dataclass(frozen=True, slots=True)
+class PublicViewBaselineIR:
+    format_version: int
+    id: str
+    path: str
+    sha256: str
+    authority: str
+    canonicalization_id: str
+    source_commit: str
+    source_tree: str
+
+
+@dataclass(frozen=True, slots=True)
+class PublicViewMarkerIR:
+    keyword: str
+    generator: str
+    registry_version: int
+    baseline_epoch: str
+
+
+@dataclass(frozen=True, slots=True)
+class PublicViewSourceIR:
+    kind: str
+    id: str
+
+
+@dataclass(frozen=True, slots=True)
+class PublicViewNumberLexemeIR:
+    pointer: str
+    token: str
+
+
+@dataclass(frozen=True, slots=True)
+class PublicViewConstraintsIR:
+    mode: str
+    schema_sha256: str
+    schema_canonical_json: bytes
+
+
+@dataclass(frozen=True, slots=True)
+class PublicViewFieldDispositionIR:
+    pointer: str
+    property_name: str
+    projected_name: str
+    disposition: str
+    source: PublicViewSourceIR
+    required: bool
+    constraints: PublicViewConstraintsIR
+    encoding_conversion: str
+    field_class: str
+    sensitivity: str
+    redaction_parity: str
+    fixture_coverage: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class PublicViewDynamicScopeIR:
+    id: str
+    pointer: str
+    policy: str
+    disposition: str
+    source: PublicViewSourceIR
+    field_class: str
+    sensitivity: str
+    schema_sha256: str
+    schema_canonical_json: bytes
+    encoding_conversion: str
+    redaction_parity: str
+    fixture_coverage: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class PublicViewReferenceIR:
+    pointer: str
+    reference: str
+    target_view: str
+    target_pointer: str
+
+
+@dataclass(frozen=True, slots=True)
+class PublicViewTemplateIR:
+    kind: str
+    transport: str
+    root_type: str
+    root_schema_sha256: str
+
+
+@dataclass(frozen=True, slots=True)
+class PublicViewAdditionalPropertiesIR:
+    pointer: str
+    mode: str
+    schema_sha256: str
+    schema_canonical_json: bytes
+
+
+@dataclass(frozen=True, slots=True)
+class PublicViewLayoutIR:
+    definition_pointers: tuple[str, ...]
+    discriminator_pointers: tuple[str, ...]
+    additional_properties_default: str
+    additional_properties_overrides: tuple[PublicViewAdditionalPropertiesIR, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class PublicViewIR:
+    id: str
+    output_path: str
+    dialect: str
+    schema_id: str
+    authority: str
+    stability: str
+    introduced_in: str
+    deprecated_in: str | None
+    removed_in: str | None
+    mirror_targets: tuple[str, ...]
+    embed_targets: tuple[str, ...]
+    wheel_targets: tuple[str, ...]
+    baseline_git_blob_oid: str
+    baseline_source_sha256: str
+    baseline_canonical_sha256: str
+    baseline_number_lexemes: tuple[PublicViewNumberLexemeIR, ...]
+    baseline_document_canonical_json: bytes
+    template: PublicViewTemplateIR
+    layout: PublicViewLayoutIR
+    field_dispositions: tuple[PublicViewFieldDispositionIR, ...]
+    dynamic_scopes: tuple[PublicViewDynamicScopeIR, ...]
+    references: tuple[PublicViewReferenceIR, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class PublicViewsIR:
+    schema_version: int
+    compatibility_epoch: str
+    baseline: PublicViewBaselineIR
+    marker: PublicViewMarkerIR
+    authority_sha256: str
+    views: tuple[PublicViewIR, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class StructuralInputIR:
     upstream_path: str
     path: str
@@ -1916,6 +2148,7 @@ class RegistryIR:
     imports: tuple[str, ...]
     dependency_lock_path: str
     examples_path: str
+    public_views_path: str
     input_digests: tuple[InputDigest, ...]
     dependencies: tuple[DependencyIR, ...]
     semantic_profiles: tuple[SemanticProfileIR, ...]
@@ -1938,6 +2171,7 @@ class RegistryIR:
     examples: tuple[ExampleIR, ...]
     upstream_attribute_ownership: tuple[UpstreamAttributeOwnershipIR, ...]
     legacy_only_upstream_attributes: tuple[str, ...]
+    public_views: PublicViewsIR
     materialized_view: MaterializedRegistryView
     __hash__ = None
 
@@ -3274,6 +3508,1044 @@ def _schema_allows_null(value: Any) -> bool:
 
 def _json_pointer_token(value: str) -> str:
     return value.replace("~", "~0").replace("/", "~1")
+
+
+def _public_view_pointer(value: Any, path: str, *, allow_root: bool = False) -> str:
+    if value == "" and allow_root:
+        return ""
+    pointer = _string(value, path)
+    if not pointer.startswith("/") or "*" in pointer:
+        raise RegistryError(f"{path}: expected an explicit RFC6901 pointer without wildcards")
+    for token in pointer[1:].split("/"):
+        if re.search(r"~(?![01])", token):
+            raise RegistryError(f"{path}: invalid RFC6901 escape")
+    return pointer
+
+
+def _public_view_target_list(value: Any, path: str, *, prefix: str) -> tuple[str, ...]:
+    targets = _string_list(value, path)
+    for index, target in enumerate(targets):
+        pure = PurePosixPath(target)
+        if (
+            target.startswith("/")
+            or "\\" in target
+            or "\x00" in target
+            or target != pure.as_posix()
+            or any(part in {"", ".", ".."} for part in pure.parts)
+            or not pure.is_relative_to(PurePosixPath(prefix))
+        ):
+            raise RegistryError(f"{path}[{index}]: target must remain beneath {prefix}")
+    if targets != tuple(sorted(targets)):
+        raise RegistryError(f"{path}: targets must use canonical lexical order")
+    return targets
+
+
+def _public_view_id_for_path(path: str) -> str:
+    name = PurePosixPath(path).name
+    for suffix in (".schema.json", ".json"):
+        if name.endswith(suffix):
+            name = name[: -len(suffix)]
+            break
+    return ("otel-" if PurePosixPath(path).is_relative_to(PurePosixPath("schemas/otel")) else "") + name
+
+
+def _walk_public_schema(value: Any, pointer: str = "") -> Iterable[tuple[str, Any]]:
+    yield pointer, value
+    if isinstance(value, Mapping):
+        for key, child in value.items():
+            yield from _walk_public_schema(child, f"{pointer}/{_json_pointer_token(key)}")
+    elif isinstance(value, (list, tuple)):
+        for index, child in enumerate(value):
+            yield from _walk_public_schema(child, f"{pointer}/{index}")
+
+
+def _public_property_inventory(document: Any) -> Mapping[str, tuple[str, bool, Any]]:
+    result: dict[str, tuple[str, bool, Any]] = {}
+    for pointer, schema in _walk_public_schema(document):
+        if not isinstance(schema, Mapping) or "properties" not in schema:
+            continue
+        properties = schema["properties"]
+        if not isinstance(properties, Mapping):
+            raise RegistryError(f"public view baseline {pointer}/properties: expected object")
+        required_value = schema.get("required", ())
+        if not isinstance(required_value, (list, tuple)) or any(not isinstance(item, str) for item in required_value):
+            raise RegistryError(f"public view baseline {pointer}/required: expected string array")
+        if len(set(required_value)) != len(required_value):
+            raise RegistryError(f"public view baseline {pointer}/required: duplicate property")
+        required = frozenset(required_value)
+        unknown_required = required - properties.keys()
+        if unknown_required:
+            raise RegistryError(f"public view baseline {pointer}/required: unknown property")
+        for name, property_schema in properties.items():
+            property_pointer = f"{pointer}/properties/{_json_pointer_token(name)}"
+            if property_pointer in result:
+                raise RegistryError(f"public view baseline {property_pointer}: duplicate property pointer")
+            result[property_pointer] = (name, name in required, property_schema)
+    return MappingProxyType({pointer: result[pointer] for pointer in sorted(result)})
+
+
+def _public_is_object_schema(schema: Mapping[str, Any]) -> bool:
+    schema_type = schema.get("type")
+    declares_object = schema_type == "object" or (isinstance(schema_type, (list, tuple)) and "object" in schema_type)
+    return declares_object or bool(PUBLIC_VIEW_OBJECT_KEYWORDS.intersection(schema))
+
+
+def _public_dynamic_inventory(document: Any) -> Mapping[str, tuple[str, Any]]:
+    result: dict[str, tuple[str, Any]] = {}
+    for pointer, schema in _walk_public_schema(document):
+        if not isinstance(schema, Mapping) or not _public_is_object_schema(schema):
+            continue
+
+        additional_pointer = f"{pointer}/additionalProperties"
+        if "additionalProperties" not in schema:
+            result[additional_pointer] = ("additional-properties-default-allow", True)
+        else:
+            additional = schema["additionalProperties"]
+            if additional is True:
+                result[additional_pointer] = ("additional-properties-explicit-allow", additional)
+            elif isinstance(additional, Mapping):
+                result[additional_pointer] = ("additional-properties-schema", additional)
+            elif additional is not False:
+                raise RegistryError(f"public view baseline {additional_pointer}: invalid policy")
+
+        pattern_properties = schema.get("patternProperties")
+        if pattern_properties is not None:
+            pattern_pointer = f"{pointer}/patternProperties"
+            if not isinstance(pattern_properties, Mapping):
+                raise RegistryError(f"public view baseline {pattern_pointer}: expected object")
+            for pattern, pattern_schema in pattern_properties.items():
+                dynamic_pointer = f"{pattern_pointer}/{_json_pointer_token(pattern)}"
+                result[dynamic_pointer] = ("pattern-properties-schema", pattern_schema)
+
+        if "unevaluatedProperties" in schema:
+            unevaluated = schema["unevaluatedProperties"]
+            unevaluated_pointer = f"{pointer}/unevaluatedProperties"
+            if unevaluated is True:
+                result[unevaluated_pointer] = (
+                    "unevaluated-properties-explicit-allow",
+                    unevaluated,
+                )
+            elif isinstance(unevaluated, Mapping):
+                result[unevaluated_pointer] = ("unevaluated-properties-schema", unevaluated)
+            elif unevaluated is not False:
+                raise RegistryError(f"public view baseline {unevaluated_pointer}: invalid policy")
+    return MappingProxyType({pointer: result[pointer] for pointer in sorted(result)})
+
+
+def _public_reference_inventory(document: Any) -> Mapping[str, str]:
+    result: dict[str, str] = {}
+    for pointer, value in _walk_public_schema(document):
+        if not pointer.endswith("/$ref"):
+            continue
+        if not isinstance(value, str) or not value:
+            raise RegistryError(f"public view baseline {pointer}: $ref must be a nonempty string")
+        result[pointer] = value
+    return MappingProxyType({pointer: result[pointer] for pointer in sorted(result)})
+
+
+def _public_definition_pointers(document: Any) -> tuple[str, ...]:
+    result: list[str] = []
+    for pointer, schema in _walk_public_schema(document):
+        if not isinstance(schema, Mapping):
+            continue
+        for keyword in ("$defs", "definitions"):
+            definitions = schema.get(keyword)
+            if definitions is None:
+                continue
+            if not isinstance(definitions, Mapping):
+                raise RegistryError(f"public view baseline {pointer}/{keyword}: expected object")
+            result.extend(
+                f"{pointer}/{_json_pointer_token(keyword)}/{_json_pointer_token(name)}" for name in definitions
+            )
+    return tuple(sorted(result))
+
+
+def _public_discriminator_pointers(document: Any) -> tuple[str, ...]:
+    properties = _public_property_inventory(document)
+    return tuple(
+        pointer
+        for pointer, (_name, _required, schema) in properties.items()
+        if isinstance(schema, Mapping) and ("const" in schema or "enum" in schema)
+    )
+
+
+def _public_additional_properties_inventory(document: Any) -> Mapping[str, tuple[str, Any]]:
+    result: dict[str, tuple[str, Any]] = {}
+    for pointer, schema in _walk_public_schema(document):
+        if not isinstance(schema, Mapping) or "additionalProperties" not in schema:
+            continue
+        additional = schema["additionalProperties"]
+        additional_pointer = f"{pointer}/additionalProperties"
+        if additional is False:
+            mode = "deny"
+        elif additional is True:
+            mode = "allow"
+        elif isinstance(additional, Mapping):
+            mode = "schema"
+        else:
+            raise RegistryError(f"public view baseline {additional_pointer}: invalid policy")
+        result[additional_pointer] = (mode, additional)
+    return MappingProxyType({pointer: result[pointer] for pointer in sorted(result)})
+
+
+def _public_subschema_bytes(baseline_module: ModuleType, schema: Any) -> bytes:
+    def mutable_json(value: Any) -> Any:
+        if isinstance(value, Mapping):
+            return {key: mutable_json(child) for key, child in value.items()}
+        if isinstance(value, tuple):
+            return [mutable_json(child) for child in value]
+        return value
+
+    return baseline_module.render_lossless_json(mutable_json(schema), pretty=False)
+
+
+def _public_subschema_sha256(baseline_module: ModuleType, schema: Any) -> str:
+    rendered = _public_subschema_bytes(baseline_module, schema)
+    return hashlib.sha256(PUBLIC_VIEW_SUBSCHEMA_DIGEST_DOMAIN + rendered).hexdigest()
+
+
+def _public_view_authority_sha256(views: tuple[PublicViewIR, ...]) -> str:
+    def plain(value: Any) -> Any:
+        if is_dataclass(value):
+            return {field.name: plain(getattr(value, field.name)) for field in dataclass_fields(value)}
+        if isinstance(value, tuple):
+            return [plain(item) for item in value]
+        if isinstance(value, bytes):
+            return {"$bytes": value.hex()}
+        if value is None or type(value) in {bool, int, float, str}:
+            return value
+        raise RegistryError("public-view render authority contains an unsupported value")
+
+    payload = plain(views)
+    raw = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(PUBLIC_VIEW_AUTHORITY_DIGEST_DOMAIN + raw).hexdigest()
+
+
+def _parse_public_view_source(
+    value: Any,
+    path: str,
+    canonical_sources: Mapping[str, tuple[str, str]],
+) -> PublicViewSourceIR:
+    if not isinstance(value, dict):
+        raise RegistryError(f"{path}: expected mapping")
+    _exact_keys(value, {"kind", "id"}, set(), path)
+    kind = _string(value["kind"], f"{path}.kind", pattern=_ID)
+    if kind not in PUBLIC_VIEW_SOURCE_KINDS:
+        raise RegistryError(f"{path}.kind: unsupported public-view source kind")
+    source_id = _string(value["id"], f"{path}.id", pattern=_GO_SOURCE_ID)
+    if kind == "canonical_attribute" and source_id not in canonical_sources:
+        raise RegistryError(f"{path}.id: unknown canonical registry source")
+    if kind == "transport_only" and not source_id.startswith("legacy."):
+        raise RegistryError(f"{path}.id: transport-only source must use the legacy namespace")
+    return PublicViewSourceIR(kind, source_id)
+
+
+def _parse_public_number_lexemes(value: Any, path: str) -> tuple[PublicViewNumberLexemeIR, ...]:
+    if not isinstance(value, dict):
+        raise RegistryError(f"{path}: expected pointer-to-token mapping")
+    result: list[PublicViewNumberLexemeIR] = []
+    for pointer, token in value.items():
+        normalized_pointer = _public_view_pointer(pointer, f"{path}.{pointer}", allow_root=True)
+        if not isinstance(token, str) or _JSON_NUMBER_TOKEN.fullmatch(token) is None:
+            raise RegistryError(f"{path}.{pointer}: invalid JSON number token")
+        result.append(PublicViewNumberLexemeIR(normalized_pointer, token))
+    if tuple(item.pointer for item in result) != tuple(sorted(item.pointer for item in result)):
+        raise RegistryError(f"{path}: number pointers must use canonical lexical order")
+    return tuple(result)
+
+
+def _parse_public_views(
+    root: Path,
+    source_relative: str,
+    *,
+    registry_version: int,
+    canonical_sources: Mapping[str, tuple[str, str]],
+) -> tuple[PublicViewsIR, InputDigest, InputDigest]:
+    source_path, source_path_relative = _safe_relative(
+        root,
+        source_relative,
+        "registry.public_views",
+        prefix=Path("schemas/telemetry/v8"),
+    )
+    if source_path_relative != PUBLIC_VIEWS_SOURCE.as_posix():
+        raise RegistryError("registry.public_views: expected schemas/telemetry/v8/public-views.yaml")
+    source_raw, source = _load_yaml_strict_with_bytes(source_path)
+    _exact_keys(
+        source,
+        {"schema_version", "compatibility_epoch", "baseline", "generated_marker", "views"},
+        set(),
+        "public_views",
+    )
+    schema_version = _integer(source["schema_version"], "public_views.schema_version")
+    if schema_version != 1:
+        raise RegistryError("public_views.schema_version: unsupported version")
+    compatibility_epoch = _string(
+        source["compatibility_epoch"],
+        "public_views.compatibility_epoch",
+        pattern=_ID,
+    )
+    if compatibility_epoch != PUBLIC_VIEWS_COMPATIBILITY_EPOCH:
+        raise RegistryError("public_views.compatibility_epoch: unsupported compatibility epoch")
+
+    baseline_source = source["baseline"]
+    if not isinstance(baseline_source, dict):
+        raise RegistryError("public_views.baseline: expected mapping")
+    _exact_keys(
+        baseline_source,
+        {
+            "format_version",
+            "id",
+            "path",
+            "sha256",
+            "authority",
+            "canonicalization_id",
+            "source_commit",
+            "source_tree",
+        },
+        set(),
+        "public_views.baseline",
+    )
+    baseline_relative = _string(baseline_source["path"], "public_views.baseline.path")
+    baseline_path, baseline_path_relative = _safe_relative(
+        root,
+        baseline_relative,
+        "public_views.baseline.path",
+        prefix=PUBLIC_VIEWS_BASELINE_ROOT,
+    )
+    if baseline_path_relative != PUBLIC_VIEWS_BASELINE_PATH.as_posix():
+        raise RegistryError("public_views.baseline.path: expected the pinned v7 public-schema baseline")
+    baseline_raw, _ = _read_utf8(baseline_path)
+    baseline_module = _load_sibling_module("telemetry_public_schema_baseline")
+    try:
+        baseline = baseline_module.load_public_schema_baseline_bytes(
+            baseline_raw,
+            baseline_path_relative,
+        )
+    except Exception as exc:
+        if exc.__class__.__name__ != "BaselineError":
+            raise
+        raise RegistryError(f"public_views.baseline: {exc}") from exc
+    baseline_digest = _string(baseline_source["sha256"], "public_views.baseline.sha256", pattern=_SHA256)
+    if baseline_digest != PUBLIC_VIEWS_BASELINE_SHA256 or baseline.baseline_sha256 != baseline_digest:
+        raise RegistryError("public_views.baseline.sha256: baseline byte digest mismatch")
+    baseline_format = _integer(baseline_source["format_version"], "public_views.baseline.format_version")
+    baseline_id = _string(baseline_source["id"], "public_views.baseline.id", pattern=_ID)
+    baseline_authority = _string(baseline_source["authority"], "public_views.baseline.authority", pattern=_ID)
+    canonicalization_id = _string(
+        baseline_source["canonicalization_id"],
+        "public_views.baseline.canonicalization_id",
+        pattern=_ID,
+    )
+    source_commit = _string(baseline_source["source_commit"], "public_views.baseline.source_commit")
+    source_tree = _string(baseline_source["source_tree"], "public_views.baseline.source_tree")
+    expected_baseline_identity = (
+        1,
+        PUBLIC_VIEWS_BASELINE_ID,
+        PUBLIC_VIEWS_BASELINE_AUTHORITY,
+        PUBLIC_VIEWS_BASELINE_CANONICALIZATION,
+        PUBLIC_VIEWS_BASELINE_SOURCE_COMMIT,
+        PUBLIC_VIEWS_BASELINE_SOURCE_TREE,
+    )
+    authored_baseline_identity = (
+        baseline_format,
+        baseline_id,
+        baseline_authority,
+        canonicalization_id,
+        source_commit,
+        source_tree,
+    )
+    loaded_baseline_identity = (
+        baseline.format_version,
+        baseline.baseline_id,
+        baseline.authority,
+        baseline.canonicalization["id"],
+        baseline.source.commit,
+        baseline.source.tree,
+    )
+    if (
+        authored_baseline_identity != expected_baseline_identity
+        or loaded_baseline_identity != expected_baseline_identity
+    ):
+        raise RegistryError("public_views.baseline: duplicated baseline identity drift")
+    baseline_ir = PublicViewBaselineIR(
+        baseline_format,
+        baseline_id,
+        baseline_path_relative,
+        baseline_digest,
+        baseline_authority,
+        canonicalization_id,
+        source_commit,
+        source_tree,
+    )
+
+    marker_source = source["generated_marker"]
+    if not isinstance(marker_source, dict):
+        raise RegistryError("public_views.generated_marker: expected mapping")
+    _exact_keys(
+        marker_source,
+        {"keyword", "generator", "registry_version", "baseline_epoch"},
+        set(),
+        "public_views.generated_marker",
+    )
+    marker = PublicViewMarkerIR(
+        _string(marker_source["keyword"], "public_views.generated_marker.keyword"),
+        _string(marker_source["generator"], "public_views.generated_marker.generator"),
+        _integer(marker_source["registry_version"], "public_views.generated_marker.registry_version"),
+        _string(marker_source["baseline_epoch"], "public_views.generated_marker.baseline_epoch", pattern=_ID),
+    )
+    if (
+        marker.keyword != PUBLIC_VIEW_MARKER_KEY
+        or marker.generator != PUBLIC_VIEW_MARKER_GENERATOR
+        or marker.registry_version != registry_version
+        or marker.baseline_epoch != compatibility_epoch
+    ):
+        raise RegistryError("public_views.generated_marker: marker contract mismatch")
+
+    raw_views = source["views"]
+    if not isinstance(raw_views, list):
+        raise RegistryError("public_views.views: expected sequence")
+    if len(raw_views) != len(baseline.resources):
+        raise RegistryError("public_views.views: expected exact 21-view inventory")
+    view_ids: list[str] = []
+    output_paths: list[str] = []
+    for index, raw_view in enumerate(raw_views):
+        if not isinstance(raw_view, dict):
+            raise RegistryError(f"public_views.views[{index}]: expected mapping")
+        view_id = _string(raw_view.get("id"), f"public_views.views[{index}].id", pattern=_ID)
+        output_path = _string(raw_view.get("output_path"), f"public_views.views[{index}].output_path")
+        view_ids.append(view_id)
+        output_paths.append(output_path)
+    if len(set(view_ids)) != len(view_ids):
+        raise RegistryError("public_views.views: duplicate view ID")
+    if len(set(output_paths)) != len(output_paths):
+        raise RegistryError("public_views.views: duplicate output path")
+    expected_paths = [resource.path for resource in baseline.resources]
+    if output_paths != expected_paths:
+        raise RegistryError("public_views.views: output inventory/order differs from baseline")
+    expected_view_ids = [_public_view_id_for_path(path) for path in expected_paths]
+    if view_ids != expected_view_ids:
+        raise RegistryError("public_views.views: stable view ID inventory/order differs from baseline")
+    id_by_schema_id = {resource.schema_id: view_ids[index] for index, resource in enumerate(baseline.resources)}
+
+    views: list[PublicViewIR] = []
+    for index, (raw_view, resource) in enumerate(zip(raw_views, baseline.resources, strict=True)):
+        view_path = f"public_views.views[{index}]"
+        _exact_keys(
+            raw_view,
+            {
+                "id",
+                "output_path",
+                "dialect",
+                "schema_id",
+                "authority",
+                "lifecycle",
+                "targets",
+                "baseline",
+                "template",
+                "layout",
+                "field_dispositions",
+                "dynamic_scopes",
+                "references",
+            },
+            set(),
+            view_path,
+        )
+        view_id = view_ids[index]
+        output_path = output_paths[index]
+        dialect = _string(raw_view["dialect"], f"{view_path}.dialect")
+        schema_id = _string(raw_view["schema_id"], f"{view_path}.schema_id")
+        authority = _string(raw_view["authority"], f"{view_path}.authority", pattern=_ID)
+        if dialect != resource.dialect:
+            raise RegistryError(f"{view_path}.dialect: baseline dialect mismatch")
+        if schema_id != resource.schema_id:
+            raise RegistryError(f"{view_path}.schema_id: baseline schema identity mismatch")
+        if authority != PUBLIC_VIEW_CANDIDATE_AUTHORITY:
+            raise RegistryError(f"{view_path}.authority: public views remain candidate-only")
+
+        lifecycle = raw_view["lifecycle"]
+        if not isinstance(lifecycle, dict):
+            raise RegistryError(f"{view_path}.lifecycle: expected mapping")
+        _exact_keys(
+            lifecycle,
+            {"stability", "introduced_in"},
+            {"deprecated_in", "removed_in"},
+            f"{view_path}.lifecycle",
+        )
+        stability = _string(lifecycle["stability"], f"{view_path}.lifecycle.stability", pattern=_ID)
+        introduced_in = _string(lifecycle["introduced_in"], f"{view_path}.lifecycle.introduced_in")
+        deprecated_in = (
+            _string(lifecycle["deprecated_in"], f"{view_path}.lifecycle.deprecated_in")
+            if "deprecated_in" in lifecycle
+            else None
+        )
+        removed_in = (
+            _string(lifecycle["removed_in"], f"{view_path}.lifecycle.removed_in") if "removed_in" in lifecycle else None
+        )
+        if stability not in {"stable", "deprecated"}:
+            raise RegistryError(f"{view_path}.lifecycle.stability: unsupported stability")
+        _validate_entity_lifecycle(
+            entity=f"{view_path}.lifecycle",
+            introduced_in=introduced_in,
+            deprecated_in=deprecated_in,
+            removed_in=removed_in,
+            stability=stability,
+            registry_version=registry_version,
+        )
+        if (
+            stability != "stable"
+            or introduced_in != "telemetry-registry-v1"
+            or deprecated_in is not None
+            or removed_in is not None
+        ):
+            raise RegistryError(f"{view_path}.lifecycle: marker-only stable lifecycle drift")
+
+        targets = raw_view["targets"]
+        if not isinstance(targets, dict):
+            raise RegistryError(f"{view_path}.targets: expected mapping")
+        _exact_keys(targets, {"mirrors", "embeds", "wheels"}, set(), f"{view_path}.targets")
+        mirror_targets = _public_view_target_list(
+            targets["mirrors"],
+            f"{view_path}.targets.mirrors",
+            prefix="internal",
+        )
+        embed_targets = _public_view_target_list(
+            targets["embeds"],
+            f"{view_path}.targets.embeds",
+            prefix="internal",
+        )
+        wheel_targets = _public_view_target_list(
+            targets["wheels"],
+            f"{view_path}.targets.wheels",
+            prefix="cli",
+        )
+        expected_mirrors = PUBLIC_VIEW_MIRROR_TARGETS.get(output_path, ())
+        if mirror_targets != expected_mirrors or embed_targets != expected_mirrors or wheel_targets:
+            raise RegistryError(f"{view_path}.targets: public-view target inventory drift")
+
+        resource_source = raw_view["baseline"]
+        if not isinstance(resource_source, dict):
+            raise RegistryError(f"{view_path}.baseline: expected mapping")
+        _exact_keys(
+            resource_source,
+            {"git_blob_oid", "source_sha256", "canonical_sha256", "number_lexemes"},
+            set(),
+            f"{view_path}.baseline",
+        )
+        git_blob_oid = _string(resource_source["git_blob_oid"], f"{view_path}.baseline.git_blob_oid")
+        resource_source_sha256 = _string(
+            resource_source["source_sha256"],
+            f"{view_path}.baseline.source_sha256",
+            pattern=_SHA256,
+        )
+        resource_canonical_sha256 = _string(
+            resource_source["canonical_sha256"],
+            f"{view_path}.baseline.canonical_sha256",
+            pattern=_SHA256,
+        )
+        number_lexemes = _parse_public_number_lexemes(
+            resource_source["number_lexemes"],
+            f"{view_path}.baseline.number_lexemes",
+        )
+        expected_number_lexemes = tuple(
+            PublicViewNumberLexemeIR(pointer, token) for pointer, token in sorted(resource.number_lexemes.items())
+        )
+        if (
+            git_blob_oid != resource.git_blob_oid
+            or resource_source_sha256 != resource.source_sha256
+            or resource_canonical_sha256 != resource.canonical_sha256
+            or number_lexemes != expected_number_lexemes
+        ):
+            raise RegistryError(f"{view_path}.baseline: resource baseline identity drift")
+
+        template_source = raw_view["template"]
+        if not isinstance(template_source, dict):
+            raise RegistryError(f"{view_path}.template: expected mapping")
+        _exact_keys(
+            template_source,
+            {"kind", "transport", "root_type", "root_schema_sha256"},
+            set(),
+            f"{view_path}.template",
+        )
+        template = PublicViewTemplateIR(
+            _string(template_source["kind"], f"{view_path}.template.kind", pattern=_ID),
+            _string(template_source["transport"], f"{view_path}.template.transport", pattern=_ID),
+            _string(template_source["root_type"], f"{view_path}.template.root_type", pattern=_ID),
+            _string(
+                template_source["root_schema_sha256"],
+                f"{view_path}.template.root_schema_sha256",
+                pattern=_SHA256,
+            ),
+        )
+        baseline_root_type = resource.document.get("type", "unspecified")
+        if not isinstance(baseline_root_type, str):
+            baseline_root_type = "union"
+        if (
+            template.kind != "exact-baseline-with-marker"
+            or template.transport != "json-schema-resource"
+            or template.root_type != baseline_root_type
+            or template.root_schema_sha256 != _public_subschema_sha256(baseline_module, resource.document)
+        ):
+            raise RegistryError(f"{view_path}.template: root/transport template drift")
+
+        layout_source = raw_view["layout"]
+        if not isinstance(layout_source, dict):
+            raise RegistryError(f"{view_path}.layout: expected mapping")
+        _exact_keys(
+            layout_source,
+            {"definition_pointers", "discriminator_pointers", "additional_properties"},
+            set(),
+            f"{view_path}.layout",
+        )
+        definition_source = _string_list(
+            layout_source["definition_pointers"],
+            f"{view_path}.layout.definition_pointers",
+        )
+        definition_pointers = tuple(
+            _public_view_pointer(pointer, f"{view_path}.layout.definition_pointers[{position}]")
+            for position, pointer in enumerate(definition_source)
+        )
+        discriminator_source = _string_list(
+            layout_source["discriminator_pointers"],
+            f"{view_path}.layout.discriminator_pointers",
+        )
+        discriminator_pointers = tuple(
+            _public_view_pointer(pointer, f"{view_path}.layout.discriminator_pointers[{position}]")
+            for position, pointer in enumerate(discriminator_source)
+        )
+        if definition_pointers != _public_definition_pointers(resource.document):
+            raise RegistryError(f"{view_path}.layout.definition_pointers: definition layout drift")
+        if discriminator_pointers != _public_discriminator_pointers(resource.document):
+            raise RegistryError(f"{view_path}.layout.discriminator_pointers: discriminator layout drift")
+        additional_source = layout_source["additional_properties"]
+        if not isinstance(additional_source, dict):
+            raise RegistryError(f"{view_path}.layout.additional_properties: expected mapping")
+        _exact_keys(
+            additional_source,
+            {"default", "overrides"},
+            set(),
+            f"{view_path}.layout.additional_properties",
+        )
+        additional_default = _string(
+            additional_source["default"],
+            f"{view_path}.layout.additional_properties.default",
+            pattern=_ID,
+        )
+        if additional_default != "allow":
+            raise RegistryError(f"{view_path}.layout.additional_properties.default: JSON Schema default is allow")
+        additional_inventory = _public_additional_properties_inventory(resource.document)
+        override_source = additional_source["overrides"]
+        if not isinstance(override_source, list):
+            raise RegistryError(f"{view_path}.layout.additional_properties.overrides: expected sequence")
+        additional_overrides: list[PublicViewAdditionalPropertiesIR] = []
+        override_pointers: list[str] = []
+        for override_index, raw_override in enumerate(override_source):
+            override_path = f"{view_path}.layout.additional_properties.overrides[{override_index}]"
+            if not isinstance(raw_override, dict):
+                raise RegistryError(f"{override_path}: expected mapping")
+            _exact_keys(raw_override, {"pointer", "mode", "schema_sha256"}, set(), override_path)
+            pointer = _public_view_pointer(raw_override["pointer"], f"{override_path}.pointer")
+            if pointer in override_pointers:
+                raise RegistryError(f"{view_path}.layout.additional_properties.overrides: duplicate pointer")
+            if pointer not in additional_inventory:
+                raise RegistryError(f"{override_path}.pointer: unknown additionalProperties policy")
+            mode = _string(raw_override["mode"], f"{override_path}.mode", pattern=_ID)
+            schema_sha256 = _string(
+                raw_override["schema_sha256"],
+                f"{override_path}.schema_sha256",
+                pattern=_SHA256,
+            )
+            expected_mode, additional_schema = additional_inventory[pointer]
+            if mode != expected_mode or schema_sha256 != _public_subschema_sha256(
+                baseline_module,
+                additional_schema,
+            ):
+                raise RegistryError(f"{override_path}: additionalProperties policy drift")
+            additional_overrides.append(
+                PublicViewAdditionalPropertiesIR(
+                    pointer,
+                    mode,
+                    schema_sha256,
+                    _public_subschema_bytes(baseline_module, additional_schema),
+                )
+            )
+            override_pointers.append(pointer)
+        if frozenset(override_pointers) != frozenset(additional_inventory):
+            raise RegistryError(f"{view_path}.layout.additional_properties.overrides: incomplete policy coverage")
+        if override_pointers != list(additional_inventory):
+            raise RegistryError(
+                f"{view_path}.layout.additional_properties.overrides: pointers must use canonical order"
+            )
+        layout = PublicViewLayoutIR(
+            definition_pointers,
+            discriminator_pointers,
+            additional_default,
+            tuple(additional_overrides),
+        )
+
+        property_inventory = _public_property_inventory(resource.document)
+        dispositions_source = raw_view["field_dispositions"]
+        if not isinstance(dispositions_source, list):
+            raise RegistryError(f"{view_path}.field_dispositions: expected sequence")
+        dispositions: list[PublicViewFieldDispositionIR] = []
+        disposition_pointers: list[str] = []
+        for disposition_index, raw_disposition in enumerate(dispositions_source):
+            disposition_path = f"{view_path}.field_dispositions[{disposition_index}]"
+            if not isinstance(raw_disposition, dict):
+                raise RegistryError(f"{disposition_path}: expected mapping")
+            _exact_keys(
+                raw_disposition,
+                {
+                    "pointer",
+                    "property_name",
+                    "projected_name",
+                    "disposition",
+                    "source",
+                    "required",
+                    "constraints",
+                    "encoding_conversion",
+                    "field_class",
+                    "sensitivity",
+                    "redaction_parity",
+                    "fixture_coverage",
+                },
+                set(),
+                disposition_path,
+            )
+            pointer = _public_view_pointer(raw_disposition["pointer"], f"{disposition_path}.pointer")
+            if pointer in disposition_pointers:
+                raise RegistryError(f"{view_path}.field_dispositions: duplicate pointer")
+            if pointer not in property_inventory:
+                raise RegistryError(f"{disposition_path}.pointer: unknown baseline property")
+            property_name, expected_required, property_schema = property_inventory[pointer]
+            authored_name = _string(raw_disposition["property_name"], f"{disposition_path}.property_name")
+            projected_name = _string(raw_disposition["projected_name"], f"{disposition_path}.projected_name")
+            disposition = _string(raw_disposition["disposition"], f"{disposition_path}.disposition", pattern=_ID)
+            if disposition not in PUBLIC_VIEW_DISPOSITIONS:
+                raise RegistryError(f"{disposition_path}.disposition: unsupported disposition")
+            if compatibility_epoch == PUBLIC_VIEWS_COMPATIBILITY_EPOCH and disposition != "preserved":
+                raise RegistryError(f"{disposition_path}.disposition: marker-only epoch preserves every property")
+            public_source = _parse_public_view_source(
+                raw_disposition["source"],
+                f"{disposition_path}.source",
+                canonical_sources,
+            )
+            if public_source.kind == "canonical_attribute" and public_source.id != property_name:
+                raise RegistryError(f"{disposition_path}.source: canonical source must match the preserved property")
+            if public_source.kind == "transport_only" and public_source.id != (
+                f"legacy.{view_id}.field-{disposition_index + 1:04d}"
+            ):
+                raise RegistryError(f"{disposition_path}.source: unstable transport-only field identity")
+            required = raw_disposition["required"]
+            if type(required) is not bool:
+                raise RegistryError(f"{disposition_path}.required: expected boolean")
+            constraints_source = raw_disposition["constraints"]
+            if not isinstance(constraints_source, dict):
+                raise RegistryError(f"{disposition_path}.constraints: expected mapping")
+            _exact_keys(
+                constraints_source,
+                {"mode", "schema_sha256"},
+                set(),
+                f"{disposition_path}.constraints",
+            )
+            constraints = PublicViewConstraintsIR(
+                _string(
+                    constraints_source["mode"],
+                    f"{disposition_path}.constraints.mode",
+                    pattern=_ID,
+                ),
+                _string(
+                    constraints_source["schema_sha256"],
+                    f"{disposition_path}.constraints.schema_sha256",
+                    pattern=_SHA256,
+                ),
+                _public_subschema_bytes(baseline_module, property_schema),
+            )
+            encoding_conversion = _string(
+                raw_disposition["encoding_conversion"],
+                f"{disposition_path}.encoding_conversion",
+                pattern=_ID,
+            )
+            field_class = _string(
+                raw_disposition["field_class"],
+                f"{disposition_path}.field_class",
+                pattern=_ID,
+            )
+            sensitivity = _string(
+                raw_disposition["sensitivity"],
+                f"{disposition_path}.sensitivity",
+                pattern=_ID,
+            )
+            redaction_parity = _string(
+                raw_disposition["redaction_parity"],
+                f"{disposition_path}.redaction_parity",
+                pattern=_ID,
+            )
+            fixture_coverage = _string_list(
+                raw_disposition["fixture_coverage"],
+                f"{disposition_path}.fixture_coverage",
+                allow_empty=False,
+            )
+            if field_class not in _FIELD_CLASS or sensitivity not in _SENSITIVITY:
+                raise RegistryError(f"{disposition_path}: unknown field class or sensitivity")
+            if public_source.kind == "canonical_attribute" and canonical_sources[public_source.id] != (
+                field_class,
+                sensitivity,
+            ):
+                raise RegistryError(f"{disposition_path}: canonical source redaction/class parity mismatch")
+            expected_schema_sha256 = _public_subschema_sha256(baseline_module, property_schema)
+            if (
+                constraints.mode != "exact-baseline-subschema"
+                or constraints.schema_sha256 != expected_schema_sha256
+                or encoding_conversion != "identity"
+                or redaction_parity != "baseline-unredacted"
+                or fixture_coverage != ("legacy-public-schema-parity-v1",)
+            ):
+                raise RegistryError(f"{disposition_path}: compatibility metadata drift")
+            if authored_name != property_name or projected_name != property_name or required != expected_required:
+                raise RegistryError(f"{disposition_path}: property baseline metadata drift")
+            if disposition == "preserved" and projected_name != property_name:
+                raise RegistryError(f"{disposition_path}.projected_name: preserved name changed")
+            if public_source.kind == "transport_only" and (
+                field_class not in _FIELD_CLASS or sensitivity not in _SENSITIVITY
+            ):
+                raise RegistryError(f"{disposition_path}.source: transport-only field lacks classification")
+            dispositions.append(
+                PublicViewFieldDispositionIR(
+                    pointer,
+                    property_name,
+                    projected_name,
+                    disposition,
+                    public_source,
+                    required,
+                    constraints,
+                    encoding_conversion,
+                    field_class,
+                    sensitivity,
+                    redaction_parity,
+                    fixture_coverage,
+                )
+            )
+            disposition_pointers.append(pointer)
+        if disposition_pointers != sorted(disposition_pointers):
+            raise RegistryError(f"{view_path}.field_dispositions: pointers must use canonical lexical order")
+        if frozenset(disposition_pointers) != frozenset(property_inventory):
+            raise RegistryError(f"{view_path}.field_dispositions: incomplete baseline property coverage")
+
+        dynamic_inventory = _public_dynamic_inventory(resource.document)
+        dynamic_source = raw_view["dynamic_scopes"]
+        if not isinstance(dynamic_source, list):
+            raise RegistryError(f"{view_path}.dynamic_scopes: expected sequence")
+        dynamic_scopes: list[PublicViewDynamicScopeIR] = []
+        dynamic_ids: set[str] = set()
+        dynamic_pointers: list[str] = []
+        for dynamic_index, raw_dynamic in enumerate(dynamic_source):
+            dynamic_path = f"{view_path}.dynamic_scopes[{dynamic_index}]"
+            if not isinstance(raw_dynamic, dict):
+                raise RegistryError(f"{dynamic_path}: expected mapping")
+            _exact_keys(
+                raw_dynamic,
+                {
+                    "id",
+                    "pointer",
+                    "policy",
+                    "disposition",
+                    "source",
+                    "field_class",
+                    "sensitivity",
+                    "schema_sha256",
+                    "encoding_conversion",
+                    "redaction_parity",
+                    "fixture_coverage",
+                },
+                set(),
+                dynamic_path,
+            )
+            dynamic_id = _string(raw_dynamic["id"], f"{dynamic_path}.id", pattern=_ID)
+            pointer = _public_view_pointer(raw_dynamic["pointer"], f"{dynamic_path}.pointer")
+            if dynamic_id in dynamic_ids:
+                raise RegistryError(f"{view_path}.dynamic_scopes: duplicate rule ID")
+            if pointer in dynamic_pointers:
+                raise RegistryError(f"{view_path}.dynamic_scopes: duplicate pointer")
+            if pointer not in dynamic_inventory:
+                raise RegistryError(f"{dynamic_path}.pointer: unknown baseline dynamic scope")
+            if dynamic_id != f"{view_id}-dynamic-{dynamic_index + 1:02d}":
+                raise RegistryError(f"{dynamic_path}.id: unstable dynamic-scope identity")
+            expected_policy, dynamic_schema = dynamic_inventory[pointer]
+            policy = _string(raw_dynamic["policy"], f"{dynamic_path}.policy", pattern=_ID)
+            if policy not in PUBLIC_VIEW_DYNAMIC_POLICIES or policy != expected_policy:
+                raise RegistryError(f"{dynamic_path}.policy: dynamic policy drift")
+            disposition = _string(raw_dynamic["disposition"], f"{dynamic_path}.disposition", pattern=_ID)
+            if disposition != "preserved":
+                raise RegistryError(f"{dynamic_path}.disposition: marker-only epoch preserves every dynamic scope")
+            public_source = _parse_public_view_source(
+                raw_dynamic["source"],
+                f"{dynamic_path}.source",
+                canonical_sources,
+            )
+            if (
+                public_source.kind != "transport_only"
+                or public_source.id != f"legacy.{view_id}.dynamic-{dynamic_index + 1:02d}"
+            ):
+                raise RegistryError(f"{dynamic_path}.source: unstable dynamic-scope source identity")
+            field_class = _string(raw_dynamic["field_class"], f"{dynamic_path}.field_class", pattern=_ID)
+            sensitivity = _string(raw_dynamic["sensitivity"], f"{dynamic_path}.sensitivity", pattern=_ID)
+            if field_class not in _FIELD_CLASS or sensitivity not in _SENSITIVITY:
+                raise RegistryError(f"{dynamic_path}: unknown field class or sensitivity")
+            if (field_class, sensitivity) != ("content", "sensitive"):
+                raise RegistryError(f"{dynamic_path}: dynamic scope classification drift")
+            if public_source.kind == "canonical_attribute" and canonical_sources[public_source.id] != (
+                field_class,
+                sensitivity,
+            ):
+                raise RegistryError(f"{dynamic_path}: canonical source redaction/class parity mismatch")
+            schema_sha256 = _string(
+                raw_dynamic["schema_sha256"],
+                f"{dynamic_path}.schema_sha256",
+                pattern=_SHA256,
+            )
+            if schema_sha256 != _public_subschema_sha256(baseline_module, dynamic_schema):
+                raise RegistryError(f"{dynamic_path}.schema_sha256: dynamic schema digest mismatch")
+            encoding_conversion = _string(
+                raw_dynamic["encoding_conversion"],
+                f"{dynamic_path}.encoding_conversion",
+                pattern=_ID,
+            )
+            redaction_parity = _string(
+                raw_dynamic["redaction_parity"],
+                f"{dynamic_path}.redaction_parity",
+                pattern=_ID,
+            )
+            fixture_coverage = _string_list(
+                raw_dynamic["fixture_coverage"],
+                f"{dynamic_path}.fixture_coverage",
+                allow_empty=False,
+            )
+            if (
+                encoding_conversion != "identity"
+                or redaction_parity != "baseline-unredacted"
+                or fixture_coverage != ("legacy-public-schema-parity-v1",)
+            ):
+                raise RegistryError(f"{dynamic_path}: dynamic compatibility metadata drift")
+            dynamic_scopes.append(
+                PublicViewDynamicScopeIR(
+                    dynamic_id,
+                    pointer,
+                    policy,
+                    disposition,
+                    public_source,
+                    field_class,
+                    sensitivity,
+                    schema_sha256,
+                    _public_subschema_bytes(baseline_module, dynamic_schema),
+                    encoding_conversion,
+                    redaction_parity,
+                    fixture_coverage,
+                )
+            )
+            dynamic_ids.add(dynamic_id)
+            dynamic_pointers.append(pointer)
+        if dynamic_pointers != sorted(dynamic_pointers):
+            raise RegistryError(f"{view_path}.dynamic_scopes: pointers must use canonical lexical order")
+        if frozenset(dynamic_pointers) != frozenset(dynamic_inventory):
+            raise RegistryError(f"{view_path}.dynamic_scopes: incomplete baseline dynamic-scope coverage")
+
+        reference_inventory = _public_reference_inventory(resource.document)
+        reference_source = raw_view["references"]
+        if not isinstance(reference_source, list):
+            raise RegistryError(f"{view_path}.references: expected sequence")
+        references: list[PublicViewReferenceIR] = []
+        reference_pointers: list[str] = []
+        for reference_index, raw_reference in enumerate(reference_source):
+            reference_path = f"{view_path}.references[{reference_index}]"
+            if not isinstance(raw_reference, dict):
+                raise RegistryError(f"{reference_path}: expected mapping")
+            _exact_keys(
+                raw_reference,
+                {"pointer", "reference", "target_view", "target_pointer"},
+                set(),
+                reference_path,
+            )
+            pointer = _public_view_pointer(raw_reference["pointer"], f"{reference_path}.pointer")
+            if pointer in reference_pointers:
+                raise RegistryError(f"{view_path}.references: duplicate pointer")
+            if pointer not in reference_inventory:
+                raise RegistryError(f"{reference_path}.pointer: unknown baseline reference")
+            reference = _string(raw_reference["reference"], f"{reference_path}.reference")
+            target_view = _string(raw_reference["target_view"], f"{reference_path}.target_view", pattern=_ID)
+            if target_view not in view_ids:
+                raise RegistryError(f"{reference_path}.target_view: unknown public view")
+            target_pointer = raw_reference["target_pointer"]
+            if not isinstance(target_pointer, str):
+                raise RegistryError(f"{reference_path}.target_pointer: expected string")
+            if target_pointer:
+                target_pointer = _public_view_pointer(target_pointer, f"{reference_path}.target_pointer")
+            expected_reference = reference_inventory[pointer]
+            if expected_reference.startswith("#"):
+                expected_target_view = view_id
+                expected_target_pointer = expected_reference[1:]
+            else:
+                base, separator, fragment = expected_reference.partition("#")
+                expected_target_view = id_by_schema_id.get(base, "")
+                expected_target_pointer = fragment if separator else ""
+            if not expected_target_view:
+                raise RegistryError(f"{reference_path}.reference: unknown public-view reference target")
+            if (
+                reference != expected_reference
+                or target_view != expected_target_view
+                or target_pointer != expected_target_pointer
+            ):
+                raise RegistryError(f"{reference_path}: reference metadata drift")
+            references.append(PublicViewReferenceIR(pointer, reference, target_view, target_pointer))
+            reference_pointers.append(pointer)
+        if reference_pointers != sorted(reference_pointers):
+            raise RegistryError(f"{view_path}.references: pointers must use canonical lexical order")
+        if frozenset(reference_pointers) != frozenset(reference_inventory):
+            raise RegistryError(f"{view_path}.references: incomplete baseline reference coverage")
+
+        views.append(
+            PublicViewIR(
+                view_id,
+                output_path,
+                dialect,
+                schema_id,
+                authority,
+                stability,
+                introduced_in,
+                deprecated_in,
+                removed_in,
+                mirror_targets,
+                embed_targets,
+                wheel_targets,
+                git_blob_oid,
+                resource_source_sha256,
+                resource_canonical_sha256,
+                number_lexemes,
+                _public_subschema_bytes(baseline_module, resource.document),
+                template,
+                layout,
+                tuple(dispositions),
+                tuple(dynamic_scopes),
+                tuple(references),
+            )
+        )
+
+    frozen_views = tuple(views)
+    authority_sha256 = _public_view_authority_sha256(frozen_views)
+    if PUBLIC_VIEW_AUTHORITY_SHA256 and authority_sha256 != PUBLIC_VIEW_AUTHORITY_SHA256:
+        raise RegistryError("public_views.views: reviewed public-view render authority digest drift")
+    public_views = PublicViewsIR(
+        schema_version,
+        compatibility_epoch,
+        baseline_ir,
+        marker,
+        authority_sha256,
+        frozen_views,
+    )
+    return (
+        public_views,
+        InputDigest(source_path_relative, _sha256(source_raw)),
+        InputDigest(baseline_path_relative, baseline_digest),
+    )
 
 
 def _expected_source_fields(type_id: str) -> tuple[tuple[str, bool, str, str], ...]:
@@ -7756,6 +9028,7 @@ def compile_registry(root: Path) -> RegistryIR:
             "imports",
             "dependency_lock",
             "examples",
+            "public_views",
             "semantic_profiles",
             "normalizers",
             "conditions",
@@ -8179,12 +9452,31 @@ def compile_registry(root: Path) -> RegistryIR:
         value_catalogs,
         semantic_profiles,
     )
+    public_views_relative = _string(registry["public_views"], "registry.public_views")
+    canonical_public_view_sources = {
+        attribute_id: (attribute.field_class, attribute.sensitivity)
+        for attribute_id, attribute in local_attributes.items()
+    }
+    canonical_public_view_sources.update(
+        {
+            reference: (extension.field_class, extension.sensitivity)
+            for reference, extension in upstream_extensions.items()
+        }
+    )
+    public_views, public_views_digest, public_views_baseline_digest = _parse_public_views(
+        root,
+        public_views_relative,
+        registry_version=registry_version,
+        canonical_sources=MappingProxyType(canonical_public_view_sources),
+    )
     registry_digest = InputDigest("schemas/telemetry/v8/registry.yaml", _sha256(registry_raw))
     manifest_schema_raw = _read_output_manifest_schema_bytes(root)
     manifest_schema_digest = InputDigest(OUTPUT_MANIFEST_SCHEMA.as_posix(), _sha256(manifest_schema_raw))
     input_digests = (
         registry_digest,
         manifest_schema_digest,
+        public_views_digest,
+        public_views_baseline_digest,
         *domain_digests,
         lock_digest,
         *structural_input_digests,
@@ -8199,6 +9491,7 @@ def compile_registry(root: Path) -> RegistryIR:
         "imports": imports,
         "dependency_lock_path": lock_relative,
         "examples_path": examples_relative,
+        "public_views_path": public_views_relative,
         "input_digests": tuple(input_digests),
         "dependencies": dependencies,
         "semantic_profiles": semantic_profiles,
@@ -8221,6 +9514,7 @@ def compile_registry(root: Path) -> RegistryIR:
         "examples": examples,
         "upstream_attribute_ownership": upstream_attribute_ownership,
         "legacy_only_upstream_attributes": tuple(sorted(legacy_core_genai)),
+        "public_views": public_views,
     }
     materialized_view = _build_materialized_registry_view(registry_values)
     return RegistryIR(
@@ -9248,7 +10542,7 @@ def write_outputs(root: Path, outputs: dict[Path, bytes]) -> None:
     try:
         desired = _transaction_outputs(root, outputs)
         prior = _prior_output_ownership(root)
-        extras = _unmanifested_generated_paths(root, set(desired))
+        extras = _unmanifested_generated_paths(root, set(desired) | set(prior))
         if extras:
             raise RegistryError(
                 f"generated output drift: unowned={extras}; remove unmanifested generated files before publication"

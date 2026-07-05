@@ -7,6 +7,7 @@ imports:
   - operations.yaml
 dependency_lock: schemas/telemetry/v8/semconv.lock.yaml
 examples: examples.yaml
+public_views: schemas/telemetry/v8/public-views.yaml
 semantic_profiles:
   - id: defenseclaw-genai-rich-v1
     trace_schema_version: defenseclaw-trace-v1

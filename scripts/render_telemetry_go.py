@@ -32,18 +32,32 @@ import re
 from collections.abc import Mapping, Sequence
 from typing import Any, Final
 
-from telemetry_go_api_plan import MAX_CROSS_FIELD_RELATION_ENTRIES
-from telemetry_go_fixture_plan import compile_go_fixture_plan
-from telemetry_go_output_coordinator import (
-    EXACT_GO_OUTPUT_PATHS,
-    OUTPUT_MODE,
-    OWNERSHIP_MARKER,
-    GoDeclarationKey,
-    GoFileDeclarationInventory,
-    RenderedGoOutput,
-    canonical_go_header,
-)
-from telemetry_go_producer_plan import compile_go_producer_plan
+if __package__ == "scripts":  # pragma: no cover - package import exercised by subprocess tests
+    from .telemetry_go_api_plan import MAX_CROSS_FIELD_RELATION_ENTRIES
+    from .telemetry_go_fixture_plan import compile_go_fixture_plan
+    from .telemetry_go_output_coordinator import (
+        EXACT_GO_OUTPUT_PATHS,
+        OUTPUT_MODE,
+        OWNERSHIP_MARKER,
+        GoDeclarationKey,
+        GoFileDeclarationInventory,
+        RenderedGoOutput,
+        canonical_go_header,
+    )
+    from .telemetry_go_producer_plan import compile_go_producer_plan
+else:
+    from telemetry_go_api_plan import MAX_CROSS_FIELD_RELATION_ENTRIES
+    from telemetry_go_fixture_plan import compile_go_fixture_plan
+    from telemetry_go_output_coordinator import (
+        EXACT_GO_OUTPUT_PATHS,
+        OUTPUT_MODE,
+        OWNERSHIP_MARKER,
+        GoDeclarationKey,
+        GoFileDeclarationInventory,
+        RenderedGoOutput,
+        canonical_go_header,
+    )
+    from telemetry_go_producer_plan import compile_go_producer_plan
 
 
 class GoRenderError(RuntimeError):

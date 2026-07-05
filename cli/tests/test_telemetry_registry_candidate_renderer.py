@@ -11,11 +11,11 @@
 from __future__ import annotations
 
 import base64
-import builtins
 import dataclasses
 import hashlib
 import importlib.util
 import json
+import subprocess
 import sys
 from collections import Counter
 from collections.abc import Mapping
@@ -126,21 +126,87 @@ def _copy_materialized(value: Any) -> Any:
     return value
 
 
+@pytest.mark.parametrize("mode", ["direct", "package"])
 def test_renderer_import_does_not_mask_a_missing_go_plan_transitive_dependency(
-    monkeypatch: pytest.MonkeyPatch,
+    mode: str,
 ) -> None:
-    real_import = builtins.__import__
-
-    def fail_nested_dependency(name: str, *args: Any, **kwargs: Any) -> Any:
-        if name == "scripts.telemetry_go_api_plan":
-            failure = ModuleNotFoundError("No module named 'go_plan_transitive_dependency'")
-            failure.name = "go_plan_transitive_dependency"
-            raise failure
-        return real_import(name, *args, **kwargs)
-
-    monkeypatch.setattr(builtins, "__import__", fail_nested_dependency)
-    with pytest.raises(ModuleNotFoundError, match="go_plan_transitive_dependency"):
-        _load("telemetry_candidate_missing_go_plan_dependency", RENDERER)
+    canonical = ROOT / "scripts/telemetry_canonical_record.py"
+    api_plan = ROOT / "scripts/telemetry_go_api_plan.py"
+    if mode == "direct":
+        preload = """
+import scripts.telemetry_canonical_record
+import scripts.telemetry_go_api_plan
+"""
+        load = f"""
+spec = importlib.util.spec_from_file_location("transitive_direct_renderer", {str(RENDERER)!r})
+module = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = module
+try:
+    spec.loader.exec_module(module)
+finally:
+    sys.modules.pop(spec.name, None)
+"""
+        expected_importer = "telemetry_go_api_plan"
+    else:
+        preload = f"""
+for name, path in (
+    ("telemetry_canonical_record", {str(canonical)!r}),
+    ("telemetry_go_api_plan", {str(api_plan)!r}),
+):
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+"""
+        load = 'importlib.import_module("scripts.render_telemetry_registry_candidates")'
+        expected_importer = "scripts.telemetry_go_api_plan"
+    code = f"""
+import builtins
+import importlib
+import importlib.util
+import sys
+{preload}
+# Exercise the opposite import order first, then clear both supported graphs so
+# the injected failure tests the selected graph rather than mixed-mode policy.
+for prefix in ("", "scripts."):
+    for leaf in (
+        "telemetry_canonical_record",
+        "telemetry_go_api_plan",
+        "render_telemetry_registry_candidates",
+    ):
+        sys.modules.pop(prefix + leaf, None)
+real_import = builtins.__import__
+def fail_nested_dependency(name, *args, **kwargs):
+    importer_globals = args[0] if args and isinstance(args[0], dict) else {{}}
+    if (
+        importer_globals.get("__name__") == {expected_importer!r}
+        and name.endswith("telemetry_canonical_record")
+    ):
+        failure = ModuleNotFoundError("No module named 'go_plan_transitive_dependency'")
+        failure.name = "go_plan_transitive_dependency"
+        raise failure
+    return real_import(name, *args, **kwargs)
+builtins.__import__ = fail_nested_dependency
+try:
+{"".join("    " + line + chr(10) for line in load.splitlines())}
+except ModuleNotFoundError as exc:
+    assert exc.name == "go_plan_transitive_dependency"
+    assert "go_plan_transitive_dependency" in str(exc)
+else:
+    raise AssertionError("renderer masked the injected transitive dependency failure")
+finally:
+    builtins.__import__ = real_import
+assert "transitive_direct_renderer" not in sys.modules
+"""
+    completed = subprocess.run(
+        [sys.executable, "-c", code],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=60,
+    )
+    assert completed.returncode == 0, completed.stderr
 
 
 def _go_symbol_table_fields(facts: Mapping[str, Any]) -> dict[str, Any]:

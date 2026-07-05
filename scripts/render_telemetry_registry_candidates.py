@@ -26,40 +26,74 @@ import importlib.util
 import json
 import math
 import re
+import stat
 import sys
 import unicodedata
 from collections import Counter
 from collections.abc import Mapping, Sequence
 from pathlib import Path, PurePosixPath
-from types import MappingProxyType
+from types import MappingProxyType, ModuleType
 from typing import Any, Final, TypeAlias
 
-try:
-    from scripts.telemetry_go_api_plan import GoAPIPlanError, GoAPIPlanIR, compile_go_api_plan
-except ModuleNotFoundError as exc:  # pragma: no cover - exercised by path-loaded tests
-    if exc.name != "scripts":
-        raise
-    _canonical_plan_spec = importlib.util.spec_from_file_location(
-        "telemetry_canonical_record",
-        Path(__file__).with_name("telemetry_canonical_record.py"),
-    )
-    if _canonical_plan_spec is None or _canonical_plan_spec.loader is None:
-        raise RuntimeError("telemetry canonical-record dependency is unavailable") from None
-    _canonical_plan_module = importlib.util.module_from_spec(_canonical_plan_spec)
-    sys.modules[_canonical_plan_spec.name] = _canonical_plan_module
-    _canonical_plan_spec.loader.exec_module(_canonical_plan_module)
-    _go_plan_spec = importlib.util.spec_from_file_location(
-        "defenseclaw_telemetry_go_api_plan",
-        Path(__file__).with_name("telemetry_go_api_plan.py"),
-    )
-    if _go_plan_spec is None or _go_plan_spec.loader is None:
-        raise RuntimeError("telemetry Go API plan dependency is unavailable") from None
-    _go_plan_module = importlib.util.module_from_spec(_go_plan_spec)
-    sys.modules[_go_plan_spec.name] = _go_plan_module
-    _go_plan_spec.loader.exec_module(_go_plan_module)
-    GoAPIPlanError = _go_plan_module.GoAPIPlanError
-    GoAPIPlanIR = _go_plan_module.GoAPIPlanIR
-    compile_go_api_plan = _go_plan_module.compile_go_api_plan
+if __package__ == "scripts":  # pragma: no cover - package import exercised by subprocess tests
+    from .telemetry_go_api_plan import GoAPIPlanError, GoAPIPlanIR, compile_go_api_plan
+else:
+
+    def _load_direct_dependency(module_name: str):  # type: ignore[no-untyped-def]
+        path = Path(__file__).resolve().with_name(module_name + ".py").resolve(strict=True)
+        opposite = sys.modules.get(f"scripts.{module_name}")
+        if isinstance(opposite, ModuleType):
+            opposite_paths: list[Path] = []
+            try:
+                opposite_paths.append(Path(opposite.__file__).resolve(strict=True))
+            except (AttributeError, OSError, TypeError):
+                pass
+            try:
+                opposite_paths.append(Path(opposite.__spec__.origin).resolve(strict=True))
+            except (AttributeError, OSError, TypeError):
+                pass
+            if path in opposite_paths:
+                raise RuntimeError(f"telemetry renderer dependency {module_name} has a conflicting package identity")
+        existing = sys.modules.get(module_name)
+        if existing is not None:
+            if not isinstance(existing, ModuleType):
+                raise RuntimeError(f"telemetry renderer dependency {module_name} has foreign provenance")
+            try:
+                existing_path = Path(existing.__file__).resolve(strict=True)
+                existing_spec = existing.__spec__
+                if (
+                    existing.__name__ != module_name
+                    or existing_spec is None
+                    or existing_spec.name != module_name
+                    or existing_spec.loader is None
+                    or existing_spec.origin is None
+                ):
+                    raise RuntimeError("dependency has no canonical import identity")
+                existing_origin = Path(existing_spec.origin).resolve(strict=True)
+                regular = stat.S_ISREG(existing_path.stat().st_mode) and stat.S_ISREG(existing_origin.stat().st_mode)
+            except (AttributeError, OSError, RuntimeError, TypeError) as exc:
+                raise RuntimeError(f"telemetry renderer dependency {module_name} has foreign provenance") from exc
+            if not regular or existing_path != path or existing_origin != path:
+                raise RuntimeError(f"telemetry renderer dependency {module_name} has foreign provenance")
+            return existing
+        spec = importlib.util.spec_from_file_location(module_name, path)
+        if spec is None or spec.loader is None:
+            raise RuntimeError(f"telemetry renderer dependency {module_name} is unavailable")
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[module_name] = module
+        try:
+            spec.loader.exec_module(module)
+        except Exception:
+            if sys.modules.get(module_name) is module:
+                del sys.modules[module_name]
+            raise
+        return module
+
+    _load_direct_dependency("telemetry_canonical_record")
+    _api_plan = _load_direct_dependency("telemetry_go_api_plan")
+    GoAPIPlanError = _api_plan.GoAPIPlanError
+    GoAPIPlanIR = _api_plan.GoAPIPlanIR
+    compile_go_api_plan = _api_plan.compile_go_api_plan
 
 
 class CandidateRenderError(ValueError):
@@ -454,6 +488,8 @@ _TOP_LEVEL_FIELDS: Final = frozenset(
         "imports",
         "dependency_lock_path",
         "examples_path",
+        "public_views_path",
+        "public_views",
         "input_digests",
         "dependencies",
         "semantic_profiles",
@@ -478,6 +514,96 @@ _TOP_LEVEL_FIELDS: Final = frozenset(
         "legacy_only_upstream_attributes",
     }
 )
+_PUBLIC_VIEWS_FIELDS: Final = frozenset(
+    {"schema_version", "compatibility_epoch", "baseline", "marker", "authority_sha256", "views"}
+)
+_PUBLIC_VIEW_BASELINE_FIELDS: Final = frozenset(
+    {
+        "format_version",
+        "id",
+        "path",
+        "sha256",
+        "authority",
+        "canonicalization_id",
+        "source_commit",
+        "source_tree",
+    }
+)
+_PUBLIC_VIEW_MARKER_FIELDS: Final = frozenset({"keyword", "generator", "registry_version", "baseline_epoch"})
+_PUBLIC_VIEW_FIELDS: Final = frozenset(
+    {
+        "id",
+        "output_path",
+        "dialect",
+        "schema_id",
+        "authority",
+        "stability",
+        "introduced_in",
+        "deprecated_in",
+        "removed_in",
+        "mirror_targets",
+        "embed_targets",
+        "wheel_targets",
+        "baseline_git_blob_oid",
+        "baseline_source_sha256",
+        "baseline_canonical_sha256",
+        "baseline_number_lexemes",
+        "baseline_document_canonical_json",
+        "template",
+        "layout",
+        "field_dispositions",
+        "dynamic_scopes",
+        "references",
+    }
+)
+_PUBLIC_VIEW_NUMBER_FIELDS: Final = frozenset({"pointer", "token"})
+_PUBLIC_VIEW_TEMPLATE_FIELDS: Final = frozenset({"kind", "transport", "root_type", "root_schema_sha256"})
+_PUBLIC_VIEW_LAYOUT_FIELDS: Final = frozenset(
+    {
+        "definition_pointers",
+        "discriminator_pointers",
+        "additional_properties_default",
+        "additional_properties_overrides",
+    }
+)
+_PUBLIC_VIEW_ADDITIONAL_PROPERTIES_FIELDS: Final = frozenset(
+    {"pointer", "mode", "schema_sha256", "schema_canonical_json"}
+)
+_PUBLIC_VIEW_DISPOSITION_FIELDS: Final = frozenset(
+    {
+        "pointer",
+        "property_name",
+        "projected_name",
+        "disposition",
+        "source",
+        "required",
+        "constraints",
+        "encoding_conversion",
+        "field_class",
+        "sensitivity",
+        "redaction_parity",
+        "fixture_coverage",
+    }
+)
+_PUBLIC_VIEW_SOURCE_FIELDS: Final = frozenset({"kind", "id"})
+_PUBLIC_VIEW_CONSTRAINT_FIELDS: Final = frozenset({"mode", "schema_sha256", "schema_canonical_json"})
+_PUBLIC_VIEW_DYNAMIC_FIELDS: Final = frozenset(
+    {
+        "id",
+        "pointer",
+        "policy",
+        "disposition",
+        "source",
+        "field_class",
+        "sensitivity",
+        "schema_sha256",
+        "schema_canonical_json",
+        "encoding_conversion",
+        "redaction_parity",
+        "fixture_coverage",
+    }
+)
+_PUBLIC_VIEW_REFERENCE_FIELDS: Final = frozenset({"pointer", "reference", "target_view", "target_pointer"})
 _GO_SYMBOL_POLICY_FIELDS: Final = frozenset(
     {
         "version",
@@ -860,6 +986,52 @@ _FIELD_CLASSES: Final = (
     "error",
     "path",
     "credential",
+)
+_PUBLIC_VIEW_IDENTITIES: Final = (
+    ("activity-event", "schemas/activity-event.json"),
+    ("audit-event", "schemas/audit-event.json"),
+    ("gateway-event-envelope", "schemas/gateway-event-envelope.json"),
+    ("hook-audit-envelope", "schemas/hook-audit-envelope.json"),
+    ("network-egress-event", "schemas/network-egress-event.json"),
+    ("otel-agent-lifecycle-event", "schemas/otel/agent-lifecycle-event.schema.json"),
+    ("otel-asset-lifecycle-event", "schemas/otel/asset-lifecycle-event.schema.json"),
+    ("otel-connector-telemetry-event", "schemas/otel/connector-telemetry-event.schema.json"),
+    ("otel-galileo-export-profile", "schemas/otel/galileo-export-profile.schema.json"),
+    ("otel-metrics", "schemas/otel/metrics.schema.json"),
+    ("otel-resource", "schemas/otel/resource.schema.json"),
+    ("otel-runtime-agent-span", "schemas/otel/runtime-agent-span.schema.json"),
+    ("otel-runtime-alert-event", "schemas/otel/runtime-alert-event.schema.json"),
+    ("otel-runtime-approval-span", "schemas/otel/runtime-approval-span.schema.json"),
+    ("otel-runtime-llm-span", "schemas/otel/runtime-llm-span.schema.json"),
+    ("otel-runtime-tool-span", "schemas/otel/runtime-tool-span.schema.json"),
+    ("otel-scan-finding-event", "schemas/otel/scan-finding-event.schema.json"),
+    ("otel-scan-result-event", "schemas/otel/scan-result-event.schema.json"),
+    ("scan-event", "schemas/scan-event.json"),
+    ("scan-finding-event", "schemas/scan-finding-event.json"),
+    ("scan-result", "schemas/scan-result.json"),
+)
+_PUBLIC_VIEW_MIRRORS: Final = {
+    "schemas/activity-event.json": ("internal/gatewaylog/schemas/activity-event.json",),
+    "schemas/gateway-event-envelope.json": ("internal/gatewaylog/schemas/gateway-event-envelope.json",),
+    "schemas/scan-event.json": ("internal/gatewaylog/schemas/scan-event.json",),
+    "schemas/scan-finding-event.json": ("internal/gatewaylog/schemas/scan-finding-event.json",),
+    "schemas/scan-result.json": ("internal/cli/embed/scan-result.json",),
+}
+_PUBLIC_VIEW_BASELINE_PATH: Final = "schemas/telemetry/v8/baselines/public-schemas-v7.normalized.json"
+_PUBLIC_VIEW_BASELINE_SHA256: Final = "d44ea610e9e82b142788babce9c8853713aa004a037c6bd2684502c80a1ca2b3"
+_PUBLIC_VIEW_SUBSCHEMA_DIGEST_DOMAIN: Final = b"DefenseClaw PublicView Subschema v1\x00"
+_PUBLIC_VIEW_AUTHORITY_DIGEST_DOMAIN: Final = b"DefenseClaw PublicView Render Authority v1\x00"
+_PUBLIC_VIEW_AUTHORITY_SHA256: Final = "8b617e6145719eef96625b41c6ca961dd0c16c060ef7d453b2f35888b489f171"
+_PUBLIC_VIEW_SENSITIVITIES: Final = frozenset({"safe", "internal", "sensitive", "critical"})
+_PUBLIC_VIEW_DYNAMIC_POLICIES: Final = frozenset(
+    {
+        "additional-properties-default-allow",
+        "additional-properties-explicit-allow",
+        "additional-properties-schema",
+        "pattern-properties-schema",
+        "unevaluated-properties-explicit-allow",
+        "unevaluated-properties-schema",
+    }
 )
 
 
@@ -4287,6 +4459,294 @@ def _expanded_producer_mappings(
     return tuple(rows)
 
 
+def _validate_public_views(path_value: FrozenJSON, value: FrozenJSON, registry_version: int) -> None:
+    """Validate the compiler-owned public-view IR without rendering it yet."""
+
+    def tuple_value(candidate: FrozenJSON, field: str) -> tuple[FrozenJSON, ...]:
+        if not isinstance(candidate, tuple):
+            raise CandidateRenderError(f"materialized {field} is invalid")
+        return candidate
+
+    def string_tuple(candidate: FrozenJSON, field: str) -> tuple[str, ...]:
+        items = tuple_value(candidate, field)
+        if any(not isinstance(item, str) or not item for item in items):
+            raise CandidateRenderError(f"materialized {field} is invalid")
+        return items  # type: ignore[return-value]
+
+    def digest_value(candidate: FrozenJSON, field: str) -> str:
+        digest = _string(candidate, field)
+        if _SHA256.fullmatch(digest) is None:
+            raise CandidateRenderError(f"materialized {field} is invalid")
+        return digest
+
+    def bytes_value(candidate: FrozenJSON, field: str) -> bytes:
+        if not isinstance(candidate, bytes) or not candidate:
+            raise CandidateRenderError(f"materialized {field} is invalid")
+        return candidate
+
+    def pointer(candidate: FrozenJSON, field: str, *, allow_root: bool = False) -> str:
+        if candidate == "" and allow_root:
+            return ""
+        result = _string(candidate, field)
+        if not result.startswith("/") or "*" in result or re.search(r"~(?![01])", result):
+            raise CandidateRenderError(f"materialized {field} is invalid")
+        return result
+
+    public_views_path = _string(path_value, "public views path")
+    if public_views_path != "schemas/telemetry/v8/public-views.yaml":
+        raise CandidateRenderError("materialized public views path is invalid")
+    fields = _tagged(value, "PublicViewsIR", _PUBLIC_VIEWS_FIELDS)
+    if (
+        _integer(fields["schema_version"], "public views schema version", minimum=1) != 1
+        or _string(fields["compatibility_epoch"], "public views compatibility epoch")
+        != "public-schemas-v7-marker-only-v1"
+    ):
+        raise CandidateRenderError("materialized public views identity is invalid")
+
+    baseline = _tagged(fields["baseline"], "PublicViewBaselineIR", _PUBLIC_VIEW_BASELINE_FIELDS)
+    baseline_identity = (
+        _integer(baseline["format_version"], "public views baseline format", minimum=1),
+        _string(baseline["id"], "public views baseline ID"),
+        _string(baseline["path"], "public views baseline path"),
+        digest_value(baseline["sha256"], "public views baseline digest"),
+        _string(baseline["authority"], "public views baseline authority"),
+        _string(baseline["canonicalization_id"], "public views baseline canonicalization"),
+        _string(baseline["source_commit"], "public views baseline source commit"),
+        _string(baseline["source_tree"], "public views baseline source tree"),
+    )
+    if baseline_identity != (
+        1,
+        "public-schemas-v7",
+        _PUBLIC_VIEW_BASELINE_PATH,
+        _PUBLIC_VIEW_BASELINE_SHA256,
+        "pre_cutover",
+        "defenseclaw-lossless-json-v1",
+        "e309dffc369d8f0c722d74ace848cec74ff40e3c",
+        "e63356679501ae178fd3f3411ed909a231eb54fd",
+    ):
+        raise CandidateRenderError("materialized public views baseline identity is invalid")
+
+    marker = _tagged(fields["marker"], "PublicViewMarkerIR", _PUBLIC_VIEW_MARKER_FIELDS)
+    if (
+        _string(marker["keyword"], "public views marker keyword") != "x-defenseclaw-generated"
+        or _string(marker["generator"], "public views marker generator") != "scripts/generate_telemetry_registry.py"
+        or _integer(marker["registry_version"], "public views marker registry version", minimum=1) != registry_version
+        or _string(marker["baseline_epoch"], "public views marker epoch") != "public-schemas-v7-marker-only-v1"
+    ):
+        raise CandidateRenderError("materialized public views marker is invalid")
+
+    raw_views = tuple_value(fields["views"], "public view inventory")
+    if len(raw_views) != len(_PUBLIC_VIEW_IDENTITIES):
+        raise CandidateRenderError("materialized public view inventory is incomplete")
+    authority_sha256 = digest_value(fields["authority_sha256"], "public view render authority digest")
+    authority_payload = json.dumps(
+        _plain_ir(raw_views),
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    observed_authority_sha256 = hashlib.sha256(_PUBLIC_VIEW_AUTHORITY_DIGEST_DOMAIN + authority_payload).hexdigest()
+    if authority_sha256 != _PUBLIC_VIEW_AUTHORITY_SHA256 or observed_authority_sha256 != authority_sha256:
+        raise CandidateRenderError("materialized public view render authority digest is invalid")
+    known_view_ids = frozenset(view_id for view_id, _path in _PUBLIC_VIEW_IDENTITIES)
+    total_fields = total_dynamic = total_references = total_definitions = total_discriminators = 0
+    total_additional = canonical_sources = transport_sources = 0
+    for view_index, (raw_view, (expected_id, expected_path)) in enumerate(
+        zip(raw_views, _PUBLIC_VIEW_IDENTITIES, strict=True)
+    ):
+        context = f"public view {view_index}"
+        view = _tagged(raw_view, "PublicViewIR", _PUBLIC_VIEW_FIELDS)
+        view_id = _string(view["id"], f"{context} ID")
+        output_path = _string(view["output_path"], f"{context} output path")
+        if (view_id, output_path) != (expected_id, expected_path):
+            raise CandidateRenderError("materialized public view identity is invalid")
+        dialect = _string(view["dialect"], f"{context} dialect")
+        schema_id = _string(view["schema_id"], f"{context} schema ID")
+        if (
+            _string(view["authority"], f"{context} authority") != "candidate-not-public-authority"
+            or _string(view["stability"], f"{context} stability") != "stable"
+            or _string(view["introduced_in"], f"{context} introduced version") != "telemetry-registry-v1"
+            or view["deprecated_in"] is not None
+            or view["removed_in"] is not None
+        ):
+            raise CandidateRenderError("materialized public view lifecycle is invalid")
+        expected_mirrors = _PUBLIC_VIEW_MIRRORS.get(output_path, ())
+        if (
+            string_tuple(view["mirror_targets"], f"{context} mirror targets") != expected_mirrors
+            or string_tuple(view["embed_targets"], f"{context} embed targets") != expected_mirrors
+            or string_tuple(view["wheel_targets"], f"{context} wheel targets")
+        ):
+            raise CandidateRenderError("materialized public view targets are invalid")
+        git_oid = _string(view["baseline_git_blob_oid"], f"{context} baseline Git object")
+        if re.fullmatch(r"[0-9a-f]{40}(?:[0-9a-f]{24})?", git_oid) is None:
+            raise CandidateRenderError("materialized public view baseline object is invalid")
+        digest_value(view["baseline_source_sha256"], f"{context} baseline source digest")
+        digest_value(view["baseline_canonical_sha256"], f"{context} baseline canonical digest")
+        number_pointers: list[str] = []
+        for raw_number in tuple_value(view["baseline_number_lexemes"], f"{context} number lexemes"):
+            number = _tagged(raw_number, "PublicViewNumberLexemeIR", _PUBLIC_VIEW_NUMBER_FIELDS)
+            number_pointers.append(pointer(number["pointer"], f"{context} number pointer", allow_root=True))
+            token = _string(number["token"], f"{context} number token")
+            if re.fullmatch(r"-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?", token) is None:
+                raise CandidateRenderError("materialized public view number token is invalid")
+        if number_pointers != sorted(set(number_pointers)):
+            raise CandidateRenderError("materialized public view number inventory is invalid")
+
+        document_bytes = bytes_value(view["baseline_document_canonical_json"], f"{context} document")
+        try:
+            document = json.loads(document_bytes)
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise CandidateRenderError("materialized public view document is invalid") from exc
+        if not isinstance(document, dict) or document.get("$schema") != dialect or document.get("$id") != schema_id:
+            raise CandidateRenderError("materialized public view document identity is invalid")
+        template = _tagged(view["template"], "PublicViewTemplateIR", _PUBLIC_VIEW_TEMPLATE_FIELDS)
+        root_digest = digest_value(template["root_schema_sha256"], f"{context} root schema digest")
+        if (
+            _string(template["kind"], f"{context} template kind") != "exact-baseline-with-marker"
+            or _string(template["transport"], f"{context} template transport") != "json-schema-resource"
+            or not _string(template["root_type"], f"{context} root type")
+            or hashlib.sha256(_PUBLIC_VIEW_SUBSCHEMA_DIGEST_DOMAIN + document_bytes).hexdigest() != root_digest
+        ):
+            raise CandidateRenderError("materialized public view template is invalid")
+
+        layout = _tagged(view["layout"], "PublicViewLayoutIR", _PUBLIC_VIEW_LAYOUT_FIELDS)
+        definitions = string_tuple(layout["definition_pointers"], f"{context} definition pointers")
+        discriminators = string_tuple(layout["discriminator_pointers"], f"{context} discriminator pointers")
+        if definitions != tuple(sorted(set(definitions))) or discriminators != tuple(sorted(set(discriminators))):
+            raise CandidateRenderError("materialized public view layout is invalid")
+        if _string(layout["additional_properties_default"], f"{context} additional default") != "allow":
+            raise CandidateRenderError("materialized public view additionalProperties default is invalid")
+        total_definitions += len(definitions)
+        total_discriminators += len(discriminators)
+        additional_pointers: list[str] = []
+        for raw_additional in tuple_value(
+            layout["additional_properties_overrides"],
+            f"{context} additionalProperties overrides",
+        ):
+            additional = _tagged(
+                raw_additional,
+                "PublicViewAdditionalPropertiesIR",
+                _PUBLIC_VIEW_ADDITIONAL_PROPERTIES_FIELDS,
+            )
+            additional_pointers.append(pointer(additional["pointer"], f"{context} additional pointer"))
+            if _string(additional["mode"], f"{context} additional mode") not in {"allow", "deny", "schema"}:
+                raise CandidateRenderError("materialized public view additionalProperties mode is invalid")
+            schema_bytes = bytes_value(additional["schema_canonical_json"], f"{context} additional schema")
+            if hashlib.sha256(_PUBLIC_VIEW_SUBSCHEMA_DIGEST_DOMAIN + schema_bytes).hexdigest() != digest_value(
+                additional["schema_sha256"], f"{context} additional schema digest"
+            ):
+                raise CandidateRenderError("materialized public view additionalProperties digest is invalid")
+        if additional_pointers != sorted(set(additional_pointers)):
+            raise CandidateRenderError("materialized public view additionalProperties inventory is invalid")
+        total_additional += len(additional_pointers)
+
+        disposition_pointers: list[str] = []
+        raw_dispositions = tuple_value(view["field_dispositions"], f"{context} field dispositions")
+        for disposition_index, raw_disposition in enumerate(raw_dispositions):
+            disposition = _tagged(
+                raw_disposition,
+                "PublicViewFieldDispositionIR",
+                _PUBLIC_VIEW_DISPOSITION_FIELDS,
+            )
+            disposition_pointers.append(pointer(disposition["pointer"], f"{context} field pointer"))
+            property_name = _string(disposition["property_name"], f"{context} property name")
+            if (
+                _string(disposition["projected_name"], f"{context} projected name") != property_name
+                or _string(disposition["disposition"], f"{context} disposition") != "preserved"
+                or type(disposition["required"]) is not bool
+            ):
+                raise CandidateRenderError("materialized public view field disposition is invalid")
+            source = _tagged(disposition["source"], "PublicViewSourceIR", _PUBLIC_VIEW_SOURCE_FIELDS)
+            source_kind = _string(source["kind"], f"{context} field source kind")
+            source_id = _string(source["id"], f"{context} field source ID")
+            if source_kind == "canonical_attribute":
+                if source_id != property_name:
+                    raise CandidateRenderError("materialized public view canonical source is invalid")
+                canonical_sources += 1
+            elif source_kind == "transport_only":
+                if source_id != f"legacy.{view_id}.field-{disposition_index + 1:04d}":
+                    raise CandidateRenderError("materialized public view transport source is invalid")
+                transport_sources += 1
+            else:
+                raise CandidateRenderError("materialized public view field source is invalid")
+            constraints = _tagged(
+                disposition["constraints"],
+                "PublicViewConstraintsIR",
+                _PUBLIC_VIEW_CONSTRAINT_FIELDS,
+            )
+            constraint_bytes = bytes_value(constraints["schema_canonical_json"], f"{context} field schema")
+            if (
+                _string(constraints["mode"], f"{context} constraint mode") != "exact-baseline-subschema"
+                or hashlib.sha256(_PUBLIC_VIEW_SUBSCHEMA_DIGEST_DOMAIN + constraint_bytes).hexdigest()
+                != digest_value(constraints["schema_sha256"], f"{context} field schema digest")
+                or _string(disposition["encoding_conversion"], f"{context} field encoding") != "identity"
+                or _string(disposition["field_class"], f"{context} field class") not in _FIELD_CLASSES
+                or _string(disposition["sensitivity"], f"{context} field sensitivity") not in _PUBLIC_VIEW_SENSITIVITIES
+                or _string(disposition["redaction_parity"], f"{context} field redaction") != "baseline-unredacted"
+                or string_tuple(disposition["fixture_coverage"], f"{context} field fixtures")
+                != ("legacy-public-schema-parity-v1",)
+            ):
+                raise CandidateRenderError("materialized public view field compatibility is invalid")
+        if disposition_pointers != sorted(set(disposition_pointers)):
+            raise CandidateRenderError("materialized public view field inventory is invalid")
+        total_fields += len(disposition_pointers)
+
+        dynamic_pointers: list[str] = []
+        raw_dynamics = tuple_value(view["dynamic_scopes"], f"{context} dynamic scopes")
+        for dynamic_index, raw_dynamic in enumerate(raw_dynamics):
+            dynamic = _tagged(raw_dynamic, "PublicViewDynamicScopeIR", _PUBLIC_VIEW_DYNAMIC_FIELDS)
+            dynamic_pointers.append(pointer(dynamic["pointer"], f"{context} dynamic pointer"))
+            dynamic_id = f"{view_id}-dynamic-{dynamic_index + 1:02d}"
+            dynamic_source = _tagged(dynamic["source"], "PublicViewSourceIR", _PUBLIC_VIEW_SOURCE_FIELDS)
+            dynamic_bytes = bytes_value(dynamic["schema_canonical_json"], f"{context} dynamic schema")
+            if (
+                _string(dynamic["id"], f"{context} dynamic ID") != dynamic_id
+                or _string(dynamic["policy"], f"{context} dynamic policy") not in _PUBLIC_VIEW_DYNAMIC_POLICIES
+                or _string(dynamic["disposition"], f"{context} dynamic disposition") != "preserved"
+                or _string(dynamic_source["kind"], f"{context} dynamic source kind") != "transport_only"
+                or _string(dynamic_source["id"], f"{context} dynamic source ID")
+                != f"legacy.{view_id}.dynamic-{dynamic_index + 1:02d}"
+                or _string(dynamic["field_class"], f"{context} dynamic field class") != "content"
+                or _string(dynamic["sensitivity"], f"{context} dynamic sensitivity") != "sensitive"
+                or hashlib.sha256(_PUBLIC_VIEW_SUBSCHEMA_DIGEST_DOMAIN + dynamic_bytes).hexdigest()
+                != digest_value(dynamic["schema_sha256"], f"{context} dynamic schema digest")
+                or _string(dynamic["encoding_conversion"], f"{context} dynamic encoding") != "identity"
+                or _string(dynamic["redaction_parity"], f"{context} dynamic redaction") != "baseline-unredacted"
+                or string_tuple(dynamic["fixture_coverage"], f"{context} dynamic fixtures")
+                != ("legacy-public-schema-parity-v1",)
+            ):
+                raise CandidateRenderError("materialized public view dynamic scope is invalid")
+        if dynamic_pointers != sorted(set(dynamic_pointers)):
+            raise CandidateRenderError("materialized public view dynamic inventory is invalid")
+        total_dynamic += len(dynamic_pointers)
+
+        reference_pointers: list[str] = []
+        for raw_reference in tuple_value(view["references"], f"{context} references"):
+            reference = _tagged(raw_reference, "PublicViewReferenceIR", _PUBLIC_VIEW_REFERENCE_FIELDS)
+            reference_pointers.append(pointer(reference["pointer"], f"{context} reference pointer"))
+            _string(reference["reference"], f"{context} reference")
+            if _string(reference["target_view"], f"{context} reference target") not in known_view_ids:
+                raise CandidateRenderError("materialized public view reference target is invalid")
+            target_pointer = reference["target_pointer"]
+            if not isinstance(target_pointer, str) or (target_pointer and not target_pointer.startswith("/")):
+                raise CandidateRenderError("materialized public view reference pointer is invalid")
+        if reference_pointers != sorted(set(reference_pointers)):
+            raise CandidateRenderError("materialized public view reference inventory is invalid")
+        total_references += len(reference_pointers)
+
+    if (
+        total_fields,
+        total_dynamic,
+        total_references,
+        total_definitions,
+        total_discriminators,
+        total_additional,
+        canonical_sources,
+        transport_sources,
+    ) != (756, 94, 39, 40, 131, 16, 174, 582):
+        raise CandidateRenderError("materialized public view inventory totals are invalid")
+
+
 def build_candidate_render_index(view: object) -> CandidateRenderIndex:
     if type(view).__name__ != "MaterializedRegistryView":
         raise CandidateRenderError("renderer requires MaterializedRegistryView")
@@ -4307,6 +4767,7 @@ def build_candidate_render_index(view: object) -> CandidateRenderIndex:
     schema_version = _integer(fields["schema_version"], "schema version", minimum=1)
     registry_version = _integer(fields["registry_version"], "registry version", minimum=1)
     bucket_version = _integer(fields["bucket_catalog_version"], "bucket catalog version", minimum=1)
+    _validate_public_views(fields["public_views_path"], fields["public_views"], registry_version)
     _validate_normalizer_catalog(fields["normalizers"])
     _validate_mandatory_rule_catalog(fields["mandatory_rule_catalog"])
     condition_ids: set[str] = set()

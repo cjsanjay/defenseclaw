@@ -40,15 +40,13 @@ import re
 from collections.abc import Mapping, Sequence
 from typing import Any, Final
 
-try:
-    from scripts.telemetry_canonical_record import (
+if __package__ == "scripts":  # pragma: no cover - package import exercised by subprocess tests
+    from .telemetry_canonical_record import (
         CanonicalRecordError,
         canonical_record_json,
         canonicalize_record_json_text,
     )
-except ModuleNotFoundError as exc:  # pragma: no cover - direct script execution
-    if exc.name != "scripts":
-        raise
+else:
     from telemetry_canonical_record import (  # type: ignore[no-redef]
         CanonicalRecordError,
         canonical_record_json,

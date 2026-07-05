@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import dataclasses
+import functools
 import hashlib
 import importlib.util
 import io
@@ -12,8 +13,10 @@ import os
 import subprocess
 import sys
 import tarfile
+import textwrap
 import threading
 import time
+from collections import Counter
 from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -210,17 +213,95 @@ def _write_yaml_raw(path: Path, value: Any) -> None:
     path.write_text(yaml.safe_dump(value, sort_keys=False), encoding="utf-8")
 
 
+@functools.lru_cache(maxsize=1)
+def _public_view_fixture_catalog() -> dict[str, Any]:
+    public_views = yaml.safe_load((ROOT / "schemas/telemetry/v8/public-views.yaml").read_text(encoding="utf-8"))
+    canonical_dispositions = [
+        disposition
+        for view in public_views["views"]
+        for disposition in view["field_dispositions"]
+        if disposition["source"]["kind"] == "canonical_attribute"
+    ]
+    required = {disposition["source"]["id"] for disposition in canonical_dispositions}
+    domains: dict[str, dict[str, list[dict[str, Any]]]] = {}
+    extension_ids: set[str] = set()
+    for filename in ("genai.yaml", "security.yaml", "operations.yaml"):
+        source = yaml.safe_load((ROOT / "schemas/telemetry/v8" / filename).read_text(encoding="utf-8"))
+        attributes = [copy.deepcopy(item) for item in source.get("attributes", []) if item["id"] in required]
+        aliases = {item["alias_of"] for item in attributes if item.get("alias_of")}
+        supporting_attributes = [
+            copy.deepcopy(item) for item in source.get("attributes", []) if item["id"] in aliases - required
+        ]
+        extensions = [copy.deepcopy(item) for item in source.get("attribute_extensions", []) if item["ref"] in required]
+        extension_ids.update(item["ref"] for item in extensions)
+        domains[filename] = {
+            "attributes": attributes,
+            "supporting_attributes": supporting_attributes,
+            "attribute_extensions": extensions,
+        }
+
+    upstream: dict[str, dict[str, dict[str, Any]]] = {}
+    source_files: dict[str, list[dict[str, Any]]] = {}
+    snapshot_paths = {
+        "otel_core": "otel-core-v1.42.0.normalized.json",
+        "otel_genai": "otel-genai-b028dceecdad117461a785c3af35315e7184e813.normalized.json",
+    }
+    for dependency_id, filename in snapshot_paths.items():
+        snapshot = json.loads((ROOT / "schemas/telemetry/v8/upstream" / filename).read_text(encoding="utf-8"))
+        attributes = {item["id"]: copy.deepcopy(item) for item in snapshot["attributes"] if item["id"] in extension_ids}
+        referenced_paths = {item["source_pointer"].split("#", 1)[0] for item in attributes.values()}
+        upstream[dependency_id] = attributes
+        source_files[dependency_id] = [
+            copy.deepcopy(item) for item in snapshot["source_files"] if item["path"] in referenced_paths
+        ]
+
+    assert len(required) == 78
+    assert len(canonical_dispositions) == 174
+    assert sum(len(value["attributes"]) for value in domains.values()) == 53
+    assert {item["id"] for value in domains.values() for item in value["supporting_attributes"]} == {
+        "defenseclaw.agent.type"
+    }
+    assert len(extension_ids) == 25
+    assert set(upstream["otel_core"]) == extension_ids
+    assert len(upstream["otel_genai"]) == 19
+    classifications = {
+        item["id"]: (item["field_class"], item["sensitivity"])
+        for value in domains.values()
+        for item in value["attributes"]
+    }
+    classifications.update(
+        {
+            item["ref"]: (item["field_class"], item["sensitivity"])
+            for value in domains.values()
+            for item in value["attribute_extensions"]
+        }
+    )
+    assert all(
+        classifications[item["source"]["id"]] == (item["field_class"], item["sensitivity"])
+        for item in canonical_dispositions
+    )
+    return {
+        "domains": domains,
+        "upstream": upstream,
+        "source_files": source_files,
+    }
+
+
 def _snapshot(
     dependency_id: str,
     repository: str,
     revision: str,
     attribute: str,
 ) -> bytes:
+    public_catalog = _public_view_fixture_catalog()
+    required_upstream = public_catalog["upstream"].get(dependency_id, {})
     source_path = "model/registry.yaml"
     source_files = [{"path": source_path, "sha256": "a" * 64}]
+    shared_public_genai = set(public_catalog["upstream"]["otel_genai"])
     deprecated_shared = {
         "gen_ai.request.top_k",
-        *(f"gen_ai.shared.deprecated.{index:03d}" for index in range(57)),
+        *shared_public_genai,
+        *(f"gen_ai.shared.deprecated.{index:03d}" for index in range(58 - 1 - len(shared_public_genai))),
     }
     active_shared = {"aws.bedrock.guardrail.id", "aws.bedrock.knowledge_base.id"}
     legacy_core = {f"gen_ai.legacy.{index:03d}" for index in range(10)}
@@ -234,6 +315,7 @@ def _snapshot(
                 "service.version",
                 "session.id",
                 "user.id",
+                *required_upstream,
             }
         )
         identifiers |= {f"core.attribute.{index:04d}" for index in range(923 - len(identifiers))}
@@ -247,6 +329,7 @@ def _snapshot(
                 "gen_ai.output.messages",
                 "gen_ai.tool.call.arguments",
                 "gen_ai.tool.call.result",
+                *required_upstream,
             }
         )
         identifiers |= {f"gen_ai.current.{index:03d}" for index in range(70 - len(identifiers))}
@@ -273,7 +356,9 @@ def _snapshot(
             ]
         )
         attributes.append(
-            {
+            copy.deepcopy(required_upstream[identifier])
+            if identifier in required_upstream
+            else {
                 "id": identifier,
                 "allowed_types": allowed_types,
                 "shape": "any_value" if structured_any else "attribute",
@@ -330,6 +415,12 @@ def _snapshot(
             }
             for index, identifier in enumerate(sorted(identifiers))
         ]
+    elif dependency_id in public_catalog["source_files"]:
+        source_file_by_path = {item["path"]: item for item in source_files}
+        source_file_by_path.update(
+            {item["path"]: copy.deepcopy(item) for item in public_catalog["source_files"][dependency_id]}
+        )
+        source_files = [source_file_by_path[path] for path in sorted(source_file_by_path)]
     value = {
         "format_version": 1,
         "format": "defenseclaw-normalized-semconv-v1",
@@ -641,6 +732,33 @@ def _domain_sources() -> dict[str, dict[str, Any]]:
                     "severity_policy": "canonical_or_info",
                 }
             )
+    public_catalog = _public_view_fixture_catalog()
+    for filename, additions in public_catalog["domains"].items():
+        domain = domains[filename]
+        attribute_by_id = {item["id"]: item for item in domain["attributes"]}
+        attribute_by_id.update(
+            {
+                item["id"]: copy.deepcopy(item)
+                for item in (*additions["attributes"], *additions["supporting_attributes"])
+            }
+        )
+        domain["attributes"] = list(attribute_by_id.values())
+        extension_by_ref = {item["ref"]: item for item in domain["attribute_extensions"]}
+        extension_by_ref.update({item["ref"]: copy.deepcopy(item) for item in additions["attribute_extensions"]})
+        domain["attribute_extensions"] = list(extension_by_ref.values())
+    anchor_refs = sorted(
+        item["ref"] for additions in public_catalog["domains"].values() for item in additions["attribute_extensions"]
+    )
+    operations["groups"].insert(
+        0,
+        {
+            "id": "resource.fixture.public_view_extensions",
+            "type": "resource",
+            "brief": "Fixture-only anchor proving exact public-view extension coverage.",
+            "stability": "development",
+            "attributes": [{"ref": reference, "requirement_level": "optional"} for reference in anchor_refs],
+        },
+    )
     operations["groups"].insert(
         0,
         {
@@ -672,6 +790,13 @@ def _fixture_root(tmp_path: Path) -> Path:
     )
     schema_baseline_target = _install_manifest_schema_baseline(root, schema_baseline_source.read_bytes())
     assert schema_baseline_target.name == schema_baseline_source.name
+    public_views_source = ROOT / "schemas/telemetry/v8/public-views.yaml"
+    public_views_target = telemetry / "public-views.yaml"
+    public_views_target.write_bytes(public_views_source.read_bytes())
+    public_views_baseline_source = ROOT / "schemas/telemetry/v8/baselines/public-schemas-v7.normalized.json"
+    public_views_baseline_target = telemetry / "baselines/public-schemas-v7.normalized.json"
+    public_views_baseline_target.parent.mkdir(parents=True, exist_ok=True)
+    public_views_baseline_target.write_bytes(public_views_baseline_source.read_bytes())
     inventory_source = ROOT / "docs/design/observability-v8/current-state-inventory.yaml"
     inventory_target = root / "docs/design/observability-v8/current-state-inventory.yaml"
     inventory_target.parent.mkdir(parents=True)
@@ -759,6 +884,7 @@ def _fixture_root(tmp_path: Path) -> Path:
             "imports": ["genai.yaml", "security.yaml", "operations.yaml"],
             "dependency_lock": "schemas/telemetry/v8/semconv.lock.yaml",
             "examples": "examples.yaml",
+            "public_views": "schemas/telemetry/v8/public-views.yaml",
             "semantic_profiles": [
                 {
                     "id": "defenseclaw-genai-rich-v1",
@@ -965,6 +1091,230 @@ def test_sibling_module_loader_reuses_same_file_identity(monkeypatch: pytest.Mon
 
     assert isinstance(existing, ModuleType)
     assert module._load_sibling_module(name) is existing
+
+
+def test_transaction_loader_rejects_unsafe_preload(monkeypatch: pytest.MonkeyPatch) -> None:
+    module = _load_generator_module("telemetry_registry_unsafe_transaction_preload")
+    name = "telemetry_generated_transaction"
+    monkeypatch.setitem(
+        sys.modules,
+        name,
+        SimpleNamespace(__file__=str(GENERATOR.with_name(f"{name}.py").resolve())),
+    )
+
+    with pytest.raises(RuntimeError, match="unsafe"):
+        module._load_transaction_module()
+
+
+def test_transaction_loader_exec_failure_cleans_canonical_identity(monkeypatch: pytest.MonkeyPatch) -> None:
+    module = _load_generator_module("telemetry_registry_transaction_exec_cleanup")
+    name = "telemetry_generated_transaction"
+    monkeypatch.delitem(sys.modules, name, raising=False)
+    monkeypatch.delitem(sys.modules, f"scripts.{name}", raising=False)
+    real_spec_from_file_location = module.importlib.util.spec_from_file_location
+
+    class FailingLoader:
+        def create_module(self, _spec: Any) -> None:
+            return None
+
+        def exec_module(self, _module: ModuleType) -> None:
+            raise RuntimeError("injected transaction import failure")
+
+    def failing_spec(module_name: str, path: Path) -> Any:
+        if module_name == name:
+            return importlib.util.spec_from_loader(module_name, FailingLoader(), origin=str(path))
+        return real_spec_from_file_location(module_name, path)
+
+    monkeypatch.setattr(module.importlib.util, "spec_from_file_location", failing_spec)
+    with pytest.raises(RuntimeError, match="injected transaction import failure"):
+        module._load_transaction_module()
+    assert name not in sys.modules
+
+
+@pytest.mark.parametrize("mode", ["package", "spec", "direct"])
+def test_candidate_loader_uses_one_fresh_process_module_identity(mode: str) -> None:
+    generator = GENERATOR.resolve()
+    if mode == "package":
+        cwd = ROOT
+        load = "import scripts.generate_telemetry_registry as generator"
+        prefix = "scripts."
+    elif mode == "spec":
+        cwd = ROOT / "cli/tests"
+        load = f"""
+import importlib.util
+spec = importlib.util.spec_from_file_location("fresh_telemetry_generator", {str(generator)!r})
+assert spec is not None and spec.loader is not None
+generator = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = generator
+spec.loader.exec_module(generator)
+"""
+        prefix = ""
+    else:
+        cwd = ROOT / "scripts"
+        load = "import generate_telemetry_registry as generator"
+        prefix = ""
+    code = f"""
+import sys
+{load}
+portable, go_renderer, coordinator = generator._load_candidate_renderers()
+prefix = {prefix!r}
+canonical = sys.modules[prefix + "telemetry_canonical_record"]
+api = sys.modules[prefix + "telemetry_go_api_plan"]
+fixtures = sys.modules[prefix + "telemetry_go_fixture_plan"]
+producer = sys.modules[prefix + "telemetry_go_producer_plan"]
+assert api.canonical_record_json is canonical.canonical_record_json
+assert fixtures.canonical_record_json is canonical.canonical_record_json
+assert portable.compile_go_api_plan is api.compile_go_api_plan
+assert go_renderer.compile_go_fixture_plan is fixtures.compile_go_fixture_plan
+assert go_renderer.compile_go_producer_plan is producer.compile_go_producer_plan
+assert coordinator is sys.modules[prefix + "telemetry_go_output_coordinator"]
+assert go_renderer.RenderedGoOutput is coordinator.RenderedGoOutput
+assert go_renderer.GoFileDeclarationInventory is coordinator.GoFileDeclarationInventory
+assert go_renderer.GoDeclarationKey is coordinator.GoDeclarationKey
+assert generator.generated_transaction is sys.modules[prefix + "telemetry_generated_transaction"]
+assert "defenseclaw_telemetry_go_api_plan" not in sys.modules
+opposite = "" if prefix else "scripts."
+for leaf in (
+    "telemetry_canonical_record",
+    "telemetry_go_api_plan",
+    "telemetry_go_fixture_plan",
+    "telemetry_go_output_coordinator",
+    "telemetry_go_producer_plan",
+    "telemetry_generated_transaction",
+    "render_telemetry_registry_candidates",
+    "render_telemetry_go",
+):
+    assert opposite + leaf not in sys.modules
+"""
+    completed = subprocess.run(
+        [sys.executable, "-c", code],
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=60,
+    )
+    assert completed.returncode == 0, completed.stderr
+
+
+@pytest.mark.parametrize("direction", ["package-then-direct", "direct-then-package", "package-then-renderer"])
+def test_candidate_loader_rejects_mixed_supported_namespaces(direction: str) -> None:
+    generator = GENERATOR.resolve()
+    renderer = GENERATOR.with_name("render_telemetry_registry_candidates.py").resolve()
+    if direction == "package-then-direct":
+        setup = "import scripts.generate_telemetry_registry"
+        action = f"""
+spec = importlib.util.spec_from_file_location("mixed_direct_generator", {str(generator)!r})
+module = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
+"""
+    elif direction == "direct-then-package":
+        setup = f"""
+spec = importlib.util.spec_from_file_location("mixed_direct_generator", {str(generator)!r})
+module = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
+"""
+        action = 'importlib.import_module("scripts.generate_telemetry_registry")'
+    else:
+        setup = """
+import scripts.telemetry_canonical_record
+import scripts.telemetry_go_api_plan
+"""
+        action = f"""
+spec = importlib.util.spec_from_file_location("mixed_direct_renderer", {str(renderer)!r})
+module = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
+"""
+    code = f"""
+import importlib
+import importlib.util
+import sys
+{setup}
+try:
+{textwrap.indent(action, "    ")}
+except RuntimeError as exc:
+    assert "conflicting" in str(exc)
+else:
+    raise AssertionError("mixed package/top-level telemetry identities were accepted")
+"""
+    completed = subprocess.run(
+        [sys.executable, "-c", code],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=60,
+    )
+    assert completed.returncode == 0, completed.stderr
+
+
+@pytest.mark.parametrize("surface", ["file", "origin"])
+def test_generator_loader_rejects_malformed_opposite_identity(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    surface: str,
+) -> None:
+    module = _load_generator_module(f"telemetry_registry_malformed_opposite_{surface}")
+    leaf = "telemetry_go_api_plan"
+    path = GENERATOR.with_name(f"{leaf}.py").resolve()
+    opposite = ModuleType(f"scripts.{leaf}")
+    if surface == "file":
+        opposite.__file__ = str(path)
+        opposite.__spec__ = None
+    else:
+        opposite.__file__ = str(tmp_path / "missing.py")
+        opposite.__spec__ = importlib.util.spec_from_file_location(f"scripts.{leaf}", path)
+    monkeypatch.setitem(sys.modules, f"scripts.{leaf}", opposite)
+
+    with pytest.raises(RuntimeError, match="conflicting identity"):
+        module._load_sibling_module(leaf)
+
+
+@pytest.mark.parametrize("surface", ["file", "origin"])
+def test_candidate_direct_loader_rejects_malformed_opposite_identity(
+    tmp_path: Path,
+    surface: str,
+) -> None:
+    renderer = GENERATOR.with_name("render_telemetry_registry_candidates.py").resolve()
+    canonical = GENERATOR.with_name("telemetry_canonical_record.py").resolve()
+    malformed = (
+        f"opposite.__file__ = {str(canonical)!r}\nopposite.__spec__ = None"
+        if surface == "file"
+        else (
+            f"opposite.__file__ = {str(tmp_path / 'missing.py')!r}\n"
+            f"opposite.__spec__ = importlib.util.spec_from_file_location("
+            f"'scripts.telemetry_canonical_record', {str(canonical)!r})"
+        )
+    )
+    code = f"""
+import importlib.util
+import sys
+from types import ModuleType
+opposite = ModuleType("scripts.telemetry_canonical_record")
+{malformed}
+sys.modules[opposite.__name__] = opposite
+spec = importlib.util.spec_from_file_location("malformed_opposite_renderer", {str(renderer)!r})
+module = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = module
+try:
+    spec.loader.exec_module(module)
+except RuntimeError as exc:
+    assert "conflicting package identity" in str(exc)
+else:
+    raise AssertionError("candidate renderer accepted a malformed opposite identity")
+"""
+    completed = subprocess.run(
+        [sys.executable, "-c", code],
+        cwd=ROOT / "cli/tests",
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=60,
+    )
+    assert completed.returncode == 0, completed.stderr
 
 
 def _render_manifest_only(module: ModuleType, ir: Any) -> dict[Path, bytes]:
@@ -1277,6 +1627,53 @@ def test_unmanifested_portable_artifact_is_rejected_by_write_preflight(
         module.write_outputs(root, outputs)
     assert write_called is False
     assert extra.is_file()
+
+
+def test_write_preflight_allows_prior_owned_portable_retirement_but_rejects_foreign_file(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _load_generator_module("telemetry_registry_prior_owned_retirement")
+    root = _fixture_root(tmp_path)
+    generated = root / "schemas/telemetry/generated"
+    generated.mkdir(parents=True)
+    marker = b'"x-defenseclaw-generated"'
+    old_manifest = module.generated_transaction.RenderedOutput(
+        b'{"x-defenseclaw-generated":"old"}\n',
+        marker,
+    )
+    new_manifest = module.generated_transaction.RenderedOutput(
+        b'{"x-defenseclaw-generated":"new"}\n',
+        marker,
+    )
+    retired_path = "schemas/telemetry/generated/retired-public-view.json"
+    retired = module.generated_transaction.RenderedOutput(
+        b'{"x-defenseclaw-generated":"retire-me"}\n',
+        marker,
+    )
+    manifest_path = module.generated_transaction.MANIFEST_PATH
+    (root / manifest_path).write_bytes(old_manifest.payload)
+    (root / retired_path).write_bytes(retired.payload)
+    desired = {manifest_path: new_manifest}
+    current_prior = {
+        manifest_path: module.generated_transaction.PriorOwnedOutput.from_rendered(old_manifest),
+        retired_path: module.generated_transaction.PriorOwnedOutput.from_rendered(retired),
+    }
+    monkeypatch.setattr(module, "_transaction_outputs", lambda *_: desired)
+    monkeypatch.setattr(module, "_prior_output_ownership", lambda *_: current_prior)
+
+    module.write_outputs(root, {})
+    assert not (root / retired_path).exists()
+    assert (root / manifest_path).read_bytes() == new_manifest.payload
+
+    current_prior = {
+        manifest_path: module.generated_transaction.PriorOwnedOutput.from_rendered(new_manifest),
+    }
+    foreign = generated / "foreign-public-view.json"
+    foreign.write_bytes(b'{"x-defenseclaw-generated":"foreign"}\n')
+    with pytest.raises(module.RegistryError, match="foreign-public-view.json"):
+        module.write_outputs(root, {})
+    assert foreign.is_file()
 
 
 def _explicit_builder_context(
@@ -1700,16 +2097,14 @@ def test_upstream_attribute_extension_is_required_exactly_once(tmp_path: Path) -
     root = _fixture_root(tmp_path)
     path = root / "schemas/telemetry/v8/genai.yaml"
     document = yaml.safe_load(path.read_text(encoding="utf-8"))
+    expected_missing = sorted(extension["ref"] for extension in document["attribute_extensions"])
     document["attribute_extensions"] = []
     _write_yaml(path, document)
 
     result = _run(root, "--write")
 
     assert result.returncode == 1
-    assert (
-        "coverage mismatch missing=['gen_ai.input.messages', 'gen_ai.operation.name', "
-        "'gen_ai.output.messages', 'gen_ai.tool.call.arguments', 'gen_ai.tool.call.result']"
-    ) in result.stderr
+    assert f"coverage mismatch missing={expected_missing!r}" in result.stderr
 
 
 @pytest.mark.parametrize(
@@ -2524,8 +2919,8 @@ def test_compiler_ir_preserves_every_validated_public_contract(tmp_path: Path) -
     assert core.snapshot.source_archive.endswith(f"/{core.revision}.tar.gz")
     assert core.snapshot.format_version == 1
     assert core.snapshot.format == "defenseclaw-normalized-semconv-v1"
-    assert core.snapshot.source_files[0].path == "model/registry.yaml"
-    assert len(core.snapshot.source_files[0].sha256) == 64
+    core_registry_source = next(source for source in core.snapshot.source_files if source.path == "model/registry.yaml")
+    assert len(core_registry_source.sha256) == 64
     assert core.snapshot.attributes[0].stability_source == "upstream"
     ownership = {item.ref: item.owner for item in ir.upstream_attribute_ownership}
     assert ownership["service.name"] == "otel"
@@ -5974,6 +6369,10 @@ def test_removed_non_signal_group_without_route_selector_is_historical_only(tmp_
     root = _fixture_root(tmp_path)
     path = root / "schemas/telemetry/v8/genai.yaml"
     domain = yaml.safe_load(path.read_text(encoding="utf-8"))
+    # Keep the unrelated v1 public-view alias active in this synthetic v2
+    # registry so the fixture isolates non-signal group retirement.
+    public_view_alias = next(item for item in domain["attributes"] if item["id"] == "gen_ai.agent.type")
+    public_view_alias["removed_in"] = "telemetry-registry-v3"
     domain["groups"].append(
         {
             "id": "historical.attributes",
@@ -5991,6 +6390,10 @@ def test_removed_non_signal_group_without_route_selector_is_historical_only(tmp_
     registry = yaml.safe_load(registry_path.read_text(encoding="utf-8"))
     registry["registry_version"] = 2
     _write_yaml(registry_path, registry)
+    public_views_path = root / "schemas/telemetry/v8/public-views.yaml"
+    public_views = yaml.safe_load(public_views_path.read_text(encoding="utf-8"))
+    public_views["generated_marker"]["registry_version"] = 2
+    _write_yaml(public_views_path, public_views)
     module = _load_generator_module("telemetry_registry_historical_non_signal")
 
     ir = module.compile_registry(root)
@@ -7065,6 +7468,8 @@ def test_every_hashed_authored_input_is_read_once_for_parse_and_digest(
         "schemas/telemetry/v8/security.yaml",
         "schemas/telemetry/v8/operations.yaml",
         "schemas/telemetry/v8/examples.yaml",
+        "schemas/telemetry/v8/public-views.yaml",
+        "schemas/telemetry/v8/baselines/public-schemas-v7.normalized.json",
         "docs/design/observability-v8/current-state-inventory.yaml",
         *(f"schemas/telemetry/v8/upstream/{dependency[5]}" for dependency in DEPENDENCIES),
         *(row["path"] for row in structural_rows),
@@ -7131,6 +7536,390 @@ def test_structured_facts_participate_in_materialized_digest() -> None:
         ).typed_canonical_json_sha256
         != ir.materialized_view.typed_canonical_json_sha256
     )
+
+
+def test_fixture_root_preserves_reviewed_public_view_authority_and_canonical_catalog(
+    tmp_path: Path,
+) -> None:
+    root = _fixture_root(tmp_path)
+    source = ROOT / "schemas/telemetry/v8/public-views.yaml"
+    target = root / "schemas/telemetry/v8/public-views.yaml"
+    assert target.read_bytes() == source.read_bytes()
+
+    module = _load_generator_module("telemetry_registry_fixture_public_view_authority")
+    ir = module.compile_registry(root)
+    canonical = [
+        disposition
+        for view in ir.public_views.views
+        for disposition in view.field_dispositions
+        if disposition.source.kind == "canonical_attribute"
+    ]
+    assert len(canonical) == 174
+    assert len({item.source.id for item in canonical}) == 78
+    assert ir.public_views.authority_sha256 == module.PUBLIC_VIEW_AUTHORITY_SHA256
+
+
+def test_checked_in_public_views_are_exact_immutable_materialized_authority() -> None:
+    module = _load_generator_module("telemetry_registry_public_views_exact")
+    ir = module.compile_registry(ROOT)
+
+    assert ir.public_views_path == "schemas/telemetry/v8/public-views.yaml"
+    assert ir.public_views.schema_version == 1
+    assert ir.public_views.compatibility_epoch == "public-schemas-v7-marker-only-v1"
+    assert ir.public_views.baseline.sha256 == "d44ea610e9e82b142788babce9c8853713aa004a037c6bd2684502c80a1ca2b3"
+    assert ir.public_views.marker.keyword == "x-defenseclaw-generated"
+    assert ir.public_views.marker.registry_version == ir.registry_version
+    assert ir.public_views.authority_sha256 == "8b617e6145719eef96625b41c6ca961dd0c16c060ef7d453b2f35888b489f171"
+    assert len(ir.public_views.views) == 21
+    assert sum(len(view.field_dispositions) for view in ir.public_views.views) == 756
+    assert sum(len(view.dynamic_scopes) for view in ir.public_views.views) == 94
+    assert {view.id: len(view.dynamic_scopes) for view in ir.public_views.views} == {
+        "activity-event": 5,
+        "audit-event": 1,
+        "gateway-event-envelope": 32,
+        "hook-audit-envelope": 1,
+        "network-egress-event": 0,
+        "otel-agent-lifecycle-event": 1,
+        "otel-asset-lifecycle-event": 5,
+        "otel-connector-telemetry-event": 5,
+        "otel-galileo-export-profile": 0,
+        "otel-metrics": 4,
+        "otel-resource": 1,
+        "otel-runtime-agent-span": 4,
+        "otel-runtime-alert-event": 5,
+        "otel-runtime-approval-span": 4,
+        "otel-runtime-llm-span": 4,
+        "otel-runtime-tool-span": 5,
+        "otel-scan-finding-event": 5,
+        "otel-scan-result-event": 7,
+        "scan-event": 3,
+        "scan-finding-event": 2,
+        "scan-result": 0,
+    }
+    assert sum(len(view.references) for view in ir.public_views.views) == 39
+    dispositions = tuple(disposition for view in ir.public_views.views for disposition in view.field_dispositions)
+    assert sum(item.source.kind == "canonical_attribute" for item in dispositions) == 174
+    assert sum(item.source.kind == "transport_only" for item in dispositions) == 582
+    assert all(
+        item.disposition == "preserved"
+        and item.projected_name == item.property_name
+        and item.constraints.mode == "exact-baseline-subschema"
+        and item.constraints.schema_canonical_json
+        and item.encoding_conversion == "identity"
+        and item.redaction_parity == "baseline-unredacted"
+        and item.fixture_coverage == ("legacy-public-schema-parity-v1",)
+        for item in dispositions
+    )
+    assert sum(len(view.layout.definition_pointers) for view in ir.public_views.views) == 40
+    assert sum(len(view.layout.discriminator_pointers) for view in ir.public_views.views) == 131
+    assert sum(len(view.layout.additional_properties_overrides) for view in ir.public_views.views) == 16
+    assert all(
+        scope.schema_canonical_json
+        and scope.source.kind == "transport_only"
+        and scope.field_class == "content"
+        and scope.sensitivity == "sensitive"
+        for view in ir.public_views.views
+        for scope in view.dynamic_scopes
+    )
+    dynamic_policies = Counter(scope.policy for view in ir.public_views.views for scope in view.dynamic_scopes)
+    assert dynamic_policies == {
+        "additional-properties-default-allow": 89,
+        "additional-properties-explicit-allow": 2,
+        "additional-properties-schema": 3,
+    }
+    assert all(
+        policy.schema_canonical_json
+        for view in ir.public_views.views
+        for policy in view.layout.additional_properties_overrides
+    )
+    assert all(
+        view.template.kind == "exact-baseline-with-marker"
+        and view.template.transport == "json-schema-resource"
+        and view.layout.additional_properties_default == "allow"
+        for view in ir.public_views.views
+    )
+    assert all(view.authority == "candidate-not-public-authority" for view in ir.public_views.views)
+    baseline_module = module._load_sibling_module("telemetry_public_schema_baseline")
+    baseline_path = ROOT / ir.public_views.baseline.path
+    baseline = baseline_module.load_public_schema_baseline_bytes(
+        baseline_path.read_bytes(),
+        ir.public_views.baseline.path,
+    )
+    for view, resource in zip(ir.public_views.views, baseline.resources, strict=True):
+        canonical = module._public_subschema_bytes(baseline_module, resource.document)
+        assert view.baseline_document_canonical_json == canonical
+        parsed = baseline_module.parse_lossless_json(canonical, view.output_path)
+        assert baseline_module.render_lossless_json(parsed, pretty=False) == canonical
+        assert (
+            hashlib.sha256(module.PUBLIC_VIEW_SUBSCHEMA_DIGEST_DOMAIN + canonical).hexdigest()
+            == view.template.root_schema_sha256
+        )
+    assert {digest.path for digest in ir.input_digests} >= {
+        "schemas/telemetry/v8/public-views.yaml",
+        "schemas/telemetry/v8/baselines/public-schemas-v7.normalized.json",
+    }
+    materialized_fields = ir.materialized_view.facts["fields"]
+    assert materialized_fields["public_views"]["$type"] == "PublicViewsIR"
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        ir.public_views.views[0].authority = "generated"
+    with pytest.raises(TypeError):
+        ir.materialized_view.facts["fields"]["public_views"] = None
+
+
+def test_candidate_renderer_rejects_mutually_consistent_forged_public_view_authority() -> None:
+    module = _load_generator_module("telemetry_registry_public_views_renderer_authority")
+    ir = module.compile_registry(ROOT)
+    portable_renderer, _go_renderer, _coordinator = module._load_candidate_renderers()
+    portable_renderer.build_candidate_render_index(ir.materialized_view)
+
+    values = {
+        field.name: getattr(ir, field.name)
+        for field in module.dataclass_fields(module.RegistryIR)
+        if field.name != "materialized_view"
+    }
+    original = ir.public_views.views[0]
+    forged_document = json.dumps(
+        {
+            "$schema": original.dialect,
+            "$id": original.schema_id,
+            "title": "mutually consistent forged document",
+            "type": "object",
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    forged_template = module.replace(
+        original.template,
+        root_schema_sha256=hashlib.sha256(module.PUBLIC_VIEW_SUBSCHEMA_DIGEST_DOMAIN + forged_document).hexdigest(),
+    )
+    forged_view = module.replace(
+        original,
+        baseline_document_canonical_json=forged_document,
+        template=forged_template,
+    )
+    forged_views = (forged_view, *ir.public_views.views[1:])
+    forged_public_views = module.replace(
+        ir.public_views,
+        views=forged_views,
+        authority_sha256=module._public_view_authority_sha256(forged_views),
+    )
+    forged_materialized = module._build_materialized_registry_view(dict(values, public_views=forged_public_views))
+
+    with pytest.raises(
+        portable_renderer.CandidateRenderError,
+        match="public view render authority digest is invalid",
+    ):
+        portable_renderer.build_candidate_render_index(forged_materialized)
+
+
+def test_public_dynamic_inventory_models_pattern_unevaluated_default_allow_and_deny() -> None:
+    module = _load_generator_module("telemetry_registry_public_dynamic_keyword_coverage")
+    document = {
+        "type": "object",
+        "additionalProperties": False,
+        "patternProperties": {"^extension-[a-z]+$": {"type": "string"}},
+        "allOf": [
+            {"type": ["object", "null"]},
+            {"properties": {}, "additionalProperties": True},
+            {
+                "type": "object",
+                "additionalProperties": False,
+                "unevaluatedProperties": {"type": "integer"},
+            },
+            {
+                "type": "object",
+                "additionalProperties": False,
+                "unevaluatedProperties": True,
+            },
+        ],
+    }
+
+    dynamic = module._public_dynamic_inventory(document)
+    assert {pointer: policy for pointer, (policy, _schema) in dynamic.items()} == {
+        "/allOf/0/additionalProperties": "additional-properties-default-allow",
+        "/allOf/1/additionalProperties": "additional-properties-explicit-allow",
+        "/allOf/2/unevaluatedProperties": "unevaluated-properties-schema",
+        "/allOf/3/unevaluatedProperties": "unevaluated-properties-explicit-allow",
+        "/patternProperties/^extension-[a-z]+$": "pattern-properties-schema",
+    }
+    additional = module._public_additional_properties_inventory(document)
+    assert {pointer: mode for pointer, (mode, _schema) in additional.items()} == {
+        "/additionalProperties": "deny",
+        "/allOf/1/additionalProperties": "allow",
+        "/allOf/2/additionalProperties": "deny",
+        "/allOf/3/additionalProperties": "deny",
+    }
+
+
+def test_registry_requires_the_exact_public_views_source_reference(tmp_path: Path) -> None:
+    root = _fixture_root(tmp_path)
+    registry_path = root / "schemas/telemetry/v8/registry.yaml"
+    registry = yaml.safe_load(registry_path.read_text(encoding="utf-8"))
+    registry["public_views"] = "schemas/telemetry/v8/other-public-views.yaml"
+    _write_yaml_raw(registry_path, registry)
+    module = _load_generator_module("telemetry_registry_public_views_reference")
+    with pytest.raises(module.RegistryError, match="registry.public_views: expected"):
+        module.compile_registry(root)
+
+
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    [
+        ("missing-field", "incomplete baseline property coverage"),
+        ("duplicate-field", "duplicate pointer"),
+        ("wildcard-field", "without wildcards"),
+        ("invalid-pointer-escape", "invalid RFC6901 escape"),
+        ("missing-default-open-dynamic", "incomplete baseline dynamic-scope coverage"),
+        ("dynamic-policy", "dynamic policy drift"),
+        ("dynamic-classification", "dynamic scope classification drift"),
+        ("unknown-source", "unknown canonical registry source"),
+        ("dialect", "baseline dialect mismatch"),
+        ("schema-id", "baseline schema identity mismatch"),
+        ("unknown-reference", "unknown public view"),
+        ("reference-drift", "reference metadata drift"),
+        ("reference-pointer-drift", "reference metadata drift"),
+        ("number-metadata", "resource baseline identity drift"),
+        ("baseline-digest", "baseline byte digest mismatch"),
+        ("baseline-identity", "duplicated baseline identity drift"),
+        ("view-id-swap", "stable view ID inventory/order differs"),
+        ("lifecycle", "marker-only stable lifecycle drift"),
+        ("targets", "public-view target inventory drift"),
+        ("constraint-metadata", "compatibility metadata drift"),
+        ("classification", "unknown field class or sensitivity"),
+        ("canonical-source-binding", "canonical source must match the preserved property"),
+        ("canonical-class-parity", "canonical source redaction/class parity mismatch"),
+        ("transport-source-swap", "unstable transport-only field identity"),
+        ("dynamic-id", "unstable dynamic-scope identity"),
+        ("additional-duplicate", "duplicate pointer"),
+        ("additional-policy", "additionalProperties policy drift"),
+        ("additional-order", "pointers must use canonical order"),
+        ("definition-layout", "definition layout drift"),
+        ("template", "root/transport template drift"),
+        ("fixture-coverage", "expected a string sequence"),
+    ],
+)
+def test_public_view_grammar_rejects_incomplete_or_forged_source(
+    tmp_path: Path,
+    mutation: str,
+    message: str,
+) -> None:
+    root = _fixture_root(tmp_path)
+    path = root / "schemas/telemetry/v8/public-views.yaml"
+    source = yaml.safe_load(path.read_text(encoding="utf-8"))
+    first = source["views"][0]
+
+    def canonical_depth_disposition() -> dict[str, Any]:
+        return next(
+            disposition
+            for view in source["views"]
+            for disposition in view["field_dispositions"]
+            if disposition["property_name"] == "defenseclaw.agent.depth"
+        )
+
+    if mutation == "missing-field":
+        first["field_dispositions"].pop()
+    elif mutation == "duplicate-field":
+        first["field_dispositions"].append(copy.deepcopy(first["field_dispositions"][0]))
+    elif mutation == "wildcard-field":
+        first["field_dispositions"][0]["pointer"] = "/*"
+    elif mutation == "invalid-pointer-escape":
+        first["field_dispositions"][0]["pointer"] = "/bad~escape"
+    elif mutation == "missing-default-open-dynamic":
+        view = next(
+            view
+            for view in source["views"]
+            if any(scope["policy"] == "additional-properties-default-allow" for scope in view["dynamic_scopes"])
+        )
+        index = max(
+            index
+            for index, scope in enumerate(view["dynamic_scopes"])
+            if scope["policy"] == "additional-properties-default-allow"
+        )
+        view["dynamic_scopes"].pop(index)
+    elif mutation == "dynamic-policy":
+        next(view for view in source["views"] if view["dynamic_scopes"])["dynamic_scopes"][0]["policy"] = (
+            "additional-properties-explicit-allow"
+        )
+    elif mutation == "dynamic-classification":
+        next(view for view in source["views"] if view["dynamic_scopes"])["dynamic_scopes"][0]["field_class"] = (
+            "metadata"
+        )
+    elif mutation == "unknown-source":
+        first["field_dispositions"][0]["source"] = {
+            "kind": "canonical_attribute",
+            "id": "unknown.attribute",
+        }
+    elif mutation == "dialect":
+        first["dialect"] = "http://json-schema.org/draft-07/schema#"
+    elif mutation == "schema-id":
+        first["schema_id"] = "https://example.invalid/unknown.json"
+    elif mutation == "unknown-reference":
+        next(view for view in source["views"] if view["references"])["references"][0]["target_view"] = "unknown-view"
+    elif mutation == "reference-drift":
+        next(view for view in source["views"] if view["references"])["references"][0]["reference"] = "#/forged"
+    elif mutation == "reference-pointer-drift":
+        next(view for view in source["views"] if view["references"])["references"][0]["target_pointer"] = "/forged"
+    elif mutation == "number-metadata":
+        view = next(view for view in source["views"] if view["baseline"]["number_lexemes"])
+        pointer = next(iter(view["baseline"]["number_lexemes"]))
+        view["baseline"]["number_lexemes"][pointer] = "999"
+    elif mutation == "baseline-digest":
+        source["baseline"]["sha256"] = "0" * 64
+    elif mutation == "baseline-identity":
+        source["baseline"]["authority"] = "generated"
+    elif mutation == "view-id-swap":
+        first["id"], source["views"][1]["id"] = source["views"][1]["id"], first["id"]
+    elif mutation == "lifecycle":
+        first["lifecycle"].update(
+            {
+                "stability": "deprecated",
+                "deprecated_in": "telemetry-registry-v1",
+            }
+        )
+    elif mutation == "targets":
+        first["targets"]["mirrors"] = []
+    elif mutation == "constraint-metadata":
+        first["field_dispositions"][0]["constraints"]["schema_sha256"] = "0" * 64
+    elif mutation == "classification":
+        first["field_dispositions"][0]["field_class"] = "unknown"
+    elif mutation == "canonical-source-binding":
+        canonical_depth_disposition()["source"]["id"] = "defenseclaw.test.name"
+    elif mutation == "canonical-class-parity":
+        disposition = canonical_depth_disposition()
+        disposition["field_class"] = "content"
+    elif mutation == "transport-source-swap":
+        first["field_dispositions"][0]["source"], first["field_dispositions"][1]["source"] = (
+            first["field_dispositions"][1]["source"],
+            first["field_dispositions"][0]["source"],
+        )
+    elif mutation == "dynamic-id":
+        next(view for view in source["views"] if view["dynamic_scopes"])["dynamic_scopes"][0]["id"] = (
+            "forged-dynamic-id"
+        )
+    elif mutation == "additional-duplicate":
+        view = next(view for view in source["views"] if view["layout"]["additional_properties"]["overrides"])
+        overrides = view["layout"]["additional_properties"]["overrides"]
+        overrides.append(copy.deepcopy(overrides[0]))
+    elif mutation == "additional-policy":
+        view = next(view for view in source["views"] if view["layout"]["additional_properties"]["overrides"])
+        override = view["layout"]["additional_properties"]["overrides"][0]
+        override["mode"] = "allow" if override["mode"] != "allow" else "deny"
+    elif mutation == "additional-order":
+        view = next(view for view in source["views"] if len(view["layout"]["additional_properties"]["overrides"]) > 1)
+        view["layout"]["additional_properties"]["overrides"].reverse()
+    elif mutation == "definition-layout":
+        next(view for view in source["views"] if view["layout"]["definition_pointers"])["layout"][
+            "definition_pointers"
+        ].pop()
+    elif mutation == "template":
+        first["template"]["root_type"] = "array"
+    else:
+        first["field_dispositions"][0]["fixture_coverage"] = []
+    _write_yaml_raw(path, source)
+
+    module = _load_generator_module(f"telemetry_registry_public_views_{mutation.replace('-', '_')}")
+    with pytest.raises(module.RegistryError, match=message):
+        module.compile_registry(root)
 
 
 @pytest.mark.parametrize("surface", ["snapshot", "structural"])

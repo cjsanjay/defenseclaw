@@ -23,19 +23,26 @@ from typing import Any
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT / "scripts"))
 FIXTURE_COMPILER = ROOT / "scripts/telemetry_go_fixture_plan.py"
 GENERATOR = ROOT / "scripts/generate_telemetry_registry.py"
 CANDIDATE_RENDERER = ROOT / "scripts/render_telemetry_registry_candidates.py"
 
 
 def _load(name: str, path: Path) -> ModuleType:
+    existing = sys.modules.get(name)
+    if existing is not None:
+        assert isinstance(existing, ModuleType)
+        assert Path(existing.__file__).resolve() == path.resolve()
+        return existing
     spec = importlib.util.spec_from_file_location(name, path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     sys.modules[name] = module
     spec.loader.exec_module(module)
     return module
+
+
+_load("telemetry_canonical_record", ROOT / "scripts/telemetry_canonical_record.py")
 
 
 @pytest.fixture(scope="module")

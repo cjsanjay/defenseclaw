@@ -22,7 +22,23 @@ from typing import Any
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT / "scripts"))
+
+
+def _load(name: str, path: Path) -> ModuleType:
+    existing = sys.modules.get(name)
+    if existing is not None:
+        assert isinstance(existing, ModuleType)
+        assert Path(existing.__file__).resolve() == path.resolve()
+        return existing
+    spec = importlib.util.spec_from_file_location(name, path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+_load("telemetry_canonical_record", ROOT / "scripts/telemetry_canonical_record.py")
 SPEC = importlib.util.spec_from_file_location("telemetry_go_api_plan_test", ROOT / "scripts/telemetry_go_api_plan.py")
 assert SPEC is not None and SPEC.loader is not None
 plan = importlib.util.module_from_spec(SPEC)

@@ -3,7 +3,7 @@
     "artifact": "examples/valid/valid-model-chat-with-honest-missing-content-and-usage.json",
     "authority": "candidate-not-public-authority",
     "generator": "defenseclaw-telemetry-candidate-renderer-v1",
-    "materialized_view_sha256": "738e1790c3cb11c634998bb5bc43294fe1b29ac611e771b781e58389c9eba140",
+    "materialized_view_sha256": "4d9981ce5e74371eff03b1672b2f33bfdcd40b24f258c5621fa6524cfe5be87f",
     "registry_version": 1
   },
   "base_example": null,
@@ -101,7 +101,7 @@
     "/status/code": "metadata"
   },
   "id": "valid-model-chat-with-honest-missing-content-and-usage",
-  "materialized_view_sha256": "738e1790c3cb11c634998bb5bc43294fe1b29ac611e771b781e58389c9eba140",
+  "materialized_view_sha256": "4d9981ce5e74371eff03b1672b2f33bfdcd40b24f258c5621fa6524cfe5be87f",
   "mutation": null,
   "record": {
     "body": {
