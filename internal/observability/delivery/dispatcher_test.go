@@ -406,6 +406,88 @@ func TestEnqueueNeverCallsAdapterOnProducerGoroutine(t *testing.T) {
 	closeDispatcher(t, dispatcher)
 }
 
+func TestFlushWaitsForAcceptedPayloadWithoutStoppingIntake(t *testing.T) {
+	release := make(chan struct{})
+	adapter := &fakeAdapter{started: make(chan struct{}, 1), release: release}
+	dispatcher, err := delivery.NewDispatcher(testConfig("flush"), adapter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dispatcher.Activate()
+	if got := dispatcher.Enqueue(payload(t, "before-flush", "value")); !got.Accepted() {
+		t.Fatalf("enqueue before flush=%+v", got)
+	}
+	<-adapter.started
+
+	flushDone := make(chan error, 1)
+	go func() { flushDone <- dispatcher.Flush(context.Background()) }()
+	select {
+	case err := <-flushDone:
+		t.Fatalf("flush returned before terminal disposition: %v", err)
+	case <-time.After(20 * time.Millisecond):
+	}
+
+	close(release)
+	select {
+	case err := <-flushDone:
+		if err != nil {
+			t.Fatalf("flush: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("flush did not observe terminal disposition")
+	}
+	if got := dispatcher.Enqueue(payload(t, "after-flush", "value")); !got.Accepted() {
+		t.Fatalf("flush stopped intake: %+v", got)
+	}
+	closeDispatcher(t, dispatcher)
+	if got := dispatcher.Counters(); got.Accepted != 2 || got.Delivered != 2 {
+		t.Fatalf("counters=%+v", got)
+	}
+}
+
+func TestFlushCancellationDoesNotStopIntake(t *testing.T) {
+	release := make(chan struct{})
+	adapter := &fakeAdapter{started: make(chan struct{}, 1), release: release}
+	dispatcher, err := delivery.NewDispatcher(testConfig("flush-cancel"), adapter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dispatcher.Activate()
+	if got := dispatcher.Enqueue(payload(t, "blocked", "value")); !got.Accepted() {
+		t.Fatalf("enqueue=%+v", got)
+	}
+	<-adapter.started
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	if err := dispatcher.Flush(ctx); err != context.DeadlineExceeded {
+		t.Fatalf("flush cancellation=%v", err)
+	}
+	if got := dispatcher.Enqueue(payload(t, "still-open", "value")); !got.Accepted() {
+		t.Fatalf("canceled flush stopped intake: %+v", got)
+	}
+	close(release)
+	if err := dispatcher.Flush(context.Background()); err != nil {
+		t.Fatalf("second flush: %v", err)
+	}
+	closeDispatcher(t, dispatcher)
+}
+
+func TestFlushValidatesContextAndHandlesNilDispatcher(t *testing.T) {
+	dispatcher, err := delivery.NewDispatcher(testConfig("flush-context"), &fakeAdapter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := dispatcher.Flush(nil); !delivery.IsError(err, delivery.ErrorInvalidContext) {
+		t.Fatalf("nil context error=%v", err)
+	}
+	var nilDispatcher *delivery.Dispatcher
+	if err := nilDispatcher.Flush(context.Background()); err != nil {
+		t.Fatalf("nil dispatcher flush=%v", err)
+	}
+	closeDispatcher(t, dispatcher)
+}
+
 func TestEnqueueDoesNotWaitForAdapterBatchEstimator(t *testing.T) {
 	release := make(chan struct{})
 	adapter := &blockingSizerAdapter{entered: make(chan struct{}, 1), release: release}

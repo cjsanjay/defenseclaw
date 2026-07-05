@@ -61,6 +61,7 @@ type Dispatcher struct {
 	inFlightItems int
 	inFlightBytes int
 	wake          chan struct{}
+	flushNotify   chan struct{}
 
 	workerDone     chan struct{}
 	workerDoneOnce sync.Once
@@ -75,7 +76,8 @@ type Dispatcher struct {
 	observerStopOnce  sync.Once
 	observerDoneOnce  sync.Once
 
-	counters atomicCounters
+	counters  atomicCounters
+	completed atomic.Uint64
 }
 
 // NewDispatcher validates limits and snapshots configuration without touching
@@ -96,8 +98,9 @@ func NewDispatcher(config Config, adapter Adapter) (*Dispatcher, error) {
 	return &Dispatcher{
 		config: config, adapter: adapter,
 		rootContext: rootContext, cancelRoot: cancelRoot,
-		wake: make(chan struct{}, 1), workerDone: make(chan struct{}),
-		health: health, healthNotify: make(chan struct{}, 1),
+		wake: make(chan struct{}, 1), flushNotify: make(chan struct{}, 1),
+		workerDone: make(chan struct{}),
+		health:     health, healthNotify: make(chan struct{}, 1),
 		observerStop: make(chan struct{}), observerDone: make(chan struct{}),
 	}, nil
 }
@@ -217,6 +220,28 @@ func (dispatcher *Dispatcher) StopIntake(context.Context) error {
 		dispatcher.setHealth(HealthDraining, HealthReasonIntakeStopped)
 	}
 	dispatcher.signalWorker()
+	return nil
+}
+
+// Flush waits until every payload accepted before this call reaches a terminal
+// delivery, rejection, or drop disposition. Unlike Drain it keeps intake open,
+// so generation-owned trace processors can implement ForceFlush without making
+// the destination unusable for subsequent spans.
+func (dispatcher *Dispatcher) Flush(ctx context.Context) error {
+	if dispatcher == nil {
+		return nil
+	}
+	if ctx == nil {
+		return newError(ErrorInvalidContext)
+	}
+	target := dispatcher.counters.accepted.Load()
+	for dispatcher.completed.Load() < target {
+		select {
+		case <-dispatcher.flushNotify:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
 	return nil
 }
 
@@ -608,6 +633,8 @@ func (dispatcher *Dispatcher) release(payloads []Payload) {
 	dispatcher.inFlightItems = 0
 	dispatcher.inFlightBytes = 0
 	dispatcher.queueMu.Unlock()
+	dispatcher.completed.Add(uint64(len(payloads)))
+	dispatcher.signalFlush()
 }
 
 func (dispatcher *Dispatcher) abandonPending() {
@@ -621,12 +648,21 @@ func (dispatcher *Dispatcher) abandonPending() {
 	dispatcher.queueMu.Unlock()
 	if dropped > 0 {
 		dispatcher.counters.dropped.Add(uint64(dropped))
+		dispatcher.completed.Add(uint64(dropped))
+		dispatcher.signalFlush()
 	}
 }
 
 func (dispatcher *Dispatcher) signalWorker() {
 	select {
 	case dispatcher.wake <- struct{}{}:
+	default:
+	}
+}
+
+func (dispatcher *Dispatcher) signalFlush() {
+	select {
+	case dispatcher.flushNotify <- struct{}{}:
 	default:
 	}
 }
