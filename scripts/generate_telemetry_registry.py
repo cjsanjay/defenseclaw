@@ -8066,7 +8066,12 @@ def compile_registry(root: Path) -> RegistryIR:
         metric_compatibility_profile,
         metric_inventory,
     )
-    _validate_span_name_patterns(group_owners, local_attributes, upstream_extensions)
+    _validate_span_name_patterns(
+        group_owners,
+        local_attributes,
+        upstream_extensions,
+        upstream_attributes,
+    )
     go_symbol_table = _build_go_symbol_table(
         go_symbol_policy,
         go_symbol_overrides,
@@ -8597,6 +8602,7 @@ def _validate_span_name_patterns(
     groups: dict[str, GroupIR],
     local_attributes: dict[str, AttributeIR],
     upstream_extensions: dict[str, AttributeExtensionIR],
+    upstream_attributes: Mapping[str, tuple[str, SnapshotAttribute]],
 ) -> None:
     prohibited_classes = {"content", "credential", "path", "evidence", "reason", "error"}
     for group in groups.values():
@@ -8604,24 +8610,38 @@ def _validate_span_name_patterns(
             continue
         if group.span_name_pattern is None or group.span_name_parts is None:
             raise RegistryError(f"span {group.id}: missing compiled name pattern")
-        available = frozenset(use.ref for use in group.resolved_uses)
+        uses = {use.ref: use for use in group.resolved_uses}
         for part in group.span_name_parts:
             if part.kind == "literal":
                 continue
             assert part.field is not None
             placeholder = part.field
-            if placeholder not in available:
+            use = uses.get(placeholder)
+            if use is None:
                 raise RegistryError(f"span {group.id}: unresolved or transformed name placeholder {placeholder!r}")
             local = local_attributes.get(placeholder)
             extension = upstream_extensions.get(placeholder)
             if local is not None:
                 field_class = local.field_class
                 cardinality = local.cardinality
+                string_only = local.field_type == "string"
             elif extension is not None:
                 field_class = extension.field_class
                 cardinality = extension.cardinality
+                upstream = upstream_attributes.get(placeholder)
+                string_only = upstream is not None and upstream[1].allowed_types == ("string",)
             else:
                 raise RegistryError(f"span {group.id}: name placeholder has no privacy metadata")
+            if (
+                use.role != "attributes"
+                or use.requirement_level != "required"
+                or use.conditional is not None
+                or not string_only
+            ):
+                raise RegistryError(
+                    f"span {group.id}: name placeholder {placeholder!r} must resolve as an unconditional "
+                    "required string attribute"
+                )
             if cardinality == "high" or field_class in prohibited_classes:
                 raise RegistryError(
                     f"span {group.id}: unsafe name placeholder {placeholder} "

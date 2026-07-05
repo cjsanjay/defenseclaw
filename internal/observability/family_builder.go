@@ -132,6 +132,9 @@ func (builder *FamilyBuilder) buildResolvedGeneratedLog(
 	if err != nil {
 		return Record{}, err
 	}
+	if err := validateFamilyCrossFieldValues(contract.crossFieldRelations, body); err != nil {
+		return Record{}, err
+	}
 	if err := verifyFamilyFieldClassCoverage(body, classes); err != nil {
 		return Record{}, err
 	}
@@ -208,6 +211,9 @@ func (builder *FamilyBuilder) buildGeneratedTrace(
 		context,
 	)
 	if err != nil {
+		return Record{}, err
+	}
+	if err := validateFamilyCrossFieldValues(base.crossFieldRelations, attributes); err != nil {
 		return Record{}, err
 	}
 	if err := validateFamilyStructuredValue(attributes, contract.attributeLimits); err != nil {
@@ -412,6 +418,9 @@ func (builder *FamilyBuilder) buildGeneratedMetric(
 	context := familyContext(base, input.envelope, Absent[Outcome]())
 	labels, labelClasses, err := materializeFamilyFields(base.fields, input.labels, input.conditions, context)
 	if err != nil {
+		return Record{}, err
+	}
+	if err := validateFamilyCrossFieldValues(base.crossFieldRelations, labels); err != nil {
 		return Record{}, err
 	}
 	if err := validateFamilyStructuredValue(labels, contract.attributeLimits); err != nil {

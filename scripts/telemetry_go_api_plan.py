@@ -33,6 +33,13 @@ import re
 from collections.abc import Mapping, Sequence
 from typing import Any, Final, TypeAlias
 
+try:
+    from scripts.telemetry_canonical_record import CanonicalRecordError, canonical_record_json
+except ModuleNotFoundError as exc:  # pragma: no cover - direct script execution
+    if exc.name != "scripts":
+        raise
+    from telemetry_canonical_record import CanonicalRecordError, canonical_record_json  # type: ignore[no-redef]
+
 
 class GoAPIPlanError(RuntimeError):
     """A deterministic compiler-contract failure."""
@@ -329,12 +336,29 @@ class GoOutcomePolicyPlanIR:
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
+class GoValueCodeEntryPlanIR:
+    value: str
+    code: int
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class GoCrossFieldRelationPlanIR:
+    catalog_id: str
+    arm: str
+    value_key: str
+    code_key: str
+    entries: tuple[GoValueCodeEntryPlanIR, ...]
+    mismatch_error: GoTypedSymbolRefIR
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
 class GoBaseFamilyContractPlanIR:
     family_id: str
     identity: GoIdentityContractPlanIR
     family_schema_version: int
     outcome: GoOutcomePolicyPlanIR
     fields: tuple[GoKernelFieldDescriptorIR, ...]
+    cross_field_relations: tuple[GoCrossFieldRelationPlanIR, ...]
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -520,6 +544,16 @@ class GoAPIPlanIR:
     fixtures: tuple[GoFixturePlanIR, ...]
     files: tuple[GoFilePlanIR, ...]
     api_plan_sha256: str
+
+    def recomputed_digest(self) -> str:
+        """Return the compiler-owned digest of the current immutable facts."""
+
+        return _plan_digest(self)
+
+    def verify_digest(self) -> bool:
+        """Report whether the recorded digest still binds every typed fact."""
+
+        return self.api_plan_sha256 == self.recomputed_digest()
 
 
 _GO_API_PLAN_DIGEST_DOMAIN: Final = b"DefenseClaw GoAPIPlanIR v1\x00"
@@ -819,6 +853,10 @@ _OUTCOME_SYMBOLS: Final = {
     "skipped": "OutcomeSkipped",
     "no_change": "OutcomeNoChange",
 }
+_VALUE_CATALOG_ERROR_SYMBOLS: Final = {
+    "agent-phase-v1": "FamilyBuildLifecyclePhaseCodeMismatch",
+}
+MAX_CROSS_FIELD_RELATION_ENTRIES: Final = 8192
 _CALLABLE_BODY_ARMS: Final = frozenset(
     {"family_log", "family_span", "family_metric", "event", "link", "structured_member"}
 )
@@ -1445,17 +1483,27 @@ def _string_validation_helper() -> GoKernelHelperRefIR:
 
 def _condition_fields(
     owner: str,
-    values: Sequence[GoFieldPlanIR],
+    descriptor_ids: Sequence[str],
+    fields: Mapping[str, _Field],
     start: int,
     policy: _Policy,
 ) -> tuple[GoFieldPlanIR, ...]:
-    seen: set[str] = set()
+    seen: dict[str, str] = {}
     result: list[GoFieldPlanIR] = []
-    for value in values:
-        fact = value.condition_binding
-        if fact is None or fact in seen:
+    for descriptor_id in descriptor_ids:
+        field = fields[descriptor_id]
+        fact = field.condition_fact
+        condition_id = field.condition_id
+        if fact is None:
             continue
-        seen.add(fact)
+        if condition_id is None:
+            raise GoAPIPlanError(f"{owner}: conditional field has no condition ID")
+        prior = seen.get(fact)
+        if prior is not None:
+            if prior != condition_id:
+                raise GoAPIPlanError(f"{owner}: condition fact maps to multiple condition IDs")
+            continue
+        seen[fact] = condition_id
         selector = "Condition" + _public_name(policy, fact, f"condition selector {owner}")
         result.append(
             GoFieldPlanIR(
@@ -1565,19 +1613,19 @@ def _value_bindings(
 
 
 def _condition_bindings(
-    owner_fields: Sequence[GoFieldPlanIR], fields: Mapping[str, _Field]
+    owner_fields: Sequence[GoFieldPlanIR], descriptor_ids: Sequence[str], fields: Mapping[str, _Field]
 ) -> tuple[GoConditionBindingPlanIR, ...]:
     selector_by_fact = {
         field.condition_binding: field.selector for field in owner_fields if field.conversion_op == "condition_fact"
     }
     condition_by_fact: dict[str, str] = {}
-    for public in owner_fields:
-        field = fields.get(public.enriched_descriptor_id)
-        if field is None or field.condition_fact is None or field.condition_id is None:
+    for descriptor_id in descriptor_ids:
+        field = fields[descriptor_id]
+        if field.condition_fact is None or field.condition_id is None:
             continue
         prior = condition_by_fact.setdefault(field.condition_fact, field.condition_id)
         if prior != field.condition_id:
-            raise GoAPIPlanError(f"{public.owner}: condition fact maps to multiple condition IDs")
+            raise GoAPIPlanError("condition fact maps to multiple condition IDs")
     if set(selector_by_fact) != set(condition_by_fact):
         raise GoAPIPlanError("condition selector coverage disagrees with enriched fields")
     return tuple(
@@ -1744,6 +1792,95 @@ def _metric_limits_from_trace_contract(index: Any) -> GoKernelLimitsIR:
         _integer(constraints.get("max_depth"), "metric max depth", minimum=1),
         _integer(constraints.get("max_properties"), "metric max properties", minimum=1),
     )
+
+
+def _cross_field_relations(
+    index: Any,
+    family_ids: Sequence[str],
+    fields: Mapping[str, _Field],
+) -> tuple[GoCrossFieldRelationPlanIR, ...]:
+    candidate_fields = _read(index, "fields", "candidate")
+    if not isinstance(candidate_fields, Mapping):
+        raise GoAPIPlanError("candidate.fields: expected mapping")
+    raw_catalogs = _sequence(candidate_fields.get("value_catalogs"), "candidate.fields.value_catalogs")
+    family_by_key = {fields[descriptor_id].semantic_source_id: fields[descriptor_id] for descriptor_id in family_ids}
+    relations: list[GoCrossFieldRelationPlanIR] = []
+    for position, raw_catalog in enumerate(raw_catalogs):
+        path = f"candidate.fields.value_catalogs[{position}]"
+        catalog = _tag_fields(raw_catalog, path)
+        catalog_id = _string(catalog.get("id"), f"{path}.id")
+        arm = _string(catalog.get("kind"), f"{path}.kind")
+        if arm != "string-int64-bijection":
+            raise GoAPIPlanError(f"{path}.kind: unsupported cross-field relation")
+        value_key = _string(catalog.get("paired_value_attribute"), f"{path}.paired_value_attribute")
+        code_key = _string(catalog.get("code_attribute"), f"{path}.code_attribute")
+        value_field = family_by_key.get(value_key)
+        code_field = family_by_key.get(code_key)
+        if (value_field is None) != (code_field is None):
+            raise GoAPIPlanError(f"{path}: family exposes only one side of a cross-field relation")
+        if value_field is None:
+            continue
+        if (
+            value_field.primitive_type != "string"
+            or code_field is None
+            or code_field.primitive_type != "int64"
+            or value_field.value_source != "input"
+            or code_field.value_source != "input"
+        ):
+            raise GoAPIPlanError(f"{path}: cross-field relation types are incompatible with the kernel")
+        value_constraints = _typed_constraints(value_field)
+        code_constraints = _typed_constraints(code_field)
+        if not value_constraints.enum_values:
+            raise GoAPIPlanError(f"{path}: paired value field requires a closed enum")
+        entries: list[GoValueCodeEntryPlanIR] = []
+        seen_values: set[str] = set()
+        seen_codes: set[int] = set()
+        raw_entries = _sequence(catalog.get("entries"), f"{path}.entries")
+        if not raw_entries or len(raw_entries) > MAX_CROSS_FIELD_RELATION_ENTRIES:
+            raise GoAPIPlanError(f"{path}.entries: expected bounded nonempty relation")
+        for entry_position, raw_entry in enumerate(raw_entries):
+            entry = _tag_fields(raw_entry, f"{path}.entries[{entry_position}]")
+            value = _string(entry.get("value"), f"{path}.entries[{entry_position}].value")
+            code = _integer(entry.get("code"), f"{path}.entries[{entry_position}].code", minimum=1)
+            if code > 2**63 - 1:
+                raise GoAPIPlanError(f"{path}.entries[{entry_position}].code: outside signed int64")
+            if value in seen_values or code in seen_codes:
+                raise GoAPIPlanError(f"{path}.entries: relation is not bijective")
+            if value_constraints.max_utf8_bytes > 0 and len(value.encode("utf-8")) > value_constraints.max_utf8_bytes:
+                raise GoAPIPlanError(f"{path}.entries[{entry_position}].value: violates paired field bounds")
+            if value not in value_constraints.enum_values:
+                raise GoAPIPlanError(f"{path}.entries[{entry_position}].value: outside paired field enum")
+            if value_constraints.pattern:
+                try:
+                    matches = re.search(value_constraints.pattern, value) is not None
+                except re.error as exc:
+                    raise GoAPIPlanError(f"{path}: paired field pattern is invalid") from exc
+                if not matches:
+                    raise GoAPIPlanError(f"{path}.entries[{entry_position}].value: violates paired field pattern")
+            if code_constraints.int_min is not None and code < code_constraints.int_min:
+                raise GoAPIPlanError(f"{path}.entries[{entry_position}].code: below paired field range")
+            if code_constraints.int_max is not None and code > code_constraints.int_max:
+                raise GoAPIPlanError(f"{path}.entries[{entry_position}].code: above paired field range")
+            seen_values.add(value)
+            seen_codes.add(code)
+            entries.append(GoValueCodeEntryPlanIR(value, code))
+        if seen_values != set(value_constraints.enum_values):
+            raise GoAPIPlanError(f"{path}.entries: does not exactly cover paired field enum")
+        try:
+            error_symbol = _VALUE_CATALOG_ERROR_SYMBOLS[catalog_id]
+        except KeyError as exc:
+            raise GoAPIPlanError(f"{path}: no reviewed cross-field mismatch error") from exc
+        relations.append(
+            GoCrossFieldRelationPlanIR(
+                catalog_id,
+                arm,
+                value_key,
+                code_key,
+                tuple(entries),
+                _typed_symbol("FamilyBuildErrorCode", error_symbol),
+            )
+        )
+    return tuple(relations)
 
 
 def _ordered_public_fields(
@@ -2456,7 +2593,14 @@ def _compile_families(
                 fields=fields,
             )
         )
-        conditions = _condition_fields(identifier, values, len(common) + len(values), policy)
+        condition_descriptor_ids = resource_ids + family_ids + scope_ids if signal == "span" else family_ids
+        conditions = _condition_fields(
+            identifier,
+            condition_descriptor_ids,
+            fields,
+            len(common) + len(values),
+            policy,
+        )
         program_id = _optional(raw, "mandatory_program_id")
         raw_program = mandatory_programs.get(program_id) if program_id is not None else None
         mandatory_program = {
@@ -2515,7 +2659,13 @@ def _compile_families(
             event_fields = (
                 _event_common(source_id)
                 + event_values
-                + _condition_fields(source_id, event_values, 2 + len(event_values), policy)
+                + _condition_fields(
+                    source_id,
+                    event_ids,
+                    fields,
+                    2 + len(event_values),
+                    policy,
+                )
             )
             _validate_owner_fields(event_fields)
             inputs.append(
@@ -2547,7 +2697,7 @@ def _compile_families(
                     GoEventCallableBodyPlanIR(
                         "generated" + constructor.symbol.removeprefix("New") + "Contract",
                         _value_bindings(event_values, fields, symbols),
-                        _condition_bindings(event_fields, fields),
+                        _condition_bindings(event_fields, event_ids, fields),
                     ),
                 )
             )
@@ -2584,7 +2734,13 @@ def _compile_families(
             link_fields = (
                 _link_common(source_id)
                 + link_values
-                + _condition_fields(source_id, link_values, 4 + len(link_values), policy)
+                + _condition_fields(
+                    source_id,
+                    link_ids,
+                    fields,
+                    4 + len(link_values),
+                    policy,
+                )
             )
             _validate_owner_fields(link_fields)
             inputs.append(
@@ -2620,7 +2776,7 @@ def _compile_families(
                             _builtin("string"),
                         ),
                         _value_bindings(link_values, fields, symbols),
-                        _condition_bindings(link_fields, fields),
+                        _condition_bindings(link_fields, link_ids, fields),
                     ),
                 )
             )
@@ -2687,7 +2843,7 @@ def _compile_families(
                         fields,
                         symbols,
                     ),
-                    _condition_bindings(input_fields, fields),
+                    _condition_bindings(input_fields, condition_descriptor_ids, fields),
                     tuple(
                         GoMandatoryBindingPlanIR(field.mandatory_binding or "", field.selector) for field in mandatory
                     ),
@@ -2720,8 +2876,19 @@ def _compile_families(
                 candidates = [
                     fields[field_id] for field_id in family_ids if fields[field_id].semantic_source_id == field_key
                 ]
-                if len(candidates) != 1 or candidates[0].primitive_type != "string":
-                    raise GoAPIPlanError(f"{path}.span_name_parts: field arm {field_key!r} is not one family string")
+                if (
+                    len(candidates) != 1
+                    or candidates[0].primitive_type != "string"
+                    or candidates[0].structured_type is not None
+                    or candidates[0].requirement != "required"
+                    or candidates[0].condition_id is not None
+                    or candidates[0].condition_fact is not None
+                    or candidates[0].false_requirement is not None
+                ):
+                    raise GoAPIPlanError(
+                        f"{path}.span_name_parts: field arm {field_key!r} is not one unconditional required "
+                        "family string"
+                    )
                 span_parts_list.append(GoSpanNamePartPlanIR("field", None, field_key))
             else:
                 raise GoAPIPlanError(f"{path}.span_name_parts: unknown arm")
@@ -2771,7 +2938,10 @@ def _compile_families(
         identity_source = identifier if signal == "span" else identity_name
         identity_symbol = _required_symbol(symbols, identity_kind, identity_source).symbol
         try:
-            requirement_ref = _typed_symbol("familyRequirement", _REQUIREMENT_SYMBOLS[outcome_requirement])
+            requirement_ref = _typed_symbol(
+                "familyRequirement",
+                "familyRequirementInvalid" if signal == "metric" else _REQUIREMENT_SYMBOLS[outcome_requirement],
+            )
             outcome_refs = tuple(_typed_symbol("Outcome", _OUTCOME_SYMBOLS[outcome]) for outcome in allowed_outcomes)
         except KeyError as exc:
             raise GoAPIPlanError(f"{path}: outcome contract has no reviewed kernel symbol") from exc
@@ -2785,6 +2955,7 @@ def _compile_families(
             _integer(_read(raw, "family_schema_version", path), f"{path}.family_schema_version", minimum=1),
             GoOutcomePolicyPlanIR(requirement_ref, outcome_refs),
             tuple(kernel_by_id[field_id] for field_id in family_ids),
+            _cross_field_relations(index, family_ids, fields),
         )
         trace_catalog: GoTraceFamilyContractPlanIR | None = None
         if signal == "span":
@@ -3234,6 +3405,83 @@ def _validate_render_targets(inputs: Sequence[GoInputPlanIR], callables: Sequenc
             raise GoAPIPlanError("callable plan has an unreviewed private target")
 
 
+def _validate_condition_closure(
+    inputs: Sequence[GoInputPlanIR],
+    callables: Sequence[GoCallablePlanIR],
+    descriptors: Sequence[GoDescriptorPlanIR],
+) -> None:
+    input_by_key = {(item.declaration_kind, item.declaration_source_id): item for item in inputs}
+    callable_by_key = {(item.declaration_kind, item.declaration_source_id): item for item in callables}
+
+    def expected_facts(descriptor: GoDescriptorPlanIR, descriptor_ids: Sequence[str]) -> tuple[tuple[str, str], ...]:
+        by_id = {field.descriptor_id: field for field in descriptor.field_contracts}
+        result: list[tuple[str, str]] = []
+        seen: dict[str, str] = {}
+        for descriptor_id in descriptor_ids:
+            field = by_id[descriptor_id]
+            if field.condition_fact is None:
+                continue
+            if field.condition_id is None:
+                raise GoAPIPlanError("conditional private descriptor has no condition ID")
+            prior = seen.get(field.condition_fact)
+            if prior is not None:
+                if prior != field.condition_id:
+                    raise GoAPIPlanError("condition fact maps to multiple condition IDs")
+                continue
+            seen[field.condition_fact] = field.condition_id
+            result.append((field.condition_id, field.condition_fact))
+        return tuple(result)
+
+    def verify(
+        input_key: DeclarationKeyIR,
+        callable_key: DeclarationKeyIR,
+        expected: tuple[tuple[str, str], ...],
+    ) -> None:
+        input_plan = input_by_key[input_key]
+        actual_input = tuple(
+            (field.semantic_source_id, field.condition_binding or "", field.enriched_descriptor_id)
+            for field in input_plan.fields
+            if field.conversion_op == "condition_fact"
+        )
+        expected_input = tuple(
+            (fact_id, fact_id, f"condition:{input_plan.declaration_source_id}:{fact_id}") for _, fact_id in expected
+        )
+        body = callable_by_key[callable_key].body
+        if isinstance(body, (GoFamilyCallableBodyPlanIR, GoEventCallableBodyPlanIR, GoLinkCallableBodyPlanIR)):
+            actual_body = tuple((condition.condition_id, condition.fact_id) for condition in body.conditions)
+        else:
+            raise GoAPIPlanError("condition-bearing input has incompatible callable body")
+        if actual_input != expected_input or actual_body != expected:
+            raise GoAPIPlanError("generated condition fact closure is incomplete or reordered")
+
+    for descriptor in descriptors:
+        family_ids = (
+            descriptor.resource_field_descriptor_ids
+            + descriptor.enriched_field_descriptor_ids
+            + descriptor.scope_field_descriptor_ids
+            if descriptor.signal == "span"
+            else descriptor.enriched_field_descriptor_ids
+        )
+        verify(
+            ("family_input", descriptor.family_id),
+            ("family_builder", descriptor.family_id),
+            expected_facts(descriptor, family_ids),
+        )
+        for source_id, _, field_ids in descriptor.event_contracts:
+            verify(
+                ("span_event_input", source_id),
+                ("span_event_constructor", source_id),
+                expected_facts(descriptor, field_ids),
+            )
+        for relation, field_ids in descriptor.link_contracts:
+            source_id = f"{descriptor.family_id}#{relation}"
+            verify(
+                ("span_link_input", source_id),
+                ("span_link_constructor", source_id),
+                expected_facts(descriptor, field_ids),
+            )
+
+
 def _canonical_node(value: Any) -> Any:
     if dataclasses.is_dataclass(value):
         return {
@@ -3325,6 +3573,10 @@ def _fixture_plans(index: Any, inputs: Sequence[GoInputPlanIR]) -> tuple[GoFixtu
         base_example = _optional(raw, "base_example")
         if base_example is not None and not isinstance(base_example, str):
             raise GoAPIPlanError(f"{path}.base_example: invalid fixture base")
+        try:
+            expected_record_json = canonical_record_json(record_plain)
+        except CanonicalRecordError as exc:
+            raise GoAPIPlanError(f"{path}.record: canonical record encoding failed") from exc
         fixtures.append(
             GoFixturePlanIR(
                 example_id,
@@ -3339,7 +3591,7 @@ def _fixture_plans(index: Any, inputs: Sequence[GoInputPlanIR]) -> tuple[GoFixtu
                 ),
                 _fact_value(_read(raw, "builder_context", path), f"{path}.builder_context"),
                 _fact_value(record, f"{path}.record"),
-                json.dumps(record_plain, ensure_ascii=False, sort_keys=True, separators=(",", ":")),
+                expected_record_json,
                 expected_error,
                 base_example,
             )
@@ -3391,6 +3643,7 @@ def compile_go_api_plan(index: Any) -> GoAPIPlanIR:
     )
     _validate_render_targets(inputs, callables)
     descriptors = tuple(sorted(descriptors, key=lambda item: item.family_id.encode("ascii")))
+    _validate_condition_closure(inputs, callables, descriptors)
     private_declarations = _private_declaration_plans(structured, descriptors)
     kernel_helpers = _kernel_helper_inventory(callables, structured)
     fixtures = _fixture_plans(index, inputs)

@@ -581,6 +581,29 @@ func TestFamilyBuilderRejectsAdversarialTraceInputs(t *testing.T) {
 		{name: "unknown link relation", mutate: func(_ *testGeneratedTraceFamily, input *familyTraceBuildInput) {
 			input.links[0].relation = "attacker_relation"
 		}, code: FamilyBuildInvalidTrace},
+		{name: "recommended span name field", mutate: func(family *testGeneratedTraceFamily, _ *familyTraceBuildInput) {
+			for index := range family.trace.fields {
+				if family.trace.fields[index].key == "defenseclaw.workflow.name" {
+					family.trace.fields[index].requirement = familyRequirementRecommended
+				}
+			}
+		}, code: FamilyBuildInvalidDescriptor},
+		{name: "optional span name field", mutate: func(family *testGeneratedTraceFamily, _ *familyTraceBuildInput) {
+			for index := range family.trace.fields {
+				if family.trace.fields[index].key == "defenseclaw.workflow.name" {
+					family.trace.fields[index].requirement = familyRequirementOptional
+				}
+			}
+		}, code: FamilyBuildInvalidDescriptor},
+		{name: "conditional span name field", mutate: func(family *testGeneratedTraceFamily, _ *familyTraceBuildInput) {
+			for index := range family.trace.fields {
+				if family.trace.fields[index].key == "defenseclaw.workflow.name" {
+					family.trace.fields[index].requirement = familyRequirementConditional
+					family.trace.fields[index].conditionID = "workflow-name-available"
+					family.trace.fields[index].falseRequirement = familyFalseOptional
+				}
+			}
+		}, code: FamilyBuildInvalidDescriptor},
 		{name: "descriptor split brain", mutate: func(family *testGeneratedTraceFamily, _ *familyTraceBuildInput) { family.base.familySchemaVersion = 2 }, code: FamilyBuildInvalidDescriptor},
 	}
 	for _, test := range tests {

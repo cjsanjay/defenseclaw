@@ -23,6 +23,7 @@ from typing import Any
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "scripts"))
 FIXTURE_COMPILER = ROOT / "scripts/telemetry_go_fixture_plan.py"
 GENERATOR = ROOT / "scripts/generate_telemetry_registry.py"
 CANDIDATE_RENDERER = ROOT / "scripts/render_telemetry_registry_candidates.py"
@@ -348,6 +349,7 @@ def test_deterministic_clock_id_optional_and_exact_expected_values(compiler: Mod
     assert occurrence_id.scalar.string_value == "record-1"
     assert case.final_call.expression.arguments[0].fields[1].expression.arm == "optional_present"
     assert case.assertions[1].expected_value.arm == "object"
+    assert case.assertions[1].expected_text == case.assertions[2].expected_text
     assert case.assertions[2].expected_text.startswith('{"body"')
 
 
@@ -361,6 +363,11 @@ def test_plan_is_recursively_frozen_and_contains_no_raw_go_arm(compiler: ModuleT
         for statement in (*case.prelude, *((case.final_call,) if case.final_call else ()))
     ]
     assert all(expression.arm != "raw" for expression in expressions)
+
+
+def test_mapping_api_plan_cannot_bypass_digest_verification(compiler: ModuleType) -> None:
+    with pytest.raises(compiler.GoFixturePlanError, match="canonical typed compiler IR"):
+        compiler._verify_api_digest({"api_plan_sha256": "3" * 64}, "3" * 64)
 
 
 @pytest.mark.parametrize(

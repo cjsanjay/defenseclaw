@@ -5,7 +5,7 @@
   "registry_schema_version": 1,
   "registry_version": 1,
   "bucket_catalog_version": 1,
-  "materialized_view_sha256": "a7b5cb4fdff321f920ad6af77755ff74d867afd56be63d01cba609003d362fff",
+  "materialized_view_sha256": "43bd5b554a463493ceff9b74f87cc3046fe4307bdae04e19924afd73b60dbbdc",
   "canonical_import_order": [
     "genai.yaml",
     "security.yaml",
@@ -22,15 +22,15 @@
     },
     {
       "path": "schemas/telemetry/v8/genai.yaml",
-      "sha256": "2ece6c6ac796de8f0953ea553691d5e8e71d978fda3e44c50c607ebcd9d089dd"
+      "sha256": "b64cdaa055d1aa108712aa9812fc95bab51865d019d0c341d15f50da7405d88c"
     },
     {
       "path": "schemas/telemetry/v8/security.yaml",
-      "sha256": "e5cd521bf67738951dc5281f9f05e66f8dacd027e0ecb85d2f0a1f345ff214a0"
+      "sha256": "a43f5432f632bc6213e489ae205ed67d806976b33c97033a84fff4f31745b2ed"
     },
     {
       "path": "schemas/telemetry/v8/operations.yaml",
-      "sha256": "51647e8ab0a3cdbccef74ca4d4d49540de9029470bcb4d22f327ef3805c4ea26"
+      "sha256": "35273a83892b3ec38856716ffc78ba71143bfdd1f2d8d732510d641814bc05dc"
     },
     {
       "path": "schemas/telemetry/v8/semconv.lock.yaml",

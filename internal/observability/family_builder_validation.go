@@ -26,21 +26,22 @@ import (
 type FamilyBuildErrorCode string
 
 const (
-	FamilyBuildInvalidDependency  FamilyBuildErrorCode = "invalid_dependency"
-	FamilyBuildInvalidDescriptor  FamilyBuildErrorCode = "invalid_descriptor"
-	FamilyBuildMissingRequired    FamilyBuildErrorCode = "missing_required"
-	FamilyBuildForbiddenField     FamilyBuildErrorCode = "forbidden_field"
-	FamilyBuildUnknownField       FamilyBuildErrorCode = "unknown_field"
-	FamilyBuildDuplicateField     FamilyBuildErrorCode = "duplicate_field"
-	FamilyBuildInvalidType        FamilyBuildErrorCode = "invalid_type"
-	FamilyBuildConstraint         FamilyBuildErrorCode = "constraint_violation"
-	FamilyBuildInvalidCondition   FamilyBuildErrorCode = "invalid_condition"
-	FamilyBuildInvalidOutcome     FamilyBuildErrorCode = "invalid_outcome"
-	FamilyBuildInvalidTrace       FamilyBuildErrorCode = "invalid_trace"
-	FamilyBuildInvalidMetric      FamilyBuildErrorCode = "invalid_metric"
-	FamilyBuildFieldClassCoverage FamilyBuildErrorCode = "field_class_coverage"
-	FamilyBuildOccurrence         FamilyBuildErrorCode = "occurrence_generation"
-	FamilyBuildRecordRejected     FamilyBuildErrorCode = "record_rejected"
+	FamilyBuildInvalidDependency          FamilyBuildErrorCode = "invalid_dependency"
+	FamilyBuildInvalidDescriptor          FamilyBuildErrorCode = "invalid_descriptor"
+	FamilyBuildMissingRequired            FamilyBuildErrorCode = "missing_required"
+	FamilyBuildForbiddenField             FamilyBuildErrorCode = "forbidden_field"
+	FamilyBuildUnknownField               FamilyBuildErrorCode = "unknown_field"
+	FamilyBuildDuplicateField             FamilyBuildErrorCode = "duplicate_field"
+	FamilyBuildInvalidType                FamilyBuildErrorCode = "invalid_type"
+	FamilyBuildConstraint                 FamilyBuildErrorCode = "constraint_violation"
+	FamilyBuildInvalidCondition           FamilyBuildErrorCode = "invalid_condition"
+	FamilyBuildInvalidOutcome             FamilyBuildErrorCode = "invalid_outcome"
+	FamilyBuildInvalidTrace               FamilyBuildErrorCode = "invalid_trace"
+	FamilyBuildInvalidMetric              FamilyBuildErrorCode = "invalid_metric"
+	FamilyBuildFieldClassCoverage         FamilyBuildErrorCode = "field_class_coverage"
+	FamilyBuildLifecyclePhaseCodeMismatch FamilyBuildErrorCode = "lifecycle_phase_code_mismatch"
+	FamilyBuildOccurrence                 FamilyBuildErrorCode = "occurrence_generation"
+	FamilyBuildRecordRejected             FamilyBuildErrorCode = "record_rejected"
 )
 
 type FamilyBuildError struct{ code FamilyBuildErrorCode }
@@ -87,7 +88,10 @@ func validateFamilyDescriptor(contract familyDescriptorContract, signal familySi
 	if err := validateFamilyOutcomePolicy(contract.outcome, signal); err != nil {
 		return err
 	}
-	return validateFamilyFieldDescriptors(contract.fields)
+	if err := validateFamilyFieldDescriptors(contract.fields); err != nil {
+		return err
+	}
+	return validateFamilyCrossFieldRelations(contract.fields, contract.crossFieldRelations)
 }
 
 func validateFamilyOutcomePolicy(policy familyOutcomePolicy, signal familySignal) error {
@@ -153,6 +157,96 @@ func validateFamilyFieldDescriptors(descriptors []familyFieldDescriptor) error {
 		}
 		if err := validateFamilyFieldConstraintDescriptor(descriptor); err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+func validateFamilyCrossFieldRelations(
+	descriptors []familyFieldDescriptor,
+	relations []familyCrossFieldRelation,
+) error {
+	if len(relations) > len(descriptors) {
+		return familyBuildFailure(FamilyBuildInvalidDescriptor)
+	}
+	fields := make(map[string]familyFieldDescriptor, len(descriptors))
+	for _, descriptor := range descriptors {
+		fields[descriptor.key] = descriptor
+	}
+	seenRelations := make(map[string]struct{}, len(relations))
+	for _, relation := range relations {
+		valueField, valueExists := fields[relation.valueKey]
+		codeField, codeExists := fields[relation.codeKey]
+		relationID := relation.valueKey + "\x00" + relation.codeKey
+		if relation.valueKey == "" || relation.codeKey == "" || relation.valueKey == relation.codeKey ||
+			!valueExists || !codeExists || len(relation.entries) == 0 ||
+			len(relation.entries) > MaxCanonicalValueMembers ||
+			valueField.typeOf != familyFieldString || codeField.typeOf != familyFieldInt64 ||
+			valueField.source != familyValueInput || codeField.source != familyValueInput ||
+			relation.mismatchCode != FamilyBuildLifecyclePhaseCodeMismatch {
+			return familyBuildFailure(FamilyBuildInvalidDescriptor)
+		}
+		if _, duplicate := seenRelations[relationID]; duplicate {
+			return familyBuildFailure(FamilyBuildInvalidDescriptor)
+		}
+		seenRelations[relationID] = struct{}{}
+		seenValues := make(map[string]struct{}, len(relation.entries))
+		seenCodes := make(map[int64]struct{}, len(relation.entries))
+		for _, entry := range relation.entries {
+			if _, duplicate := seenValues[entry.value]; duplicate {
+				return familyBuildFailure(FamilyBuildInvalidDescriptor)
+			}
+			if _, duplicate := seenCodes[entry.code]; duplicate {
+				return familyBuildFailure(FamilyBuildInvalidDescriptor)
+			}
+			if err := validateFamilyFieldValue(valueField, entry.value); err != nil {
+				return familyBuildFailure(FamilyBuildInvalidDescriptor)
+			}
+			if err := validateFamilyFieldValue(codeField, entry.code); err != nil {
+				return familyBuildFailure(FamilyBuildInvalidDescriptor)
+			}
+			seenValues[entry.value] = struct{}{}
+			seenCodes[entry.code] = struct{}{}
+		}
+		if len(valueField.constraints.enum) != 0 {
+			if len(valueField.constraints.enum) != len(seenValues) {
+				return familyBuildFailure(FamilyBuildInvalidDescriptor)
+			}
+			for _, value := range valueField.constraints.enum {
+				if _, exists := seenValues[value]; !exists {
+					return familyBuildFailure(FamilyBuildInvalidDescriptor)
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func validateFamilyCrossFieldValues(
+	relations []familyCrossFieldRelation,
+	values map[string]any,
+) error {
+	for _, relation := range relations {
+		value, valuePresent := values[relation.valueKey]
+		code, codePresent := values[relation.codeKey]
+		if !valuePresent || !codePresent {
+			continue
+		}
+		text, textOK := value.(string)
+		number, numberOK := code.(json.Number)
+		integer, integerErr := number.Int64()
+		if !textOK || !numberOK || integerErr != nil {
+			return familyBuildFailure(relation.mismatchCode)
+		}
+		matched := false
+		for _, entry := range relation.entries {
+			if entry.value == text && entry.code == integer {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return familyBuildFailure(relation.mismatchCode)
 		}
 	}
 	return nil
@@ -302,11 +396,24 @@ func materializeFamilyFields(
 	object := make(map[string]any, len(descriptors))
 	classes := make(map[string]FieldClass, len(descriptors))
 	for _, descriptor := range descriptors {
-		value, present, err := resolvedFamilyFieldValue(descriptor, provided[descriptor.key], context)
+		required, forbidden, err := resolvedFamilyRequirement(descriptor, conditionStates)
 		if err != nil {
 			return nil, nil, err
 		}
-		required, forbidden, err := resolvedFamilyRequirement(descriptor, conditionStates)
+		providedValue := provided[descriptor.key]
+		// A derived conditional value has no caller-owned presence. When its
+		// condition is false, both false-requirement arms mean that the derived
+		// value is absent; the forbidden arm still rejects an attempted raw
+		// caller value here. Input-sourced false+optional fields retain their
+		// existing behavior and may be supplied by the caller.
+		if descriptor.requirement == familyRequirementConditional && !required &&
+			descriptor.source != familyValueInput {
+			if providedValue.present {
+				return nil, nil, familyBuildFailure(FamilyBuildForbiddenField)
+			}
+			continue
+		}
+		value, present, err := resolvedFamilyFieldValue(descriptor, providedValue, context)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -739,6 +846,13 @@ func cloneFamilyFieldDescriptors(input []familyFieldDescriptor) []familyFieldDes
 func cloneFamilyDescriptorContract(input familyDescriptorContract) familyDescriptorContract {
 	input.fields = cloneFamilyFieldDescriptors(input.fields)
 	input.outcome.allowed = append([]Outcome(nil), input.outcome.allowed...)
+	input.crossFieldRelations = append([]familyCrossFieldRelation(nil), input.crossFieldRelations...)
+	for index := range input.crossFieldRelations {
+		input.crossFieldRelations[index].entries = append(
+			[]familyValueCodeEntry(nil),
+			input.crossFieldRelations[index].entries...,
+		)
+	}
 	return input
 }
 

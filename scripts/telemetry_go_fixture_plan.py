@@ -40,6 +40,21 @@ import re
 from collections.abc import Mapping, Sequence
 from typing import Any, Final
 
+try:
+    from scripts.telemetry_canonical_record import (
+        CanonicalRecordError,
+        canonical_record_json,
+        canonicalize_record_json_text,
+    )
+except ModuleNotFoundError as exc:  # pragma: no cover - direct script execution
+    if exc.name != "scripts":
+        raise
+    from telemetry_canonical_record import (  # type: ignore[no-redef]
+        CanonicalRecordError,
+        canonical_record_json,
+        canonicalize_record_json_text,
+    )
+
 
 class GoFixturePlanError(RuntimeError):
     """A deterministic fixture-compiler contract failure."""
@@ -431,6 +446,20 @@ def _plain_expected(value: GoFixtureValueIR) -> Any:
     if scalar.arm == "boolean":
         return scalar.boolean_value
     raise GoFixturePlanError("expected fixture scalar has an invalid arm")
+
+
+def _canonical_expected_record(value: Any, path: str) -> str:
+    try:
+        return canonical_record_json(value)
+    except CanonicalRecordError as exc:
+        raise GoFixturePlanError(f"{path}: canonical record expectation is invalid") from exc
+
+
+def _canonical_embedded_record(value: Any, path: str) -> str:
+    try:
+        return canonicalize_record_json_text(_string(value, path))
+    except CanonicalRecordError as exc:
+        raise GoFixturePlanError(f"{path}: embedded record JSON is invalid") from exc
 
 
 def _zero(type_ref: GoFixtureTypeRefIR) -> GoFixtureExpressionIR:
@@ -1052,6 +1081,8 @@ def _canonical_node(value: Any, *, blank_api_digest: bool = False, root: bool = 
 
 
 def _verify_api_digest(api: Any, digest: str) -> None:
+    if isinstance(api, Mapping):
+        raise GoFixturePlanError("embedded Go API plan must be canonical typed compiler IR")
     if not dataclasses.is_dataclass(api):
         return
     payload = json.dumps(
@@ -1128,12 +1159,7 @@ def _curated_case(
     assert timestamp is not None and record_id is not None
     record = _mapping(_read(raw, "record", path), f"{path}.record")
     expected_record = _value(record, f"{path}.record")
-    expected_json = json.dumps(
-        _plain_expected(expected_record),
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    )
+    expected_json = _canonical_expected_record(_plain_expected(expected_record), f"{path}.record")
     field_classes = _mapping(record.get("field_classes"), f"{path}.record.field_classes")
     mandatory = record.get("mandatory") if signal == "logs" else False
     if type(mandatory) is not bool:
@@ -1222,7 +1248,7 @@ def _curated_case(
     if valid:
         assertions = (
             GoFixtureAssertionIR("error_absent"),
-            GoFixtureAssertionIR("exact_record", expected_value=expected_record),
+            GoFixtureAssertionIR("exact_record", expected_value=expected_record, expected_text=expected_json),
             GoFixtureAssertionIR("exact_canonical_json", expected_text=expected_json),
             GoFixtureAssertionIR("exact_field_classes", expected_value=_value(field_classes, f"{path}.field_classes")),
             GoFixtureAssertionIR("schema_derived_field_classes", expected_boolean=True),
@@ -1418,10 +1444,8 @@ def compile_go_fixture_plan(index: Any) -> GoFixturePlanIR:
             if _optional(embedded, name) != _optional(raw, candidate_name):
                 raise GoFixturePlanError(f"{path}: embedded semantic metadata disagrees with example")
         expected_record = _value(_read(raw, "record", f"candidate.examples[{position}]"), f"{path}.record")
-        expected_json = json.dumps(
-            _plain_expected(expected_record), ensure_ascii=False, sort_keys=True, separators=(",", ":")
-        )
-        if _read(embedded, "expected_record_json", path) != expected_json:
+        expected_json = _canonical_expected_record(_plain_expected(expected_record), f"{path}.record")
+        if _canonical_embedded_record(_read(embedded, "expected_record_json", path), path) != expected_json:
             raise GoFixturePlanError(f"{path}: embedded canonical record disagrees with example")
 
     curated: list[GoFixtureCaseIR] = []

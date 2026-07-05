@@ -266,12 +266,28 @@ type familyOutcomePolicy struct {
 	allowed     []Outcome
 }
 
+// familyValueCodeEntry is one immutable string-to-int64 catalog pair. Generated
+// descriptors use the closed relation below for sibling fields whose individual
+// scalar constraints cannot prove their pairwise consistency.
+type familyValueCodeEntry struct {
+	value string
+	code  int64
+}
+
+type familyCrossFieldRelation struct {
+	valueKey     string
+	codeKey      string
+	entries      []familyValueCodeEntry
+	mismatchCode FamilyBuildErrorCode
+}
+
 type familyDescriptorContract struct {
 	id                  string
 	identity            EventIdentity
 	familySchemaVersion uint32
 	outcome             familyOutcomePolicy
 	fields              []familyFieldDescriptor
+	crossFieldRelations []familyCrossFieldRelation
 }
 
 type familyDescriptor interface {

@@ -39,6 +39,15 @@ try:
 except ModuleNotFoundError as exc:  # pragma: no cover - exercised by path-loaded tests
     if exc.name != "scripts":
         raise
+    _canonical_plan_spec = importlib.util.spec_from_file_location(
+        "telemetry_canonical_record",
+        Path(__file__).with_name("telemetry_canonical_record.py"),
+    )
+    if _canonical_plan_spec is None or _canonical_plan_spec.loader is None:
+        raise RuntimeError("telemetry canonical-record dependency is unavailable") from None
+    _canonical_plan_module = importlib.util.module_from_spec(_canonical_plan_spec)
+    sys.modules[_canonical_plan_spec.name] = _canonical_plan_module
+    _canonical_plan_spec.loader.exec_module(_canonical_plan_module)
     _go_plan_spec = importlib.util.spec_from_file_location(
         "defenseclaw_telemetry_go_api_plan",
         Path(__file__).with_name("telemetry_go_api_plan.py"),
@@ -2348,6 +2357,28 @@ class CandidateRenderIndex:
     go_api_plan: GoAPIPlanIR
     api_plan_sha256: str
 
+    def recomputed_digest(self) -> str:
+        """Return the compiler-owned digest of the renderer-facing facts."""
+
+        return _candidate_render_index_digest(
+            self.materialized_view_sha256,
+            enriched_fields=self.enriched_fields,
+            enriched_containers=self.enriched_containers,
+            enriched_families=self.enriched_families,
+            enriched_traces=self.enriched_traces,
+            enriched_metrics=self.enriched_metrics,
+            mandatory_programs=self.mandatory_programs,
+            expanded_producer_mappings=self.expanded_producer_mappings,
+            go_declaration_values=self.go_declaration_values,
+            go_api_plan=self.go_api_plan,
+            api_plan_sha256=self.api_plan_sha256,
+        )
+
+    def verify_digest(self) -> bool:
+        """Report whether the recorded digest still binds every render fact."""
+
+        return self.candidate_render_index_sha256 == self.recomputed_digest()
+
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class _ProvisionalCandidateEnrichment:
@@ -3343,7 +3374,7 @@ def _validated_span_name_parts(family: Mapping[str, FrozenJSON]) -> tuple[Mappin
         raise CandidateRenderError("materialized span-name parts are incomplete")
     parts: list[Mapping[str, FrozenJSON]] = []
     rendered: list[str] = []
-    resolved_refs = {use["ref"] for raw_use in family["resolved_uses"] for use in (_resolved_use(raw_use),)}
+    resolved_uses = {use["ref"]: use for raw_use in family["resolved_uses"] for use in (_resolved_use(raw_use),)}
     for raw_part in raw_parts:
         part = _tagged(raw_part, "SpanNamePartIR", _SPAN_NAME_PART_FIELDS)
         kind = part["kind"]
@@ -3355,7 +3386,14 @@ def _validated_span_name_parts(family: Mapping[str, FrozenJSON]) -> tuple[Mappin
             rendered.append(literal)
         elif kind == "field":
             field = _string(field, "span-name field")
-            if literal is not None or field not in resolved_refs:
+            use = resolved_uses.get(field)
+            if (
+                literal is not None
+                or use is None
+                or use["role"] != "attributes"
+                or use["requirement_level"] != "required"
+                or use["conditional"] is not None
+            ):
                 raise CandidateRenderError("materialized field span-name part is invalid")
             rendered.append("{" + field + "}")
         else:
@@ -4111,6 +4149,24 @@ def _enriched_family_descriptors(
         )
         if family_type == "span":
             parts = _validated_span_name_parts(family)
+            for part in parts:
+                if part["kind"] != "field":
+                    continue
+                matches = tuple(
+                    fields[descriptor_id]
+                    for descriptor_id in family_field_ids
+                    if fields[descriptor_id].attribute_id == part["field"]
+                )
+                if (
+                    len(matches) != 1
+                    or matches[0].role != "attributes"
+                    or matches[0].requirement_level != "required"
+                    or matches[0].condition_id is not None
+                    or matches[0].condition_fact is not None
+                    or matches[0].field_types != ("string",)
+                    or matches[0].structured_type is not None
+                ):
+                    raise CandidateRenderError("enriched field span-name part is invalid")
             referenced_event_ids = MappingProxyType(
                 {event_name: event_ids[event_name] for event_name in family["event_refs"] if event_name in event_ids}
             )

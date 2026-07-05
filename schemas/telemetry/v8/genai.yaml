@@ -2428,7 +2428,9 @@ groups:
   - content.output
   - error.core
   - genai.agent
-  attributes: []
+  attributes:
+  - ref: defenseclaw.agent.type
+    requirement_level: required
   body_fields: []
   span:
     name_pattern: invoke_agent {defenseclaw.agent.type}
@@ -2545,7 +2547,9 @@ groups:
   - content.output
   - error.core
   - genai.model
-  attributes: []
+  attributes:
+  - ref: gen_ai.request.model
+    requirement_level: required
   body_fields: []
   span:
     name_pattern: chat {gen_ai.request.model}
@@ -2599,7 +2603,9 @@ groups:
   - content.output
   - error.core
   - genai.model
-  attributes: []
+  attributes:
+  - ref: gen_ai.request.model
+    requirement_level: required
   body_fields: []
   span:
     name_pattern: embeddings {gen_ai.request.model}
@@ -2650,7 +2656,9 @@ groups:
   - content.output
   - error.core
   - genai.tool
-  attributes: []
+  attributes:
+  - ref: gen_ai.tool.name
+    requirement_level: required
   body_fields: []
   span:
     name_pattern: execute_tool {gen_ai.tool.name}
@@ -2707,7 +2715,9 @@ groups:
   - content.output
   - error.core
   - genai.retrieval
-  attributes: []
+  attributes:
+  - ref: defenseclaw.retrieval.source.id
+    requirement_level: required
   body_fields: []
   span:
     name_pattern: retrieve {defenseclaw.retrieval.source.id}

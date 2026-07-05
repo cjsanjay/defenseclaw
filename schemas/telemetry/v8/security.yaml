@@ -1363,7 +1363,11 @@ groups:
   - correlation.security
   - security.guardrail
   - error.core
-  attributes: []
+  attributes:
+  - ref: defenseclaw.guardrail.name
+    requirement_level: required
+  - ref: defenseclaw.guardrail.target_type
+    requirement_level: required
   body_fields: []
   span:
     name_pattern: apply_guardrail {defenseclaw.guardrail.name} {defenseclaw.guardrail.target_type}
@@ -1415,7 +1419,9 @@ groups:
   - correlation.security
   - security.guardrail
   - error.core
-  attributes: []
+  attributes:
+  - ref: defenseclaw.guardrail.phase
+    requirement_level: required
   body_fields: []
   span:
     name_pattern: guardrail.{defenseclaw.guardrail.phase}
@@ -1470,7 +1476,9 @@ groups:
   - content.input
   - content.output
   - error.core
-  attributes: []
+  attributes:
+  - ref: gen_ai.request.model
+    requirement_level: required
   body_fields: []
   span:
     name_pattern: chat {gen_ai.request.model}
@@ -1517,7 +1525,9 @@ groups:
   - correlation.security
   - security.enforcement
   - error.core
-  attributes: []
+  attributes:
+  - ref: defenseclaw.enforcement.effective_action
+    requirement_level: required
   body_fields: []
   span:
     name_pattern: enforcement {defenseclaw.enforcement.effective_action}

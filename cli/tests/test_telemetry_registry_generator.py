@@ -17,6 +17,7 @@ import time
 from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from types import ModuleType
 from typing import Any
 
 import pytest
@@ -94,6 +95,52 @@ _CANONICAL_AGENT_PHASES = (
     "interrupted",
     "observed",
 )
+
+_SPAN_NAME_REQUIRED_CORRECTIONS = (
+    ("span.admin.operation", "defenseclaw.admin.operation"),
+    ("span.agent.invoke", "defenseclaw.agent.type"),
+    ("span.asset.transition", "defenseclaw.asset.transition"),
+    ("span.destination.export", "defenseclaw.destination.id"),
+    ("span.enforcement.apply", "defenseclaw.enforcement.effective_action"),
+    ("span.guardrail.apply", "defenseclaw.guardrail.name"),
+    ("span.guardrail.apply", "defenseclaw.guardrail.target_type"),
+    ("span.guardrail.judge", "gen_ai.request.model"),
+    ("span.guardrail.phase", "defenseclaw.guardrail.phase"),
+    ("span.model.chat", "gen_ai.request.model"),
+    ("span.model.embeddings", "gen_ai.request.model"),
+    ("span.network.request", "http.request.method"),
+    ("span.retrieval.search", "defenseclaw.retrieval.source.id"),
+    ("span.telemetry.normalize", "defenseclaw.telemetry.signal"),
+    ("span.telemetry.receive", "http.request.method"),
+    ("span.tool.execute", "gen_ai.tool.name"),
+)
+
+_ALL_SPAN_NAME_FIELDS = tuple(
+    sorted(
+        (
+            *_SPAN_NAME_REQUIRED_CORRECTIONS,
+            ("span.agent.transition", "defenseclaw.agent.lifecycle.event"),
+            ("span.finding.enrich", "defenseclaw.source"),
+            ("span.workflow.run", "defenseclaw.workflow.name"),
+        )
+    )
+)
+
+
+@pytest.fixture(scope="module")
+def real_span_name_contract() -> tuple[ModuleType, Any, Any, Any, Any]:
+    module = _load_generator_module("telemetry_registry_span_name_required_contract")
+    ir = module.compile_registry(ROOT)
+    groups = {group.id: group for domain in ir.domains for group in domain.groups}
+    local_attributes = {attribute.id: attribute for domain in ir.domains for attribute in domain.attributes}
+    extensions = {extension.ref: extension for domain in ir.domains for extension in domain.attribute_extensions}
+    upstream = {
+        attribute.id: (dependency.id, attribute)
+        for dependency in ir.dependencies
+        for attribute in dependency.snapshot.attributes
+    }
+    return module, groups, local_attributes, extensions, upstream
+
 
 # Test-only review lock. Runtime consumers resolve these rules from registry.yaml.
 _MANDATORY_RULE_CATALOG_V1 = (
@@ -3119,12 +3166,7 @@ def test_real_span_name_programs_are_compiled_once_and_materialized_exactly() ->
     module = _load_generator_module("telemetry_registry_real_span_name_parts")
 
     ir = module.compile_registry(ROOT)
-    spans = {
-        group.id: group
-        for domain in ir.domains
-        for group in domain.groups
-        if group.type == "span"
-    }
+    spans = {group.id: group for domain in ir.domains for group in domain.groups if group.type == "span"}
     expected = {
         "span.agent.invoke": (("literal", "invoke_agent "), ("field", "defenseclaw.agent.type")),
         "span.workflow.run": (("literal", "workflow "), ("field", "defenseclaw.workflow.name")),
@@ -3183,14 +3225,15 @@ def test_real_span_name_programs_are_compiled_once_and_materialized_exactly() ->
     }
 
     assert len(spans) == len(expected) == 25
+    actual_name_fields: list[tuple[str, str]] = []
     for group_id, expected_parts in expected.items():
         group = spans[group_id]
         assert group.span_name_pattern
         assert group.span_name_parts is not None
-        assert tuple(
-            (part.kind, part.literal if part.kind == "literal" else part.field)
-            for part in group.span_name_parts
-        ) == expected_parts
+        assert (
+            tuple((part.kind, part.literal if part.kind == "literal" else part.field) for part in group.span_name_parts)
+            == expected_parts
+        )
         assert all(part.literal or part.field for part in group.span_name_parts)
         assert all(
             left.kind != "literal" or right.kind != "literal"
@@ -3199,6 +3242,92 @@ def test_real_span_name_programs_are_compiled_once_and_materialized_exactly() ->
         materialized = module._materialize_registry_fact(group)
         materialized_parts = materialized["fields"]["span_name_parts"]
         assert tuple(item["$type"] for item in materialized_parts) == ("SpanNamePartIR",) * len(expected_parts)
+        uses = {use.ref: use for use in group.resolved_uses}
+        for part in group.span_name_parts:
+            if part.kind != "field":
+                continue
+            assert part.field is not None
+            actual_name_fields.append((group_id, part.field))
+            use = uses[part.field]
+            assert use.role == "attributes"
+            assert use.requirement_level == "required"
+            assert use.conditional is None
+
+    assert tuple(sorted(actual_name_fields)) == _ALL_SPAN_NAME_FIELDS
+    for group_id, field_id in _SPAN_NAME_REQUIRED_CORRECTIONS:
+        direct = next(use for use in spans[group_id].attribute_uses if use.ref == field_id)
+        assert direct.role == "attributes"
+        assert direct.requirement_level == "required"
+        assert direct.conditional is None
+
+
+@pytest.mark.parametrize(("family_id", "field_id"), _SPAN_NAME_REQUIRED_CORRECTIONS)
+def test_every_pre_release_span_name_required_correction_fails_closed_if_weakened(
+    family_id: str,
+    field_id: str,
+    real_span_name_contract: tuple[ModuleType, Any, Any, Any, Any],
+) -> None:
+    module, canonical_groups, local_attributes, extensions, upstream = real_span_name_contract
+    groups = dict(canonical_groups)
+    group = canonical_groups[family_id]
+    groups[family_id] = dataclasses.replace(
+        group,
+        resolved_uses=tuple(
+            dataclasses.replace(use, requirement_level="recommended", conditional=None) if use.ref == field_id else use
+            for use in group.resolved_uses
+        ),
+    )
+
+    with pytest.raises(module.RegistryError, match="must resolve as an unconditional required string attribute"):
+        module._validate_span_name_patterns(groups, local_attributes, extensions, upstream)
+
+
+@pytest.mark.parametrize(
+    ("role", "conditional"),
+    (("body_fields", None), ("attributes", "technical-failure-v1")),
+)
+def test_span_name_placeholder_must_remain_an_unconditional_attribute(
+    role: str,
+    conditional: str | None,
+    real_span_name_contract: tuple[ModuleType, Any, Any, Any, Any],
+) -> None:
+    module, canonical_groups, local_attributes, extensions, upstream = real_span_name_contract
+    groups = dict(canonical_groups)
+    group = canonical_groups["span.model.chat"]
+    groups[group.id] = dataclasses.replace(
+        group,
+        resolved_uses=tuple(
+            dataclasses.replace(use, role=role, conditional=conditional) if use.ref == "gen_ai.request.model" else use
+            for use in group.resolved_uses
+        ),
+    )
+
+    with pytest.raises(module.RegistryError, match="must resolve as an unconditional required string attribute"):
+        module._validate_span_name_patterns(groups, local_attributes, extensions, upstream)
+
+
+def test_span_name_placeholder_must_be_string_only_after_resolution(
+    real_span_name_contract: tuple[ModuleType, Any, Any, Any, Any],
+) -> None:
+    module, groups, local_attributes, extensions, canonical_upstream = real_span_name_contract
+    upstream = dict(canonical_upstream)
+    owner, model = upstream["gen_ai.request.model"]
+    upstream["gen_ai.request.model"] = (owner, dataclasses.replace(model, allowed_types=("int64",)))
+
+    with pytest.raises(module.RegistryError, match="must resolve as an unconditional required string attribute"):
+        module._validate_span_name_patterns(groups, local_attributes, extensions, upstream)
+
+
+def test_local_span_name_placeholder_must_be_string_only_after_resolution(
+    real_span_name_contract: tuple[ModuleType, Any, Any, Any, Any],
+) -> None:
+    module, groups, canonical_local_attributes, extensions, upstream = real_span_name_contract
+    local_attributes = dict(canonical_local_attributes)
+    operation = local_attributes["defenseclaw.admin.operation"]
+    local_attributes[operation.id] = dataclasses.replace(operation, field_type="int64")
+
+    with pytest.raises(module.RegistryError, match="must resolve as an unconditional required string attribute"):
+        module._validate_span_name_patterns(groups, local_attributes, extensions, upstream)
 
 
 @pytest.mark.parametrize(

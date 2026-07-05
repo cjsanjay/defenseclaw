@@ -394,6 +394,26 @@ def test_candidate_enrichment_is_complete_typed_and_recursively_immutable(
         {"field": None, "kind": "literal", "literal": "chat "},
         {"field": "gen_ai.request.model", "kind": "field", "literal": None},
     )
+    span_name_fields = 0
+    for family_id, trace in index.enriched_traces.items():
+        family = index.enriched_families[family_id]
+        for part in trace.span_name_parts:
+            if part["kind"] != "field":
+                continue
+            span_name_fields += 1
+            matches = tuple(
+                index.enriched_fields[descriptor_id]
+                for descriptor_id in family.field_descriptor_ids
+                if index.enriched_fields[descriptor_id].attribute_id == part["field"]
+            )
+            assert len(matches) == 1
+            assert matches[0].role == "attributes"
+            assert matches[0].requirement_level == "required"
+            assert matches[0].condition_id is None
+            assert matches[0].condition_fact is None
+            assert matches[0].field_types == ("string",)
+            assert matches[0].structured_type is None
+    assert span_name_fields == 19
     assert all(item.path.startswith("/") and item.origins for item in index.enriched_fields.values())
     assert {item.path_kind for item in index.enriched_fields.values()} == {
         "payload_template",
@@ -451,6 +471,52 @@ def test_candidate_enrichment_is_complete_typed_and_recursively_immutable(
         first_row.compatibility["disposition"] = "changed"  # type: ignore[index]
     with pytest.raises(dataclasses.FrozenInstanceError):
         index.go_declaration_values[0].value = "changed"  # type: ignore[misc]
+
+
+@pytest.mark.parametrize("requirement", ["recommended", "optional", "conditional"])
+def test_candidate_rejects_nonrequired_span_name_fields(
+    renderer: ModuleType,
+    view: Any,
+    requirement: str,
+) -> None:
+    facts = _copy_materialized(view.facts)
+    family = next(
+        group["fields"]
+        for domain in facts["fields"]["domains"]
+        for group in domain["fields"]["groups"]
+        if group["fields"]["id"] == "span.model.chat"
+    )
+    use = next(item["fields"] for item in family["resolved_uses"] if item["fields"]["ref"] == "gen_ai.request.model")
+    use["requirement_level"] = requirement
+    use["conditional"] = "technical-failure-v1" if requirement == "conditional" else None
+
+    with pytest.raises(renderer.CandidateRenderError, match="materialized field span-name part is invalid"):
+        renderer._validated_span_name_parts(family)
+
+
+@pytest.mark.parametrize(
+    ("role", "conditional"),
+    (("body_fields", None), ("attributes", "technical-failure-v1")),
+)
+def test_candidate_rejects_nonattribute_or_conditional_span_name_fields(
+    renderer: ModuleType,
+    view: Any,
+    role: str,
+    conditional: str | None,
+) -> None:
+    facts = _copy_materialized(view.facts)
+    family = next(
+        group["fields"]
+        for domain in facts["fields"]["domains"]
+        for group in domain["fields"]["groups"]
+        if group["fields"]["id"] == "span.model.chat"
+    )
+    use = next(item["fields"] for item in family["resolved_uses"] if item["fields"]["ref"] == "gen_ai.request.model")
+    use["role"] = role
+    use["conditional"] = conditional
+
+    with pytest.raises(renderer.CandidateRenderError, match="materialized field span-name part is invalid"):
+        renderer._validated_span_name_parts(family)
 
 
 def test_enriched_occurrence_constraint_overlay_is_materialized_once_and_rejects_weakening(

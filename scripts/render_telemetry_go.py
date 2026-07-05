@@ -22,6 +22,8 @@ The returned objects are the exact input types accepted by
 ``telemetry_go_output_coordinator.preflight_go_outputs``.
 """
 
+# ruff: noqa: E501 -- generated Go source fragments are intentionally kept whole.
+
 from __future__ import annotations
 
 import dataclasses
@@ -30,6 +32,8 @@ import re
 from collections.abc import Mapping, Sequence
 from typing import Any, Final
 
+from telemetry_go_api_plan import MAX_CROSS_FIELD_RELATION_ENTRIES
+from telemetry_go_fixture_plan import compile_go_fixture_plan
 from telemetry_go_output_coordinator import (
     EXACT_GO_OUTPUT_PATHS,
     OUTPUT_MODE,
@@ -39,6 +43,7 @@ from telemetry_go_output_coordinator import (
     RenderedGoOutput,
     canonical_go_header,
 )
+from telemetry_go_producer_plan import compile_go_producer_plan
 
 
 class GoRenderError(RuntimeError):
@@ -101,6 +106,45 @@ def _digest(value: Any, path: str) -> str:
     return value
 
 
+def _signed_int64(value: Any, path: str) -> int:
+    if type(value) is not int or value < -(1 << 63) or value > (1 << 63) - 1:
+        raise GoRenderError(f"{path}: expected a signed 64-bit integer")
+    return value
+
+
+def _require_typed_root(value: Any, expected_name: str, path: str) -> None:
+    if not dataclasses.is_dataclass(value) or isinstance(value, type) or type(value).__name__ != expected_name:
+        raise GoRenderError(f"{path}: expected canonical typed {expected_name}")
+
+
+def _verify_compiler_digests(index: Any, plan: Any) -> tuple[str, str]:
+    _require_typed_root(index, "CandidateRenderIndex", "CandidateRenderIndex")
+    _require_typed_root(plan, "GoAPIPlanIR", "GoAPIPlanIR")
+    recorded_api = _digest(_read(plan, "api_plan_sha256", "GoAPIPlanIR"), "GoAPIPlanIR.api_plan_sha256")
+    try:
+        api_valid = plan.verify_digest()
+    except (TypeError, ValueError, RuntimeError) as exc:
+        raise GoRenderError("GoAPIPlanIR digest verification failed") from exc
+    if api_valid is not True:
+        raise GoRenderError("GoAPIPlanIR.api_plan_sha256 disagrees with its typed facts")
+    if (
+        _digest(_read(index, "api_plan_sha256", "CandidateRenderIndex"), "CandidateRenderIndex.api_plan_sha256")
+        != recorded_api
+    ):
+        raise GoRenderError("CandidateRenderIndex and GoAPIPlanIR API-plan digests disagree")
+    recorded_candidate = _digest(
+        _read(index, "candidate_render_index_sha256", "CandidateRenderIndex"),
+        "CandidateRenderIndex.candidate_render_index_sha256",
+    )
+    try:
+        candidate_valid = index.verify_digest()
+    except (TypeError, ValueError, RuntimeError) as exc:
+        raise GoRenderError("CandidateRenderIndex digest verification failed") from exc
+    if candidate_valid is not True:
+        raise GoRenderError("CandidateRenderIndex digest disagrees with its typed facts")
+    return recorded_api, recorded_candidate
+
+
 def _identifier(value: Any, path: str) -> str:
     value = _string(value, path)
     if _GO_IDENTIFIER.fullmatch(value) is None:
@@ -109,7 +153,8 @@ def _identifier(value: Any, path: str) -> str:
 
 
 def _go_string(value: Any, path: str) -> str:
-    value = _string(value, path)
+    if not isinstance(value, str):
+        raise GoRenderError(f"{path}: expected a string")
     if any(0xD800 <= ord(character) <= 0xDFFF for character in value):
         raise GoRenderError(f"{path}: Go string literal contains an unpaired surrogate")
     if len(value.encode("utf-8")) > _MAX_GO_STRING_BYTES:
@@ -133,6 +178,98 @@ def _type_name(type_ref: Any, path: str) -> str:
         nested = _type_name(element, f"{path}.element")
         return f"Optional[{nested}]" if arm == "optional" else f"[]{nested}"
     raise GoRenderError(f"{path}: unsupported Go type AST arm {arm}")
+
+
+def _producer_type_name(type_ref: Any, path: str) -> str:
+    arm = _string(_read(type_ref, "arm", path), f"{path}.arm")
+    name = _read(type_ref, "name", path)
+    element = _read(type_ref, "element", path)
+    if arm in {"builtin", "named"}:
+        if element is not None:
+            raise GoRenderError(f"{path}: scalar producer type unexpectedly has an element")
+        return _identifier(name, f"{path}.name")
+    if arm in {"slice", "pointer"}:
+        if name is not None or element is None:
+            raise GoRenderError(f"{path}: producer container type is incomplete")
+        prefix = "[]" if arm == "slice" else "*"
+        return prefix + _producer_type_name(element, f"{path}.element")
+    if arm == "array":
+        length = _read(type_ref, "length", path)
+        if name is not None or element is None or type(length) is not int or length < 0:
+            raise GoRenderError(f"{path}: producer array type is incomplete")
+        return f"[{length}]" + _producer_type_name(element, f"{path}.element")
+    if arm == "map":
+        key = _read(type_ref, "key", path)
+        if name is not None or element is None or key is None:
+            raise GoRenderError(f"{path}: producer map type is incomplete")
+        return "map[" + _producer_type_name(key, f"{path}.key") + "]" + _producer_type_name(element, f"{path}.element")
+    raise GoRenderError(f"{path}: unsupported producer Go type AST arm {arm}")
+
+
+def _fixture_type_name(type_ref: Any, path: str) -> str:
+    arm = _string(_read(type_ref, "arm", path), f"{path}.arm")
+    name = _read(type_ref, "name", path)
+    element = _read(type_ref, "element", path)
+    if arm in {"builtin", "named"}:
+        if element is not None:
+            raise GoRenderError(f"{path}: scalar fixture type unexpectedly has an element")
+        return _identifier(name, f"{path}.name")
+    if arm == "qualified":
+        if not isinstance(name, str) or re.fullmatch(r"[A-Za-z][A-Za-z0-9]*\.[A-Za-z][A-Za-z0-9]*", name) is None:
+            raise GoRenderError(f"{path}: invalid qualified fixture type")
+        return name
+    if arm in {"optional", "slice", "pointer"}:
+        if name is not None or element is None:
+            raise GoRenderError(f"{path}: fixture container type is incomplete")
+        nested = _fixture_type_name(element, f"{path}.element")
+        return {"optional": f"Optional[{nested}]", "slice": f"[]{nested}", "pointer": f"*{nested}"}[arm]
+    raise GoRenderError(f"{path}: unsupported fixture Go type AST arm {arm}")
+
+
+def _bool(value: Any, path: str) -> str:
+    if type(value) is not bool:
+        raise GoRenderError(f"{path}: expected Boolean")
+    return "true" if value else "false"
+
+
+def _number(value: Any, path: str) -> str:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise GoRenderError(f"{path}: expected a finite number")
+    if isinstance(value, float):
+        if value != value or value in {float("inf"), float("-inf")}:
+            raise GoRenderError(f"{path}: expected a finite number")
+        rendered = repr(value)
+        return rendered if "." in rendered or "e" in rendered.lower() else rendered + ".0"
+    return str(value)
+
+
+def _typed_symbol(value: Any, path: str) -> str:
+    symbol = _identifier(_read(value, "symbol", path), f"{path}.symbol")
+    conversion = _read(value, "conversion_type", path)
+    if conversion is None:
+        return symbol
+    return f"{_type_name(conversion, f'{path}.conversion_type')}({symbol})"
+
+
+def _imports(items: Sequence[tuple[str | None, str]], path: str) -> list[str]:
+    if not items:
+        return []
+    lines = ["import ("]
+    for alias, import_path in items:
+        literal = _go_string(import_path, path)
+        lines.append(f"\t{alias} {literal}" if alias is not None else f"\t{literal}")
+    lines.extend((")", ""))
+    return lines
+
+
+def _struct_lines(symbol: str, fields: Sequence[Any], path: str) -> list[str]:
+    lines = [f"type {_identifier(symbol, path)} struct {{"]
+    ordered = sorted(fields, key=lambda item: _read(item, "order", path) if hasattr(item, "order") else 0)
+    for position, field in enumerate(ordered):
+        selector = _identifier(_read(field, "selector", f"{path}[{position}]"), f"{path}[{position}].selector")
+        lines.append(f"\t{selector} {_type_name(_read(field, 'type_ref', path), path)}")
+    lines.extend(("}", ""))
+    return lines
 
 
 def _constant_line(declaration: Any, position: int) -> str:
@@ -173,8 +310,1490 @@ def _render_ids_body(declarations: tuple[Any, ...]) -> bytes:
     return ("\n".join(lines) + "\n").encode("utf-8")
 
 
-def _render_empty_body() -> bytes:
-    return b"package observability\n"
+def _limits_literal(value: Any, path: str) -> str:
+    fields = (
+        ("maxEncodedBytes", "max_encoded_bytes"),
+        ("maxItemUTF8Bytes", "max_item_utf8_bytes"),
+        ("maxItems", "max_items"),
+        ("maxDepth", "max_depth"),
+        ("maxProperties", "max_properties"),
+    )
+    pieces = [f"{target}: {_read(value, source, path)}" for target, source in fields]
+    if any(type(_read(value, source, path)) is not int or _read(value, source, path) < 0 for _, source in fields):
+        raise GoRenderError(f"{path}: invalid structured limits")
+    return "familyStructuredLimits{" + ", ".join(pieces) + "}"
+
+
+def _constraints_literal(value: Any, path: str) -> str:
+    pieces: list[str] = []
+    scalar_fields = (
+        ("maxUTF8Bytes", "max_utf8_bytes"),
+        ("minItems", "min_items"),
+        ("maxItems", "max_items"),
+    )
+    for target, source in scalar_fields:
+        item = _read(value, source, path)
+        if type(item) is not int or item < 0:
+            raise GoRenderError(f"{path}.{source}: invalid constraint")
+        if item:
+            pieces.append(f"{target}: {item}")
+    pattern = _read(value, "pattern", path)
+    if pattern:
+        pieces.append(f"pattern: {_go_string(pattern, f'{path}.pattern')}")
+    enum = _sequence(_read(value, "enum_values", path), f"{path}.enum_values", maximum=4096)
+    if enum:
+        pieces.append("enum: []string{" + ", ".join(_go_string(item, f"{path}.enum") for item in enum) + "}")
+    for stem, go_name in (("int", "Int"), ("uint", "Uint"), ("float", "Float")):
+        for edge, title in (("min", "Min"), ("max", "Max")):
+            item = _read(value, f"{stem}_{edge}", path)
+            if item is not None:
+                pieces.append(f"has{go_name}{title}: true")
+                pieces.append(f"{stem}{title}: {_number(item, f'{path}.{stem}_{edge}')}")
+    structured = _read(value, "structured", path)
+    if structured is not None:
+        pieces.append(f"structured: {_limits_literal(structured, f'{path}.structured')}")
+    return "familyFieldConstraints{" + ", ".join(pieces) + "}"
+
+
+def _field_descriptor_literal(value: Any, path: str) -> str:
+    pieces = [
+        f"key: {_go_string(_read(value, 'key', path), f'{path}.key')}",
+        f"typeOf: {_typed_symbol(_read(value, 'type_ref', path), f'{path}.type_ref')}",
+        f"requirement: {_typed_symbol(_read(value, 'requirement_ref', path), f'{path}.requirement_ref')}",
+    ]
+    condition = _read(value, "condition_id", path)
+    if condition is not None:
+        pieces.append(f"conditionID: {_go_string(condition, f'{path}.condition_id')}")
+    false_requirement = _read(value, "false_requirement_ref", path)
+    if false_requirement is not None:
+        pieces.append(f"falseRequirement: {_typed_symbol(false_requirement, f'{path}.false_requirement_ref')}")
+    pieces.extend(
+        (
+            f"fieldClass: {_typed_symbol(_read(value, 'field_class_ref', path), f'{path}.field_class_ref')}",
+            f"constraints: {_constraints_literal(_read(value, 'typed_constraints', path), f'{path}.constraints')}",
+            f"source: {_typed_symbol(_read(value, 'source_ref', path), f'{path}.source_ref')}",
+        )
+    )
+    return "familyFieldDescriptor{" + ", ".join(pieces) + "}"
+
+
+def _field_descriptor_slice(values: Any, path: str) -> str:
+    items = _sequence(values, path, maximum=_MAX_PRIVATE_ROWS)
+    return (
+        "[]familyFieldDescriptor{"
+        + ", ".join(_field_descriptor_literal(item, f"{path}[{position}]") for position, item in enumerate(items))
+        + "}"
+    )
+
+
+def _base_contract_literal(value: Any, path: str) -> str:
+    identity = _read(value, "identity", path)
+    outcome = _read(value, "outcome", path)
+    allowed = _sequence(_read(outcome, "allowed", path), f"{path}.outcome.allowed", maximum=128)
+    relations: list[str] = []
+    for position, relation in enumerate(
+        _sequence(_read(value, "cross_field_relations", path), f"{path}.cross_field_relations", maximum=64)
+    ):
+        relation_path = f"{path}.cross_field_relations[{position}]"
+        if _read(relation, "arm", relation_path) != "string-int64-bijection":
+            raise GoRenderError(f"{relation_path}: unsupported cross-field relation arm")
+        entries = _sequence(
+            _read(relation, "entries", relation_path),
+            f"{relation_path}.entries",
+            maximum=MAX_CROSS_FIELD_RELATION_ENTRIES,
+        )
+        entry_literals = ", ".join(
+            "{value: "
+            + _go_string(_read(entry, "value", relation_path), f"{relation_path}.entries[{entry_at}].value")
+            + f", code: {_signed_int64(_read(entry, 'code', relation_path), f'{relation_path}.entries[{entry_at}].code')}}}"
+            for entry_at, entry in enumerate(entries)
+        )
+        relations.append(
+            "{"
+            + ", ".join(
+                (
+                    f"valueKey: {_go_string(_read(relation, 'value_key', relation_path), relation_path)}",
+                    f"codeKey: {_go_string(_read(relation, 'code_key', relation_path), relation_path)}",
+                    f"entries: []familyValueCodeEntry{{{entry_literals}}}",
+                    f"mismatchCode: {_typed_symbol(_read(relation, 'mismatch_error', relation_path), relation_path)}",
+                )
+            )
+            + "}"
+        )
+    return (
+        "familyDescriptorContract{"
+        + ", ".join(
+            (
+                f"id: {_go_string(_read(value, 'family_id', path), f'{path}.family_id')}",
+                "identity: EventIdentity{"
+                + ", ".join(
+                    (
+                        f"Bucket: {_typed_symbol(_read(identity, 'bucket', path), f'{path}.bucket')}",
+                        f"Signal: {_typed_symbol(_read(identity, 'signal', path), f'{path}.signal')}",
+                        f"Name: {_typed_symbol(_read(identity, 'event_name', path), f'{path}.event_name')}",
+                    )
+                )
+                + "}",
+                f"familySchemaVersion: {_read(value, 'family_schema_version', path)}",
+                "outcome: familyOutcomePolicy{"
+                + f"requirement: {_typed_symbol(_read(outcome, 'requirement', path), f'{path}.outcome.requirement')}, "
+                + "allowed: []Outcome{"
+                + ", ".join(_typed_symbol(item, f"{path}.outcome.allowed") for item in allowed)
+                + "}}",
+                f"fields: {_field_descriptor_slice(_read(value, 'fields', path), f'{path}.fields')}",
+                "crossFieldRelations: []familyCrossFieldRelation{" + ", ".join(relations) + "}",
+            )
+        )
+        + "}"
+    )
+
+
+def _span_name_literal(parts: Any, path: str) -> str:
+    result: list[str] = []
+    for position, part in enumerate(_sequence(parts, path, maximum=128)):
+        arm = _read(part, "arm", f"{path}[{position}]")
+        if arm == "literal":
+            literal = _read(part, "literal", path)
+            if _read(part, "field_key", path) is not None:
+                raise GoRenderError(f"{path}[{position}]: literal span-name arm carries a field")
+            result.append(f"{{literal: {_go_string(literal, path)}}}")
+        elif arm == "field":
+            field = _read(part, "field_key", path)
+            if _read(part, "literal", path) is not None:
+                raise GoRenderError(f"{path}[{position}]: field span-name arm carries a literal")
+            result.append(f"{{field: {_go_string(field, path)}}}")
+        else:
+            raise GoRenderError(f"{path}[{position}]: unknown span-name arm")
+    return "[]spanNamePart{" + ", ".join(result) + "}"
+
+
+def _render_catalog_body(plan: Any) -> bytes:
+    descriptors = _sequence(_read(plan, "descriptors", "GoAPIPlanIR"), "GoAPIPlanIR.descriptors", maximum=4096)
+    lines = ["package observability", ""]
+    for position, descriptor in enumerate(descriptors):
+        path = f"GoAPIPlanIR.descriptors[{position}]"
+        catalog = _read(descriptor, "catalog_contract", path)
+        symbol = _identifier(_read(catalog, "descriptor_type_symbol", path), f"{path}.descriptor_type_symbol")
+        lines.extend((f"type {symbol} struct{{}}", ""))
+        base = _read(catalog, "base", path)
+        lines.extend(
+            (
+                f"func ({symbol}) familyDescriptorContract() familyDescriptorContract {{",
+                f"\treturn {_base_contract_literal(base, f'{path}.base')}",
+                "}",
+                "",
+            )
+        )
+        trace = _read(catalog, "trace", path)
+        if trace is not None:
+            events = _sequence(_read(trace, "allowed_events", path), f"{path}.events", maximum=1024)
+            links = _sequence(_read(trace, "allowed_links", path), f"{path}.links", maximum=1024)
+            event_literals = ", ".join(
+                f"{_identifier(_read(event, 'private_helper_symbol', path), path)}()" for event in events
+            )
+            lines.extend(
+                (
+                    f"func ({symbol}) familyTraceContract() familyTraceContract {{",
+                    "\treturn familyTraceContract{",
+                    f"\t\tfamilyDescriptorContract: {symbol}{{}}.familyDescriptorContract(),",
+                    "\t\tallowedKinds: []string{"
+                    + ", ".join(
+                        _go_string(item, path)
+                        for item in _sequence(_read(trace, "allowed_kinds", path), path, maximum=64)
+                    )
+                    + "},",
+                    f"\t\tspanName: {_span_name_literal(_read(trace, 'span_name', path), path)},",
+                    f"\t\tattributeLimits: {_limits_literal(_read(trace, 'attribute_limits', path), path)},",
+                    f"\t\tresourceFields: {_field_descriptor_slice(_read(trace, 'resource_fields', path), path)},",
+                    f"\t\tresourceLimits: {_limits_literal(_read(trace, 'resource_limits', path), path)},",
+                    f"\t\tscopeFields: {_field_descriptor_slice(_read(trace, 'scope_fields', path), path)},",
+                    f"\t\tscopeLimits: {_limits_literal(_read(trace, 'scope_limits', path), path)},",
+                    f"\t\tallowedEvents: []familyEventContract{{{event_literals}}},",
+                    f"\t\teventLimits: {_limits_literal(_read(trace, 'event_limits', path), path)},",
+                    f"\t\tmaxEvents: {_read(trace, 'max_events', path)},",
+                    "\t\tallowedLinks: []string{" + ", ".join(_typed_symbol(item, path) for item in links) + "},",
+                    f"\t\tlinkFields: {_field_descriptor_slice(_read(trace, 'link_fields', path), path)},",
+                    f"\t\tlinkLimits: {_limits_literal(_read(trace, 'link_limits', path), path)},",
+                    f"\t\tmaxLinks: {_read(trace, 'max_links', path)},",
+                    f"\t\tscopeName: {_go_string(_read(trace, 'scope_name', path), path)},",
+                    f"\t\tscopeSchemaURL: {_go_string(_read(trace, 'scope_schema_url', path), path)},",
+                    f"\t\ttraceSchemaVersion: {_go_string(_read(trace, 'trace_schema_version', path), path)},",
+                    f"\t\tsemanticProfile: {_go_string(_read(trace, 'semantic_profile', path), path)},",
+                    "\t}",
+                    "}",
+                    "",
+                )
+            )
+            for event_position, event in enumerate(events):
+                event_path = f"{path}.events[{event_position}]"
+                helper = _identifier(_read(event, "private_helper_symbol", event_path), event_path)
+                lines.extend(
+                    (
+                        f"func {helper}() familyEventContract {{",
+                        "\treturn familyEventContract{"
+                        + ", ".join(
+                            (
+                                f"id: {_go_string(_read(event, 'event_id', event_path), event_path)}",
+                                f"name: {_typed_symbol(_read(event, 'event_name', event_path), event_path)}",
+                                f"fields: {_field_descriptor_slice(_read(event, 'fields', event_path), event_path)}",
+                            )
+                        )
+                        + "}",
+                        "}",
+                        "",
+                    )
+                )
+        metric = _read(catalog, "metric", path)
+        if metric is not None:
+            lines.extend(
+                (
+                    f"func ({symbol}) familyMetricContract() familyMetricContract {{",
+                    "\treturn familyMetricContract{",
+                    f"\t\tfamilyDescriptorContract: {symbol}{{}}.familyDescriptorContract(),",
+                    f"\t\tvalueType: {_typed_symbol(_read(metric, 'value_type', path), path)},",
+                    f"\t\tattributeLimits: {_limits_literal(_read(metric, 'attribute_limits', path), path)},",
+                    f"\t\tinstrumentName: {_typed_symbol(_read(metric, 'instrument_name', path), path)},",
+                    f"\t\tinstrumentType: {_go_string(_read(metric, 'instrument_type', path), path)},",
+                    f"\t\tunit: {_go_string(_read(metric, 'unit', path), path)},",
+                    f"\t\ttemporality: {_go_string(_read(metric, 'temporality', path), path)},",
+                    "\t}",
+                    "}",
+                    "",
+                )
+            )
+    return ("\n".join(lines) + "\n").encode()
+
+
+def _condition_state(selector: str) -> str:
+    return (
+        "func() familyConditionState { if input."
+        + selector
+        + " { return familyConditionTrue }; return familyConditionFalse }()"
+    )
+
+
+def _emit_value_bindings(bindings: Any, *, target: str, prefix: str = "generated") -> tuple[list[str], str]:
+    lines: list[str] = []
+    literals: list[str] = []
+    for position, binding in enumerate(_sequence(bindings, "value bindings", maximum=4096)):
+        path = f"value bindings[{position}]"
+        key = _go_string(_read(binding, "key", path), f"{path}.key")
+        selector = _identifier(_read(binding, "selector", path), f"{path}.selector")
+        conversion = _read(binding, "conversion_op", path)
+        local = f"{prefix}Value{position}"
+        present = f"{prefix}Present{position}"
+        if conversion == "required_scalar":
+            literals.append(f"{{key: {key}, value: input.{selector}, present: true}}")
+        elif conversion == "optional_scalar":
+            lines.append(f"{local}, {present} := input.{selector}.Get()")
+            literals.append(f"{{key: {key}, value: {local}, present: {present}}}")
+        elif conversion == "copied_string_slice":
+            if _read(binding, "presence", path) == "required":
+                literals.append(f"{{key: {key}, value: append([]string(nil), input.{selector}...), present: true}}")
+            else:
+                lines.extend(
+                    (
+                        f"{local}, {present} := input.{selector}.Get()",
+                        f"if {present} {{ {local} = append([]string(nil), {local}...) }}",
+                    )
+                )
+                literals.append(f"{{key: {key}, value: {local}, present: {present}}}")
+        elif conversion == "structured_encoder":
+            encoder = _read(binding, "structured_encoder_symbol", path)
+            if encoder is None:
+                raise GoRenderError(f"{path}: structured binding has no encoder")
+            encoder = _identifier(encoder, f"{path}.structured_encoder_symbol")
+            if _read(binding, "presence", path) == "required":
+                lines.append(f"{local}, err := {encoder}({key}, input.{selector}, true)")
+            else:
+                value = f"{prefix}Input{position}"
+                lines.extend(
+                    (
+                        f"{value}, {present} := input.{selector}.Get()",
+                        f"{local}, err := {encoder}({key}, {value}, {present})",
+                    )
+                )
+            lines.append(f"if err != nil {{ return {target}{{}}, err }}")
+            literals.append(local)
+        else:
+            raise GoRenderError(f"{path}: unsupported value conversion opcode {conversion}")
+    return lines, "familyFieldValues{" + ", ".join(literals) + "}"
+
+
+def _conditions_literal(bindings: Any) -> str:
+    items = []
+    for position, binding in enumerate(_sequence(bindings, "condition bindings", maximum=4096)):
+        path = f"condition bindings[{position}]"
+        selector = _identifier(_read(binding, "selector", path), f"{path}.selector")
+        items.append(
+            "{id: "
+            + _go_string(_read(binding, "condition_id", path), f"{path}.condition_id")
+            + ", state: "
+            + _condition_state(selector)
+            + "}"
+        )
+    return "familyConditionFacts{" + ", ".join(items) + "}"
+
+
+def _render_member_callable(callable_plan: Any, body: Any, path: str) -> list[str]:
+    symbol = _identifier(_read(callable_plan, "symbol", path), f"{path}.symbol")
+    parameters = _sequence(_read(callable_plan, "parameters", path), f"{path}.parameters", maximum=16)
+    results = _sequence(_read(callable_plan, "results", path), f"{path}.results", maximum=8)
+    if len(parameters) != 2 or len(results) != 2:
+        raise GoRenderError(f"{path}: structured-member constructor signature is invalid")
+    params = ", ".join(f"{_identifier(item[0], path)} {_type_name(item[1], path)}" for item in parameters)
+    result_text = "(" + ", ".join(_type_name(item, path) for item in results) + ")"
+    result_type = _type_name(results[0], path)
+    constraints = _constraints_literal(_read(body, "name_constraints", path), f"{path}.name_constraints")
+    return [
+        f"func {symbol}({params}) {result_text} {{",
+        f"\tif err := validateFamilyString(name, {constraints}); err != nil {{",
+        f"\t\treturn {result_type}{{}}, err",
+        "\t}",
+        f"\treturn {result_type}{{Name: name, Value: value}}, nil",
+        "}",
+        "",
+    ]
+
+
+def _render_event_callable(callable_plan: Any, body: Any, path: str) -> list[str]:
+    symbol = _identifier(_read(callable_plan, "symbol", path), f"{path}.symbol")
+    input_type = _type_name(_read(callable_plan, "parameters", path)[0][1], path)
+    value_lines, values = _emit_value_bindings(_read(body, "values", path), target="TraceEventInput")
+    lines = [f"func {symbol}(input {input_type}) (TraceEventInput, error) {{"]
+    lines.extend(f"\t{line}" for line in value_lines)
+    lines.extend(
+        (
+            "\treturn TraceEventInput{",
+            "\t\tTimeUnixNano: input.TimeUnixNano,",
+            "\t\tDroppedAttributesCount: input.DroppedAttributesCount,",
+            f"\t\tcontract: {_identifier(_read(body, 'contract_helper_symbol', path), path)}(),",
+            f"\t\tvalues: {values},",
+            f"\t\tconditions: {_conditions_literal(_read(body, 'conditions', path))},",
+            "\t}, nil",
+            "}",
+            "",
+        )
+    )
+    return lines
+
+
+def _render_link_callable(callable_plan: Any, body: Any, path: str) -> list[str]:
+    symbol = _identifier(_read(callable_plan, "symbol", path), f"{path}.symbol")
+    input_type = _type_name(_read(callable_plan, "parameters", path)[0][1], path)
+    value_lines, values = _emit_value_bindings(_read(body, "values", path), target="TraceLinkInput")
+    lines = [f"func {symbol}(input {input_type}) (TraceLinkInput, error) {{"]
+    lines.extend(f"\t{line}" for line in value_lines)
+    lines.extend(
+        (
+            "\treturn TraceLinkInput{",
+            "\t\tTraceID: input.TraceID,",
+            "\t\tSpanID: input.SpanID,",
+            "\t\tTraceState: input.TraceState,",
+            "\t\tDroppedAttributesCount: input.DroppedAttributesCount,",
+            f"\t\trelation: {_typed_symbol(_read(body, 'relation', path), path)},",
+            f"\t\tvalues: {values},",
+            f"\t\tconditions: {_conditions_literal(_read(body, 'conditions', path))},",
+            "\t}, nil",
+            "}",
+            "",
+        )
+    )
+    return lines
+
+
+def _input_fields_by_selector(input_plan: Any, path: str) -> dict[str, Any]:
+    fields = _sequence(_read(input_plan, "fields", path), f"{path}.fields", maximum=4096)
+    return {_read(field, "selector", path): field for field in fields}
+
+
+def _render_family_callable(callable_plan: Any, body: Any, input_plan: Any, descriptor: Any, path: str) -> list[str]:
+    symbol = _identifier(_read(callable_plan, "symbol", path), f"{path}.symbol")
+    input_type = _type_name(_read(callable_plan, "parameters", path)[0][1], path)
+    fields = _input_fields_by_selector(input_plan, path)
+    value_lines, values = _emit_value_bindings(_read(body, "values", path), target="Record")
+    resource_lines, resource_values = _emit_value_bindings(
+        _read(body, "resource_values", path), target="Record", prefix="generatedResource"
+    )
+    lines = [f"func (builder *FamilyBuilder) {symbol}(input {input_type}) (Record, error) {{"]
+    lines.extend(f"\t{line}" for line in (*value_lines, *resource_lines))
+    arm = _read(body, "arm", path)
+    descriptor_type = _identifier(_read(body, "descriptor_type_symbol", path), path)
+    conditions = _conditions_literal(_read(body, "conditions", path))
+    if arm == "family_log":
+        outcome_field = fields.get("Outcome")
+        if outcome_field is None:
+            outcome = "Absent[Outcome]()"
+        elif _read(outcome_field, "presence", path) == "required":
+            outcome = "Present(input.Outcome)"
+        else:
+            outcome = "input.Outcome"
+        mandatory_terms = [
+            "true" if item else "false"
+            for item in _sequence(_read(descriptor, "mandatory_constant_terms", path), path, maximum=128)
+        ]
+        mandatory_terms.extend(
+            "input." + _identifier(_read(item, "selector", path), path)
+            for item in _sequence(_read(body, "mandatory_terms", path), path, maximum=128)
+        )
+        mandatory = " || ".join(mandatory_terms) if mandatory_terms else "false"
+        lines.extend(
+            (
+                "\tprivateInput := familyLogBuildInput{",
+                "\t\tenvelope: input.Envelope,",
+                "\t\tseverity: input.Severity,",
+                "\t\tlogLevel: input.LogLevel,",
+                f"\t\toutcome: {outcome},",
+                f"\t\tvalues: {values},",
+                f"\t\tconditions: {conditions},",
+                "\t}",
+                f"\treturn builder.buildGeneratedResolvedLog({descriptor_type}{{}}, resolveGeneratedLogMandatory({mandatory}), privateInput)",
+            )
+        )
+    elif arm == "family_span":
+        lines.extend(
+            (
+                "\tresource := input.Resource",
+                f"\tresource.values = {resource_values}",
+                "\tprivateInput := familyTraceBuildInput{",
+                "\t\tenvelope: input.Envelope,",
+                "\t\toutcome: Present(input.Outcome),",
+                "\t\tkind: input.Kind,",
+                "\t\tstartTimeUnixNano: input.StartTimeUnixNano,",
+                "\t\tendTimeUnixNano: input.EndTimeUnixNano,",
+                "\t\tparentSpanID: input.ParentSpanID,",
+                "\t\tstatus: input.Status,",
+                "\t\tresource: resource,",
+                "\t\tscope: input.Scope,",
+                f"\t\tvalues: {values},",
+                f"\t\tconditions: {conditions},",
+                "\t\tevents: append([]TraceEventInput(nil), input.Events...),",
+                "\t\tdroppedEventsCount: input.DroppedEventsCount,",
+                "\t\tlinks: append([]TraceLinkInput(nil), input.Links...),",
+                "\t\tdroppedLinksCount: input.DroppedLinksCount,",
+                "\t\tdroppedAttributesCount: input.DroppedAttributesCount,",
+                "\t}",
+                f"\treturn builder.buildGeneratedTrace({descriptor_type}{{}}, privateInput)",
+            )
+        )
+    elif arm == "family_metric":
+        helper = _read(body, "metric_number_helper", path)
+        if helper is None:
+            raise GoRenderError(f"{path}: metric callable has no number helper")
+        lines.extend(
+            (
+                "\tprivateInput := familyMetricBuildInput{",
+                "\t\tenvelope: input.Envelope,",
+                f"\t\tvalue: {_identifier(_read(helper, 'symbol', path), path)}(input.Value),",
+                f"\t\tlabels: {values},",
+                f"\t\tconditions: {conditions},",
+                "\t}",
+                f"\treturn builder.buildGeneratedMetric({descriptor_type}{{}}, privateInput)",
+            )
+        )
+    else:
+        raise GoRenderError(f"{path}: unknown family body arm {arm}")
+    lines.extend(("}", ""))
+    return lines
+
+
+def _structured_object_field_lines(binding: Any, position: int, *, receiver: str, target: str) -> list[str]:
+    path = f"structured binding[{position}]"
+    key = _go_string(_read(binding, "key", path), path)
+    selector = _identifier(_read(binding, "selector", path), path)
+    conversion = _read(binding, "conversion_op", path)
+    required = _read(binding, "presence", path) == "required"
+    if conversion == "required_scalar":
+        return [f"{target}[{key}] = {receiver}.{selector}"]
+    if conversion == "optional_scalar":
+        return [
+            f"generatedValue{position}, generatedPresent{position} := {receiver}.{selector}.Get()",
+            f"if generatedPresent{position} {{ {target}[{key}] = generatedValue{position} }}",
+        ]
+    if conversion == "copied_string_slice":
+        if required:
+            return [f"{target}[{key}] = append([]string(nil), {receiver}.{selector}...)"]
+        return [
+            f"generatedValue{position}, generatedPresent{position} := {receiver}.{selector}.Get()",
+            f"if generatedPresent{position} {{ {target}[{key}] = append([]string(nil), generatedValue{position}...) }}",
+        ]
+    if conversion == "structured_encoder":
+        encoder = _read(binding, "structured_encoder_symbol", path)
+        if encoder is None:
+            raise GoRenderError(f"{path}: nested structured field has no encoder")
+        encoder = _identifier(encoder, path)
+        lines: list[str] = []
+        argument = f"{receiver}.{selector}"
+        present = "true"
+        if not required:
+            argument = f"generatedInput{position}"
+            present = f"generatedPresent{position}"
+            lines.append(f"{argument}, {present} := {receiver}.{selector}.Get()")
+        lines.extend(
+            (
+                f"generatedValue{position}, err := {encoder}({key}, {argument}, {present})",
+                "if err != nil { return familyFieldValue{}, err }",
+                f"if generatedValue{position}.present {{ {target}[{key}] = generatedValue{position}.value }}",
+            )
+        )
+        return lines
+    raise GoRenderError(f"{path}: unsupported structured conversion opcode {conversion}")
+
+
+def _encode_nested_value(
+    *, expression: str, encoder: str | None, key: str, index: int, result_target: str
+) -> list[str]:
+    if encoder is None:
+        return [f"{result_target} = append({result_target}, {expression})"]
+    checked = _identifier(encoder, "structured nested encoder")
+    return [
+        f"generatedItem{index}, err := {checked}({_go_string(key, 'structured key')}, {expression}, true)",
+        "if err != nil { return familyFieldValue{}, err }",
+        f"{result_target} = append({result_target}, generatedItem{index}.value)",
+    ]
+
+
+def _render_structured_encoder(structured: Any, path: str) -> list[str]:
+    encoder = _read(structured, "encoder", path)
+    symbol = _identifier(_read(encoder, "symbol", path), f"{path}.encoder.symbol")
+    input_type = _type_name(_read(encoder, "input_type", path), path)
+    arm = _read(encoder, "arm", path)
+    lines = [f"func {symbol}(key string, input {input_type}, present bool) (familyFieldValue, error) {{"]
+    lines.extend(("\tif !present {", "\t\treturn familyFieldValue{key: key}, nil", "\t}"))
+    if arm == "object":
+        lines.append("\tencoded := make(map[string]any)")
+        for position, binding in enumerate(_sequence(_read(encoder, "fixed_fields", path), path, maximum=1024)):
+            lines.extend(
+                "\t" + item
+                for item in _structured_object_field_lines(binding, position, receiver="input", target="encoded")
+            )
+        members = _sequence(_read(structured, "members", path), f"{path}.members", maximum=64)
+        if members:
+            if len(members) != 1:
+                raise GoRenderError(f"{path}: object has an ambiguous dynamic-member plan")
+            member = members[0]
+            member_fields = _sequence(_read(member, "fields", path), path, maximum=8)
+            value_field = next((item for item in member_fields if _read(item, "selector", path) == "Value"), None)
+            if value_field is None:
+                raise GoRenderError(f"{path}: dynamic member has no Value field")
+            value_type = _read(value_field, "type_ref", path)
+            nested_name = _read(value_type, "name", path) if _read(value_type, "arm", path) == "named" else None
+            nested_encoder = "encode" + nested_name if nested_name is not None else None
+            constraints = _constraints_literal(_read(member, "name_constraints", path), path)
+            lines.extend(
+                (
+                    "\tfor _, entry := range input.Entries {",
+                    f"\t\tif err := validateFamilyString(entry.Name, {constraints}); err != nil {{",
+                    "\t\t\treturn familyFieldValue{}, err",
+                    "\t\t}",
+                )
+            )
+            if nested_encoder:
+                lines.extend(
+                    (
+                        f"\t\tvalue, err := {nested_encoder}(entry.Name, entry.Value, true)",
+                        "\t\tif err != nil { return familyFieldValue{}, err }",
+                        "\t\tencoded[entry.Name] = value.value",
+                    )
+                )
+            else:
+                lines.append("\t\tencoded[entry.Name] = entry.Value")
+            lines.append("\t}")
+        lines.append("\treturn familyFieldValue{key: key, value: encoded, present: true}, nil")
+    elif arm == "array":
+        item_type = _read(encoder, "item_type", path)
+        if item_type is None:
+            raise GoRenderError(f"{path}: array encoder has no item type")
+        lines.extend(("\tencoded := make([]any, 0, len(input.Items))", "\tfor _, item := range input.Items {"))
+        nested = _read(encoder, "item_encoder_symbol", path)
+        if nested is None:
+            lines.append("\t\tencoded = append(encoded, item)")
+        else:
+            lines.extend(
+                (
+                    f"\t\tvalue, err := {_identifier(nested, path)}(key, item, true)",
+                    "\t\tif err != nil { return familyFieldValue{}, err }",
+                    "\t\tencoded = append(encoded, value.value)",
+                )
+            )
+        lines.extend(("\t}", "\treturn familyFieldValue{key: key, value: encoded, present: true}, nil"))
+    elif arm in {"tagged_union", "canonical_json"}:
+        arms = _sequence(_read(structured, "arms", path), f"{path}.arms", maximum=64)
+        lines.append("\tswitch value := input.(type) {")
+        for position, arm_plan in enumerate(arms):
+            arm_path = f"{path}.arms[{position}]"
+            arm_symbol = _identifier(_read(arm_plan, "symbol", arm_path), arm_path)
+            arm_kind = _read(arm_plan, "arm", arm_path)
+            arm_fields = _sequence(_read(arm_plan, "fields", arm_path), f"{arm_path}.fields", maximum=4)
+            lines.append(f"\tcase {arm_symbol}:")
+            if arm == "canonical_json":
+                if len(arm_fields) != 1:
+                    raise GoRenderError(f"{arm_path}: canonical arm shape is invalid")
+                selector = _identifier(_read(arm_fields[0], "selector", arm_path), arm_path)
+                encoder_symbol = _read(arm_plan, "encoder_symbol", arm_path)
+                if selector == "Items":
+                    lines.extend(
+                        ("\t\titems := make([]any, 0, len(value.Items))", "\t\tfor _, item := range value.Items {")
+                    )
+                    if encoder_symbol is None:
+                        raise GoRenderError(f"{arm_path}: recursive canonical array has no encoder")
+                    lines.extend(
+                        (
+                            f"\t\t\tencodedItem, err := {_identifier(encoder_symbol, arm_path)}(key, item, true)",
+                            "\t\t\tif err != nil { return familyFieldValue{}, err }",
+                            "\t\t\titems = append(items, encodedItem.value)",
+                            "\t\t}",
+                            "\t\treturn familyFieldValue{key: key, value: items, present: true}, nil",
+                        )
+                    )
+                elif selector == "Entries":
+                    members = _sequence(_read(structured, "members", path), path, maximum=4)
+                    if len(members) != 1:
+                        raise GoRenderError(f"{arm_path}: canonical object member plan is missing")
+                    member = members[0]
+                    constraints = _constraints_literal(_read(member, "name_constraints", path), path)
+                    lines.extend(
+                        (
+                            "\t\tobject := make(map[string]any, len(value.Entries))",
+                            "\t\tfor _, entry := range value.Entries {",
+                        )
+                    )
+                    lines.extend(
+                        (
+                            f"\t\t\tif err := validateFamilyString(entry.Name, {constraints}); err != nil {{ return familyFieldValue{{}}, err }}",
+                            f"\t\t\tencodedValue, err := {symbol}(entry.Name, entry.Value, true)",
+                            "\t\t\tif err != nil { return familyFieldValue{}, err }",
+                            "\t\t\tobject[entry.Name] = encodedValue.value",
+                            "\t\t}",
+                            "\t\treturn familyFieldValue{key: key, value: object, present: true}, nil",
+                        )
+                    )
+                else:
+                    lines.append(
+                        f"\t\treturn familyFieldValue{{key: key, value: value.{selector}, present: true}}, nil"
+                    )
+            else:
+                discriminator = _read(encoder, "discriminator", path)
+                if discriminator is None:
+                    raise GoRenderError(f"{path}: tagged union has no discriminator")
+                if arm_kind == "dynamic":
+                    constraints = _read(arm_plan, "tag_constraints", arm_path)
+                    if constraints is not None:
+                        lines.extend(
+                            (
+                                f"\t\tif err := validateFamilyString(value.Tag, {_constraints_literal(constraints, arm_path)}); err != nil {{",
+                                "\t\t\treturn familyFieldValue{}, err",
+                                "\t\t}",
+                            )
+                        )
+                    nested = _read(arm_plan, "encoder_symbol", arm_path)
+                    if nested is None:
+                        raise GoRenderError(f"{arm_path}: dynamic tagged arm has no nested encoder")
+                    lines.extend(
+                        (
+                            f"\t\tnested, err := {_identifier(nested, arm_path)}(key, value.Value, true)",
+                            "\t\tif err != nil { return familyFieldValue{}, err }",
+                            "\t\tobject, _ := nested.value.(map[string]any)",
+                            "\t\tif object == nil { return familyFieldValue{key: key, present: true}, nil }",
+                            f"\t\tobject[{_go_string(discriminator, path)}] = value.Tag",
+                            "\t\treturn familyFieldValue{key: key, value: object, present: true}, nil",
+                        )
+                    )
+                else:
+                    nested = _read(arm_plan, "encoder_symbol", arm_path)
+                    wire_tag = _read(arm_plan, "wire_tag", arm_path)
+                    if nested is None or wire_tag is None:
+                        raise GoRenderError(f"{arm_path}: registered tagged arm is incomplete")
+                    lines.extend(
+                        (
+                            f"\t\tnested, err := {_identifier(nested, arm_path)}(key, value.Value, true)",
+                            "\t\tif err != nil { return familyFieldValue{}, err }",
+                            "\t\tobject, _ := nested.value.(map[string]any)",
+                            "\t\tif object == nil { return familyFieldValue{key: key, present: true}, nil }",
+                            f"\t\tobject[{_go_string(discriminator, path)}] = {_go_string(wire_tag, arm_path)}",
+                            "\t\treturn familyFieldValue{key: key, value: object, present: true}, nil",
+                        )
+                    )
+        lines.extend(("\t}", "\treturn familyFieldValue{key: key, present: true}, nil"))
+    else:
+        raise GoRenderError(f"{path}: unknown structured encoder arm {arm}")
+    lines.extend(("}", ""))
+    return lines
+
+
+def _render_domain_body(plan: Any, file_plan: Any, path: str) -> bytes:
+    declarations = _sequence(_read(file_plan, "declarations", path), f"{path}.declarations", maximum=4096)
+    inputs = {
+        (_read(item, "declaration_kind", path), _read(item, "declaration_source_id", path)): item
+        for item in _sequence(_read(plan, "inputs", path), f"{path}.inputs", maximum=4096)
+        if _read(item, "output_file", path) == path
+    }
+    callables = {
+        (_read(item, "declaration_kind", path), _read(item, "declaration_source_id", path)): item
+        for item in _sequence(_read(plan, "callables", path), f"{path}.callables", maximum=8192)
+        if _read(item, "output_file", path) == path
+    }
+    structured = {
+        _read(item, "declaration_source_id", path): item
+        for item in _sequence(_read(plan, "structured", path), f"{path}.structured", maximum=4096)
+        if _read(item, "output_file", path) == path
+    }
+    structured_arms = {
+        _read(arm, "source_id", path): arm
+        for structured_plan in structured.values()
+        for arm in _sequence(_read(structured_plan, "arms", path), f"{path}.structured.arms", maximum=128)
+    }
+    descriptors = {
+        _read(item, "family_id", path): item
+        for item in _sequence(_read(plan, "descriptors", path), f"{path}.descriptors", maximum=4096)
+    }
+    lines = ["package observability", ""]
+    rendered: set[tuple[str, str]] = set()
+    for position, declaration in enumerate(declarations):
+        declaration_path = f"{path}.declarations[{position}]"
+        key = (_read(declaration, "kind", declaration_path), _read(declaration, "source_id", declaration_path))
+        symbol = _identifier(_read(declaration, "symbol", declaration_path), declaration_path)
+        form = _read(declaration, "declaration_form", declaration_path)
+        if form == "exported_type":
+            input_plan = inputs.get(key)
+            if key[0] == "structured_type":
+                structured_plan = structured.get(key[1])
+                if structured_plan is None:
+                    raise GoRenderError(f"{declaration_path}: structured plan is missing")
+                marker = _read(structured_plan, "marker_method", declaration_path)
+                if marker is not None:
+                    lines.extend(
+                        (f"type {symbol} interface {{", f"\t{_identifier(marker, declaration_path)}()", "}", "")
+                    )
+                else:
+                    lines.extend(
+                        _struct_lines(
+                            symbol, _read(structured_plan, "declaration_fields", declaration_path), declaration_path
+                        )
+                    )
+            elif key[0] == "structured_arm":
+                arm_plan = structured_arms.get(key[1])
+                if arm_plan is None:
+                    raise GoRenderError(f"{declaration_path}: structured arm plan is missing")
+                lines.extend(_struct_lines(symbol, _read(arm_plan, "fields", declaration_path), declaration_path))
+            elif input_plan is not None:
+                lines.extend(_struct_lines(symbol, _read(input_plan, "fields", declaration_path), declaration_path))
+            else:
+                raise GoRenderError(f"{declaration_path}: exported type has no input or structured plan")
+        elif form in {"exported_function", "family_builder_method"}:
+            callable_plan = callables.get(key)
+            if callable_plan is None:
+                raise GoRenderError(f"{declaration_path}: callable plan is missing")
+            body = _read(callable_plan, "body", declaration_path)
+            body_name = type(body).__name__
+            if body_name == "GoMemberCallableBodyPlanIR":
+                lines.extend(_render_member_callable(callable_plan, body, declaration_path))
+            elif body_name == "GoEventCallableBodyPlanIR":
+                lines.extend(_render_event_callable(callable_plan, body, declaration_path))
+            elif body_name == "GoLinkCallableBodyPlanIR":
+                lines.extend(_render_link_callable(callable_plan, body, declaration_path))
+            elif body_name == "GoFamilyCallableBodyPlanIR":
+                input_plan = inputs.get(("family_input", key[1]))
+                descriptor = descriptors.get(key[1])
+                if input_plan is None or descriptor is None:
+                    raise GoRenderError(f"{declaration_path}: family input or descriptor is missing")
+                lines.extend(_render_family_callable(callable_plan, body, input_plan, descriptor, declaration_path))
+            else:
+                raise GoRenderError(f"{declaration_path}: unknown callable body arm {body_name}")
+        else:
+            raise GoRenderError(f"{declaration_path}: domain file contains unsupported declaration form {form}")
+        rendered.add(key)
+    expected = {(_read(item, "kind", path), _read(item, "source_id", path)) for item in declarations}
+    if rendered != expected:
+        raise GoRenderError(f"{path}: public declaration rendering is incomplete")
+    for source_id, structured_plan in structured.items():
+        for arm_plan in _sequence(_read(structured_plan, "arms", path), path, maximum=128):
+            symbol = _identifier(_read(arm_plan, "symbol", path), path)
+            marker = _identifier(_read(arm_plan, "marker_method", path), path)
+            lines.extend((f"func ({symbol}) {marker}() {{}}", ""))
+        lines.extend(_render_structured_encoder(structured_plan, f"{path}.structured[{source_id}]"))
+    return ("\n".join(lines) + "\n").encode()
+
+
+def _producer_typed_string(value: Any, path: str) -> str:
+    return (
+        _identifier(_read(value, "go_type", path), f"{path}.go_type")
+        + "("
+        + _go_string(_read(value, "value", path), f"{path}.value")
+        + ")"
+    )
+
+
+def _producer_rule_slice(values: Any, path: str, go_type: str) -> str:
+    items = _sequence(values, path, maximum=64)
+    return f"[]{go_type}{{" + ", ".join(_producer_typed_string(item, path) for item in items) + "}"
+
+
+def _producer_compatibility(value: Any, path: str) -> str:
+    return (
+        "generatedProducerCompatibility{"
+        + ", ".join(
+            (
+                f"IntroducedIn: {_go_string(_read(value, 'introduced_in', path) or '', path)}",
+                f"LegacyEventPrefix: {_go_string(_read(value, 'legacy_event_prefix', path) or '', path)}",
+                f"Disposition: {_producer_typed_string(_read(value, 'disposition', path), path)}",
+                f"RemovalVersion: {_go_string(_read(value, 'removal_version', path) or '', path)}",
+            )
+        )
+        + "}"
+    )
+
+
+def _producer_identity_literal(value: Any, path: str) -> str:
+    refs = _read(value, "family_refs", path)
+    return (
+        "generatedProducerIdentity{"
+        + ", ".join(
+            (
+                f"RowID: {_go_string(_read(value, 'row_id', path), path)}",
+                f"Origin: {_producer_typed_string(_read(value, 'identity_origin', path), path)}",
+                f"EventName: {_producer_typed_string(_read(value, 'event_name', path), path)}",
+                f"Bucket: {_producer_typed_string(_read(value, 'bucket', path), path)}",
+                "FamilyRefs: generatedProducerFamilyRefs{"
+                + f"FamilyDescriptorID: {_go_string(_read(refs, 'family_descriptor_id', path) or '', path)}, "
+                + f"SelectedFamilyFloorID: {_go_string(_read(refs, 'selected_family_floor_id', path) or '', path)}"
+                + "}",
+                f"CompatibilityOnly: {_bool(_read(value, 'compatibility_only', path), path)}",
+                f"LegacyMandatoryRules: {_producer_rule_slice(_read(value, 'legacy_mapping_mandatory_rules', path), path, 'MandatoryRule')}",
+                f"CompanionRules: {_producer_rule_slice(_read(value, 'companion_rules', path), path, 'CompanionRule')}",
+            )
+        )
+        + "}"
+    )
+
+
+def _render_producer_body(producer: Any, expected_path: str) -> bytes:
+    if _read(producer, "version", "GoProducerPlanIR") != 1:
+        raise GoRenderError("GoProducerPlanIR.version: only version 1 is supported")
+    file_plan = _read(producer, "file", "GoProducerPlanIR")
+    if _read(file_plan, "path", "GoProducerFilePlanIR") != expected_path:
+        raise GoRenderError("GoProducerFilePlanIR.path: producer output assignment disagrees")
+    if _read(file_plan, "package", "GoProducerFilePlanIR") != "observability":
+        raise GoRenderError("GoProducerFilePlanIR.package: expected observability")
+    imports = _sequence(_read(file_plan, "imports", "GoProducerFilePlanIR"), "producer imports", maximum=16)
+    if tuple(imports) != ("fmt",):
+        raise GoRenderError("GoProducerFilePlanIR.imports: unsupported compiler import inventory")
+    lines = ["package observability", "", *_imports([(None, item) for item in imports], "producer imports")]
+    types = _sequence(_read(file_plan, "type_declarations", "GoProducerFilePlanIR"), "producer types", maximum=64)
+    for position, declaration in enumerate(types):
+        path = f"producer types[{position}]"
+        symbol = _identifier(_read(declaration, "symbol", path), path)
+        kind = _read(declaration, "declaration_kind", path)
+        if kind == "defined":
+            lines.extend(
+                (f"type {symbol} {_producer_type_name(_read(declaration, 'underlying_type', path), path)}", "")
+            )
+        elif kind == "struct":
+            lines.append(f"type {symbol} struct {{")
+            for field in _sequence(_read(declaration, "fields", path), f"{path}.fields", maximum=64):
+                lines.append(
+                    f"\t{_identifier(_read(field, 'name', path), path)} "
+                    + _producer_type_name(_read(field, "type_ref", path), path)
+                )
+            lines.extend(("}", ""))
+        else:
+            raise GoRenderError(f"{path}: unsupported producer type declaration kind {kind}")
+    constants = _sequence(_read(file_plan, "constants", "GoProducerFilePlanIR"), "producer constants", maximum=64)
+    lines.append("const (")
+    for position, constant in enumerate(constants):
+        path = f"producer constants[{position}]"
+        lines.append(
+            f"\t{_identifier(_read(constant, 'symbol', path), path)} "
+            + _producer_type_name(_read(constant, "go_type", path), path)
+            + " = "
+            + _go_string(_read(constant, "value", path), path)
+        )
+    lines.extend((")", ""))
+    rows = _sequence(_read(producer, "rows", "GoProducerPlanIR"), "producer rows", maximum=_MAX_PRIVATE_ROWS)
+    groups = _sequence(_read(producer, "groups", "GoProducerPlanIR"), "producer groups", maximum=4096)
+    lookup = _read(producer, "lookup_index", "GoProducerPlanIR")
+    entries = _sequence(_read(lookup, "entries", "GoLookupIndexIR"), "lookup entries", maximum=4096)
+    variables = _sequence(_read(file_plan, "variables", "GoProducerFilePlanIR"), "producer variables", maximum=16)
+    if tuple(_read(item, "initializer_opcode", "producer variable") for item in variables) != (
+        "literal_rows",
+        "literal_groups",
+        "literal_lookup_index",
+    ):
+        raise GoRenderError("GoProducerFilePlanIR.variables: unsupported initializer opcode")
+    if len(variables) != 3 or len(entries) != len(groups):
+        raise GoRenderError("GoProducerPlanIR: variable or lookup coverage is incomplete")
+    expected_data_refs = (
+        tuple(_read(row, "row_id", "producer row") for row in rows),
+        tuple(_read(group, "group_id", "producer group") for group in groups),
+        tuple(_read(group, "group_id", "producer group") for group in groups),
+    )
+    if tuple(tuple(_read(item, "data_refs", "producer variable")) for item in variables) != expected_data_refs:
+        raise GoRenderError("GoProducerFilePlanIR.variables: initializer data references are incomplete")
+    row_symbol = _identifier(_read(variables[0], "symbol", "producer rows variable"), "producer rows variable")
+    lines.append(f"var {row_symbol} = {_producer_type_name(_read(variables[0], 'go_type', 'rows'), 'rows')}{{")
+    lines.extend(
+        f"\t{_producer_identity_literal(row, f'producer rows[{position}]')}," for position, row in enumerate(rows)
+    )
+    lines.extend(("}", ""))
+    group_symbol = _identifier(_read(variables[1], "symbol", "producer groups variable"), "producer groups variable")
+    lines.append(f"var {group_symbol} = {_producer_type_name(_read(variables[1], 'go_type', 'groups'), 'groups')}{{")
+    for position, (group, entry) in enumerate(zip(groups, entries)):
+        path = f"producer groups[{position}]"
+        policy = _read(_read(group, "event_name_policy", path), "value", path)
+        expected_steps = {
+            "fixed": ("reject_nonempty_context_disagreement", "select_default"),
+            "context_optional": (
+                "select_exact_context_when_present",
+                "select_default_when_context_absent",
+                "reject_unmatched_context",
+            ),
+            "context_required": ("require_context_identity", "select_exact_context", "reject_unmatched_context"),
+        }.get(policy)
+        observed_steps = tuple(
+            _read(step, "opcode", path)
+            for step in _sequence(_read(group, "selection_steps", path), f"{path}.selection_steps", maximum=8)
+        )
+        if expected_steps is None or observed_steps != expected_steps:
+            raise GoRenderError(f"{path}: missing or unknown selection opcode")
+        start = _read(entry, "row_start", path)
+        count = _read(entry, "row_count", path)
+        if type(start) is not int or type(count) is not int or start < 0 or count < 1 or start + count > len(rows):
+            raise GoRenderError(f"{path}: invalid row slice")
+        if (
+            _read(entry, "group_id", path) != _read(group, "group_id", path)
+            or _read(entry, "group_index", path) != position
+        ):
+            raise GoRenderError(f"{path}: lookup entry disagrees with group ordering")
+        lines.append("\t{")
+        lines.extend(
+            (
+                f"\t\tKind: {_producer_typed_string(_read(group, 'producer_kind', path), path)},",
+                f"\t\tKey: {_producer_typed_string(_read(group, 'producer_key', path), path)},",
+                f"\t\tSource: {_producer_typed_string(_read(group, 'source', path), path)},",
+                f"\t\tEventNamePolicy: {_producer_typed_string(_read(group, 'event_name_policy', path), path)},",
+                f"\t\tSeverityPolicy: {_producer_typed_string(_read(group, 'severity_policy', path), path)},",
+                f"\t\tDefaultIdentityIndex: {_read(group, 'default_identity_index', path)},",
+                f"\t\tContextIdentityStart: {_read(group, 'context_identity_start', path)},",
+                f"\t\tContextIdentityCount: {_read(group, 'context_identity_count', path)},",
+                f"\t\tIdentities: {row_symbol}[{start}:{start + count}],",
+                f"\t\tCompatibility: {_producer_compatibility(_read(group, 'compatibility', path), path)},",
+            )
+        )
+        lines.append("\t},")
+    lines.extend(("}", ""))
+    index_symbol = _identifier(_read(variables[2], "symbol", "producer index variable"), "producer index variable")
+    lines.append(f"var {index_symbol} = {_producer_type_name(_read(variables[2], 'go_type', 'index'), 'index')}{{")
+    for entry in entries:
+        lines.append(
+            "\t{Kind: "
+            + _producer_typed_string(_read(entry, "producer_kind", "lookup entry"), "lookup entry")
+            + ", Key: "
+            + _producer_typed_string(_read(entry, "producer_key", "lookup entry"), "lookup entry")
+            + f"}}: {_read(entry, 'group_index', 'lookup entry')},"
+        )
+    lines.extend(("}", ""))
+    functions = _sequence(_read(file_plan, "functions", "GoProducerFilePlanIR"), "producer functions", maximum=16)
+    copy_operations = tuple(
+        (
+            _read(item, "owner_type", "copy operation"),
+            _read(item, "field", "copy operation"),
+            _read(item, "opcode", "copy operation"),
+            tuple(_read(item, "nested_fields", "copy operation")),
+        )
+        for item in _sequence(_read(producer, "copy_operations", "GoProducerPlanIR"), "copy operations", maximum=16)
+    )
+    if copy_operations != (
+        (
+            "generatedProducerGroup",
+            "Identities",
+            "deep_clone_slice",
+            ("LegacyMandatoryRules", "CompanionRules"),
+        ),
+        ("generatedProducerIdentity", "LegacyMandatoryRules", "clone_slice", ()),
+        ("generatedProducerIdentity", "CompanionRules", "clone_slice", ()),
+    ):
+        raise GoRenderError("GoProducerPlanIR.copy_operations: missing or unknown copy opcode")
+    expected_operations = {
+        "lookupGeneratedProducerGroup": (
+            "construct_lookup_key",
+            "lookup_group_index",
+            "return_zero_false_when_missing",
+            "deep_clone_group",
+            "return_group_true",
+        ),
+        "resolveGeneratedProducerIdentity": (
+            "lookup_group_or_error",
+            "validate_context_identity_pair",
+            "dispatch_closed_event_name_policy",
+            "apply_group_selection_steps",
+            "return_selected_identity_copy",
+        ),
+        "cloneGeneratedProducerGroup": (
+            "copy_group_value",
+            "allocate_identity_rows",
+            "copy_identity_rows",
+            "clone_legacy_mandatory_rule_slices",
+            "clone_companion_rule_slices",
+            "return_group_copy",
+        ),
+    }
+    observed = {
+        _read(function, "symbol", "producer function"): tuple(
+            _read(operation, "opcode", "producer operation")
+            for operation in _sequence(
+                _read(function, "body_operations", "producer function"), "producer operations", maximum=32
+            )
+        )
+        for function in functions
+    }
+    if observed != expected_operations:
+        raise GoRenderError("GoProducerFilePlanIR.functions: missing or unknown body opcode")
+    expected_signatures = {
+        "lookupGeneratedProducerGroup": (
+            (("kind", "ProducerKind"), ("key", "ProducerKey")),
+            ("generatedProducerGroup", "bool"),
+        ),
+        "resolveGeneratedProducerIdentity": (
+            (("kind", "ProducerKind"), ("key", "ProducerKey"), ("context", "ClassificationContext")),
+            ("generatedProducerIdentity", "error"),
+        ),
+        "cloneGeneratedProducerGroup": ((("input", "generatedProducerGroup"),), ("generatedProducerGroup",)),
+    }
+    expected_errors = {
+        "lookupGeneratedProducerGroup": (),
+        "resolveGeneratedProducerIdentity": (
+            ("unknown_producer_mapping", "unknown generated producer classification %s/%s", ("kind", "key")),
+            (
+                "partial_context_identity",
+                "generated producer context identity requires bucket and event name together",
+                (),
+            ),
+            ("fixed_context_disagreement", "generated producer fixed identity disagrees with supplied context", ()),
+            (
+                "missing_context_identity",
+                "generated producer classification requires a context identity",
+                (),
+            ),
+            (
+                "unmatched_context_identity",
+                "generated producer context identity is not registered for %s/%s",
+                ("kind", "key"),
+            ),
+        ),
+        "cloneGeneratedProducerGroup": (),
+    }
+    for function in functions:
+        function_symbol = _read(function, "symbol", "producer function")
+        signature = (
+            tuple(
+                (
+                    _read(parameter, "name", "producer parameter"),
+                    _producer_type_name(_read(parameter, "type_ref", "producer parameter"), "producer parameter"),
+                )
+                for parameter in _sequence(
+                    _read(function, "parameters", "producer function"), "producer parameters", maximum=16
+                )
+            ),
+            tuple(
+                _producer_type_name(item, "producer result")
+                for item in _sequence(_read(function, "results", "producer function"), "producer results", maximum=8)
+            ),
+        )
+        errors = tuple(
+            (
+                _read(item, "code", "producer error"),
+                _read(item, "format_string", "producer error"),
+                tuple(_read(item, "operands", "producer error")),
+            )
+            for item in _sequence(_read(function, "error_cases", "producer function"), "producer errors", maximum=16)
+        )
+        if signature != expected_signatures.get(function_symbol) or errors != expected_errors.get(function_symbol):
+            raise GoRenderError(
+                f"GoProducerFilePlanIR.functions[{function_symbol}]: signature/error contract disagrees"
+            )
+    lines.extend(
+        (
+            "func lookupGeneratedProducerGroup(kind ProducerKind, key ProducerKey) (generatedProducerGroup, bool) {",
+            "\tindex, ok := generatedProducerGroupIndex[generatedProducerLookupKey{Kind: kind, Key: key}]",
+            "\tif !ok { return generatedProducerGroup{}, false }",
+            "\treturn cloneGeneratedProducerGroup(generatedProducerGroups[index]), true",
+            "}",
+            "",
+            "func resolveGeneratedProducerIdentity(kind ProducerKind, key ProducerKey, context ClassificationContext) (generatedProducerIdentity, error) {",
+            "\tgroup, ok := lookupGeneratedProducerGroup(kind, key)",
+            '\tif !ok { return generatedProducerIdentity{}, fmt.Errorf("unknown generated producer classification %s/%s", kind, key) }',
+            '\thasBucket := context.Bucket != ""',
+            '\thasEventName := context.EventName != ""',
+            '\tif hasBucket != hasEventName { return generatedProducerIdentity{}, fmt.Errorf("generated producer context identity requires bucket and event name together") }',
+            "\tselectContext := func() (generatedProducerIdentity, bool) {",
+            "\t\tfor index := group.ContextIdentityStart; index < group.ContextIdentityStart+group.ContextIdentityCount; index++ {",
+            "\t\t\tidentity := group.Identities[index]",
+            "\t\t\tif identity.Bucket == context.Bucket && identity.EventName == context.EventName { return identity, true }",
+            "\t\t}",
+            "\t\treturn generatedProducerIdentity{}, false",
+            "\t}",
+            "\tswitch group.EventNamePolicy {",
+            "\tcase EventNameFixed:",
+            "\t\tidentity := group.Identities[group.DefaultIdentityIndex]",
+            '\t\tif hasBucket && (identity.Bucket != context.Bucket || identity.EventName != context.EventName) { return generatedProducerIdentity{}, fmt.Errorf("generated producer fixed identity disagrees with supplied context") }',
+            "\t\treturn identity, nil",
+            "\tcase EventNameContextOptional:",
+            "\t\tif !hasBucket { return group.Identities[group.DefaultIdentityIndex], nil }",
+            "\t\tif identity, found := selectContext(); found { return identity, nil }",
+            "\tcase EventNameContextRequired:",
+            '\t\tif !hasBucket { return generatedProducerIdentity{}, fmt.Errorf("generated producer classification requires a context identity") }',
+            "\t\tif identity, found := selectContext(); found { return identity, nil }",
+            "\t}",
+            '\treturn generatedProducerIdentity{}, fmt.Errorf("generated producer context identity is not registered for %s/%s", kind, key)',
+            "}",
+            "",
+            "func cloneGeneratedProducerGroup(input generatedProducerGroup) generatedProducerGroup {",
+            "\toutput := input",
+            "\toutput.Identities = make([]generatedProducerIdentity, len(input.Identities))",
+            "\tcopy(output.Identities, input.Identities)",
+            "\tfor index := range output.Identities {",
+            "\t\toutput.Identities[index].LegacyMandatoryRules = append([]MandatoryRule(nil), input.Identities[index].LegacyMandatoryRules...)",
+            "\t\toutput.Identities[index].CompanionRules = append([]CompanionRule(nil), input.Identities[index].CompanionRules...)",
+            "\t}",
+            "\treturn output",
+            "}",
+            "",
+        )
+    )
+    return ("\n".join(lines) + "\n").encode()
+
+
+def _fixture_scalar(value: Any, path: str) -> str:
+    arm = _read(value, "arm", path)
+    if arm == "string":
+        return _go_string(_read(value, "string_value", path), path)
+    if arm == "integer":
+        item = _read(value, "integer_value", path)
+        if isinstance(item, bool) or not isinstance(item, int):
+            raise GoRenderError(f"{path}: invalid integer scalar")
+        return str(item)
+    if arm == "double":
+        return _number(_read(value, "double_value", path), path)
+    if arm == "boolean":
+        return _bool(_read(value, "boolean_value", path), path)
+    raise GoRenderError(f"{path}: unknown fixture scalar arm {arm}")
+
+
+def _fixture_time(value: Any, path: str) -> str:
+    names = ("year", "month", "day", "hour", "minute", "second", "nanosecond")
+    pieces = []
+    for name in names:
+        item = _read(value, name, path)
+        if type(item) is not int:
+            raise GoRenderError(f"{path}.{name}: invalid time component")
+        pieces.append(str(item))
+    return "time.Date(" + ", ".join((*pieces[:2], *pieces[2:6], pieces[6], "time.UTC")) + ")"
+
+
+def _fixture_expression(value: Any, path: str) -> str:
+    arm = _read(value, "arm", path)
+    type_ref = _read(value, "type_ref", path)
+    go_type = _fixture_type_name(type_ref, f"{path}.type_ref")
+    arguments = _sequence(_read(value, "arguments", path), f"{path}.arguments", maximum=1024)
+    if arm == "zero":
+        return f"*new({go_type})"
+    if arm == "literal":
+        scalar = _read(value, "scalar", path)
+        if scalar is None:
+            raise GoRenderError(f"{path}: literal has no scalar")
+        literal = _fixture_scalar(scalar, f"{path}.scalar")
+        if _read(type_ref, "arm", path) == "builtin" and _read(type_ref, "name", path) in {
+            "int64",
+            "uint32",
+            "uint64",
+        }:
+            return f"{go_type}({literal})"
+        return literal
+    if arm == "symbol":
+        return _identifier(_read(value, "symbol", path), f"{path}.symbol")
+    if arm == "conversion":
+        if len(arguments) != 1:
+            raise GoRenderError(f"{path}: conversion requires one argument")
+        return f"{go_type}({_fixture_expression(arguments[0], f'{path}.arguments[0]')})"
+    if arm == "optional_present":
+        if len(arguments) != 1:
+            raise GoRenderError(f"{path}: present optional requires one argument")
+        return f"Present({_fixture_expression(arguments[0], f'{path}.arguments[0]')})"
+    if arm == "optional_absent":
+        element = _read(type_ref, "element", path)
+        if _read(type_ref, "arm", path) != "optional" or element is None:
+            raise GoRenderError(f"{path}: absent optional has a non-optional type")
+        return f"Absent[{_fixture_type_name(element, f'{path}.element')}]()"
+    if arm == "slice":
+        items = _sequence(_read(value, "items", path), f"{path}.items", maximum=4096)
+        return (
+            go_type
+            + "{"
+            + ", ".join(_fixture_expression(item, f"{path}.items[{position}]") for position, item in enumerate(items))
+            + "}"
+        )
+    if arm == "composite":
+        fields = _sequence(_read(value, "fields", path), f"{path}.fields", maximum=4096)
+        return (
+            go_type
+            + "{"
+            + ", ".join(
+                _identifier(_read(field, "selector", path), path)
+                + ": "
+                + _fixture_expression(_read(field, "expression", path), f"{path}.fields[{position}]")
+                for position, field in enumerate(fields)
+            )
+            + "}"
+        )
+    if arm == "call":
+        symbol = _identifier(_read(value, "symbol", path), f"{path}.symbol")
+        return (
+            symbol
+            + "("
+            + ", ".join(
+                _fixture_expression(item, f"{path}.arguments[{position}]") for position, item in enumerate(arguments)
+            )
+            + ")"
+        )
+    if arm == "method_call":
+        receivers = _sequence(_read(value, "items", path), f"{path}.items", maximum=1)
+        if len(receivers) != 1:
+            raise GoRenderError(f"{path}: method call requires one receiver")
+        receiver = _fixture_expression(receivers[0], f"{path}.receiver")
+        symbol = _identifier(_read(value, "symbol", path), f"{path}.symbol")
+        return (
+            receiver
+            + "."
+            + symbol
+            + "("
+            + ", ".join(
+                _fixture_expression(item, f"{path}.arguments[{position}]") for position, item in enumerate(arguments)
+            )
+            + ")"
+        )
+    if arm == "time":
+        return _fixture_time(_read(value, "time_value", path), path)
+    if arm == "deterministic_clock":
+        instant = _fixture_time(_read(value, "time_value", path), path)
+        return f"ClockFunc(func() time.Time {{ return {instant} }})"
+    if arm == "deterministic_occurrence_id":
+        scalar = _read(value, "scalar", path)
+        if scalar is None or _read(scalar, "arm", path) != "string":
+            raise GoRenderError(f"{path}: occurrence ID expression requires a string")
+        identifier = _go_string(_read(scalar, "string_value", path), path)
+        return f"OccurrenceIDGeneratorFunc(func() (string, error) {{ return {identifier}, nil }})"
+    raise GoRenderError(f"{path}: unknown fixture expression arm {arm}")
+
+
+def _fixture_value_plain(value: Any, path: str) -> Any:
+    arm = _read(value, "arm", path)
+    if arm == "null":
+        return None
+    if arm == "scalar":
+        scalar = _read(value, "scalar", path)
+        scalar_arm = _read(scalar, "arm", path)
+        return {
+            "string": lambda: _read(scalar, "string_value", path),
+            "integer": lambda: _read(scalar, "integer_value", path),
+            "double": lambda: _read(scalar, "double_value", path),
+            "boolean": lambda: _read(scalar, "boolean_value", path),
+        }.get(scalar_arm, lambda: (_ for _ in ()).throw(GoRenderError(f"{path}: unknown scalar")))()
+    if arm == "array":
+        return [
+            _fixture_value_plain(item, f"{path}.items[{position}]")
+            for position, item in enumerate(_sequence(_read(value, "items", path), f"{path}.items", maximum=131072))
+        ]
+    if arm == "object":
+        result: dict[str, Any] = {}
+        for position, field in enumerate(_sequence(_read(value, "fields", path), f"{path}.fields", maximum=131072)):
+            name = _read(field, "name", path)
+            if not isinstance(name, str) or name in result:
+                raise GoRenderError(f"{path}: invalid object field")
+            result[name] = _fixture_value_plain(_read(field, "value", path), f"{path}.fields[{position}]")
+        return result
+    raise GoRenderError(f"{path}: unknown canonical fixture value arm {arm}")
+
+
+def _fixture_json(value: Any, path: str) -> str:
+    return json.dumps(_fixture_value_plain(value, path), ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+
+
+def _render_fixture_statement(statement: Any, path: str) -> list[str]:
+    if _read(statement, "arm", path) != "bind_call":
+        raise GoRenderError(f"{path}: unsupported fixture statement arm")
+    names = _sequence(_read(statement, "result_names", path), f"{path}.result_names", maximum=8)
+    if not names:
+        raise GoRenderError(f"{path}: bind call has no results")
+    checked = [_identifier(name, path) for name in names]
+    lines = [", ".join(checked) + " := " + _fixture_expression(_read(statement, "expression", path), path)]
+    require_nil = _read(statement, "require_nil_error", path)
+    if type(require_nil) is not bool:
+        raise GoRenderError(f"{path}: require_nil_error is not Boolean")
+    if require_nil:
+        error_name = checked[-1]
+        lines.append(f'if {error_name} != nil {{ t.Fatalf("generated fixture call failed: %v", {error_name}) }}')
+    return lines
+
+
+def _render_fixture_case(function: Any, case: Any, path: str) -> list[str]:
+    symbol = _identifier(_read(function, "symbol", path), f"{path}.symbol")
+    disposition = _read(case, "disposition", path)
+    if disposition != _read(function, "arm", path):
+        raise GoRenderError(f"{path}: fixture function and case disposition disagree")
+    lines = [f"func {symbol}(t *testing.T) {{"]
+    if disposition == "compile_only":
+        coverage = _read(case, "coverage", path)
+        if coverage is None:
+            raise GoRenderError(f"{path}: compile-only case has no coverage plan")
+        input_symbol = _read(coverage, "input_symbol", path)
+        if input_symbol is not None:
+            lines.extend((f"\tvar input {_identifier(input_symbol, path)}", "\t_ = input"))
+        descriptor = _read(coverage, "descriptor_type_symbol", path)
+        if descriptor is not None:
+            lines.extend((f"\tvar descriptor {_identifier(descriptor, path)}", "\t_ = descriptor"))
+        callable_symbol = _identifier(_read(coverage, "callable_symbol", path), path)
+        receiver = _read(coverage, "receiver_type", path)
+        args = ", ".join(
+            _fixture_expression(item, f"{path}.zero_arguments[{position}]")
+            for position, item in enumerate(
+                _sequence(_read(coverage, "zero_arguments", path), f"{path}.zero_arguments", maximum=64)
+            )
+        )
+        lines.append("\tif false {")
+        if receiver is not None:
+            receiver_type = _fixture_type_name(receiver, path)
+            if _read(coverage, "receiver_pointer", path):
+                receiver_type = "*" + receiver_type
+            lines.extend((f"\t\tvar receiver {receiver_type}", f"\t\t_, _ = receiver.{callable_symbol}({args})"))
+        else:
+            lines.append(f"\t\t_, _ = {callable_symbol}({args})")
+        lines.extend(("\t}", "}", ""))
+        return lines
+    for position, statement in enumerate(_sequence(_read(case, "prelude", path), f"{path}.prelude", maximum=128)):
+        lines.extend("\t" + item for item in _render_fixture_statement(statement, f"{path}.prelude[{position}]"))
+    final = _read(case, "final_call", path)
+    if final is not None:
+        lines.extend("\t" + item for item in _render_fixture_statement(final, f"{path}.final_call"))
+        if disposition == "executable_error":
+            lines.append("\t_ = record")
+    assertions = _sequence(_read(case, "assertions", path), f"{path}.assertions", maximum=16)
+    for position, assertion in enumerate(assertions):
+        assertion_path = f"{path}.assertions[{position}]"
+        arm = _read(assertion, "arm", assertion_path)
+        if arm == "error_absent":
+            lines.append('\tif buildErr != nil { t.Fatalf("generated build failed: %v", buildErr) }')
+        elif arm == "stable_error":
+            expected = _go_string(_read(assertion, "expected_text", assertion_path), assertion_path)
+            if final is None:
+                lines.append(f'\tif {expected} == "" {{ t.Fatal("schema-only failure code is empty") }}')
+            else:
+                lines.extend(
+                    (
+                        f"\tgeneratedBuildError{position}, generatedBuildErrorOK{position} := buildErr.(*FamilyBuildError)",
+                        f"\tif !generatedBuildErrorOK{position} || string(generatedBuildError{position}.Code()) != {expected} {{",
+                        f'\t\tt.Fatalf("generated error = %v, want code %s", buildErr, {expected})',
+                        "\t}",
+                    )
+                )
+        elif arm in {"exact_record", "exact_canonical_json"}:
+            expected_text = _read(assertion, "expected_text", assertion_path)
+            if arm == "exact_record":
+                expected_value = _read(assertion, "expected_value", assertion_path)
+                if expected_value is None or expected_text is None:
+                    raise GoRenderError(f"{assertion_path}: exact record value or canonical text is missing")
+            expected = _go_string(expected_text, assertion_path)
+            encoded_name = f"encodedRecord{position}"
+            error_name = f"marshalErr{position}"
+            lines.extend(
+                (
+                    f"\t{encoded_name}, {error_name} := json.Marshal(record)",
+                    f'\tif {error_name} != nil {{ t.Fatalf("marshal generated record: %v", {error_name}) }}',
+                    f'\tif string({encoded_name}) != {expected} {{ t.Fatalf("generated record JSON mismatch\\n got: %s\\nwant: %s", {encoded_name}, {expected}) }}',
+                )
+            )
+        elif arm == "exact_field_classes":
+            expected_value = _read(assertion, "expected_value", assertion_path)
+            if expected_value is None:
+                raise GoRenderError(f"{assertion_path}: field-class expectation is missing")
+            expected = _go_string(_fixture_json(expected_value, assertion_path), assertion_path)
+            lines.extend(
+                (
+                    "\tencodedClasses, classErr := json.Marshal(record.FieldClasses())",
+                    '\tif classErr != nil { t.Fatalf("marshal generated field classes: %v", classErr) }',
+                    f'\tif string(encodedClasses) != {expected} {{ t.Fatalf("generated field classes mismatch: %s", encodedClasses) }}',
+                )
+            )
+        elif arm == "schema_derived_field_classes":
+            expected = _bool(_read(assertion, "expected_boolean", assertion_path), assertion_path)
+            lines.append(
+                f'\tif record.SchemaDerivedFieldClasses() != {expected} {{ t.Fatal("schema-derived field-class state mismatch") }}'
+            )
+        elif arm == "exact_mandatory":
+            expected = _bool(_read(assertion, "expected_boolean", assertion_path), assertion_path)
+            lines.append(f'\tif record.Mandatory() != {expected} {{ t.Fatal("mandatory state mismatch") }}')
+        else:
+            raise GoRenderError(f"{assertion_path}: unknown fixture assertion arm {arm}")
+    # The fixture imports reflect by contract. Keep it semantically live while
+    # the exact-record assertion intentionally compares canonical wire values.
+    lines.append("\t_ = reflect.DeepEqual")
+    lines.extend(("}", ""))
+    return lines
+
+
+def _render_fixture_body(fixture: Any, expected_path: str) -> bytes:
+    if _read(fixture, "version", "GoFixturePlanIR") != 1:
+        raise GoRenderError("GoFixturePlanIR.version: only version 1 is supported")
+    file_plan = _read(fixture, "file", "GoFixturePlanIR")
+    if (
+        _read(file_plan, "path", "GoFixtureFilePlanIR") != expected_path
+        or _read(file_plan, "package_name", "GoFixtureFilePlanIR") != "observability"
+    ):
+        raise GoRenderError("GoFixtureFilePlanIR: fixture output assignment disagrees")
+    if (
+        tuple(
+            _sequence(
+                _read(file_plan, "expected_digest_headers", "GoFixtureFilePlanIR"),
+                "fixture digest headers",
+                maximum=8,
+            )
+        )
+        != _EXPECTED_HEADERS
+    ):
+        raise GoRenderError("GoFixtureFilePlanIR: digest headers are not canonical")
+    imports = _sequence(_read(file_plan, "imports", "GoFixtureFilePlanIR"), "fixture imports", maximum=16)
+    import_rows = []
+    for item in imports:
+        alias = _read(item, "alias", "fixture import")
+        if alias is not None:
+            alias = _identifier(alias, "fixture import alias")
+        import_rows.append((alias, _read(item, "path", "fixture import")))
+    if tuple(import_rows) != ((None, "encoding/json"), (None, "reflect"), (None, "testing"), (None, "time")):
+        raise GoRenderError("GoFixtureFilePlanIR.imports: unsupported compiler import inventory")
+    cases = (
+        *_sequence(_read(fixture, "curated_cases", "GoFixturePlanIR"), "curated cases", maximum=4096),
+        *_sequence(_read(fixture, "generated_coverage_cases", "GoFixturePlanIR"), "coverage cases", maximum=4096),
+    )
+    by_id = {_read(case, "case_id", "fixture case"): case for case in cases}
+    if len(by_id) != len(cases):
+        raise GoRenderError("GoFixturePlanIR: duplicate case ID")
+    functions = _sequence(_read(file_plan, "functions", "GoFixtureFilePlanIR"), "fixture functions", maximum=8192)
+    case_ids = tuple(_sequence(_read(file_plan, "case_ids", "GoFixtureFilePlanIR"), "fixture case IDs", maximum=8192))
+    if tuple(_read(item, "case_id", "fixture function") for item in functions) != case_ids or set(case_ids) != set(
+        by_id
+    ):
+        raise GoRenderError("GoFixtureFilePlanIR: function/case coverage is incomplete")
+    if tuple(_read(item, "order", "fixture function") for item in functions) != tuple(range(len(functions))):
+        raise GoRenderError("GoFixtureFilePlanIR: function order is not contiguous")
+    if any(
+        _read(function, "case_origin", "fixture function") != _read(by_id[case_id], "origin", "fixture case")
+        for function, case_id in zip(functions, case_ids)
+    ):
+        raise GoRenderError("GoFixtureFilePlanIR: function origin disagrees with its case")
+    lines = ["package observability", "", *_imports(import_rows, "fixture imports")]
+    for position, function in enumerate(functions):
+        case_id = _read(function, "case_id", f"fixture functions[{position}]")
+        lines.extend(_render_fixture_case(function, by_id[case_id], f"fixture case {case_id}"))
+    return ("\n".join(lines) + "\n").encode()
 
 
 def _declaration_key(declaration: Any, position: int) -> GoDeclarationKey:
@@ -198,6 +1817,15 @@ def _validate_file_plans(plan: Any, declarations: tuple[Any, ...]) -> tuple[Any,
         path = _string(_read(file_plan, "path", f"GoAPIPlanIR.files[{position}]"), "GoFilePlanIR.path")
         if path not in EXACT_GO_OUTPUT_PATHS or path in by_path:
             raise GoRenderError("GoAPIPlanIR.files: contains an extra or duplicate output path")
+        if _read(file_plan, "package_name", f"GoFilePlanIR[{path}]") != "observability":
+            raise GoRenderError(f"GoFilePlanIR[{path}]: package assignment is not observability")
+        imports = _sequence(
+            _read(file_plan, "imports", f"GoFilePlanIR[{path}]"),
+            f"GoFilePlanIR[{path}].imports",
+            maximum=64,
+        )
+        if imports:
+            raise GoRenderError(f"GoFilePlanIR[{path}]: API file imports are not empty")
         headers = tuple(
             _sequence(
                 _read(file_plan, "expected_digest_headers", f"GoFilePlanIR[{path}]"),
@@ -243,58 +1871,82 @@ def _validate_file_plans(plan: Any, declarations: tuple[Any, ...]) -> tuple[Any,
     return tuple(by_path[path] for path in EXACT_GO_OUTPUT_PATHS)
 
 
-def _missing_syntax_facts(index: Any, plan: Any, declarations: tuple[Any, ...]) -> tuple[str, ...]:
-    """Return syntax-completion gaps without rendering any partial output."""
+def _validate_private_declaration_coverage(plan: Any, files: Sequence[Any]) -> None:
+    declarations = _sequence(
+        _read(plan, "private_declarations", "GoAPIPlanIR"),
+        "GoAPIPlanIR.private_declarations",
+        maximum=4096,
+    )
+    expected: set[str] = set()
+    for descriptor in _sequence(_read(plan, "descriptors", "GoAPIPlanIR"), "descriptors", maximum=4096):
+        family_id = _read(descriptor, "family_id", "descriptor")
+        expected.update((f"catalog:{family_id}:type", f"catalog:{family_id}:base"))
+        catalog = _read(descriptor, "catalog_contract", "descriptor")
+        trace = _read(catalog, "trace", "catalog")
+        if trace is not None:
+            expected.add(f"catalog:{family_id}:trace")
+            expected.update(
+                "catalog:" + _read(event, "source_id", "event") + ":event"
+                for event in _sequence(_read(trace, "allowed_events", "trace"), "trace events", maximum=1024)
+            )
+        if _read(catalog, "metric", "catalog") is not None:
+            expected.add(f"catalog:{family_id}:metric")
+    for structured in _sequence(_read(plan, "structured", "GoAPIPlanIR"), "structured", maximum=4096):
+        source_id = _read(structured, "declaration_source_id", "structured")
+        expected.add(f"structured:{source_id}:encoder")
+        expected.update(
+            "structured:" + _read(arm, "source_id", "structured arm") + ":marker"
+            for arm in _sequence(_read(structured, "arms", "structured"), "structured arms", maximum=128)
+        )
+    observed = [_read(item, "declaration_id", "private declaration") for item in declarations]
+    if len(observed) != len(set(observed)) or set(observed) != expected:
+        raise GoRenderError("GoAPIPlanIR.private_declarations: rendered private declaration coverage is incomplete")
+    declarations_by_file = {
+        path: tuple(item for item in declarations if _read(item, "output_file", "private declaration") == path)
+        for path in EXACT_GO_OUTPUT_PATHS
+    }
+    descriptor_ids = tuple(
+        _read(item, "family_id", "descriptor")
+        for item in _sequence(_read(plan, "descriptors", "GoAPIPlanIR"), "descriptors", maximum=4096)
+    ) + tuple(
+        "structured:" + _read(item, "declaration_source_id", "structured")
+        for item in _sequence(_read(plan, "structured", "GoAPIPlanIR"), "structured", maximum=4096)
+    )
+    for file_plan, path in zip(files, EXACT_GO_OUTPUT_PATHS):
+        file_declarations = _sequence(
+            _read(file_plan, "private_declarations", f"GoFilePlanIR[{path}]"),
+            f"GoFilePlanIR[{path}].private_declarations",
+            maximum=4096,
+        )
+        if tuple(file_declarations) != declarations_by_file[path]:
+            raise GoRenderError(f"GoFilePlanIR[{path}]: private declaration ownership disagrees")
+        if tuple(_read(item, "order", "private declaration") for item in file_declarations) != tuple(
+            range(len(file_declarations))
+        ):
+            raise GoRenderError(f"GoFilePlanIR[{path}]: private declaration order is not contiguous")
+        observed_descriptors = tuple(
+            _sequence(
+                _read(file_plan, "private_descriptor_ids", f"GoFilePlanIR[{path}]"),
+                f"GoFilePlanIR[{path}].private_descriptor_ids",
+                maximum=4096,
+            )
+        )
+        expected_descriptors = descriptor_ids if path == EXACT_GO_OUTPUT_PATHS[1] else ()
+        if observed_descriptors != expected_descriptors:
+            raise GoRenderError(f"GoFilePlanIR[{path}]: private descriptor rendering coverage is incomplete")
 
-    missing: list[str] = []
-    structured = _sequence(
-        _read(plan, "structured", "GoAPIPlanIR"), "GoAPIPlanIR.structured", maximum=_MAX_DECLARATIONS
-    )
-    descriptors = _sequence(
-        _read(plan, "descriptors", "GoAPIPlanIR"), "GoAPIPlanIR.descriptors", maximum=_MAX_DECLARATIONS
-    )
-    inputs = _sequence(_read(plan, "inputs", "GoAPIPlanIR"), "GoAPIPlanIR.inputs", maximum=_MAX_DECLARATIONS)
-    callables = _sequence(_read(plan, "callables", "GoAPIPlanIR"), "GoAPIPlanIR.callables", maximum=_MAX_DECLARATIONS)
-    producer_rows = _sequence(
-        _read(index, "expanded_producer_mappings", "CandidateRenderIndex"),
-        "CandidateRenderIndex.expanded_producer_mappings",
-        maximum=_MAX_PRIVATE_ROWS,
-    )
-    examples = _sequence(
-        _read(index, "examples", "CandidateRenderIndex"),
-        "CandidateRenderIndex.examples",
-        maximum=_MAX_PRIVATE_ROWS,
-    )
-    nonconstants = [
-        item for item in declarations if _read(item, "declaration_form", "GoDeclarationPlanIR") != "exported_const"
-    ]
-    if descriptors:
-        missing.append(
-            "GoDescriptorPlanIR.kernel_contract_ast (complete field/constraint enums and trace limits, "
-            "scope identity, schema/profile versions, and max event/link counts)"
-        )
-    if structured:
-        missing.append(
-            "GoStructuredPlanIR.arm_shape_and_conversion_ast (registered/dynamic/canonical arm storage, "
-            "private marker, and exact recursive encoder operations)"
-        )
-    if inputs or callables or nonconstants:
-        missing.append(
-            "GoCallablePlanIR.body_ast (exact descriptor binding, typed value/condition conversion, "
-            "mandatory resolution, and private-kernel invocation)"
-        )
-    if producer_rows:
-        missing.append("GoProducerProjectionPlanIR (exact private row type, lookup API, and copy semantics)")
-    if examples:
-        missing.append(
-            "GoFixturePlanIR (typed constructor inputs, normalized expected record bytes/classes, and stable failures)"
-        )
-    return tuple(missing)
 
-
-def render_go_candidate(index: Any, plan: Any) -> GoRenderCandidate:
+def render_go_candidate(index: Any, plan: Any | None = None) -> GoRenderCandidate:
     """Render all seven in-memory outputs with one plan-bound inventory."""
 
+    embedded_plan = _read(index, "go_api_plan", "CandidateRenderIndex")
+    if plan is None:
+        plan = embedded_plan
+    elif plan != embedded_plan:
+        raise GoRenderError("CandidateRenderIndex.go_api_plan and supplied GoAPIPlanIR disagree")
+
+    _require_typed_root(index, "CandidateRenderIndex", "CandidateRenderIndex")
+    _require_typed_root(plan, "GoAPIPlanIR", "GoAPIPlanIR")
     if _read(plan, "version", "GoAPIPlanIR") != 1:
         raise GoRenderError("GoAPIPlanIR.version: only version 1 is supported")
     materialized = _digest(
@@ -308,10 +1960,7 @@ def render_go_candidate(index: Any, plan: Any) -> GoRenderCandidate:
         != materialized
     ):
         raise GoRenderError("CandidateRenderIndex and GoAPIPlanIR materialized-view digests disagree")
-    candidate = _digest(
-        _read(index, "candidate_render_index_sha256", "CandidateRenderIndex"),
-        "CandidateRenderIndex.candidate_render_index_sha256",
-    )
+    _, candidate = _verify_compiler_digests(index, plan)
     symbol_table = _digest(_read(plan, "go_symbol_table_sha256", "GoAPIPlanIR"), "GoAPIPlanIR.go_symbol_table_sha256")
     declarations = _sequence(
         _read(plan, "declarations", "GoAPIPlanIR"),
@@ -319,30 +1968,72 @@ def render_go_candidate(index: Any, plan: Any) -> GoRenderCandidate:
         maximum=_MAX_DECLARATIONS,
     )
     files = _validate_file_plans(plan, declarations)
-    missing = _missing_syntax_facts(index, plan, declarations)
-    if missing:
-        raise GoRenderError("complete seven-file Go render is blocked by missing compiler facts: " + "; ".join(missing))
+    _validate_private_declaration_coverage(plan, files)
+    if len(declarations) != 1773:
+        raise GoRenderError("GoAPIPlanIR.declarations: exact 1,773-declaration inventory is required")
+    if len(_sequence(_read(plan, "private_declarations", "GoAPIPlanIR"), "private declarations", maximum=4096)) != 741:
+        raise GoRenderError("GoAPIPlanIR.private_declarations: exact 741-declaration inventory is required")
+    producer = compile_go_producer_plan(index)
+    fixture = compile_go_fixture_plan(index)
+    expected_projections = {
+        EXACT_GO_OUTPUT_PATHS[2]: tuple(_read(row, "row_id", "producer row") for row in producer.rows),
+        EXACT_GO_OUTPUT_PATHS[6]: tuple(
+            _read(item, "example_id", "fixture") for item in _read(plan, "fixtures", "plan")
+        ),
+    }
+    for file_plan, path in zip(files, EXACT_GO_OUTPUT_PATHS):
+        observed = tuple(
+            _sequence(
+                _read(file_plan, "private_projection_ids", f"GoFilePlanIR[{path}]"),
+                f"GoFilePlanIR[{path}].private_projection_ids",
+                maximum=_MAX_PRIVATE_ROWS,
+            )
+        )
+        if observed != expected_projections.get(path, ()):
+            raise GoRenderError(f"GoFilePlanIR[{path}]: private projection rendering coverage is incomplete")
+    for compiled, owner in ((producer, "GoProducerPlanIR"), (fixture, "GoFixturePlanIR")):
+        if (
+            _digest(_read(compiled, "materialized_view_sha256", owner), f"{owner}.materialized_view_sha256")
+            != materialized
+        ):
+            raise GoRenderError(f"{owner}: materialized-view digest disagrees")
+        if (
+            _digest(_read(compiled, "candidate_render_index_sha256", owner), f"{owner}.candidate_render_index_sha256")
+            != candidate
+        ):
+            raise GoRenderError(f"{owner}: candidate-render-index digest disagrees")
 
     header = canonical_go_header(materialized, candidate, symbol_table)
-    ids_path = EXACT_GO_OUTPUT_PATHS[0]
-    outputs: list[RenderedGoOutput] = []
-    inventories: list[GoFileDeclarationInventory] = []
-    expected_keys: list[GoDeclarationKey] = []
+    rendered_files: list[tuple[str, bytes, tuple[GoDeclarationKey, ...]]] = []
     for file_plan, path in zip(files, EXACT_GO_OUTPUT_PATHS):
         file_declarations = _sequence(
             _read(file_plan, "declarations", f"GoFilePlanIR[{path}]"),
             f"GoFilePlanIR[{path}].declarations",
             maximum=_MAX_DECLARATIONS,
         )
-        body = _render_ids_body(file_declarations) if path == ids_path else _render_empty_body()
-        outputs.append(RenderedGoOutput(path, header + body, OWNERSHIP_MARKER, OUTPUT_MODE))
+        if path == EXACT_GO_OUTPUT_PATHS[0]:
+            body = _render_ids_body(file_declarations)
+        elif path == EXACT_GO_OUTPUT_PATHS[1]:
+            body = _render_catalog_body(plan)
+        elif path == EXACT_GO_OUTPUT_PATHS[2]:
+            body = _render_producer_body(producer, path)
+        elif path in EXACT_GO_OUTPUT_PATHS[3:6]:
+            body = _render_domain_body(plan, file_plan, path)
+        elif path == EXACT_GO_OUTPUT_PATHS[6]:
+            body = _render_fixture_body(fixture, path)
+        else:
+            raise AssertionError("validated exact output path was not rendered")
         keys = tuple(_declaration_key(item, position) for position, item in enumerate(file_declarations))
-        inventories.append(GoFileDeclarationInventory(path, keys))
-        expected_keys.extend(keys)
+        rendered_files.append((path, body, keys))
+    outputs = tuple(
+        RenderedGoOutput(path, header + body, OWNERSHIP_MARKER, OUTPUT_MODE) for path, body, _ in rendered_files
+    )
+    inventories = tuple(GoFileDeclarationInventory(path, keys) for path, _, keys in rendered_files)
+    expected_keys = tuple(key for _, _, keys in rendered_files for key in keys)
     return GoRenderCandidate(
-        tuple(outputs),
-        tuple(inventories),
-        tuple(expected_keys),
+        outputs,
+        inventories,
+        expected_keys,
         materialized,
         candidate,
         symbol_table,

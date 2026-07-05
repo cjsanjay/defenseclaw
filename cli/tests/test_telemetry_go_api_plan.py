@@ -22,6 +22,7 @@ from typing import Any
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "scripts"))
 SPEC = importlib.util.spec_from_file_location("telemetry_go_api_plan_test", ROOT / "scripts/telemetry_go_api_plan.py")
 assert SPEC is not None and SPEC.loader is not None
 plan = importlib.util.module_from_spec(SPEC)
@@ -292,6 +293,7 @@ def synthetic_candidate_fields() -> dict[str, Any]:
 
     return {
         "semantic_profiles": ({"id": "profile-v1", "trace_schema_version": "trace-v1"},),
+        "value_catalogs": (),
         "structural_contract": {
             "trace_body": {
                 "fields": (
@@ -574,12 +576,13 @@ def test_real_candidate_index_compiles_complete_semantic_plan() -> None:
     second = plan.compile_go_api_plan(index)
 
     assert first == second
-    assert first.api_plan_sha256 == "1de7f97800f1c3ab6e217ca7c224a0ee34c5f4d4a685b0b4046c7df04423d8aa"
+    assert first.api_plan_sha256 == "c616028b0c0d3d51d63c47ecfd606af2abc09a8165c81fb47d1c34a3720b6d5c"
     assert len(first.declarations) == 1773
     assert len(first.inputs) == len(first.callables) == 421
     assert len(first.descriptors) == 243
     assert len(first.structured) == 21
     assert len(first.fixtures) == 12
+    assert sum(len(item.fields) for item in first.inputs) == 4627
     assert len(first.private_declarations) == 741
     assert tuple(helper.symbol for helper in first.kernel_helpers) == (
         "buildGeneratedMetric",
@@ -619,6 +622,86 @@ def test_real_candidate_index_compiles_complete_semantic_plan() -> None:
     }
     assert sum(part.arm == "literal" for item in first.descriptors for part in item.span_name_parts) == 25
     assert sum(part.arm == "field" for item in first.descriptors for part in item.span_name_parts) == 19
+    model_input = input_by_source(first, "span.model.chat")
+    assert len(model_input.fields) == 91
+    assert tuple(field.selector for field in model_input.fields if field.conversion_op == "condition_fact") == (
+        "ConditionConnectorKnown",
+        "ConditionOperationTerminal",
+        "ConditionTechnicalFailure",
+    )
+    model_builder = next(
+        item
+        for item in first.callables
+        if item.declaration_kind == "family_builder" and item.declaration_source_id == "span.model.chat"
+    )
+    assert isinstance(model_builder.body, plan.GoFamilyCallableBodyPlanIR)
+    assert tuple(
+        (condition.condition_id, condition.fact_id, condition.selector) for condition in model_builder.body.conditions
+    ) == (
+        ("connector-known-v1", "connector_known", "ConditionConnectorKnown"),
+        ("operation-terminal-v1", "operation_terminal", "ConditionOperationTerminal"),
+        ("technical-failure-v1", "technical_failure", "ConditionTechnicalFailure"),
+    )
+    assert (
+        sum(
+            field.requirement == "conditional" and field.value_source != "input"
+            for descriptor in first.descriptors
+            for field in descriptor.field_contracts
+        )
+        == 25
+    )
+    relation_owners = tuple(
+        descriptor for descriptor in first.descriptors if descriptor.catalog_contract.base.cross_field_relations
+    )
+    assert len(relation_owners) == 36
+    transition = next(item for item in relation_owners if item.family_id == "span.agent.transition")
+    phase_relation = transition.catalog_contract.base.cross_field_relations[0]
+    assert phase_relation.catalog_id == "agent-phase-v1"
+    assert len(phase_relation.entries) == 12
+    assert phase_relation.mismatch_error.symbol == "FamilyBuildLifecyclePhaseCodeMismatch"
+    valid_model_fixture = next(
+        item for item in first.fixtures if item.example_id == "valid-model-chat-with-honest-missing-content-and-usage"
+    )
+    assert '"operation_terminal"' in json.dumps(plan._canonical_node(valid_model_fixture.builder_context))
+    assert '"start_time_unix_nano":1.78308e18' in valid_model_fixture.expected_record_json
+    invalid_phase_fixture = next(
+        item for item in first.fixtures if item.example_id == "invalid-lifecycle-phase-code-mismatch"
+    )
+    assert invalid_phase_fixture.expected_error == "lifecycle_phase_code_mismatch"
+    enriched_fields = dict(index.enriched_fields)
+    inputs = {item.declaration_source_id: item for item in first.inputs}
+    public_span_name_fields = 0
+    for descriptor in first.descriptors:
+        if descriptor.signal != "span":
+            continue
+        family = index.enriched_families[descriptor.family_id]
+        for part in descriptor.span_name_parts:
+            if part.arm != "field":
+                continue
+            matches = tuple(
+                enriched_fields[field_id]
+                for field_id in family.field_descriptor_ids
+                if enriched_fields[field_id].attribute_id == part.field_key
+            )
+            assert len(matches) == 1
+            enriched = matches[0]
+            assert enriched.requirement_level == "required"
+            assert enriched.condition_id is None and enriched.condition_fact is None
+            assert enriched.field_types == ("string",) and enriched.structured_type is None
+            kernel = next(item for item in descriptor.field_contracts if item.descriptor_id == enriched.id)
+            assert kernel.requirement == "required"
+            assert kernel.requirement_ref.symbol == "familyRequirementRequired"
+            if enriched.value_source == "input":
+                public_span_name_fields += 1
+                public = next(
+                    item for item in inputs[descriptor.family_id].fields if item.enriched_descriptor_id == enriched.id
+                )
+                assert public.presence == "required"
+                assert public.type_ref == plan.GoTypeRefIR("builtin", name="string")
+                assert public.conversion_op == "required_scalar"
+            else:
+                assert all(item.enriched_descriptor_id != enriched.id for item in inputs[descriptor.family_id].fields)
+    assert public_span_name_fields == 18
     assert sum(len(item.scalar_descriptor_ids) for item in first.structured) == 47
     assert sum(item.trace_contract is not None for item in first.descriptors) == 25
     assert sum(item.metric_attribute_limits is not None for item in first.descriptors) == 131
@@ -743,6 +826,23 @@ def test_compiler_owns_names_types_layouts_signatures_and_constant_values() -> N
     )
 
 
+@pytest.mark.parametrize("requirement", ["recommended", "optional", "conditional"])
+def test_go_api_plan_rejects_nonrequired_span_name_fields(requirement: str) -> None:
+    index = rich_index()
+    trace = index.enriched_traces["span.test"]
+    trace.span_name_parts = ({"kind": "field", "literal": None, "field": "gen_ai.operation.name"},)
+    fields = list(index.enriched_fields)
+    target = next(field for field in fields if field["id"] == "span-operation")
+    target["requirement_level"] = requirement
+    target["condition_id"] = "condition.span_name" if requirement == "conditional" else None
+    target["condition_fact"] = "span_name" if requirement == "conditional" else None
+    target["condition_false_requirement"] = "optional" if requirement == "conditional" else None
+    index.enriched_fields = tuple(fields)
+
+    with pytest.raises(plan.GoAPIPlanError, match="not one unconditional required family string"):
+        plan.compile_go_api_plan(index)
+
+
 def test_catalog_structured_and_callable_rendering_contracts_are_closed_and_typed() -> None:
     compiled = plan.compile_go_api_plan(rich_index())
     log = next(item for item in compiled.descriptors if item.family_id == "log.test")
@@ -818,6 +918,213 @@ def test_catalog_structured_and_callable_rendering_contracts_are_closed_and_type
     assert structured.encoder.result_type == plan.GoTypeRefIR("named", name="familyFieldValue")
     assert structured.encoder.arm == "object"
     assert tuple(binding.key for binding in structured.encoder.fixed_fields) == ("content",)
+
+    metric = next(item for item in compiled.descriptors if item.family_id == "metric.test")
+    assert metric.outcome_requirement == "forbidden"
+    assert metric.catalog_contract.base.outcome.requirement.symbol == "familyRequirementInvalid"
+    assert metric.catalog_contract.base.outcome.allowed == ()
+
+
+def test_conditional_derived_field_adds_only_the_owned_fact_selector_and_body_binding() -> None:
+    index = rich_index()
+    fields = list(index.enriched_fields)
+    fields.append(
+        enriched_field(
+            "span-derived-outcome",
+            "span.test",
+            "family",
+            "defenseclaw.outcome",
+            "string",
+            1,
+            requirement="conditional",
+            condition_fact="operation_terminal",
+            value_source="envelope.outcome",
+            input_owner_kind="none",
+        )
+    )
+    index.enriched_fields = tuple(fields)
+    families = list(index.enriched_families)
+    span_position = next(position for position, family in enumerate(families) if family["id"] == "span.test")
+    families[span_position] = {
+        **families[span_position],
+        "field_descriptor_ids": families[span_position]["field_descriptor_ids"] + ("span-derived-outcome",),
+    }
+    index.enriched_families = tuple(families)
+
+    compiled = plan.compile_go_api_plan(index)
+    span_input = input_by_source(compiled, "span.test")
+    assert len(span_input.fields) == 17
+    assert tuple(field.selector for field in span_input.fields[-3:]) == (
+        "ResourceServiceName",
+        "GenAIOperationName",
+        "ConditionOperationTerminal",
+    )
+    assert all(field.selector != "DefenseClawOutcome" for field in span_input.fields)
+    builder = next(
+        item
+        for item in compiled.callables
+        if item.declaration_kind == "family_builder" and item.declaration_source_id == "span.test"
+    )
+    assert isinstance(builder.body, plan.GoFamilyCallableBodyPlanIR)
+    assert builder.body.conditions == (
+        plan.GoConditionBindingPlanIR(
+            "condition.operation_terminal",
+            "operation_terminal",
+            "ConditionOperationTerminal",
+        ),
+    )
+
+    incomplete_builder = dataclasses.replace(
+        builder,
+        body=dataclasses.replace(builder.body, conditions=()),
+    )
+    incomplete_callables = tuple(incomplete_builder if item is builder else item for item in compiled.callables)
+    with pytest.raises(plan.GoAPIPlanError, match="condition fact closure"):
+        plan._validate_condition_closure(compiled.inputs, incomplete_callables, compiled.descriptors)
+
+
+def value_catalog_index(
+    *,
+    entries: tuple[dict[str, Any], ...] = (
+        {"value": "planning", "code": 1},
+        {"value": "model", "code": 2},
+    ),
+    value_enum: tuple[str, ...] = ("planning", "model"),
+    code_min: int = 1,
+    code_max: int = 2,
+) -> SimpleNamespace:
+    index = rich_index()
+    fields = list(index.enriched_fields)
+    phase = enriched_field(
+        "span-phase",
+        "span.test",
+        "family",
+        "defenseclaw.agent.phase",
+        "string",
+        1,
+        requirement="optional",
+    )
+    phase["effective_constraints"] = {"enum": value_enum, "max_utf8_bytes": 16}
+    phase_code = enriched_field(
+        "span-phase-code",
+        "span.test",
+        "family",
+        "defenseclaw.agent.phase.code",
+        "int64",
+        2,
+        requirement="optional",
+    )
+    phase_code["effective_constraints"] = {"min": code_min, "max": code_max}
+    fields.extend((phase, phase_code))
+    index.enriched_fields = tuple(fields)
+    families = list(index.enriched_families)
+    span_position = next(position for position, family in enumerate(families) if family["id"] == "span.test")
+    families[span_position] = {
+        **families[span_position],
+        "field_descriptor_ids": families[span_position]["field_descriptor_ids"] + ("span-phase", "span-phase-code"),
+    }
+    index.enriched_families = tuple(families)
+    index.fields = {
+        **index.fields,
+        "value_catalogs": (
+            {
+                "id": "agent-phase-v1",
+                "kind": "string-int64-bijection",
+                "value_attributes": ("defenseclaw.agent.phase",),
+                "paired_value_attribute": "defenseclaw.agent.phase",
+                "code_attribute": "defenseclaw.agent.phase.code",
+                "entries": entries,
+                "compatibility": {"value": "unknown", "code": 0, "canonical_emittable": False},
+            },
+        ),
+    }
+    return index
+
+
+def test_value_catalog_compiles_typed_cross_field_relation() -> None:
+    index = value_catalog_index()
+
+    compiled = plan.compile_go_api_plan(index)
+    descriptor = next(item for item in compiled.descriptors if item.family_id == "span.test")
+    assert descriptor.catalog_contract.base.cross_field_relations == (
+        plan.GoCrossFieldRelationPlanIR(
+            "agent-phase-v1",
+            "string-int64-bijection",
+            "defenseclaw.agent.phase",
+            "defenseclaw.agent.phase.code",
+            (
+                plan.GoValueCodeEntryPlanIR("planning", 1),
+                plan.GoValueCodeEntryPlanIR("model", 2),
+            ),
+            plan.GoTypedSymbolRefIR(
+                plan.GoTypeRefIR("named", name="FamilyBuildErrorCode"),
+                "FamilyBuildLifecyclePhaseCodeMismatch",
+                None,
+            ),
+        ),
+    )
+
+
+@pytest.mark.parametrize(
+    ("index", "message"),
+    (
+        (value_catalog_index(entries=()), "bounded nonempty relation"),
+        (
+            value_catalog_index(
+                entries=(
+                    {"value": "planning", "code": 1},
+                    {"value": "model", "code": 2**100},
+                )
+            ),
+            "outside signed int64",
+        ),
+        (
+            value_catalog_index(
+                entries=(
+                    {"value": "planning", "code": 1},
+                    {"value": "unknown", "code": 2},
+                )
+            ),
+            "outside paired field enum",
+        ),
+        (
+            value_catalog_index(
+                entries=(
+                    {"value": "planning", "code": 1},
+                    {"value": "model", "code": 3},
+                )
+            ),
+            "above paired field range",
+        ),
+        (
+            value_catalog_index(
+                entries=({"value": "planning", "code": 1},),
+            ),
+            "exactly cover paired field enum",
+        ),
+    ),
+)
+def test_value_catalog_relation_rejects_unbounded_or_constraint_incompatible_entries(
+    index: SimpleNamespace, message: str
+) -> None:
+    with pytest.raises(plan.GoAPIPlanError, match=message):
+        plan.compile_go_api_plan(index)
+
+
+def test_value_catalog_relation_rejects_family_with_only_one_side() -> None:
+    index = value_catalog_index()
+    index.enriched_fields = tuple(field for field in index.enriched_fields if field["id"] != "span-phase-code")
+    families = list(index.enriched_families)
+    span_position = next(position for position, family in enumerate(families) if family["id"] == "span.test")
+    families[span_position] = {
+        **families[span_position],
+        "field_descriptor_ids": tuple(
+            field_id for field_id in families[span_position]["field_descriptor_ids"] if field_id != "span-phase-code"
+        ),
+    }
+    index.enriched_families = tuple(families)
+    with pytest.raises(plan.GoAPIPlanError, match="family exposes only one side"):
+        plan.compile_go_api_plan(index)
 
 
 @pytest.mark.parametrize(

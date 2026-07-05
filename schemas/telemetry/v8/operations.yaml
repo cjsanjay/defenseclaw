@@ -2403,7 +2403,9 @@ groups:
   - correlation.security
   - lifecycle.asset
   - error.core
-  attributes: []
+  attributes:
+  - ref: defenseclaw.asset.transition
+    requirement_level: required
   body_fields: []
   span:
     name_pattern: asset.transition {defenseclaw.asset.transition}
@@ -2451,7 +2453,9 @@ groups:
   - transport.http
   - correlation.security
   - error.core
-  attributes: []
+  attributes:
+  - ref: http.request.method
+    requirement_level: required
   body_fields: []
   span:
     name_pattern: '{http.request.method} outbound'
@@ -2577,7 +2581,9 @@ groups:
   - transport.http
   - telemetry.ingest
   - error.core
-  attributes: []
+  attributes:
+  - ref: http.request.method
+    requirement_level: required
   body_fields: []
   span:
     name_pattern: '{http.request.method} telemetry'
@@ -2620,7 +2626,9 @@ groups:
   - span.core
   - telemetry.ingest
   - error.core
-  attributes: []
+  attributes:
+  - ref: defenseclaw.telemetry.signal
+    requirement_level: required
   body_fields: []
   span:
     name_pattern: telemetry.normalize {defenseclaw.telemetry.signal}
@@ -2663,7 +2671,9 @@ groups:
   - span.core
   - telemetry.destination
   - error.core
-  attributes: []
+  attributes:
+  - ref: defenseclaw.destination.id
+    requirement_level: required
   body_fields: []
   span:
     name_pattern: telemetry.export {defenseclaw.destination.id}
@@ -2748,7 +2758,9 @@ groups:
   - span.core
   - operation.admin
   - error.core
-  attributes: []
+  attributes:
+  - ref: defenseclaw.admin.operation
+    requirement_level: required
   body_fields: []
   span:
     name_pattern: '{defenseclaw.admin.operation}'

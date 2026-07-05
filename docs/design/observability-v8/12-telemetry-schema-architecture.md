@@ -624,6 +624,17 @@ outcome, field-class, or sensitivity break requires a family-schema-version bump
 and reviewed compatibility disposition. Editing a reusable group cannot evade that
 rule; an optional safe addition may retain the family version.
 
+Pre-release consistency correction: the initial v8 `telemetry-registry-v1`
+families have not shipped, and the trace kernel has always required every field
+substituted into a registered span-name program in order to render that name. The
+source therefore marks all nineteen span-name field occurrences as unconditional
+required string attributes, including sixteen family-local strengthenings that
+remove an optional-input/required-kernel contradiction. This correction remains
+family schema version 1 because no released v8 family accepted the missing values;
+it does not authorize changing a released family in place. Migration preserves the
+existing missing-data rule: producers supply the value or construction fails, and
+no adapter fabricates or reverse-parses it from a rendered name.
+
 ##### Complete single-fault examples
 
 Every `examples.yaml` valid record is a complete canonical record accepted by the
