@@ -127,3 +127,53 @@ def test_object_keys_use_utf8_byte_order_and_minimal_string_escapes(canonical: M
     assert canonical.canonical_record_json({"body": {"é": "line\n雪", "z": "</script>"}}) == (
         '{"body":{"z":"</script>","é":"line\\n雪"}}'
     )
+
+
+def test_backspace_and_form_feed_match_go_json_encoder_in_values_and_object_keys(
+    canonical: ModuleType,
+) -> None:
+    record = {
+        "body": {
+            "\f": "\b",
+            "nested": ["prefix\bsuffix", {"value": "prefix\fsuffix"}],
+            "\b": "\f",
+        }
+    }
+
+    assert canonical.canonical_record_json(record) == (
+        '{"body":{"\\b":"\\f","\\f":"\\b",'
+        '"nested":["prefix\\bsuffix",{"value":"prefix\\fsuffix"}]}}'
+    )
+
+
+def test_text_entry_point_reencodes_unicode_control_escapes_like_go_json_encoder(
+    canonical: ModuleType,
+) -> None:
+    source = (
+        '{"body":{"\\u000c":"\\u0008","nested":["\\b",{"value":"\\f"}],'
+        '"\\u0008":"\\u000c"}}'
+    )
+
+    assert canonical.canonicalize_record_json_text(source) == (
+        '{"body":{"\\b":"\\f","\\f":"\\b","nested":["\\b",{"value":"\\f"}]}}'
+    )
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    (
+        (-0.0, "0"),
+        (1e-7, "1e-7"),
+        (1e20, "1e20"),
+        (5e-324, "5e-324"),
+        (1.7976931348623157e308, "1.7976931348623157e308"),
+    ),
+)
+def test_structured_and_text_float_vectors_match_go_shortest_exact_normalization(
+    canonical: ModuleType,
+    value: float,
+    expected: str,
+) -> None:
+    wanted = '{"body":{"value":' + expected + "}}"
+    assert canonical.canonical_record_json({"body": {"value": value}}) == wanted
+    assert canonical.canonicalize_record_json_text('{"body":{"value":' + repr(value) + "}}") == wanted

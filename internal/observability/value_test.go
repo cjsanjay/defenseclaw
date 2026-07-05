@@ -39,6 +39,24 @@ func TestValueCanonicalEncodingAndMinimalEscapes(t *testing.T) {
 	}
 }
 
+func TestValueBackspaceAndFormFeedCanonicalEncoding(t *testing.T) {
+	value, err := NewValue(map[string]any{
+		"\f": "\b",
+		"nested": []any{
+			"prefix\bsuffix",
+			map[string]any{"value": "prefix\fsuffix"},
+		},
+		"\b": "\f",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "{\"\\b\":\"\\f\",\"\\f\":\"\\b\",\"nested\":[\"prefix\\bsuffix\",{\"value\":\"prefix\\fsuffix\"}]}"
+	if got := string(value.Bytes()); got != want {
+		t.Fatalf("canonical control-character JSON mismatch\n got: %q\nwant: %q", got, want)
+	}
+}
+
 func TestValueMinimalLineSeparatorEscapesPreserveLiteralBackslashes(t *testing.T) {
 	input := map[string]any{
 		"literal_escape":       `\u2028\u2029`,
@@ -87,6 +105,10 @@ func TestValueCanonicalExponentVectors(t *testing.T) {
 	}{
 		{name: "positive exponent", input: 1e20, want: `{"n":1e20}`},
 		{name: "negative exponent", input: 1e-9, want: `{"n":1e-9}`},
+		{name: "negative zero", input: math.Copysign(0, -1), want: `{"n":0}`},
+		{name: "seven digit negative exponent", input: 1e-7, want: `{"n":1e-7}`},
+		{name: "smallest subnormal", input: math.SmallestNonzeroFloat64, want: `{"n":5e-324}`},
+		{name: "largest finite", input: math.MaxFloat64, want: `{"n":1.7976931348623157e308}`},
 		{name: "number positive sign and zero", input: json.Number("1e+09"), want: `{"n":1e9}`},
 		{name: "number negative exponent zero", input: json.Number("1e-09"), want: `{"n":1e-9}`},
 		{name: "negative zero exponent", input: json.Number("-0e+08"), want: `{"n":0}`},
