@@ -117,7 +117,10 @@ rest.
 
 | v7 source | v8 target |
 |---|---|
-| `otel.resource` | `observability.resource` |
+| Effective `otel.resource.attributes.service.name`, including `OTEL_SERVICE_NAME` precedence | `observability.resource.attributes.service.name`; record a content-free preservation summary code |
+| `deployment.environment` and `deployment.environment.name` | Canonical `observability.resource.attributes.deployment.environment.name`; equal dual spellings coalesce and conflicting values fail before write |
+| `defenseclaw.preset` / `defenseclaw.preset_name` resource markers | Consume them into destination identity/display handling, omit them from the process resource, and record content-free migration summary codes |
+| Other eligible stable `otel.resource.attributes` | Preserve under `observability.resource.attributes`; unsupported registered/process-owned keys fail value-free rather than becoming custom attributes |
 | `otel.traces` sampler | `observability.trace_policy` |
 | `otel.metrics` interval/temporality | `observability.metric_policy`; preserve explicit values, while the inherited current default remains `export_interval_s: 60` and `temporality: delta` |
 | `otel.logs.emit_individual_findings: true` | Add an OTLP log route for the generated canonical individual-finding event family; `false`/absent does not automatically route those individual finding logs and does not drop unrelated `security.finding` facts |

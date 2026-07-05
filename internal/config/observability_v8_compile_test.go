@@ -13,6 +13,7 @@ package config
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -607,6 +608,168 @@ func TestCompileObservabilityV8RejectsFilesystemResourceAttributes(t *testing.T)
 		}); err != nil {
 			t.Fatalf("stable non-path resource value %q was rejected: %v", value, err)
 		}
+	}
+}
+
+func TestCompileObservabilityV8ResourceAttributeBoundaries(t *testing.T) {
+	atLimit := make(map[string]string, ObservabilityV8MaxResourceAttributes)
+	for index := 0; index < ObservabilityV8MaxResourceAttributes; index++ {
+		atLimit[fmt.Sprintf("custom.attribute_%02d", index)] = "value"
+	}
+	if _, err := CompileObservabilityV8(&ObservabilityV8Source{
+		Resource: ObservabilityV8ResourceSource{Attributes: atLimit},
+	}); err != nil {
+		t.Fatalf("%d custom attributes were rejected: %v", ObservabilityV8MaxResourceAttributes, err)
+	}
+	atLimit["custom.one_too_many"] = "value"
+	if _, err := CompileObservabilityV8(&ObservabilityV8Source{
+		Resource: ObservabilityV8ResourceSource{Attributes: atLimit},
+	}); err == nil || !strings.Contains(err.Error(), "maximum is 64") {
+		t.Fatalf("65-entry error = %v", err)
+	}
+
+	validMultibyte := strings.Repeat("é", ObservabilityV8MaxResourceValueBytes/2)
+	if _, err := CompileObservabilityV8(&ObservabilityV8Source{
+		Resource: ObservabilityV8ResourceSource{Attributes: map[string]string{"custom.label": validMultibyte}},
+	}); err != nil {
+		t.Fatalf("1024-byte multibyte value was rejected: %v", err)
+	}
+	invalidMultibyte := validMultibyte + "é"
+	if _, err := CompileObservabilityV8(&ObservabilityV8Source{
+		Resource: ObservabilityV8ResourceSource{Attributes: map[string]string{"custom.label": invalidMultibyte}},
+	}); err == nil || !strings.Contains(err.Error(), "1024 UTF-8 bytes") || strings.Contains(err.Error(), invalidMultibyte) {
+		t.Fatalf("1026-byte multibyte error was absent or value-unsafe: %v", err)
+	}
+	validKey := "A" + strings.Repeat("a", ObservabilityV8MaxResourceKeyBytes-1)
+	if _, err := CompileObservabilityV8(&ObservabilityV8Source{
+		Resource: ObservabilityV8ResourceSource{Attributes: map[string]string{validKey: "value"}},
+	}); err != nil {
+		t.Fatalf("128-byte resource key was rejected: %v", err)
+	}
+	invalidKey := validKey + "a"
+	if _, err := CompileObservabilityV8(&ObservabilityV8Source{
+		Resource: ObservabilityV8ResourceSource{Attributes: map[string]string{invalidKey: "value"}},
+	}); err == nil || !strings.Contains(err.Error(), "at most 128 ASCII bytes") {
+		t.Fatalf("129-byte resource key error = %v", err)
+	}
+
+	aggregate := make(map[string]string, 16)
+	for index := 0; index < 16; index++ {
+		aggregate[fmt.Sprintf("a%03d", index)] = strings.Repeat("v", 1020)
+	}
+	if _, err := CompileObservabilityV8(&ObservabilityV8Source{
+		Resource: ObservabilityV8ResourceSource{Attributes: aggregate},
+	}); err != nil {
+		t.Fatalf("exact 16KiB aggregate was rejected: %v", err)
+	}
+	aggregate["a000"] += "v"
+	if _, err := CompileObservabilityV8(&ObservabilityV8Source{
+		Resource: ObservabilityV8ResourceSource{Attributes: aggregate},
+	}); err == nil || !strings.Contains(err.Error(), "16384 UTF-8 bytes") {
+		t.Fatalf("over-aggregate error = %v", err)
+	}
+}
+
+func TestCompileObservabilityV8ResourceAttributeShapeAndOwnership(t *testing.T) {
+	tests := []struct {
+		name       string
+		attributes map[string]string
+		want       string
+	}{
+		{name: "empty value", attributes: map[string]string{"custom.label": ""}, want: "1 through 1024"},
+		{name: "blank value", attributes: map[string]string{"custom.label": " \u00a0 "}, want: "must not be blank"},
+		{name: "control value", attributes: map[string]string{"custom.label": "line\nvalue"}, want: "control characters"},
+		{name: "invalid UTF-8 value", attributes: map[string]string{"custom.label": string([]byte{0xff})}, want: "valid UTF-8"},
+		{name: "invalid key", attributes: map[string]string{"custom/label": "value"}, want: "must match"},
+		{name: "process key", attributes: map[string]string{"defenseclaw.instance.id": "value"}, want: "cannot be configured as custom"},
+		{name: "legacy preset marker", attributes: map[string]string{"defenseclaw.preset": "generic-otlp"}, want: "cannot be configured as custom"},
+		{
+			name: "alias conflict",
+			attributes: map[string]string{
+				"deployment.environment.name": "canonical",
+				"deployment.environment":      "legacy",
+			},
+			want: "conflicting canonical and legacy alias",
+		},
+		{
+			name:       "NFC collision",
+			attributes: map[string]string{"e\u0301": "first", "\u00e9": "second"},
+			want:       "collide after NFC normalization",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := CompileObservabilityV8(&ObservabilityV8Source{
+				Resource: ObservabilityV8ResourceSource{Attributes: test.attributes},
+			})
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("error = %v, want %q", err, test.want)
+			}
+		})
+	}
+	canary := "private-control-canary"
+	_, err := CompileObservabilityV8(&ObservabilityV8Source{
+		Resource: ObservabilityV8ResourceSource{Attributes: map[string]string{"custom.label": canary + "\n"}},
+	})
+	if err == nil || strings.Contains(err.Error(), canary) {
+		t.Fatalf("resource error was absent or rendered its value: %v", err)
+	}
+}
+
+func TestCompileObservabilityV8ClassifiesRegisteredCoreAndCanonicalizesEqualAlias(t *testing.T) {
+	plan := mustCompileObservabilityV8(t, &ObservabilityV8Source{
+		Resource: ObservabilityV8ResourceSource{Attributes: map[string]string{
+			"service.name":                "defenseclaw-gateway",
+			"deployment.environment":      "production",
+			"deployment.environment.name": "production",
+			"tenant.id":                   "tenant-a",
+			"workspace.id":                "workspace-a",
+			"organization.unit":           "security",
+		}},
+	})
+	snapshot := plan.Snapshot()
+	wantAttributes := map[string]string{
+		"service.name":                "defenseclaw-gateway",
+		"deployment.environment.name": "production",
+		"tenant.id":                   "tenant-a",
+		"workspace.id":                "workspace-a",
+		"organization.unit":           "security",
+	}
+	if !reflect.DeepEqual(snapshot.ResourceAttributes, wantAttributes) {
+		t.Fatalf("normalized resource attributes = %+v, want %+v", snapshot.ResourceAttributes, wantAttributes)
+	}
+	if !reflect.DeepEqual(snapshot.ResourceAttributeEntries, []ObservabilityV8EffectiveResourceAttribute{{
+		Key: "organization.unit", Value: "security",
+	}}) {
+		t.Fatalf("custom resource entries = %+v", snapshot.ResourceAttributeEntries)
+	}
+}
+
+func TestCompileObservabilityV8ResourceAttributeEntriesAreSortedAndCopySafe(t *testing.T) {
+	attributes := map[string]string{
+		"z.custom": "last",
+		"A.custom": "uppercase-first",
+		"a.custom": "lowercase-second",
+	}
+	plan := mustCompileObservabilityV8(t, &ObservabilityV8Source{
+		Resource: ObservabilityV8ResourceSource{Attributes: attributes},
+	})
+	want := []ObservabilityV8EffectiveResourceAttribute{
+		{Key: "A.custom", Value: "uppercase-first"},
+		{Key: "a.custom", Value: "lowercase-second"},
+		{Key: "z.custom", Value: "last"},
+	}
+	snapshot := plan.Snapshot()
+	if !reflect.DeepEqual(snapshot.ResourceAttributeEntries, want) {
+		t.Fatalf("resource entries = %+v, want %+v", snapshot.ResourceAttributeEntries, want)
+	}
+	digest := plan.Digest()
+	attributes["A.custom"] = "source-mutated"
+	snapshot.ResourceAttributeEntries[0].Value = "mutated"
+	snapshot.ResourceAttributes["A.custom"] = "mutated"
+	again := plan.Snapshot()
+	if !reflect.DeepEqual(again.ResourceAttributeEntries, want) || plan.Digest() != digest {
+		t.Fatal("mutating a resource projection changed the immutable plan")
 	}
 }
 

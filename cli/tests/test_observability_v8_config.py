@@ -26,6 +26,8 @@ from defenseclaw.observability.v8_config import (
     DESTINATION_BATCH_MODES,
     DESTINATION_CAPABILITIES,
     MAX_MAPPING_ENTRIES,
+    MAX_RESOURCE_ATTRIBUTES,
+    MAX_RESOURCE_TOTAL_BYTES,
     MAX_YAML_DEPTH,
     MAX_YAML_NODES,
     PUSH_BATCH_BOUNDS,
@@ -33,6 +35,7 @@ from defenseclaw.observability.v8_config import (
     QUEUE_BOUNDS,
     QUEUE_DEFAULTS,
     V8ConfigError,
+    _parse_source,
     _shape,
     load_validate_v8,
     observability_v8_parity_contract,
@@ -286,12 +289,104 @@ def test_yaml_node_depth_and_mapping_boundaries_match_go_preflight() -> None:
         load_validate_v8(over_depth_limit)
     assert captured.value.keyword == "max-depth"
 
-    attributes = {f"service.attribute_{index}": "value" for index in range(MAX_MAPPING_ENTRIES)}
+    entries = {f"entry_{index}": "value" for index in range(MAX_MAPPING_ENTRIES)}
+    _parse_source({"config_version": 8, "preflight": entries}, "config.yaml")
+    entries["one_too_many"] = "value"
+    with pytest.raises(V8ConfigError) as captured:
+        _parse_source({"config_version": 8, "preflight": entries}, "config.yaml")
+    assert captured.value.keyword == "max-mapping-entries"
+
+
+def test_resource_attribute_count_and_utf8_byte_boundaries() -> None:
+    attributes = {f"custom.attribute_{index:02d}": "value" for index in range(MAX_RESOURCE_ATTRIBUTES)}
     load_validate_v8({"config_version": 8, "observability": {"resource": {"attributes": attributes}}})
-    attributes["service.one_too_many"] = "value"
+    attributes["custom.one_too_many"] = "value"
     with pytest.raises(V8ConfigError) as captured:
         load_validate_v8({"config_version": 8, "observability": {"resource": {"attributes": attributes}}})
-    assert captured.value.keyword == "max-mapping-entries"
+    assert captured.value.keyword == "maxProperties"
+    assert captured.value.path == "$.observability.resource.attributes"
+
+    valid_multibyte = "é" * 512
+    load_validate_v8(
+        {
+            "config_version": 8,
+            "observability": {"resource": {"attributes": {"custom.label": valid_multibyte}}},
+        }
+    )
+    invalid_multibyte = valid_multibyte + "é"
+    with pytest.raises(V8ConfigError) as captured:
+        load_validate_v8(
+            {
+                "config_version": 8,
+                "observability": {"resource": {"attributes": {"custom.label": invalid_multibyte}}},
+            }
+        )
+    assert "1 through 1024 UTF-8 bytes" in str(captured.value)
+    assert invalid_multibyte not in str(captured.value)
+
+    valid_key = "A" + ("a" * 127)
+    load_validate_v8(
+        {
+            "config_version": 8,
+            "observability": {"resource": {"attributes": {valid_key: "value"}}},
+        }
+    )
+    with pytest.raises(V8ConfigError):
+        load_validate_v8(
+            {
+                "config_version": 8,
+                "observability": {"resource": {"attributes": {valid_key + "a": "value"}}},
+            }
+        )
+
+
+def test_resource_attribute_aggregate_boundary() -> None:
+    attributes = {f"a{index:03d}": "v" * 1020 for index in range(16)}
+    assert sum(len(name.encode()) + len(value.encode()) for name, value in attributes.items()) == MAX_RESOURCE_TOTAL_BYTES
+    load_validate_v8({"config_version": 8, "observability": {"resource": {"attributes": attributes}}})
+    attributes["a000"] += "v"
+    with pytest.raises(V8ConfigError, match="within 16384 UTF-8 bytes"):
+        load_validate_v8({"config_version": 8, "observability": {"resource": {"attributes": attributes}}})
+
+
+@pytest.mark.parametrize(
+    ("attributes", "message"),
+    [
+        ({"custom.label": ""}, "canonical v8 schema"),
+        ({"custom.label": " \u00a0 "}, "nonblank"),
+        ({"custom.label": "line\nvalue"}, "control characters"),
+        ({"custom.label": "\ud800"}, "valid UTF-8"),
+        ({"custom/label": "value"}, "canonical v8 schema"),
+        ({"defenseclaw.instance.id": "value"}, "process-owned"),
+        ({"defenseclaw.preset": "generic-otlp"}, "process-owned"),
+        (
+            {"deployment.environment.name": "canonical", "deployment.environment": "legacy"},
+            "conflicting canonical and legacy alias spellings",
+        ),
+        ({"e\u0301": "first", "\u00e9": "second"}, "collide after NFC normalization"),
+    ],
+)
+def test_resource_attribute_shape_ownership_and_collisions(
+    attributes: dict[str, str], message: str
+) -> None:
+    with pytest.raises(V8ConfigError) as captured:
+        load_validate_v8({"config_version": 8, "observability": {"resource": {"attributes": attributes}}})
+    assert message in str(captured.value)
+
+
+def test_registered_resource_core_is_not_misclassified_as_custom() -> None:
+    for attributes in (
+        {"service.name": "defenseclaw-gateway"},
+        {"tenant.id": "tenant-a", "workspace.id": "workspace-a"},
+        {"deployment.environment": "production"},
+        {
+            "deployment.environment.name": "production",
+            "deployment.environment": "production",
+        },
+    ):
+        load_validate_v8(
+            {"config_version": 8, "observability": {"resource": {"attributes": attributes}}}
+        )
 
 
 def test_schema_diagnostics_do_not_render_values() -> None:

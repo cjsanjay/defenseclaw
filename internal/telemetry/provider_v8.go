@@ -350,8 +350,10 @@ func NewProviderV8Inactive(
 			metricCollect[bucket.Bucket] = true
 		}
 	}
+	resourceEnvironment := strings.TrimSpace(snapshot.ResourceAttributes["deployment.environment.name"])
 	if len(traceCollect) > 0 &&
-		(strings.TrimSpace(options.Version) == "" || strings.TrimSpace(options.Environment) == "") {
+		(strings.TrimSpace(options.Version) == "" ||
+			(strings.TrimSpace(options.Environment) == "" && resourceEnvironment == "")) {
 		return nil, newV8ProviderError(V8ProviderErrorInitialization, nil)
 	}
 	metricSpec := v8MetricReaderSpec(snapshot.MetricPolicy)
@@ -693,7 +695,10 @@ func buildV8Resource(snapshot config.ObservabilityV8EffectivePlan, options V8Pro
 	setTrusted("deployment.mode", options.DeploymentMode)
 	setTrusted("defenseclaw.claw.mode", options.ConnectorMode)
 	setTrusted("discovery.source", options.DiscoverySource)
-	environment := strings.TrimSpace(options.Environment)
+	environment := strings.TrimSpace(values["deployment.environment.name"])
+	if environment == "" {
+		environment = strings.TrimSpace(options.Environment)
+	}
 	if environment != "" {
 		values["deployment.environment.name"] = environment
 		values["deployment.environment"] = environment

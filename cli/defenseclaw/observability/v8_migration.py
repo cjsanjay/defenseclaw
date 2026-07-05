@@ -64,6 +64,7 @@ from defenseclaw.observability.v8_compatibility import (
 )
 from defenseclaw.observability.v8_config import (
     BUCKETS,
+    CONFIGURABLE_CORE_RESOURCE_ATTRIBUTE_KEYS,
     ENDPOINT_HOST_CGNAT,
     ENDPOINT_HOST_LOCALHOST,
     ENDPOINT_HOST_PRIVATE,
@@ -72,6 +73,7 @@ from defenseclaw.observability.v8_config import (
     MAX_SOURCE_BYTES,
     MAX_YAML_DEPTH,
     MAX_YAML_NODES,
+    RESERVED_RESOURCE_ATTRIBUTE_KEYS,
     V8ConfigError,
     _shape,
     _StrictLoader,
@@ -202,6 +204,7 @@ class V8MigrationSummary:
     redaction_intent: str
     judge_body_retention: str
     local_observability: str
+    resource_migrations: tuple[str, ...] = ()
 
     def lines(self) -> tuple[str, ...]:
         return (
@@ -211,6 +214,7 @@ class V8MigrationSummary:
             f"redaction intent: {self.redaction_intent}",
             f"judge-body retention: {self.judge_body_retention}",
             f"local observability: {self.local_observability}",
+            "resource migrations: " + (",".join(self.resource_migrations) or "none"),
             f"{self.environment_edits} protected environment edits",
         )
 
@@ -239,11 +243,19 @@ class _Context:
     sensitive_values: set[str] = field(default_factory=set, repr=False)
     sensitive_value_bytes: int = field(default=0, repr=False)
     used_names: set[str] = field(default_factory=set)
+    resource_migrations: list[str] = field(default_factory=list)
     _comment_scrubber: _LiteralScrubber | None = field(default=None, repr=False)
 
     def warning(self, code: str) -> None:
         if code not in self.warnings:
             self.warnings.append(code)
+
+    def resource_migration(self, code: str) -> None:
+        """Record one content-free resource conversion in preview and warnings."""
+
+        if code not in self.resource_migrations:
+            self.resource_migrations.append(code)
+        self.warning(f"resource_migration:{code}")
 
     def scrub_comment(self, value: str) -> str:
         if not self.sensitive_values:
@@ -423,6 +435,7 @@ def convert_v7_observability_to_v8(
         redaction_intent="unredacted" if redaction_disabled else "legacy-v7-compatible",
         judge_body_retention=retention,
         local_observability=local_state,
+        resource_migrations=tuple(sorted(ctx.resource_migrations)),
     )
     return V8MigrationResult(
         candidate=candidate,
@@ -1110,22 +1123,78 @@ def _resolve_effective_data_dir(document: Mapping[str, Any], effective_data_dir:
 
 
 def _resource_attributes(otel: Mapping[str, Any], ctx: _Context) -> dict[str, str]:
+    """Canonicalize registered v7 identity while preserving custom attributes.
+
+    V7 stored process-owned identity, destination-preset markers, and operator
+    attributes in one open map. V8 keeps one resource map but classifies known
+    registered keys separately from custom extras. An unsupported reserved key
+    must stop the upgrade instead of being silently copied or renamed.
+    """
+
     resource = _mapping(otel.get("resource"), "$.otel.resource", ctx) if "resource" in otel else {}
     attrs = (
         _mapping(resource.get("attributes"), "$.otel.resource.attributes", ctx)
         if resource.get("attributes") is not None
         else {}
     )
-    result: dict[str, str] = {}
+    normalized: dict[str, str] = {}
     for name, value in attrs.items():
         if not _is_legacy_scalar(name) or name is None or not _is_legacy_scalar(value):
             raise _error(ctx, "unsupported_type", "$.otel.resource.attributes", "use scalar keys and values")
         normalized_name = _legacy_scalar_text(name)
         if value is not None:
-            result[normalized_name] = _legacy_scalar_text(value)
+            normalized[normalized_name] = _legacy_scalar_text(value)
+
     if service_name := ctx.environment.get("OTEL_SERVICE_NAME", ""):
-        result["service.name"] = service_name
+        normalized["service.name"] = service_name
         ctx.warning("environment_decision:OTEL_SERVICE_NAME")
+
+    canonical_environment = normalized.get("deployment.environment.name")
+    legacy_environment = normalized.get("deployment.environment")
+    if (
+        canonical_environment is not None
+        and legacy_environment is not None
+        and canonical_environment != legacy_environment
+    ):
+        raise _error(
+            ctx,
+            "conflicting_resource_environment",
+            "$.otel.resource.attributes",
+            "make deployment.environment.name and deployment.environment exactly equal before upgrading",
+        )
+    environment = canonical_environment if canonical_environment is not None else legacy_environment
+    result: dict[str, str] = {}
+    environment_written = False
+    for name, value in normalized.items():
+        if name == "service.name":
+            result[name] = value
+            ctx.resource_migration("service_name_preserved")
+            continue
+        if name in {"deployment.environment.name", "deployment.environment"}:
+            if not environment_written and environment is not None:
+                result["deployment.environment.name"] = environment
+                environment_written = True
+                ctx.resource_migration("environment_canonicalized")
+                if canonical_environment is not None and legacy_environment is not None:
+                    ctx.resource_migration("environment_aliases_coalesced")
+            continue
+        if name == "defenseclaw.preset":
+            ctx.resource_migration("preset_identity_consumed")
+            continue
+        if name == "defenseclaw.preset_name":
+            ctx.resource_migration("preset_display_name_removed")
+            continue
+        if (
+            name in RESERVED_RESOURCE_ATTRIBUTE_KEYS
+            and name not in CONFIGURABLE_CORE_RESOURCE_ATTRIBUTE_KEYS
+        ):
+            raise _error(
+                ctx,
+                "unsupported_reserved_resource_attribute",
+                f"$.otel.resource.attributes.{name}",
+                "remove this process-owned resource key; DefenseClaw derives it in v8",
+            )
+        result[name] = value
     return result
 
 

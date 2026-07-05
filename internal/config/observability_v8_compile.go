@@ -20,8 +20,11 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/defenseclaw/defenseclaw/internal/observability"
+	"golang.org/x/text/unicode/norm"
 )
 
 const (
@@ -45,11 +48,12 @@ const (
 )
 
 var (
-	observabilityV8StableNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}$`)
-	observabilityV8EnvNamePattern    = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]{0,255}$`)
-	observabilityV8SelectorPattern   = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$`)
-	observabilityV8HostnamePattern   = regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$`)
-	observabilityV8ReservedPrefixes  = []netip.Prefix{
+	observabilityV8StableNamePattern  = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}$`)
+	observabilityV8EnvNamePattern     = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]{0,255}$`)
+	observabilityV8SelectorPattern    = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$`)
+	observabilityV8ResourceKeyPattern = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_.-]{0,127}$`)
+	observabilityV8HostnamePattern    = regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$`)
+	observabilityV8ReservedPrefixes   = []netip.Prefix{
 		netip.MustParsePrefix("0.0.0.0/8"),
 		netip.MustParsePrefix("192.0.0.0/24"),
 		netip.MustParsePrefix("192.0.2.0/24"),
@@ -108,10 +112,8 @@ func CompileObservabilityV8(source *ObservabilityV8Source) (*ObservabilityV8Plan
 	if err != nil {
 		return nil, err
 	}
-	if len(source.Resource.Attributes) > ObservabilityV8MaxMappingEntries {
-		return nil, fmt.Errorf("observability.resource.attributes: got %d entries, maximum is %d", len(source.Resource.Attributes), ObservabilityV8MaxMappingEntries)
-	}
-	if err := validateObservabilityV8ResourceAttributes(source.Resource.Attributes); err != nil {
+	resourceAttributeMap, resourceAttributes, err := compileObservabilityV8ResourceAttributes(source.Resource.Attributes)
+	if err != nil {
 		return nil, err
 	}
 
@@ -143,16 +145,17 @@ func CompileObservabilityV8(source *ObservabilityV8Source) (*ObservabilityV8Plan
 	}
 
 	return newObservabilityV8Plan(ObservabilityV8EffectivePlan{
-		BucketCatalogVersion: catalogVersion,
-		ResourceAttributes:   cloneStringMap(source.Resource.Attributes),
-		TracePolicy:          tracePolicy,
-		MetricPolicy:         metricPolicy,
-		Local:                local,
-		Buckets:              buckets,
-		Profiles:             profiles,
-		Destinations:         destinations,
-		Warnings:             compileObservabilityV8Warnings(local, destinations),
-		Provenance:           compileObservabilityV8Provenance(source, buckets, destinations),
+		BucketCatalogVersion:     catalogVersion,
+		ResourceAttributes:       resourceAttributeMap,
+		ResourceAttributeEntries: resourceAttributes,
+		TracePolicy:              tracePolicy,
+		MetricPolicy:             metricPolicy,
+		Local:                    local,
+		Buckets:                  buckets,
+		Profiles:                 profiles,
+		Destinations:             destinations,
+		Warnings:                 compileObservabilityV8Warnings(local, destinations),
+		Provenance:               compileObservabilityV8Provenance(source, buckets, destinations),
 	})
 }
 
@@ -1281,25 +1284,141 @@ func validateObservabilityV8Headers(source map[string]ObservabilityV8HeaderValue
 	return nil
 }
 
-func validateObservabilityV8ResourceAttributes(attributes map[string]string) error {
-	for name, value := range attributes {
-		if strings.TrimSpace(name) == "" || len(name) > 256 {
-			return fmt.Errorf("observability.resource.attributes: attribute name must contain 1 through 256 bytes")
+func compileObservabilityV8ResourceAttributes(
+	attributes map[string]string,
+) (map[string]string, []ObservabilityV8EffectiveResourceAttribute, error) {
+	if len(attributes) > ObservabilityV8MaxResourceAttributes {
+		return nil, nil, fmt.Errorf(
+			"observability.resource.attributes: got %d entries, maximum is %d",
+			len(attributes),
+			ObservabilityV8MaxResourceAttributes,
+		)
+	}
+	names := make([]string, 0, len(attributes))
+	normalizedNames := make(map[string]string, len(attributes))
+	for name := range attributes {
+		if !utf8.ValidString(name) {
+			return nil, nil, fmt.Errorf("observability.resource.attributes: attribute names must be valid UTF-8")
 		}
-		if len(value) > 16_384 {
-			return fmt.Errorf("observability.resource.attributes.%s: value exceeds 16384 bytes", name)
+		normalized := norm.NFC.String(name)
+		if first, exists := normalizedNames[normalized]; exists && first != name {
+			return nil, nil, fmt.Errorf("observability.resource.attributes: attribute names collide after NFC normalization")
+		}
+		normalizedNames[normalized] = name
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	if err := validateObservabilityV8ResourceAliasConflicts(attributes); err != nil {
+		return nil, nil, err
+	}
+	var normalizedAttributes map[string]string
+	var custom []ObservabilityV8EffectiveResourceAttribute
+	if len(names) > 0 {
+		normalizedAttributes = make(map[string]string, len(attributes))
+		custom = make([]ObservabilityV8EffectiveResourceAttribute, 0, len(names))
+	}
+	totalBytes := 0
+	for _, name := range names {
+		value := attributes[name]
+		if !utf8.ValidString(name) || len(name) > ObservabilityV8MaxResourceKeyBytes ||
+			!observabilityV8ResourceKeyPattern.MatchString(name) {
+			return nil, nil, fmt.Errorf(
+				"observability.resource.attributes: attribute names must match %s and contain at most %d ASCII bytes",
+				observabilityV8ResourceKeyPattern,
+				ObservabilityV8MaxResourceKeyBytes,
+			)
+		}
+		if !utf8.ValidString(value) {
+			return nil, nil, fmt.Errorf("observability.resource.attributes.%s: value must be valid UTF-8", name)
+		}
+		if len(value) == 0 || len(value) > ObservabilityV8MaxResourceValueBytes {
+			return nil, nil, fmt.Errorf(
+				"observability.resource.attributes.%s: value must contain 1 through %d UTF-8 bytes",
+				name,
+				ObservabilityV8MaxResourceValueBytes,
+			)
+		}
+		if strings.TrimSpace(value) == "" {
+			return nil, nil, fmt.Errorf("observability.resource.attributes.%s: value must not be blank", name)
+		}
+		if strings.IndexFunc(value, unicode.IsControl) >= 0 {
+			return nil, nil, fmt.Errorf("observability.resource.attributes.%s: value must not contain control characters", name)
 		}
 		if observabilityV8SecretBearingResourceKey(name) {
-			return fmt.Errorf("observability.resource.attributes.%s: secret-bearing resource attributes are prohibited", name)
+			return nil, nil, fmt.Errorf("observability.resource.attributes.%s: secret-bearing resource attributes are prohibited", name)
 		}
 		if observabilityV8PathBearingResourceKey(name) || observabilityV8LooksFilesystemPathResourceValue(value) {
-			return fmt.Errorf("observability.resource.attributes.%s: filesystem and home-directory paths are prohibited", name)
+			return nil, nil, fmt.Errorf("observability.resource.attributes.%s: filesystem and home-directory paths are prohibited", name)
 		}
 		if observabilityV8LooksSecretResourceValue(value) {
-			return fmt.Errorf("observability.resource.attributes.%s: value resembles credential material and is prohibited", name)
+			return nil, nil, fmt.Errorf("observability.resource.attributes.%s: value resembles credential material and is prohibited", name)
+		}
+		canonicalName := name
+		if name == "deployment.environment" {
+			canonicalName = "deployment.environment.name"
+		}
+		if observabilityV8ReservedResourceKey(name) && !observabilityV8ConfigurableCoreResourceKey(name) {
+			return nil, nil, fmt.Errorf(
+				"observability.resource.attributes.%s: registered, process-owned, and compatibility-alias keys cannot be configured as custom attributes",
+				name,
+			)
+		}
+		totalBytes += len(name) + len(value)
+		if totalBytes > ObservabilityV8MaxResourceTotalBytes {
+			return nil, nil, fmt.Errorf(
+				"observability.resource.attributes: aggregate key and value data exceeds %d UTF-8 bytes",
+				ObservabilityV8MaxResourceTotalBytes,
+			)
+		}
+		normalizedAttributes[canonicalName] = value
+		if !observabilityV8ConfigurableCoreResourceKey(name) {
+			custom = append(custom, ObservabilityV8EffectiveResourceAttribute{Key: name, Value: value})
+		}
+	}
+	return normalizedAttributes, custom, nil
+}
+
+func validateObservabilityV8ResourceAliasConflicts(attributes map[string]string) error {
+	for _, pair := range [][2]string{
+		{"deployment.environment.name", "deployment.environment"},
+		{"defenseclaw.deployment.mode", "deployment.mode"},
+		{"defenseclaw.device.public_key_fingerprint", "defenseclaw.device.id"},
+	} {
+		canonicalValue, canonical := attributes[pair[0]]
+		legacyValue, legacy := attributes[pair[1]]
+		if canonical && legacy && canonicalValue != legacyValue {
+			return fmt.Errorf(
+				"observability.resource.attributes: conflicting canonical and legacy alias spellings are prohibited",
+			)
 		}
 	}
 	return nil
+}
+
+func observabilityV8ConfigurableCoreResourceKey(name string) bool {
+	switch name {
+	case "service.name", "deployment.environment.name", "deployment.environment", "tenant.id", "workspace.id":
+		return true
+	default:
+		return false
+	}
+}
+
+func observabilityV8ReservedResourceKey(name string) bool {
+	_, reserved := observabilityV8ReservedResourceKeys[name]
+	return reserved
+}
+
+var observabilityV8ReservedResourceKeys = map[string]struct{}{
+	"service.name": {}, "service.version": {}, "service.namespace": {}, "service.instance.id": {},
+	"deployment.environment.name": {}, "host.name": {}, "host.arch": {}, "os.type": {},
+	"tenant.id": {}, "workspace.id": {},
+	"defenseclaw.deployment.mode": {}, "defenseclaw.claw.mode": {}, "defenseclaw.instance.id": {},
+	"defenseclaw.device.public_key_fingerprint": {}, "defenseclaw.claw.home_dir": {},
+	"defenseclaw.gateway.host": {}, "defenseclaw.gateway.port": {}, "discovery.source": {},
+	"deployment.environment": {}, "deployment.mode": {}, "defenseclaw.device.id": {},
+	"defenseclaw.preset": {}, "defenseclaw.preset_name": {},
+	"telemetry.sdk.name": {}, "telemetry.sdk.language": {}, "telemetry.sdk.version": {},
 }
 
 func observabilityV8LooksSecretResourceValue(value string) bool {

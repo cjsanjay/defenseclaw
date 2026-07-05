@@ -64,7 +64,9 @@ observability:
   resource:
     attributes:
       service.name: defenseclaw-gateway
-      deployment.environment: production
+      deployment.environment.name: production
+      organization.unit: security
+      deployment.region: us-east-1
 
   trace_policy:
     sampler: parentbased_traceidratio
@@ -745,8 +747,23 @@ redaction boundary with the `none` transform.
 
 ## 6. Resource, Sampling, and Metrics Policy
 
-- Resource attributes apply to all OTLP destinations and must use stable bounded
-  values.
+- `observability.resource.attributes` contains the configurable registered core
+  keys (`service.name`, `deployment.environment.name`, `tenant.id`, and
+  `workspace.id`) plus custom process-stable attributes. The legacy
+  `deployment.environment` spelling canonicalizes to
+  `deployment.environment.name`; equal dual spellings collapse and conflicting
+  values fail. The block accepts at most 64 entries; names are 1-128 ASCII bytes matching
+  `^[A-Za-z][A-Za-z0-9_.-]{0,127}$`; values are nonblank, control-free strings of
+  1-1,024 UTF-8 bytes; and the aggregate encoded key-plus-value budget is 16 KiB.
+  The compiler stores registered core values separately from a bytewise-key-sorted
+  typed custom projection and rejects invalid input without rendering the value in
+  diagnostics.
+- Other registered identity, process-owned keys, preset markers, and
+  compatibility-alias spellings are invalid in source. DefenseClaw derives those
+  canonical values and documented legacy aliases from trusted runtime identity;
+  custom configuration cannot override or collide with them. Custom attributes
+  otherwise apply to all OTLP destinations through the same immutable generation
+  plan.
 - Secret-bearing resource attributes are invalid.
 - When `trace_policy.sampler` is omitted, collected traces use
   `parentbased_always_on`; bucket trace collection is true by catalog default. Ratio

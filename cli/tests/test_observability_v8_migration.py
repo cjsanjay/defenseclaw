@@ -246,6 +246,16 @@ notifications: {enabled: true}
         "export_interval_seconds": 60,
         "temporality": "delta",
     }
+    assert observability["resource"] == {
+        "attributes": {
+            "service.name": "defenseclaw",
+            "deployment.environment.name": "test",
+        }
+    }
+    assert first.summary.resource_migrations == (
+        "environment_canonicalized",
+        "service_name_preserved",
+    )
     assert observability["defaults"] == {
         "collect": {"logs": False, "traces": False, "metrics": False},
         "redaction_profile": "legacy-v7",
@@ -645,7 +655,7 @@ def test_explicit_otel_environment_transport_is_materialized_with_precedence() -
     assert "environment_decision:OTEL_RESOURCE_ATTRIBUTES" not in result.warnings
 
 
-def test_legacy_resource_preset_markers_and_real_attributes_survive() -> None:
+def test_legacy_resource_preset_markers_are_consumed_and_real_attributes_survive() -> None:
     result = _convert(
         """config_version: 7
 otel:
@@ -658,13 +668,20 @@ otel:
       deployment.environment: staging
 """
     )
-    attributes = _document(result)["observability"]["resource"]["attributes"]
+    observability = _document(result)["observability"]
+    attributes = observability["resource"]["attributes"]
     assert attributes == {
-        "defenseclaw.preset": "generic-otlp",
-        "defenseclaw.preset_name": "Generic OTLP",
         "service.name": "defenseclaw",
-        "deployment.environment": "staging",
+        "deployment.environment.name": "staging",
     }
+    assert result.summary.resource_migrations == (
+        "environment_canonicalized",
+        "preset_display_name_removed",
+        "preset_identity_consumed",
+        "service_name_preserved",
+    )
+    assert "resource_migration:preset_identity_consumed" in result.warnings
+    assert "resource_migration:preset_display_name_removed" in result.warnings
 
 
 def test_v7_resource_null_and_scalar_values_preserve_go_yaml_node_lexemes() -> None:
@@ -712,9 +729,110 @@ otel:
     attributes = _document(result)["observability"]["resource"]["attributes"]
     assert attributes == {
         "service.name": "service-env-name",
-        "deployment.environment": "test",
+        "deployment.environment.name": "test",
     }
     assert "environment_decision:OTEL_SERVICE_NAME" in result.warnings
+    assert "resource_migration:service_name_preserved" in result.warnings
+
+
+def test_equal_canonical_and_legacy_resource_environments_collapse_exactly() -> None:
+    result = _convert(
+        """config_version: 7
+otel:
+  enabled: false
+  resource:
+    attributes:
+      deployment.environment.name: production
+      deployment.environment: production
+      organization.unit: security
+"""
+    )
+
+    assert _document(result)["observability"]["resource"]["attributes"] == {
+        "deployment.environment.name": "production",
+        "organization.unit": "security",
+    }
+    assert "resource_migration:environment_aliases_coalesced" in result.warnings
+    assert "environment_aliases_coalesced" in result.summary.resource_migrations
+
+
+def test_configurable_registered_tenant_and_workspace_resource_keys_survive() -> None:
+    result = _convert(
+        """config_version: 7
+otel:
+  enabled: false
+  resource:
+    attributes:
+      tenant.id: tenant-a
+      workspace.id: workspace-a
+"""
+    )
+    assert _document(result)["observability"]["resource"]["attributes"] == {
+        "tenant.id": "tenant-a",
+        "workspace.id": "workspace-a",
+    }
+
+
+def test_conflicting_canonical_and_legacy_resource_environments_fail_value_free() -> None:
+    canonical_canary = "canonical-environment-canary"
+    legacy_canary = "legacy-environment-canary"
+    with pytest.raises(V8MigrationError) as captured:
+        _convert(
+            f"""config_version: 7
+otel:
+  enabled: false
+  resource:
+    attributes:
+      deployment.environment.name: {canonical_canary}
+      deployment.environment: {legacy_canary}
+"""
+        )
+
+    assert captured.value.code == "conflicting_resource_environment"
+    assert canonical_canary not in str(captured.value)
+    assert legacy_canary not in str(captured.value)
+    assert captured.value.__cause__ is None
+
+
+def test_preset_markers_never_leak_into_resource_output_or_diagnostics() -> None:
+    preset_canary = "preset-identity-canary"
+    display_canary = "preset-display-canary"
+    result = _convert(
+        f"""config_version: 7
+otel:
+  enabled: false
+  resource:
+    attributes:
+      defenseclaw.preset: {preset_canary}
+      defenseclaw.preset_name: {display_canary}
+      custom.label: retained
+"""
+    )
+
+    assert _document(result)["observability"]["resource"]["attributes"] == {"custom.label": "retained"}
+    assert preset_canary not in result.candidate.decode()
+    assert display_canary not in result.candidate.decode()
+    assert all(preset_canary not in warning and display_canary not in warning for warning in result.warnings)
+    assert all(preset_canary not in line and display_canary not in line for line in result.summary.lines())
+
+
+@pytest.mark.parametrize("name", ["service.version", "telemetry.sdk.name", "deployment.mode"])
+def test_unsupported_reserved_resource_attributes_fail_instead_of_becoming_custom(name: str) -> None:
+    value_canary = "reserved-value-canary"
+    with pytest.raises(V8MigrationError) as captured:
+        _convert(
+            f"""config_version: 7
+otel:
+  enabled: false
+  resource:
+    attributes:
+      {name}: {value_canary}
+"""
+        )
+
+    assert captured.value.code == "unsupported_reserved_resource_attribute"
+    assert captured.value.path == f"$.otel.resource.attributes.{name}"
+    assert value_canary not in str(captured.value)
 
 
 @pytest.mark.parametrize(
@@ -742,6 +860,8 @@ otel:
     )
     destination = _destination(_document(result), expected_name)
     assert destination.get("preset") == expected_preset
+    assert "resource" not in _document(result)["observability"]
+    assert "resource_migration:preset_identity_consumed" in result.warnings
     if expected_name == "local-observability":
         assert destination["network_safety"] == {"allow_private_networks": True}
 
@@ -2203,6 +2323,8 @@ otel: # otel-root-comment
   resource:
     attributes:
       service.name: '# quoted-hash-not-comment'
+      deployment.environment: staging # environment-alias-comment
+      defenseclaw.preset: generic-otlp # consumed-preset-comment
 audit_sinks: # sinks-root-comment
   [] # sinks-empty-comment
 observability: # connector-root-comment
@@ -2225,6 +2347,8 @@ ai_discovery: # discovery-root-comment
         "# otel-root-comment",
         "# ┌── nested otel guide ──┐",
         "# otel-enabled-comment",
+        "# environment-alias-comment",
+        "# consumed-preset-comment",
         "# sinks-root-comment",
         "# sinks-empty-comment",
         "# connector-root-comment",
@@ -2237,6 +2361,10 @@ ai_discovery: # discovery-root-comment
     for comment in expected_comments:
         assert comment in candidate
     assert candidate.count("# quoted-hash-not-comment") == 1
+    assert _document(result)["observability"]["resource"]["attributes"] == {
+        "service.name": "# quoted-hash-not-comment",
+        "deployment.environment.name": "staging",
+    }
     load_validate_v8(result.candidate)
 
 

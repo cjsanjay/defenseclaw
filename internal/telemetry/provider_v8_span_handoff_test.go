@@ -782,11 +782,23 @@ func TestV8ProviderRequiresHonestVersionAndEnvironmentOnlyWhenTracesCollected(t 
 			t.Fatalf("trace provider accepted missing required identity: %v/%v", provider, err)
 		}
 	}
+	configuredEnvironment := v8PlanForTest(t, "always_on", "", func(source *config.ObservabilityV8Source) {
+		source.Resource.Attributes = map[string]string{"deployment.environment.name": "test"}
+	})
+	provider, err := NewProviderV8Inactive(
+		context.Background(), configuredEnvironment, 1, V8ProviderOptions{Version: "8.0.0"},
+	)
+	if err != nil {
+		t.Fatalf("configured resource environment did not satisfy trace identity: %v", err)
+	}
+	if err := provider.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
 	no := false
 	metricsOnly := v8PlanForTest(t, "always_on", "", func(source *config.ObservabilityV8Source) {
 		source.Defaults.Collect.Traces = &no
 	})
-	provider, err := NewProviderV8Inactive(context.Background(), metricsOnly, 1, V8ProviderOptions{})
+	provider, err = NewProviderV8Inactive(context.Background(), metricsOnly, 1, V8ProviderOptions{})
 	if err != nil {
 		t.Fatalf("metrics-only provider rejected optional trace identity: %v", err)
 	}

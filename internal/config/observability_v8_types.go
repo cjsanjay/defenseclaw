@@ -33,6 +33,10 @@ const (
 	ObservabilityV8MaxRoutesTotal          = 4_096
 	ObservabilityV8MaxRedactionProfiles    = 128
 	ObservabilityV8MaxMappingEntries       = 1_024
+	ObservabilityV8MaxResourceAttributes   = 64
+	ObservabilityV8MaxResourceKeyBytes     = 128
+	ObservabilityV8MaxResourceValueBytes   = 1_024
+	ObservabilityV8MaxResourceTotalBytes   = 16 * 1_024
 	// ObservabilityV8MaxRetentionDays is the largest whole-day retention
 	// period that can be represented as a time.Duration without overflow.
 	ObservabilityV8MaxRetentionDays = int((1<<63 - 1) / int64(24*time.Hour))

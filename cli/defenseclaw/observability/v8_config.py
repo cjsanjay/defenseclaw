@@ -38,6 +38,7 @@ import ipaddress
 import json
 import math
 import re
+import unicodedata
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from functools import lru_cache
@@ -71,6 +72,10 @@ MAX_ROUTES_PER_DESTINATION = 256
 MAX_ROUTES_TOTAL = 4_096
 MAX_PROFILES = 128
 MAX_MAPPING_ENTRIES = 1_024
+MAX_RESOURCE_ATTRIBUTES = 64
+MAX_RESOURCE_KEY_BYTES = 128
+MAX_RESOURCE_VALUE_BYTES = 1_024
+MAX_RESOURCE_TOTAL_BYTES = 16 * 1_024
 
 BUCKETS = (
     "compliance.activity",
@@ -163,6 +168,7 @@ _TRACE_LIMIT_DEFAULTS = {
     "max_message_items": 128,
 }
 _STABLE_NAME = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
+_RESOURCE_KEY = re.compile(r"^[A-Za-z][A-Za-z0-9_.-]{0,127}$")
 _HOSTNAME = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$")
 _OTLP_PROTOCOLS = frozenset(("grpc", "grpc/protobuf", "http", "http/protobuf"))
 _RESERVED_NETWORKS = tuple(
@@ -180,6 +186,51 @@ _RESERVED_NETWORKS = tuple(
         "2001:10::/28",
         "2001:db8::/32",
     )
+)
+
+RESERVED_RESOURCE_ATTRIBUTE_KEYS = frozenset(
+    {
+        "service.name",
+        "service.version",
+        "service.namespace",
+        "service.instance.id",
+        "deployment.environment.name",
+        "host.name",
+        "host.arch",
+        "os.type",
+        "tenant.id",
+        "workspace.id",
+        "defenseclaw.deployment.mode",
+        "defenseclaw.claw.mode",
+        "defenseclaw.instance.id",
+        "defenseclaw.device.public_key_fingerprint",
+        "defenseclaw.claw.home_dir",
+        "defenseclaw.gateway.host",
+        "defenseclaw.gateway.port",
+        "discovery.source",
+        "deployment.environment",
+        "deployment.mode",
+        "defenseclaw.device.id",
+        "defenseclaw.preset",
+        "defenseclaw.preset_name",
+        "telemetry.sdk.name",
+        "telemetry.sdk.language",
+        "telemetry.sdk.version",
+    }
+)
+CONFIGURABLE_CORE_RESOURCE_ATTRIBUTE_KEYS = frozenset(
+    {
+        "service.name",
+        "deployment.environment.name",
+        "deployment.environment",
+        "tenant.id",
+        "workspace.id",
+    }
+)
+_RESOURCE_ALIAS_PAIRS = (
+    ("deployment.environment.name", "deployment.environment"),
+    ("defenseclaw.deployment.mode", "deployment.mode"),
+    ("defenseclaw.device.public_key_fingerprint", "defenseclaw.device.id"),
 )
 _CGNAT = ipaddress.ip_network("100.64.0.0/10")
 ENDPOINT_HOST_PUBLIC = "public"
@@ -318,6 +369,7 @@ def load_validate_v8(data: str | bytes | Mapping[str, Any], *, source_name: str 
     """Parse and validate one exact-v8 source without reading secrets or network."""
 
     document = _parse_source(data, source_name)
+    _validate_resource_attribute_encoding_and_collisions(document, source_name)
     _validate_schema(document, source_name)
     _validate_semantics(document, source_name)
     return ValidatedV8Config(source_name, _masked_copy(document))
@@ -624,6 +676,17 @@ def _assert_schema_parity(schema: dict[str, Any]) -> None:
         raise RuntimeError("Python v8 route actions drifted from $defs.routeAction")
     if tuple(defs["selector"]["properties"]) != SELECTOR_FIELDS:
         raise RuntimeError("Python v8 selector vocabulary drifted from $defs.selector")
+    resource_attributes = defs["resource"]["properties"]["attributes"]
+    resource_names = resource_attributes["propertyNames"]
+    resource_values = resource_attributes["additionalProperties"]
+    if (
+        resource_attributes.get("maxProperties") != MAX_RESOURCE_ATTRIBUTES
+        or resource_names.get("maxLength") != MAX_RESOURCE_KEY_BYTES
+        or resource_names.get("pattern") != _RESOURCE_KEY.pattern
+        or resource_values.get("minLength") != 1
+        or resource_values.get("maxLength") != MAX_RESOURCE_VALUE_BYTES
+    ):
+        raise RuntimeError("Python v8 resource attribute bounds drifted from $defs.resource")
     queue_properties = defs["queueBatch"]["properties"]
     push_properties = defs["batch"]["properties"]
     for name, expected in QUEUE_DEFAULTS.items():
@@ -808,7 +871,52 @@ def _validate_trace_policy(policy: dict[str, Any], source_name: str) -> None:
 
 
 def _validate_resource_attributes(attributes: dict[str, str], source_name: str) -> None:
-    for name, value in attributes.items():
+    if len(attributes) > MAX_RESOURCE_ATTRIBUTES:
+        _semantic_error(
+            source_name,
+            "observability.resource.attributes",
+            "configure no more than 64 resource attributes",
+        )
+    for canonical, legacy in _RESOURCE_ALIAS_PAIRS:
+        if (
+            canonical in attributes
+            and legacy in attributes
+            and attributes[canonical] != attributes[legacy]
+        ):
+            _semantic_error(
+                source_name,
+                "observability.resource.attributes",
+                "remove conflicting canonical and legacy alias spellings",
+            )
+    total_bytes = 0
+    for name in sorted(attributes, key=lambda candidate: candidate.encode("utf-8")):
+        value = attributes[name]
+        name_bytes = len(name.encode("utf-8"))
+        value_bytes = len(value.encode("utf-8"))
+        if name_bytes > MAX_RESOURCE_KEY_BYTES or _RESOURCE_KEY.fullmatch(name) is None:
+            _semantic_error(
+                source_name,
+                "observability.resource.attributes",
+                "use ASCII attribute names matching ^[A-Za-z][A-Za-z0-9_.-]{0,127}$",
+            )
+        if not 1 <= value_bytes <= MAX_RESOURCE_VALUE_BYTES:
+            _semantic_error(
+                source_name,
+                f"observability.resource.attributes.{name}",
+                "use a value containing 1 through 1024 UTF-8 bytes",
+            )
+        if not value.strip():
+            _semantic_error(
+                source_name,
+                f"observability.resource.attributes.{name}",
+                "use a nonblank resource attribute value",
+            )
+        if any(unicodedata.category(character) == "Cc" for character in value):
+            _semantic_error(
+                source_name,
+                f"observability.resource.attributes.{name}",
+                "remove control characters from the resource attribute value",
+            )
         normalized = re.sub(r"[-_/]", ".", name.lower())
         segments = normalized.split(".")
         if (
@@ -867,6 +975,60 @@ def _validate_resource_attributes(attributes: dict[str, str], source_name: str) 
                 f"observability.resource.attributes.{name}",
                 "remove credential material from resource attributes",
             )
+        if (
+            name in RESERVED_RESOURCE_ATTRIBUTE_KEYS
+            and name not in CONFIGURABLE_CORE_RESOURCE_ATTRIBUTE_KEYS
+        ):
+            _semantic_error(
+                source_name,
+                f"observability.resource.attributes.{name}",
+                "remove registered, process-owned, or compatibility-alias keys from custom attributes",
+            )
+        total_bytes += name_bytes + value_bytes
+        if total_bytes > MAX_RESOURCE_TOTAL_BYTES:
+            _semantic_error(
+                source_name,
+                "observability.resource.attributes",
+                "keep aggregate resource attribute keys and values within 16384 UTF-8 bytes",
+            )
+
+
+def _validate_resource_attribute_encoding_and_collisions(
+    document: dict[str, Any], source_name: str
+) -> None:
+    """Reject invalid Unicode and NFC-colliding names before JSON Schema."""
+
+    observability = document.get("observability")
+    if not isinstance(observability, dict):
+        return
+    resource = observability.get("resource")
+    if not isinstance(resource, dict):
+        return
+    attributes = resource.get("attributes")
+    if not isinstance(attributes, dict):
+        return
+    normalized_names: dict[str, str] = {}
+    for name, value in attributes.items():
+        if not isinstance(name, str) or not isinstance(value, str):
+            continue
+        try:
+            name.encode("utf-8")
+            value.encode("utf-8")
+        except UnicodeEncodeError:
+            _semantic_error(
+                source_name,
+                "observability.resource.attributes",
+                "use valid UTF-8 attribute names and values",
+            )
+        normalized = unicodedata.normalize("NFC", name)
+        first = normalized_names.get(normalized)
+        if first is not None and first != name:
+            _semantic_error(
+                source_name,
+                "observability.resource.attributes",
+                "remove attribute names that collide after NFC normalization",
+            )
+        normalized_names[normalized] = name
 
 
 def _validate_destination(destination: dict[str, Any], path: str, source_name: str) -> None:

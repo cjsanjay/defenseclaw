@@ -1063,7 +1063,7 @@
       "properties": {
         "attributes": {
           "type": "object",
-          "maxProperties": 1024,
+          "maxProperties": 64,
           "propertyNames": {
             "type": "string",
             "minLength": 1,
@@ -1072,6 +1072,7 @@
           },
           "additionalProperties": {
             "type": "string",
+            "minLength": 1,
             "maxLength": 1024
           }
         }

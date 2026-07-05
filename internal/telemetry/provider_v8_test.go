@@ -609,13 +609,10 @@ func TestV8ResourceUsesPlanAndSafeProcessMetadataOnly(t *testing.T) {
 	}
 	plan := v8PlanForTest(t, "always_on", "", func(source *config.ObservabilityV8Source) {
 		source.Resource.Attributes = map[string]string{
-			"service.name": "custom-service", "service.instance.id": "config-must-not-override",
-			"tenant.id": "config-must-not-override", "deployment.mode": "config-must-not-override",
-			"workspace.id": "config-must-not-override", "deployment.environment": "config-must-not-override",
-			"deployment.environment.name": "config-must-not-override", "defenseclaw.claw.mode": "config-must-not-override",
-			"defenseclaw.instance.id": "config-must-not-override", "discovery.source": "config-must-not-override",
-			"defenseclaw.device.id": "config-must-not-override", "service.version": "config-must-not-override",
-			"custom.safe": "configured",
+			"service.name": "custom-service",
+			"tenant.id":    "config-must-not-override", "workspace.id": "config-must-not-override",
+			"deployment.environment.name": "configured-environment",
+			"custom.safe":                 "configured",
 		}
 	})
 	provider, err := NewProviderV8Inactive(context.Background(), plan, 9, V8ProviderOptions{
@@ -632,7 +629,7 @@ func TestV8ResourceUsesPlanAndSafeProcessMetadataOnly(t *testing.T) {
 	for key, want := range map[string]string{
 		"service.name": "custom-service", "service.namespace": "defenseclaw",
 		"service.instance.id": "test-instance", "service.version": "test-version",
-		"deployment.environment.name": "test", "deployment.environment": "test", "tenant.id": "tenant-a",
+		"deployment.environment.name": "configured-environment", "deployment.environment": "configured-environment", "tenant.id": "tenant-a",
 		"workspace.id": "workspace-a", "defenseclaw.deployment.mode": "unmanaged", "deployment.mode": "unmanaged", "defenseclaw.claw.mode": "multi",
 		"defenseclaw.instance.id": "defenseclaw-instance", "discovery.source": "registry",
 		"defenseclaw.device.public_key_fingerprint": fingerprint, "defenseclaw.device.id": fingerprint,
@@ -647,14 +644,11 @@ func TestV8ResourceUsesPlanAndSafeProcessMetadataOnly(t *testing.T) {
 	}
 }
 
-func TestV8ResourceTrustedPrecedenceFallsBackToValidatedPlanValues(t *testing.T) {
+func TestV8ResourceTrustedPrecedenceUsesValidatedRegisteredPlanValues(t *testing.T) {
 	plan := v8PlanForTest(t, "always_on", "", func(source *config.ObservabilityV8Source) {
 		source.Resource.Attributes = map[string]string{
 			"tenant.id": "plan-tenant", "workspace.id": "plan-workspace",
-			"deployment.environment": "plan-environment", "deployment.environment.name": "plan-environment",
-			"deployment.mode": "plan-mode", "defenseclaw.claw.mode": "plan-connector",
-			"discovery.source": "plan-discovery", "defenseclaw.device.id": "plan-device",
-			"service.version": "plan-must-not-override", "defenseclaw.instance.id": "plan-must-not-override",
+			"deployment.environment": "plan-environment", "service.name": "plan-service",
 		}
 	})
 	provider, err := NewProviderV8Inactive(context.Background(), plan, 1, V8ProviderOptions{
@@ -666,9 +660,10 @@ func TestV8ResourceTrustedPrecedenceFallsBackToValidatedPlanValues(t *testing.T)
 	provider.v8.active.Store(true)
 	t.Cleanup(func() { _ = provider.Shutdown(context.Background()) })
 	for key, want := range map[string]string{
-		"tenant.id": "plan-tenant", "workspace.id": "plan-workspace",
-		"deployment.environment.name": "test",
-		"service.version":             "trusted-version", "service.instance.id": "trusted-service-instance",
+		"service.name": "plan-service",
+		"tenant.id":    "plan-tenant", "workspace.id": "plan-workspace",
+		"deployment.environment.name": "plan-environment", "deployment.environment": "plan-environment",
+		"service.version": "trusted-version", "service.instance.id": "trusted-service-instance",
 		"defenseclaw.instance.id": "trusted-service-instance",
 	} {
 		if got := resourceAttribute(provider, key); got != want {

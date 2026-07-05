@@ -334,6 +334,11 @@ secret values.
   `compliance.activity` record audits the test attempt and outcome without the
   probe body.
 - Invalid source updates retain the previous runtime graph.
+- Custom resource attribute boundary tests cover 64/65 entries, 128/129-byte
+  ASCII keys, 1/1,024/1,025-byte UTF-8 values, exact/over-16-KiB aggregate data,
+  blank/control/invalid-UTF-8 values, secret/path heuristics, registered and alias
+  collisions, deterministic bytewise order, detached snapshots, and value-free
+  errors in both Go and Python.
 - Mutating an unrelated scalar/list preserves seeded ASCII header, section comments,
   inline comments, route comments, order, style where safe, permissions, and lock
   semantics.
