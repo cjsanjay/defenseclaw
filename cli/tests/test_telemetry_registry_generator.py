@@ -17,7 +17,7 @@ import time
 from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 from typing import Any
 
 import pytest
@@ -26,6 +26,7 @@ import yaml
 ROOT = Path(__file__).resolve().parents[2]
 GENERATOR = ROOT / "scripts/generate_telemetry_registry.py"
 UPDATER = ROOT / "scripts/update_telemetry_registry_upstream.py"
+MANIFEST_DRIVER = ROOT / "cli/tests/support/telemetry_registry_manifest_driver.py"
 
 DEPENDENCIES = (
     (
@@ -890,12 +891,12 @@ def _materialize_trace_attribute(root: Path, attribute: str, value: Any, field_c
 
 def _run(root: Path, mode: str, *, environment: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
-        [sys.executable, str(GENERATOR), mode, "--root", str(root)],
+        [sys.executable, str(MANIFEST_DRIVER), mode, "--root", str(root)],
         cwd=ROOT,
         check=False,
         capture_output=True,
         text=True,
-        timeout=60,
+        timeout=300,
         env=environment,
     )
 
@@ -909,6 +910,70 @@ def _load_generator_module(name: str):
     return module
 
 
+def test_sibling_module_loader_rejects_foreign_preload(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _load_generator_module("telemetry_registry_foreign_sibling_preload")
+    name = "telemetry_go_output_coordinator"
+    foreign = tmp_path / f"{name}.py"
+    foreign.write_text("# stale foreign module\n", encoding="utf-8")
+    spec = importlib.util.spec_from_file_location(name, foreign)
+    assert spec is not None and spec.loader is not None
+    existing = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(existing)
+    monkeypatch.setitem(sys.modules, name, existing)
+
+    with pytest.raises(RuntimeError, match="foreign provenance"):
+        module._load_sibling_module(name)
+
+
+@pytest.mark.parametrize("unsafe", ["same-file-spoof", "missing-file", "directory", "missing-attribute"])
+def test_sibling_module_loader_rejects_unsafe_preload(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    unsafe: str,
+) -> None:
+    module = _load_generator_module(f"telemetry_registry_unsafe_sibling_preload_{unsafe}")
+    name = "telemetry_go_output_coordinator"
+    if unsafe == "same-file-spoof":
+        existing = SimpleNamespace(__file__=str(GENERATOR.with_name(f"{name}.py").resolve()))
+    elif unsafe == "missing-file":
+        missing = tmp_path / "missing.py"
+        existing = ModuleType(name)
+        existing.__file__ = str(missing)
+        existing.__spec__ = importlib.util.spec_from_file_location(name, missing)
+    elif unsafe == "directory":
+        directory = tmp_path / "not-a-module"
+        directory.mkdir()
+        existing = ModuleType(name)
+        existing.__file__ = str(directory)
+        existing.__spec__ = importlib.util.spec_from_file_location(name, directory)
+    else:
+        existing = ModuleType(name)
+    monkeypatch.setitem(sys.modules, name, existing)
+
+    with pytest.raises(RuntimeError, match="unsafe"):
+        module._load_sibling_module(name)
+
+
+def test_sibling_module_loader_reuses_same_file_identity(monkeypatch: pytest.MonkeyPatch) -> None:
+    module = _load_generator_module("telemetry_registry_same_sibling_preload")
+    name = "telemetry_go_output_coordinator"
+    monkeypatch.delitem(sys.modules, name, raising=False)
+    existing = module._load_sibling_module(name)
+
+    assert isinstance(existing, ModuleType)
+    assert module._load_sibling_module(name) is existing
+
+
+def _render_manifest_only(module: ModuleType, ir: Any) -> dict[Path, bytes]:
+    manifest = module._manifest_document(ir, {})
+    encoded = (json.dumps(manifest, ensure_ascii=False, indent=2) + "\n").encode()
+    assert module.OUTPUT_MANIFEST_MARKER in encoded[: module.generated_transaction.MARKER_SCAN_BYTES]
+    return {module.OUTPUT_MANIFEST: encoded}
+
+
 def _load_updater_module(name: str):
     if "generate_telemetry_registry" not in sys.modules:
         _load_generator_module("generate_telemetry_registry")
@@ -918,6 +983,300 @@ def _load_updater_module(name: str):
     sys.modules[name] = module
     spec.loader.exec_module(module)
     return module
+
+
+def _install_synthetic_candidate_renderers(
+    module: ModuleType,
+    ir: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    build_error: Exception | None = None,
+) -> tuple[object, list[tuple[str, object]]]:
+    class CandidateRenderError(ValueError):
+        pass
+
+    class GoRenderError(RuntimeError):
+        pass
+
+    class GoOutputPreflightError(RuntimeError):
+        pass
+
+    index = object()
+    calls: list[tuple[str, object]] = []
+
+    def build(view: object) -> object:
+        calls.append(("build", view))
+        if build_error is not None:
+            raise build_error
+        return index
+
+    portable_artifact = SimpleNamespace(
+        path="schemas/telemetry/generated/synthetic-candidate.json",
+        payload=b'{"x-defenseclaw-generated":true}\n',
+        ownership_marker=b'"x-defenseclaw-generated"',
+        mode=0o644,
+    )
+
+    def render_portable(observed: object) -> dict[str, Any]:
+        calls.append(("portable", observed))
+        return {portable_artifact.path: portable_artifact}
+
+    portable = SimpleNamespace(
+        CANDIDATE_AUTHORITY=module.GO_CANDIDATE_AUTHORITY,
+        CandidateRenderError=CandidateRenderError,
+        build_candidate_render_index=build,
+        render_candidate_artifacts_from_index=render_portable,
+    )
+    go_render = SimpleNamespace(
+        outputs=("rendered-go-inventory",),
+        declaration_inventory=("declaration-inventory",),
+        expected_declaration_keys=("declaration-key",),
+        materialized_view_sha256=ir.materialized_view.typed_canonical_json_sha256,
+        candidate_render_index_sha256="2" * 64,
+        go_symbol_table_sha256="3" * 64,
+    )
+
+    def render_go(observed: object) -> Any:
+        calls.append(("go", observed))
+        return go_render
+
+    go_renderer = SimpleNamespace(GoRenderError=GoRenderError, render_go_candidate=render_go)
+    go_outputs = tuple(
+        SimpleNamespace(
+            path=path,
+            payload=(b"// Code generated by DefenseClaw telemetry registry; DO NOT EDIT.\npackage observability\n"),
+            marker=b"// Code generated by DefenseClaw telemetry registry; DO NOT EDIT.",
+            mode=0o644,
+        )
+        for path in module.GO_CANDIDATE_OUTPUT_PATHS
+    )
+    metadata = SimpleNamespace(
+        format_version=1,
+        materialized_view_sha256=ir.materialized_view.typed_canonical_json_sha256,
+        candidate_render_index_sha256="2" * 64,
+        go_symbol_table_sha256="3" * 64,
+        declaration_inventory_sha256="4" * 64,
+        output_inventory_sha256="5" * 64,
+        manifest_sha256="6" * 64,
+    )
+
+    def preflight(*args: Any, **kwargs: Any) -> Any:
+        calls.append(("preflight", args[0]))
+        assert args[0] is go_render.outputs
+        assert args[1] is go_render.declaration_inventory
+        assert kwargs["expected_declaration_keys"] is go_render.expected_declaration_keys
+        return SimpleNamespace(outputs=go_outputs, metadata=metadata)
+
+    coordinator = SimpleNamespace(
+        EXACT_GO_OUTPUT_PATHS=module.GO_CANDIDATE_OUTPUT_PATHS,
+        GoOutputPreflightError=GoOutputPreflightError,
+        preflight_go_outputs=preflight,
+    )
+    monkeypatch.setattr(module, "_load_candidate_renderers", lambda: (portable, go_renderer, coordinator))
+    return index, calls
+
+
+def test_render_outputs_builds_one_index_and_fans_out_the_same_identity(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = _fixture_root(tmp_path)
+    module = _load_generator_module("telemetry_registry_single_candidate_index")
+    ir = module.compile_registry(root)
+    index, calls = _install_synthetic_candidate_renderers(module, ir, monkeypatch)
+
+    outputs = module.render_outputs(ir)
+
+    assert [name for name, _ in calls] == ["build", "portable", "go", "preflight"]
+    assert calls[1][1] is index
+    assert calls[2][1] is index
+    assert set(outputs) == {
+        module.OUTPUT_MANIFEST,
+        Path("schemas/telemetry/generated/synthetic-candidate.json"),
+        *(Path(path) for path in module.GO_CANDIDATE_OUTPUT_PATHS),
+    }
+    manifest = json.loads(outputs[module.OUTPUT_MANIFEST])
+    assert manifest["ownership_inventory"]["go_candidate"]["paths"] == list(module.GO_CANDIDATE_OUTPUT_PATHS)
+
+
+def test_unexpected_renderer_failure_is_bounded_and_content_free(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = _fixture_root(tmp_path)
+    module = _load_generator_module("telemetry_registry_bounded_renderer_error")
+    ir = module.compile_registry(root)
+    secret = "/private/secret/customer-source-value"
+    _install_synthetic_candidate_renderers(module, ir, monkeypatch, build_error=RuntimeError(secret))
+
+    with pytest.raises(module.RegistryError) as raised:
+        module.render_outputs(ir)
+
+    assert str(raised.value) == "candidate telemetry rendering failed: unexpected candidate renderer failure"
+    assert secret not in str(raised.value)
+
+
+@pytest.fixture(scope="module")
+def real_candidate_outputs() -> tuple[ModuleType, dict[Path, bytes]]:
+    module = _load_generator_module("telemetry_registry_real_candidate_outputs")
+    outputs = module.render_outputs(module.compile_registry(ROOT))
+    return module, outputs
+
+
+def _mutated_manifest_outputs(
+    module: ModuleType,
+    outputs: Mapping[Path, bytes],
+    mutate: Any,
+) -> dict[Path, bytes]:
+    changed = dict(outputs)
+    manifest = json.loads(changed[module.OUTPUT_MANIFEST])
+    mutate(manifest)
+    changed[module.OUTPUT_MANIFEST] = (json.dumps(manifest, ensure_ascii=False, indent=2) + "\n").encode()
+    return changed
+
+
+def test_real_candidate_outputs_validate_as_one_complete_manifest_inventory(
+    real_candidate_outputs: tuple[ModuleType, dict[Path, bytes]],
+) -> None:
+    module, outputs = real_candidate_outputs
+    desired = module._transaction_outputs(ROOT, outputs)
+    manifest = json.loads(outputs[module.OUTPUT_MANIFEST])
+
+    assert tuple(manifest["ownership_inventory"]["go_candidate"]["paths"]) == module.GO_CANDIDATE_OUTPUT_PATHS
+    assert set(module.GO_CANDIDATE_OUTPUT_PATHS) <= set(desired)
+    assert "schemas/telemetry/generated/telemetry.schema.json" in desired
+    assert len(desired) == len(manifest["outputs"])
+
+
+@pytest.mark.parametrize(
+    ("mutate", "expected"),
+    [
+        (
+            lambda manifest: manifest["ownership_inventory"].__setitem__("go_candidate", None),
+            "Go outputs without candidate ownership",
+        ),
+        (
+            lambda manifest: manifest["ownership_inventory"]["go_candidate"]["paths"].pop(),
+            "schema violation",
+        ),
+        (
+            lambda manifest: manifest["ownership_inventory"]["go_candidate"].__setitem__(
+                "candidate_render_index_sha256", "a" * 64
+            ),
+            "digest headers disagree",
+        ),
+        (
+            lambda manifest: manifest["ownership_inventory"]["go_candidate"].__setitem__(
+                "output_inventory_sha256", "b" * 64
+            ),
+            "output-inventory digest disagrees",
+        ),
+        (
+            lambda manifest: manifest["ownership_inventory"]["go_candidate"].__setitem__(
+                "declaration_inventory_sha256", "c" * 64
+            ),
+            "coordinator digest disagrees",
+        ),
+        (
+            lambda manifest: manifest["ownership_inventory"]["go_candidate"].__setitem__(
+                "coordinator_sha256", "d" * 64
+            ),
+            "coordinator digest disagrees",
+        ),
+    ],
+)
+def test_go_candidate_manifest_rejects_null_partial_mixed_and_digest_mismatch(
+    real_candidate_outputs: tuple[ModuleType, dict[Path, bytes]],
+    mutate: Any,
+    expected: str,
+) -> None:
+    module, outputs = real_candidate_outputs
+    changed = _mutated_manifest_outputs(module, outputs, mutate)
+
+    with pytest.raises(module.RegistryError, match=expected):
+        module._transaction_outputs(ROOT, changed)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("sha256", "0" * 64),
+        ("marker", "// foreign generated ownership marker"),
+        ("mode", 0o600),
+    ],
+)
+def test_go_candidate_ownership_record_must_match_canonical_payload_marker_and_mode(
+    monkeypatch: pytest.MonkeyPatch,
+    real_candidate_outputs: tuple[ModuleType, dict[Path, bytes]],
+    field: str,
+    value: Any,
+) -> None:
+    module, outputs = real_candidate_outputs
+    changed = dict(outputs)
+    manifest = json.loads(changed[module.OUTPUT_MANIFEST])
+    target_path = module.GO_CANDIDATE_OUTPUT_PATHS[0]
+    target = next(record for record in manifest["ownership_inventory"]["artifacts"] if record["path"] == target_path)
+    target[field] = value
+    changed[module.OUTPUT_MANIFEST] = (json.dumps(manifest, ensure_ascii=False, indent=2) + "\n").encode()
+    # Exercise the transaction's defense-in-depth binding independently of the
+    # manifest schema, whose mode constraint would otherwise reject first.
+    monkeypatch.setattr(module, "_validate_v2_output_manifest", lambda *_: None)
+
+    with pytest.raises(module.RegistryError, match="Go candidate ownership record disagrees"):
+        module._transaction_outputs(ROOT, changed)
+
+
+def test_unmanifested_internal_generated_go_is_rejected_by_check_and_write_preflight(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    real_candidate_outputs: tuple[ModuleType, dict[Path, bytes]],
+) -> None:
+    module, outputs = real_candidate_outputs
+    root = _fixture_root(tmp_path)
+    extra = root / "internal/observability/zz_generated_telemetry_unowned.go"
+    extra.write_text(
+        "// Code generated by DefenseClaw telemetry registry; DO NOT EDIT.\npackage observability\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(module.generated_transaction, "check_outputs", lambda *_: None)
+
+    with pytest.raises(module.RegistryError, match="zz_generated_telemetry_unowned.go"):
+        module.check_outputs(root, outputs)
+
+    write_called = False
+
+    def unexpected_write(*_args: Any) -> None:
+        nonlocal write_called
+        write_called = True
+
+    monkeypatch.setattr(module.generated_transaction, "write_outputs", unexpected_write)
+    with pytest.raises(module.RegistryError, match="zz_generated_telemetry_unowned.go"):
+        module.write_outputs(root, outputs)
+    assert write_called is False
+
+
+def test_unmanifested_portable_artifact_is_rejected_by_write_preflight(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    real_candidate_outputs: tuple[ModuleType, dict[Path, bytes]],
+) -> None:
+    module, outputs = real_candidate_outputs
+    root = _fixture_root(tmp_path)
+    extra = root / "schemas/telemetry/generated/stale-portable.json"
+    extra.parent.mkdir(parents=True)
+    extra.write_text('{"x-defenseclaw-generated":true}\n', encoding="utf-8")
+    write_called = False
+
+    def unexpected_write(*_args: Any) -> None:
+        nonlocal write_called
+        write_called = True
+
+    monkeypatch.setattr(module.generated_transaction, "write_outputs", unexpected_write)
+
+    with pytest.raises(module.RegistryError, match="schemas/telemetry/generated/stale-portable.json"):
+        module.write_outputs(root, outputs)
+    assert write_called is False
+    assert extra.is_file()
 
 
 def _explicit_builder_context(
@@ -983,6 +1342,7 @@ def test_write_check_is_deterministic_and_offline(tmp_path: Path) -> None:
     assert manifest.read_bytes() == first_bytes
     parsed = json.loads(first_bytes)
     assert parsed["format_version"] == 2
+    assert parsed["generator_version"] == 2
     assert parsed["outputs"] == ["schemas/telemetry/generated/output-manifest.json"]
     assert parsed["ownership_inventory"] == {
         "format_version": 1,
@@ -992,6 +1352,7 @@ def test_write_check_is_deterministic_and_offline(tmp_path: Path) -> None:
             "marker": '"generated_by": "scripts/generate_telemetry_registry.py"',
         },
         "artifacts": [],
+        "go_candidate": None,
     }
     schema_input = next(
         item for item in parsed["inputs"] if item["path"] == "schemas/telemetry/v8/output-manifest.schema.json"
@@ -1033,10 +1394,12 @@ def test_write_check_is_deterministic_and_offline(tmp_path: Path) -> None:
 def test_v1_manifest_bootstraps_to_v2_ownership_inventory(tmp_path: Path) -> None:
     root = _fixture_root(tmp_path)
     module = _load_generator_module("telemetry_registry_v1_bootstrap")
-    rendered = module.render_outputs(module.compile_registry(root))
+    rendered = _render_manifest_only(module, module.compile_registry(root))
     manifest = json.loads(rendered[module.OUTPUT_MANIFEST])
     manifest["format_version"] = 1
+    manifest["generator_version"] = 1
     manifest.pop("ownership_inventory")
+    manifest["outputs"] = [module.OUTPUT_MANIFEST.as_posix()]
     generated = root / "schemas/telemetry/generated"
     generated.mkdir(parents=True)
     manifest_path = generated / "output-manifest.json"
@@ -1048,6 +1411,7 @@ def test_v1_manifest_bootstraps_to_v2_ownership_inventory(tmp_path: Path) -> Non
     upgraded = json.loads(manifest_path.read_bytes())
     assert upgraded["format_version"] == 2
     assert upgraded["ownership_inventory"]["artifacts"] == []
+    assert upgraded["ownership_inventory"]["go_candidate"] is None
     assert _run(root, "--check").returncode == 0
 
 
@@ -1176,7 +1540,7 @@ def test_v2_ownership_inventory_loads_exact_future_artifact_metadata(tmp_path: P
 
     prior = module._prior_output_ownership(root)
 
-    assert set(prior) == {module.OUTPUT_MANIFEST.as_posix(), artifact_path}
+    assert set(prior) == set(manifest["outputs"])
     assert prior[artifact_path].sha256 == _sha256(payload)
     assert prior[artifact_path].mode == 0o644
     assert prior[artifact_path].marker == marker.encode()
@@ -1606,15 +1970,25 @@ def test_invalid_example_mutation_grammar_is_mechanical_and_exact(
 
 def test_direct_upstream_bytes_type_compiles_losslessly(tmp_path: Path) -> None:
     root = _fixture_root(tmp_path)
+    attribute = "gen_ai.current.000"
 
     def mutate(snapshot: dict[str, Any]) -> None:
-        target = next(item for item in snapshot["attributes"] if item["id"] == "gen_ai.operation.name")
+        target = next(item for item in snapshot["attributes"] if item["id"] == attribute)
         target["allowed_types"] = ["bytes"]
 
     _mutate_snapshot(root, "otel_genai", mutate)
     domain_path = root / "schemas/telemetry/v8/genai.yaml"
     domain = yaml.safe_load(domain_path.read_text(encoding="utf-8"))
-    domain["attribute_extensions"][0]["normalization"] = {"id": "bounded-v1"}
+    domain["attribute_extensions"].append(
+        {
+            "ref": attribute,
+            "field_class": "metadata",
+            "sensitivity": "safe",
+            "cardinality": "low",
+            "normalization": {"id": "bounded-v1"},
+        }
+    )
+    domain["groups"][0]["attributes"].append({"ref": attribute, "requirement_level": "optional"})
     _write_yaml(domain_path, domain)
 
     result = _run(root, "--write")
@@ -2024,14 +2398,15 @@ def test_compiler_ir_preserves_every_validated_public_contract(tmp_path: Path) -
     genai["attribute_extensions"][0]["normalization"]["notes"] = "Preserved extension normalization note."
     span = genai["groups"][0]
     span["brief"] = "Preserved span brief."
-    span["attributes"][0].update(
+    span["attributes"].append(
         {
+            "ref": "defenseclaw.test.name",
             "requirement_level": "conditional",
             "conditional": "operation-terminal-v1",
             "constraints": {
-                "enum": ["chat"],
+                "enum": ["fixture"],
                 "max_utf8_bytes": 64,
-                "pattern": "^chat$",
+                "pattern": "^fixture$",
             },
         }
     )
@@ -2172,9 +2547,10 @@ def test_compiler_ir_preserves_every_validated_public_contract(tmp_path: Path) -
     assert span_ir.stability == "stable"
     assert span_ir.span_kinds == ("CLIENT",)
     assert span_ir.span_status_rule == "technical_error_only"
-    assert span_ir.attribute_uses[0].role == "attributes"
-    assert span_ir.attribute_uses[0].requirement_level == "conditional"
-    assert span_ir.attribute_uses[0].conditional == "operation-terminal-v1"
+    conditional_use = next(use for use in span_ir.attribute_uses if use.ref == "defenseclaw.test.name")
+    assert conditional_use.role == "attributes"
+    assert conditional_use.requirement_level == "conditional"
+    assert conditional_use.conditional == "operation-terminal-v1"
     assert body_ir.attribute_uses[0].role == "body_fields"
     assert body_ir.resolved_uses[0].role == "body_fields"
     assert span_ir.allowed_outcomes == ("completed", "failed")
@@ -3526,7 +3902,9 @@ def test_check_preserves_unowned_and_detects_stale_outputs(tmp_path: Path) -> No
     assert result.returncode == 1
     assert "unowned=['schemas/telemetry/generated/unowned.json']" in result.stderr
     assert extra.is_file()
-    assert _run(root, "--write").returncode == 0
+    result = _run(root, "--write")
+    assert result.returncode == 1
+    assert "unowned=['schemas/telemetry/generated/unowned.json']" in result.stderr
     assert extra.is_file()
     assert _run(root, "--check").returncode == 1
     extra.unlink()

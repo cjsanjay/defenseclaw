@@ -1,0 +1,99 @@
+{
+  "x-defenseclaw-generated": {
+    "artifact": "examples/valid/valid-hook-latency-metric.json",
+    "authority": "candidate-not-public-authority",
+    "generator": "defenseclaw-telemetry-candidate-renderer-v1",
+    "materialized_view_sha256": "738e1790c3cb11c634998bb5bc43294fe1b29ac611e771b781e58389c9eba140",
+    "registry_version": 1
+  },
+  "base_example": null,
+  "builder_context": {
+    "condition_facts": [],
+    "inheritance": {
+      "base_example": null,
+      "mode": "explicit"
+    },
+    "mandatory_facts": [],
+    "occurrence": {
+      "record_id": "rec-metric-001",
+      "timestamp": "2026-07-03T12:00:04Z"
+    }
+  },
+  "conformance": {
+    "builder_parity": "pending-source-inputs",
+    "claim": "No generated-builder or producer parity is claimed by this candidate slice.",
+    "non_json_schema_gates": [
+      "builder_fact_conditions",
+      "canonical_json_byte_depth_and_property_bounds",
+      "complete_payload_leaf_field_class_coverage",
+      "deterministic_record_and_occurrence_identity",
+      "ordinary_shape_aware_utf8_byte_bounds",
+      "ordinary_container_depth_bounds",
+      "ordinary_string_leaf_utf8_byte_bounds",
+      "portable_re2_full_match_patterns",
+      "recursive_aggregate_max_items",
+      "recursive_property_count_bounds",
+      "typed_json_enum_membership",
+      "typed_numeric_arm_int64_vs_finite_double",
+      "span_name_pattern_rendering",
+      "trace_cross_field_derivation_equality",
+      "trace_time_order_relation"
+    ],
+    "otlp_projection": "candidate",
+    "required_materialized_inputs": [
+      "builder_facts",
+      "deterministic_occurrence_inputs"
+    ],
+    "scope": "canonical-schema-comparison-only"
+  },
+  "description": "A hook-latency observation carries only the raw value and the registered bounded labels; the family owns instrument identity, type, unit, temporality, and boundaries.",
+  "expected_error": null,
+  "family": "metric.defenseclaw.connector.hook.latency",
+  "field_classes": {
+    "/attributes/defenseclaw.connector.source": "identifier",
+    "/attributes/defenseclaw.metric.event_type": "metadata",
+    "/attributes/defenseclaw.metric.reason": "metadata",
+    "/attributes/defenseclaw.metric.result": "metadata",
+    "/value": "metadata"
+  },
+  "id": "valid-hook-latency-metric",
+  "materialized_view_sha256": "738e1790c3cb11c634998bb5bc43294fe1b29ac611e771b781e58389c9eba140",
+  "mutation": null,
+  "record": {
+    "bucket": "agent.lifecycle",
+    "bucket_catalog_version": 1,
+    "correlation": {},
+    "event_name": "defenseclaw.connector.hook.latency",
+    "field_classes": {
+      "/attributes/defenseclaw.connector.source": "identifier",
+      "/attributes/defenseclaw.metric.event_type": "metadata",
+      "/attributes/defenseclaw.metric.reason": "metadata",
+      "/attributes/defenseclaw.metric.result": "metadata",
+      "/value": "metadata"
+    },
+    "instrument_data": {
+      "attributes": {
+        "defenseclaw.connector.source": "codex",
+        "defenseclaw.metric.event_type": "prompt",
+        "defenseclaw.metric.reason": "allow",
+        "defenseclaw.metric.result": "ok"
+      },
+      "value": 17.5
+    },
+    "provenance": {
+      "binary_version": "8.0.0",
+      "config_generation": 8,
+      "producer": "defenseclaw",
+      "registry_schema_version": 1
+    },
+    "record_id": "rec-metric-001",
+    "schema_version": 1,
+    "signal": "metrics",
+    "source": "gateway",
+    "timestamp": "2026-07-03T12:00:04Z"
+  },
+  "registry_version": 1,
+  "schema_version": 1,
+  "signal": "metrics",
+  "valid": true
+}

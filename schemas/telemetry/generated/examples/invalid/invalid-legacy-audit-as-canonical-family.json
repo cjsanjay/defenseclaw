@@ -1,0 +1,99 @@
+{
+  "x-defenseclaw-generated": {
+    "artifact": "examples/invalid/invalid-legacy-audit-as-canonical-family.json",
+    "authority": "candidate-not-public-authority",
+    "generator": "defenseclaw-telemetry-candidate-renderer-v1",
+    "materialized_view_sha256": "738e1790c3cb11c634998bb5bc43294fe1b29ac611e771b781e58389c9eba140",
+    "registry_version": 1
+  },
+  "base_example": "valid-asset-scan-started",
+  "builder_context": {
+    "condition_facts": [],
+    "inheritance": {
+      "base_example": "valid-asset-scan-started",
+      "mode": "exact_base"
+    },
+    "mandatory_facts": [],
+    "occurrence": null
+  },
+  "conformance": {
+    "builder_parity": "pending-source-inputs",
+    "claim": "No generated-builder or producer parity is claimed by this candidate slice.",
+    "non_json_schema_gates": [
+      "builder_fact_conditions",
+      "canonical_json_byte_depth_and_property_bounds",
+      "complete_payload_leaf_field_class_coverage",
+      "deterministic_record_and_occurrence_identity",
+      "ordinary_shape_aware_utf8_byte_bounds",
+      "ordinary_container_depth_bounds",
+      "ordinary_string_leaf_utf8_byte_bounds",
+      "portable_re2_full_match_patterns",
+      "recursive_aggregate_max_items",
+      "recursive_property_count_bounds",
+      "typed_json_enum_membership",
+      "typed_numeric_arm_int64_vs_finite_double",
+      "span_name_pattern_rendering",
+      "trace_cross_field_derivation_equality",
+      "trace_time_order_relation"
+    ],
+    "otlp_projection": "candidate",
+    "required_materialized_inputs": [
+      "builder_facts",
+      "deterministic_occurrence_inputs"
+    ],
+    "scope": "canonical-schema-comparison-only"
+  },
+  "description": "This complete log record is invalid only because a compatibility-only legacy audit identity cannot be used as a canonical family.",
+  "expected_error": "compatibility_only_identity_has_no_family",
+  "family": null,
+  "field_classes": {},
+  "id": "invalid-legacy-audit-as-canonical-family",
+  "materialized_view_sha256": "738e1790c3cb11c634998bb5bc43294fe1b29ac611e771b781e58389c9eba140",
+  "mutation": {
+    "changes": [
+      {
+        "op": "remove",
+        "path": "/family"
+      },
+      {
+        "op": "replace",
+        "path": "/record/event_name",
+        "value": "legacy.audit.scan"
+      }
+    ],
+    "kind": "compatibility_only_identity_has_no_family"
+  },
+  "record": {
+    "body": {
+      "defenseclaw.scan.id": "scan-002",
+      "defenseclaw.scan.scanner": "skill-scanner"
+    },
+    "bucket": "asset.scan",
+    "bucket_catalog_version": 1,
+    "correlation": {
+      "scan_id": "scan-002"
+    },
+    "event_name": "legacy.audit.scan",
+    "field_classes": {
+      "/defenseclaw.scan.id": "identifier",
+      "/defenseclaw.scan.scanner": "identifier"
+    },
+    "mandatory": false,
+    "outcome": "attempted",
+    "provenance": {
+      "binary_version": "8.0.0",
+      "config_generation": 8,
+      "producer": "defenseclaw",
+      "registry_schema_version": 1
+    },
+    "record_id": "rec-scan-001",
+    "schema_version": 1,
+    "signal": "logs",
+    "source": "skill_scanner",
+    "timestamp": "2026-07-03T12:00:06Z"
+  },
+  "registry_version": 1,
+  "schema_version": 1,
+  "signal": "logs",
+  "valid": false
+}

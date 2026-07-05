@@ -571,6 +571,60 @@ def test_process_interruption_recovers_prepared_transaction_by_rollback(
     assert not (state / transaction.JOURNAL_NAME).exists()
 
 
+def test_exact_seven_interruption_requires_recovery_before_readers_resume(
+    transaction: ModuleType,
+    repository: Path,
+) -> None:
+    first = _outputs(transaction, 1, include_extra=False)
+    second = _outputs(transaction, 2, include_extra=False)
+    transaction.write_outputs(repository, first, {})
+    prior = _ownership(transaction, first)
+    state = repository / transaction.STATE_DIRECTORY.as_posix()
+
+    class Crash(BaseException):
+        pass
+
+    def go_generation_versions() -> set[int]:
+        versions: set[int] = set()
+        for path in transaction.EXACT_INTERNAL_OUTPUTS:
+            payload = (repository / path).read_text(encoding="utf-8")
+            if " = 1\n" in payload:
+                versions.add(1)
+            if " = 2\n" in payload:
+                versions.add(2)
+        return versions
+
+    witnessed = False
+
+    def crash_after_first_go_apply(stage: str, path: str | None) -> None:
+        nonlocal witnessed
+        if stage != "after_output_apply" or path not in transaction.EXACT_INTERNAL_OUTPUTS:
+            return
+        witnessed = True
+        assert go_generation_versions() == {1, 2}
+        assert (repository / transaction.MANIFEST_PATH).read_bytes() == first[transaction.MANIFEST_PATH].payload
+        journal = transaction._read_journal(state)
+        assert journal is not None and journal.phase == "prepared"
+        with pytest.raises(transaction.RecoveryRequiredError):
+            transaction.check_outputs(repository, first, prior)
+        raise Crash
+
+    with pytest.raises(Crash):
+        transaction.write_outputs(
+            repository,
+            second,
+            prior,
+            fault_injector=crash_after_first_go_apply,
+        )
+
+    assert witnessed
+    assert go_generation_versions() == {1, 2}
+    with pytest.raises(transaction.RecoveryRequiredError):
+        transaction.check_outputs(repository, first, prior)
+    assert transaction.recover_outputs(repository) == transaction.RecoveryResult(True, "rolled_back")
+    _assert_outputs(repository, first)
+
+
 def test_process_interruption_after_commit_completes_cleanup_without_rollback(
     transaction: ModuleType,
     repository: Path,

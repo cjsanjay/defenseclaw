@@ -1318,8 +1318,11 @@ enriched descriptors and `GoAPIPlanIR`; it is not metadata appended after hashin
 so the candidate digest cryptographically binds the exact source view. Every generated Go
 file header and manifest entry carries both digests plus the Go-symbol-table
 digest. The renderer coordinator compares the complete in-memory seven-file set
-and manifest before publication; the filesystem transaction remains
-format-agnostic and enforces path/ownership/atomicity only.
+and manifest before publication. The format-agnostic filesystem transaction
+enforces path ownership, writer serialization, durability, and crash recovery. It
+does not provide a physical multi-file snapshot to a concurrent filesystem reader.
+Its advisory lock serializes generated-output writers only; the Go toolchain,
+language servers, and other direct readers do not acquire it.
 
 ##### Builder context in examples
 
@@ -1440,12 +1443,19 @@ internal/observability/zz_generated_telemetry_builders_operations.go
 internal/observability/zz_generated_telemetry_builder_fixtures_test.go
 ```
 
-The generated-output manifest and transaction accept all seven or none. A strict
-subset, extra generated Go path, handwritten marker, stale digest, symbol-table
-disagreement, missing family entrypoint, or builder for a compatibility-only/
-removed identity fails before publication. Candidate files compile and test but
-do not replace current event/classification/metric/public-schema authority; that
-switch remains one later atomic cutover.
+The generated-output manifest and transaction validate all seven or none. A
+strict subset, extra generated Go path, handwritten marker, stale digest,
+symbol-table disagreement, missing family entrypoint, or builder for a
+compatibility-only/removed identity fails before candidate acceptance. This
+all-or-none guarantee applies to the validated candidate and final committed
+checked-in state, not to transient filesystem visibility while the seven files
+are installed independently. `scripts/generate_telemetry_registry.py --write`
+therefore requires a quiescent worktree: no concurrent Go build, test, vet, list,
+language-server read, or mutation of generated paths. An interrupted write must
+be recovered by a later writer before any such reader resumes; `--check` refuses
+while recovery evidence exists. Candidate files compile and test but do not
+replace current event/classification/metric/public-schema authority; that switch
+remains one later atomic cutover.
 
 The static API gate changes from the pre-generation placeholder "no exported
 `FamilyBuilder` methods" to an exact generated method/signature allowlist. It
@@ -2163,10 +2173,14 @@ live content or secret values.
   methods and private-kernel calls. Compatibility-only/removed identities have no
   builder, and public inputs expose no map/`any`, raw `Value`, identity, version,
   field-class, instrument, or mandatory/floor authority.
-- The exact seven generated Go files in §5.2.3 are published and accepted as one
-  candidate transaction or none. They cannot activate current runtime or public
-  schema authority while any §5.2.3 implementation blocker or parity/cutover gate
-  remains open.
+- The exact seven generated Go files in §5.2.3 are validated and accepted as one
+  candidate set or none, and the final committed checked-in state contains the
+  complete set. Manifest-last publication is a logical crash-recoverable
+  transaction, not a physical multi-file reader snapshot: `--write` runs only in
+  a quiescent worktree, and interrupted publication is recovered before Go or
+  other direct readers resume. The files cannot activate current runtime or
+  public schema authority while any §5.2.3 implementation blocker or
+  parity/cutover gate remains open.
 - Every PR #403 lifecycle identity/event/state/phase, operation boundary,
   connector-facing decision, missing-data flag, and Agent360 dimension has an
   explicit registry disposition.

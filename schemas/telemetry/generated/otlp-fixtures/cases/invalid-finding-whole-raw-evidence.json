@@ -1,0 +1,93 @@
+{
+  "x-defenseclaw-generated": {
+    "artifact": "otlp-fixtures/cases/invalid-finding-whole-raw-evidence.json",
+    "authority": "candidate-not-public-authority",
+    "generator": "defenseclaw-telemetry-candidate-renderer-v1",
+    "materialized_view_sha256": "738e1790c3cb11c634998bb5bc43294fe1b29ac611e771b781e58389c9eba140",
+    "registry_version": 1
+  },
+  "canonical_record": {
+    "body": {
+      "defenseclaw.finding.category": "unsafe_capability",
+      "defenseclaw.finding.confidence": 0.98,
+      "defenseclaw.finding.fingerprint": "hmac-sha256:0123456789abcdef",
+      "defenseclaw.finding.id": "finding-001",
+      "defenseclaw.finding.remediation": "Review the declared capability and restrict or quarantine the asset.",
+      "defenseclaw.finding.rule_id": "SKILL-001",
+      "defenseclaw.finding.status": "open",
+      "defenseclaw.finding.target_ref": "asset:skill/example",
+      "defenseclaw.guardrail.evidence_summary": "Static rule SKILL-001 matched the normalized manifest capability set.",
+      "defenseclaw.security.severity": "HIGH",
+      "raw_prompt": "Unprojected producer content must not be copied into a finding."
+    },
+    "bucket": "security.finding",
+    "bucket_catalog_version": 1,
+    "correlation": {
+      "finding_occurrence_id": "finding-001",
+      "scan_id": "scan-001"
+    },
+    "event_name": "finding.observed",
+    "field_classes": {
+      "/defenseclaw.finding.category": "metadata",
+      "/defenseclaw.finding.confidence": "metadata",
+      "/defenseclaw.finding.fingerprint": "identifier",
+      "/defenseclaw.finding.id": "identifier",
+      "/defenseclaw.finding.remediation": "reason",
+      "/defenseclaw.finding.rule_id": "identifier",
+      "/defenseclaw.finding.status": "metadata",
+      "/defenseclaw.finding.target_ref": "identifier",
+      "/defenseclaw.guardrail.evidence_summary": "evidence",
+      "/defenseclaw.security.severity": "metadata",
+      "/raw_prompt": "content"
+    },
+    "mandatory": false,
+    "provenance": {
+      "binary_version": "8.0.0",
+      "config_generation": 8,
+      "producer": "defenseclaw",
+      "registry_schema_version": 1
+    },
+    "record_id": "rec-finding-001",
+    "schema_version": 1,
+    "severity": "HIGH",
+    "signal": "logs",
+    "source": "skill_scanner",
+    "timestamp": "2026-07-03T12:00:02Z"
+  },
+  "conformance": {
+    "builder_parity": "pending-source-inputs",
+    "claim": "No generated-builder or producer parity is claimed by this candidate slice.",
+    "non_json_schema_gates": [
+      "builder_fact_conditions",
+      "canonical_json_byte_depth_and_property_bounds",
+      "complete_payload_leaf_field_class_coverage",
+      "deterministic_record_and_occurrence_identity",
+      "ordinary_shape_aware_utf8_byte_bounds",
+      "ordinary_container_depth_bounds",
+      "ordinary_string_leaf_utf8_byte_bounds",
+      "portable_re2_full_match_patterns",
+      "recursive_aggregate_max_items",
+      "recursive_property_count_bounds",
+      "typed_json_enum_membership",
+      "typed_numeric_arm_int64_vs_finite_double",
+      "span_name_pattern_rendering",
+      "trace_cross_field_derivation_equality",
+      "trace_time_order_relation"
+    ],
+    "otlp_projection": "candidate",
+    "required_materialized_inputs": [
+      "builder_facts",
+      "deterministic_occurrence_inputs"
+    ],
+    "scope": "canonical-schema-comparison-only"
+  },
+  "expect": {
+    "accepted": false,
+    "error_code": "finding_body_field_not_registered"
+  },
+  "family": "log.finding.observed",
+  "fixture_format": "defenseclaw-otlp-fixture-v1",
+  "id": "invalid-finding-whole-raw-evidence",
+  "materialized_view_sha256": "738e1790c3cb11c634998bb5bc43294fe1b29ac611e771b781e58389c9eba140",
+  "signal": "logs"
+}

@@ -966,9 +966,15 @@ Required cases:
   `legacy.audit.*`, and builders for compatibility-only/deprecated-removed
   identities are compile- or generation-time failures.
 - Candidate publication accepts exactly the seven generated Go paths in 12 §5.2.3
-  as one manifest-owned transaction: all seven exist, match the same candidate
-  digest, materialized-view digest, and symbol table, compile with the fixture suite, and agree with the
-  complete candidate bundle, or none is published/accepted. Missing, extra, stale,
+  as one manifest-owned validated set: all seven exist, match the same candidate
+  digest, materialized-view digest, and symbol table, compile with the fixture
+  suite, and agree with the complete candidate bundle, or none is accepted. The
+  final committed checked-in state contains the complete set. The writer lock
+  excludes other writers only and supplies no physical multi-file snapshot to Go
+  or another direct reader. Tests prove `--write` requires a quiescent worktree,
+  an interruption can expose mixed generations only to unsupported concurrent
+  readers, `--check` refuses that recovery-required state, and a later writer
+  restores or completes it before readers resume. Missing, extra, stale,
   mixed-digest, partially written, independently generated, or current-authority
   files fail before cutover. The compiled package must contain no duplicate
   constant/type declaration: the 38 structured owning/arm symbols are types only

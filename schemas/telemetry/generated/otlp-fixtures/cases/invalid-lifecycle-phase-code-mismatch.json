@@ -1,0 +1,152 @@
+{
+  "x-defenseclaw-generated": {
+    "artifact": "otlp-fixtures/cases/invalid-lifecycle-phase-code-mismatch.json",
+    "authority": "candidate-not-public-authority",
+    "generator": "defenseclaw-telemetry-candidate-renderer-v1",
+    "materialized_view_sha256": "738e1790c3cb11c634998bb5bc43294fe1b29ac611e771b781e58389c9eba140",
+    "registry_version": 1
+  },
+  "canonical_record": {
+    "body": {
+      "attributes": {
+        "defenseclaw.agent.depth": 0,
+        "defenseclaw.agent.execution.id": "execution-0123456789abcdef",
+        "defenseclaw.agent.lifecycle.event": "turn_start",
+        "defenseclaw.agent.lifecycle.id": "lifecycle-0123456789abcdef",
+        "defenseclaw.agent.lifecycle.state": "active",
+        "defenseclaw.agent.phase": "planning",
+        "defenseclaw.agent.phase.code": 4,
+        "defenseclaw.agent.root.id": "agent-root",
+        "defenseclaw.agent.sequence": 4,
+        "defenseclaw.bucket": "agent.lifecycle",
+        "defenseclaw.config.generation": 8,
+        "defenseclaw.session.root.id": "conversation-001",
+        "defenseclaw.source": "codex",
+        "defenseclaw.span.family": "span.agent.transition",
+        "defenseclaw.span.family_schema_version": 1,
+        "gen_ai.agent.id": "agent-root",
+        "gen_ai.conversation.id": "conversation-001"
+      },
+      "end_time_unix_nano": 1783080001001000000,
+      "kind": "INTERNAL",
+      "resource": {
+        "attributes": {
+          "defenseclaw.instance.id": "instance-001",
+          "deployment.environment.name": "test",
+          "service.instance.id": "instance-001",
+          "service.name": "defenseclaw",
+          "service.namespace": "cisco.ai-defense",
+          "service.version": "8.0.0"
+        },
+        "schema_url": "https://opentelemetry.io/schemas/1.42.0"
+      },
+      "scope": {
+        "attributes": {
+          "defenseclaw.semantic_profile": "defenseclaw-genai-rich-v1",
+          "defenseclaw.trace.schema_version": "defenseclaw-trace-v1"
+        },
+        "name": "defenseclaw.telemetry",
+        "schema_url": "https://defenseclaw.io/schemas/telemetry/v8",
+        "version": "8.0.0"
+      },
+      "start_time_unix_nano": 1783080001000000000,
+      "status": {
+        "code": "UNSET"
+      }
+    },
+    "bucket": "agent.lifecycle",
+    "bucket_catalog_version": 1,
+    "correlation": {
+      "agent_id": "agent-root",
+      "run_id": "run-001",
+      "session_id": "conversation-001",
+      "span_id": "fedcba9876543210",
+      "trace_id": "fedcba9876543210fedcba9876543210"
+    },
+    "event_name": "span.agent.transition",
+    "field_classes": {
+      "/attributes/defenseclaw.agent.depth": "metadata",
+      "/attributes/defenseclaw.agent.execution.id": "identifier",
+      "/attributes/defenseclaw.agent.lifecycle.event": "metadata",
+      "/attributes/defenseclaw.agent.lifecycle.id": "identifier",
+      "/attributes/defenseclaw.agent.lifecycle.state": "metadata",
+      "/attributes/defenseclaw.agent.phase": "metadata",
+      "/attributes/defenseclaw.agent.phase.code": "metadata",
+      "/attributes/defenseclaw.agent.root.id": "identifier",
+      "/attributes/defenseclaw.agent.sequence": "metadata",
+      "/attributes/defenseclaw.bucket": "metadata",
+      "/attributes/defenseclaw.config.generation": "metadata",
+      "/attributes/defenseclaw.session.root.id": "identifier",
+      "/attributes/defenseclaw.source": "identifier",
+      "/attributes/defenseclaw.span.family": "identifier",
+      "/attributes/defenseclaw.span.family_schema_version": "metadata",
+      "/attributes/gen_ai.agent.id": "identifier",
+      "/attributes/gen_ai.conversation.id": "identifier",
+      "/end_time_unix_nano": "metadata",
+      "/kind": "metadata",
+      "/resource/attributes/defenseclaw.instance.id": "identifier",
+      "/resource/attributes/deployment.environment.name": "metadata",
+      "/resource/attributes/service.instance.id": "identifier",
+      "/resource/attributes/service.name": "metadata",
+      "/resource/attributes/service.namespace": "metadata",
+      "/resource/attributes/service.version": "metadata",
+      "/resource/schema_url": "metadata",
+      "/scope/attributes/defenseclaw.semantic_profile": "metadata",
+      "/scope/attributes/defenseclaw.trace.schema_version": "metadata",
+      "/scope/name": "metadata",
+      "/scope/schema_url": "metadata",
+      "/scope/version": "metadata",
+      "/start_time_unix_nano": "metadata",
+      "/status/code": "metadata"
+    },
+    "outcome": "attempted",
+    "provenance": {
+      "binary_version": "8.0.0",
+      "config_generation": 8,
+      "producer": "defenseclaw",
+      "registry_schema_version": 1
+    },
+    "record_id": "rec-lifecycle-001",
+    "schema_version": 1,
+    "signal": "traces",
+    "source": "codex",
+    "span_name": "agent.transition turn_start",
+    "timestamp": "2026-07-03T12:00:01Z"
+  },
+  "conformance": {
+    "builder_parity": "pending-source-inputs",
+    "claim": "No generated-builder or producer parity is claimed by this candidate slice.",
+    "non_json_schema_gates": [
+      "builder_fact_conditions",
+      "canonical_json_byte_depth_and_property_bounds",
+      "complete_payload_leaf_field_class_coverage",
+      "deterministic_record_and_occurrence_identity",
+      "ordinary_shape_aware_utf8_byte_bounds",
+      "ordinary_container_depth_bounds",
+      "ordinary_string_leaf_utf8_byte_bounds",
+      "portable_re2_full_match_patterns",
+      "recursive_aggregate_max_items",
+      "recursive_property_count_bounds",
+      "typed_json_enum_membership",
+      "typed_numeric_arm_int64_vs_finite_double",
+      "span_name_pattern_rendering",
+      "trace_cross_field_derivation_equality",
+      "trace_time_order_relation"
+    ],
+    "otlp_projection": "candidate",
+    "required_materialized_inputs": [
+      "builder_facts",
+      "deterministic_occurrence_inputs"
+    ],
+    "scope": "canonical-schema-comparison-only"
+  },
+  "expect": {
+    "accepted": false,
+    "error_code": "lifecycle_phase_code_mismatch"
+  },
+  "family": "span.agent.transition",
+  "fixture_format": "defenseclaw-otlp-fixture-v1",
+  "id": "invalid-lifecycle-phase-code-mismatch",
+  "materialized_view_sha256": "738e1790c3cb11c634998bb5bc43294fe1b29ac611e771b781e58389c9eba140",
+  "signal": "traces"
+}

@@ -20,8 +20,15 @@ therefore *logically* atomic: every prior file is backed up, a durable journal i
 written, non-manifest files are replaced independently, and the output manifest
 is replaced last as the commit marker.  A caught failure rolls back immediately;
 the next writer recovers a process-interrupted journal while holding the same
-exclusive repository-local lock.  Readers must treat a journal or a manifest/
-content digest mismatch as an incomplete transaction.
+exclusive repository-local lock.  That advisory lock serializes writers only;
+the Go toolchain, language servers, and other direct filesystem readers do not
+acquire it.  The transaction therefore does not provide a physical multi-file
+reader snapshot.  Callers of ``write_outputs`` must quiesce all worktree readers
+and mutations for the duration of the write.  After an interruption, readers
+must not consume generated paths until a later writer recovers the journal.
+Cooperating validators treat a journal or a manifest/content digest mismatch as
+an incomplete transaction.  "All or none" describes the validated candidate and
+the final committed checked-in state, not transient filesystem visibility.
 
 Transaction state uses either a real ``<root>/.git`` directory or the exact
 per-worktree gitdir named by a strictly validated Git indirection file.  It never
@@ -269,9 +276,7 @@ def _validate_complete_internal_output_set(paths: set[str], *, inventory: str) -
 
     selected = paths & EXACT_INTERNAL_OUTPUTS
     if selected and selected != EXACT_INTERNAL_OUTPUTS:
-        raise TransactionError(
-            f"{inventory} must contain either none or all exact internal generated outputs"
-        )
+        raise TransactionError(f"{inventory} must contain either none or all exact internal generated outputs")
 
 
 def _normalize_inputs(
@@ -2017,6 +2022,12 @@ def write_outputs(
     fault_injector: FaultInjector | None = None,
 ) -> RecoveryResult:
     """Write all outputs with manifest-last logical commit and recovery.
+
+    The repository-local lock excludes other generated-output writers only.  It
+    does not exclude ``go build``, ``go test``, language servers, or other direct
+    readers, so the caller must provide a quiescent worktree until this function
+    returns.  If the process is interrupted, no reader may consume generated
+    paths until a later writer completes journal recovery.
 
     The return value reports whether this invocation first recovered an older
     interrupted transaction.  A normal successful write returns ``action``

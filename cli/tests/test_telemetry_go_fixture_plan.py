@@ -92,6 +92,8 @@ def _callable(kind: str, source_id: str, symbol: str, input_symbol: str) -> Simp
         receiver_type=receiver,
         receiver_pointer=kind == "family_builder",
         parameters=(("input", _type("named", input_symbol)),),
+        results=(_type("named", "Record"), _type("builtin", "error")),
+        variadic=False,
     )
 
 
@@ -321,6 +323,23 @@ def test_compiles_exact_dispositions_resolves_inheritance_and_covers_missing_api
         "time",
     )
     assert result.go_symbol_table_sha256 == "4" * 64
+    assert tuple(contract.symbol for contract in result.family_builder_methods) == (
+        "BuildLogDiagnosticMessage",
+        "BuildLogPlatformHealth",
+    )
+    assert all(
+        contract.receiver_type == compiler.GoFixtureTypeRefIR("named", "FamilyBuilder")
+        and contract.receiver_pointer
+        and len(contract.parameter_types) == 1
+        and contract.parameter_types[0].arm == "named"
+        and contract.result_types
+        == (
+            compiler.GoFixtureTypeRefIR("named", "Record"),
+            compiler.GoFixtureTypeRefIR("builtin", "error"),
+        )
+        and not contract.variadic
+        for contract in result.family_builder_methods
+    )
     assert result.file.expected_digest_headers == (
         "materialized_view_sha256",
         "candidate_render_index_sha256",
@@ -352,6 +371,11 @@ def test_deterministic_clock_id_optional_and_exact_expected_values(compiler: Mod
     assert case.assertions[1].expected_text == case.assertions[2].expected_text
     assert case.assertions[2].expected_text.startswith('{"body"')
 
+    candidate = _candidate()
+    candidate.go_api_plan.callables[0].symbol = "BuildLogDiagnosticMessageChanged"
+    changed = compiler.compile_go_fixture_plan(candidate)
+    assert changed.fixture_plan_sha256 != first.fixture_plan_sha256
+
 
 def test_plan_is_recursively_frozen_and_contains_no_raw_go_arm(compiler: ModuleType) -> None:
     result = compiler.compile_go_fixture_plan(_candidate())
@@ -368,6 +392,37 @@ def test_plan_is_recursively_frozen_and_contains_no_raw_go_arm(compiler: ModuleT
 def test_mapping_api_plan_cannot_bypass_digest_verification(compiler: ModuleType) -> None:
     with pytest.raises(compiler.GoFixturePlanError, match="canonical typed compiler IR"):
         compiler._verify_api_digest({"api_plan_sha256": "3" * 64}, "3" * 64)
+
+
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    (
+        ("receiver", r"receiver must be \*FamilyBuilder"),
+        ("parameters", "exactly one input"),
+        ("unnamed input", "named struct"),
+        ("results", r"results must be \(Record, error\)"),
+        ("variadic", "nonvariadic"),
+    ),
+)
+def test_family_builder_method_contracts_fail_closed(
+    compiler: ModuleType,
+    mutation: str,
+    message: str,
+) -> None:
+    candidate = _candidate()
+    callable_plan = candidate.go_api_plan.callables[0]
+    if mutation == "receiver":
+        callable_plan.receiver_pointer = False
+    elif mutation == "parameters":
+        callable_plan.parameters = ()
+    elif mutation == "unnamed input":
+        callable_plan.parameters = (("input", _type("builtin", "string")),)
+    elif mutation == "results":
+        callable_plan.results = (_type("named", "Record"),)
+    elif mutation == "variadic":
+        callable_plan.variadic = True
+    with pytest.raises(compiler.GoFixturePlanError, match=message):
+        compiler.compile_go_fixture_plan(candidate)
 
 
 @pytest.mark.parametrize(
@@ -469,6 +524,7 @@ def test_real_candidate_has_total_bounded_family_and_callable_coverage(
     assert len(result.curated_cases) == len(real_candidate.examples)
     assert len(result.covered_family_ids) == len(api.descriptors) == 243
     assert len(result.covered_callable_keys) == len(api.callables) == 421
+    assert len(result.family_builder_methods) == 243
     assert len(result.generated_coverage_cases) <= 421
     assert len(result.file.functions) == len(result.curated_cases) + len(result.generated_coverage_cases)
     assert result.schema_only_example_ids

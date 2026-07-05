@@ -1,0 +1,242 @@
+{
+  "x-defenseclaw-generated": {
+    "artifact": "otlp-fixtures/manifest.json",
+    "authority": "candidate-not-public-authority",
+    "generator": "defenseclaw-telemetry-candidate-renderer-v1",
+    "materialized_view_sha256": "738e1790c3cb11c634998bb5bc43294fe1b29ac611e771b781e58389c9eba140",
+    "registry_version": 1
+  },
+  "canonical_to_otlp": {
+    "any_value_encoding": "typed_union",
+    "any_value_mapping": [
+      [
+        "boolean",
+        "boolValue"
+      ],
+      [
+        "int64",
+        "intValue"
+      ],
+      [
+        "uint32",
+        "intValue"
+      ],
+      [
+        "double",
+        "doubleValue"
+      ],
+      [
+        "string",
+        "stringValue"
+      ],
+      [
+        "array",
+        "arrayValue"
+      ],
+      [
+        "object",
+        "kvlistValue"
+      ]
+    ],
+    "attribute_encoding": "key_value_array",
+    "field_context_overrides": {
+      "trace_resource.schema_url": "ResourceSpans",
+      "trace_scope.schema_url": "ResourceSpans.scopeSpans[]"
+    },
+    "id": "defenseclaw-otlp-v1",
+    "id_encoding": "lowercase_hex",
+    "json_mapping": "opentelemetry_proto_json_v1",
+    "null_value_policy": "reject",
+    "object_contexts": {
+      "correlation": "ResourceSpans.scopeSpans[].spans[]",
+      "envelope": "ResourceSpans.scopeSpans[].spans[]",
+      "trace_body": "ResourceSpans.scopeSpans[].spans[]",
+      "trace_event": "ResourceSpans.scopeSpans[].spans[].events[]",
+      "trace_link": "ResourceSpans.scopeSpans[].spans[].links[]",
+      "trace_resource": "ResourceSpans.resource",
+      "trace_scope": "ResourceSpans.scopeSpans[].scope",
+      "trace_status": "ResourceSpans.scopeSpans[].spans[].status"
+    },
+    "signals": [
+      {
+        "mode": "projected_record_json_string",
+        "request_root": "resourceLogs",
+        "signal": "logs"
+      },
+      {
+        "mode": "direct_span",
+        "request_root": "resourceSpans",
+        "signal": "traces"
+      },
+      {
+        "mode": "sdk_aggregation_required",
+        "request_root": "resourceMetrics",
+        "signal": "metrics"
+      }
+    ],
+    "span_kind_mapping": [
+      [
+        "INTERNAL",
+        1
+      ],
+      [
+        "SERVER",
+        2
+      ],
+      [
+        "CLIENT",
+        3
+      ],
+      [
+        "PRODUCER",
+        4
+      ],
+      [
+        "CONSUMER",
+        5
+      ]
+    ],
+    "status_code_mapping": [
+      [
+        "UNSET",
+        0
+      ],
+      [
+        "OK",
+        1
+      ],
+      [
+        "ERROR",
+        2
+      ]
+    ],
+    "timestamp_encoding": "decimal_unix_nano_string"
+  },
+  "cases": [
+    {
+      "expected_error": null,
+      "family": "span.model.chat",
+      "id": "valid-model-chat-with-honest-missing-content-and-usage",
+      "path": "otlp-fixtures/cases/valid-model-chat-with-honest-missing-content-and-usage.json",
+      "signal": "traces",
+      "valid": true
+    },
+    {
+      "expected_error": null,
+      "family": "span.agent.transition",
+      "id": "valid-root-agent-lifecycle-transition",
+      "path": "otlp-fixtures/cases/valid-root-agent-lifecycle-transition.json",
+      "signal": "traces",
+      "valid": true
+    },
+    {
+      "expected_error": null,
+      "family": "log.finding.observed",
+      "id": "valid-security-finding-with-derived-evidence",
+      "path": "otlp-fixtures/cases/valid-security-finding-with-derived-evidence.json",
+      "signal": "logs",
+      "valid": true
+    },
+    {
+      "expected_error": null,
+      "family": "log.guardrail.judge.completed",
+      "id": "valid-guardrail-judge-payload-log",
+      "path": "otlp-fixtures/cases/valid-guardrail-judge-payload-log.json",
+      "signal": "logs",
+      "valid": true
+    },
+    {
+      "expected_error": null,
+      "family": "metric.defenseclaw.connector.hook.latency",
+      "id": "valid-hook-latency-metric",
+      "path": "otlp-fixtures/cases/valid-hook-latency-metric.json",
+      "signal": "metrics",
+      "valid": true
+    },
+    {
+      "expected_error": null,
+      "family": "log.telemetry.batch.rejected",
+      "id": "valid-telemetry-rejection-without-raw-payload",
+      "path": "otlp-fixtures/cases/valid-telemetry-rejection-without-raw-payload.json",
+      "signal": "logs",
+      "valid": true
+    },
+    {
+      "expected_error": null,
+      "family": "log.scan.started",
+      "id": "valid-asset-scan-started",
+      "path": "otlp-fixtures/cases/valid-asset-scan-started.json",
+      "signal": "logs",
+      "valid": true
+    },
+    {
+      "expected_error": "family_bucket_mismatch",
+      "family": "span.model.chat",
+      "id": "invalid-span-family-bucket-mismatch",
+      "path": "otlp-fixtures/cases/invalid-span-family-bucket-mismatch.json",
+      "signal": "traces",
+      "valid": false
+    },
+    {
+      "expected_error": "lifecycle_phase_code_mismatch",
+      "family": "span.agent.transition",
+      "id": "invalid-lifecycle-phase-code-mismatch",
+      "path": "otlp-fixtures/cases/invalid-lifecycle-phase-code-mismatch.json",
+      "signal": "traces",
+      "valid": false
+    },
+    {
+      "expected_error": "metric_label_not_registered",
+      "family": "metric.defenseclaw.connector.hook.latency",
+      "id": "invalid-metric-high-cardinality-label",
+      "path": "otlp-fixtures/cases/invalid-metric-high-cardinality-label.json",
+      "signal": "metrics",
+      "valid": false
+    },
+    {
+      "expected_error": "finding_body_field_not_registered",
+      "family": "log.finding.observed",
+      "id": "invalid-finding-whole-raw-evidence",
+      "path": "otlp-fixtures/cases/invalid-finding-whole-raw-evidence.json",
+      "signal": "logs",
+      "valid": false
+    },
+    {
+      "expected_error": "compatibility_only_identity_has_no_family",
+      "family": null,
+      "id": "invalid-legacy-audit-as-canonical-family",
+      "path": "otlp-fixtures/cases/invalid-legacy-audit-as-canonical-family.json",
+      "signal": "logs",
+      "valid": false
+    }
+  ],
+  "conformance": {
+    "builder_parity": "pending-source-inputs",
+    "claim": "No generated-builder or producer parity is claimed by this candidate slice.",
+    "non_json_schema_gates": [
+      "builder_fact_conditions",
+      "canonical_json_byte_depth_and_property_bounds",
+      "complete_payload_leaf_field_class_coverage",
+      "deterministic_record_and_occurrence_identity",
+      "ordinary_shape_aware_utf8_byte_bounds",
+      "ordinary_container_depth_bounds",
+      "ordinary_string_leaf_utf8_byte_bounds",
+      "portable_re2_full_match_patterns",
+      "recursive_aggregate_max_items",
+      "recursive_property_count_bounds",
+      "typed_json_enum_membership",
+      "typed_numeric_arm_int64_vs_finite_double",
+      "span_name_pattern_rendering",
+      "trace_cross_field_derivation_equality",
+      "trace_time_order_relation"
+    ],
+    "otlp_projection": "candidate",
+    "required_materialized_inputs": [
+      "builder_facts",
+      "deterministic_occurrence_inputs"
+    ],
+    "scope": "canonical-schema-comparison-only"
+  },
+  "format": "defenseclaw-otlp-fixture-manifest-v1",
+  "materialized_view_sha256": "738e1790c3cb11c634998bb5bc43294fe1b29ac611e771b781e58389c9eba140"
+}

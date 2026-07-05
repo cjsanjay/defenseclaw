@@ -347,7 +347,13 @@ def test_observability_v8_generated_builder_source_contract_is_normative() -> No
         "internal/observability/zz_generated_telemetry_builder_fixtures_test.go",
     ):
         assert path in schemas
-    assert "accept all seven or none" in schemas
+    assert "validate all seven or none" in schemas
+    assert "does not provide a physical multi-file snapshot" in schemas
+    assert "therefore requires a quiescent worktree" in schemas
+    assert "final committed checked-in state" in schemas
+    assert "writer lock\n  excludes other writers only" in verification
+    assert "an interruption can expose mixed generations only to unsupported concurrent" in verification
+    assert "Manifest-last installation is a logical crash-recoverable transaction" in decisions
     assert "`legacy.audit.*`" in schemas
     assert "Candidate generation MUST remain incomplete" in schemas
     assert "Generated-builder source authority" in verification

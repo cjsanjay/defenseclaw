@@ -636,10 +636,15 @@ def test_candidate_renderer_is_deterministic_complete_and_in_memory(
     view: Any,
     artifacts: Mapping[str, Any],
 ) -> None:
-    repeated = renderer.render_candidate_artifacts(view)
+    index = renderer.build_candidate_render_index(view)
+    from_index = renderer.render_candidate_artifacts_from_index(index)
+    repeated = from_index
 
     assert tuple(artifacts) == tuple(sorted(artifacts))
     assert {path: artifact.payload for path, artifact in repeated.items()} == {
+        path: artifact.payload for path, artifact in artifacts.items()
+    }
+    assert {path: artifact.payload for path, artifact in from_index.items()} == {
         path: artifact.payload for path, artifact in artifacts.items()
     }
     assert len(artifacts) == 29
@@ -662,6 +667,10 @@ def test_candidate_renderer_is_deterministic_complete_and_in_memory(
         assert path.startswith(f"{PREFIX}/")
         assert renderer._normalized_candidate_path(path) == path
         assert not PurePosixPath(path).is_absolute()
+
+    forged = dataclasses.replace(index, candidate_render_index_sha256="0" * 64)
+    with pytest.raises(renderer.CandidateRenderError, match="digest-valid CandidateRenderIndex"):
+        renderer.render_candidate_artifacts_from_index(forged)
 
 
 def test_candidate_index_consumes_reviewed_go_symbol_contract_immutably_and_preserves_real_smoke(

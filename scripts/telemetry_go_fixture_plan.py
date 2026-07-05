@@ -186,6 +186,18 @@ class GoFixtureFunctionPlanIR:
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
+class GoFixtureBuilderMethodContractIR:
+    """One exact exported ``*FamilyBuilder`` method signature."""
+
+    symbol: str
+    receiver_type: GoFixtureTypeRefIR
+    receiver_pointer: bool
+    parameter_types: tuple[GoFixtureTypeRefIR, ...]
+    result_types: tuple[GoFixtureTypeRefIR, ...]
+    variadic: bool
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
 class GoFixtureFilePlanIR:
     path: str
     package_name: str
@@ -202,6 +214,7 @@ class GoFixturePlanIR:
     candidate_render_index_sha256: str
     go_symbol_table_sha256: str
     go_api_plan_sha256: str
+    family_builder_methods: tuple[GoFixtureBuilderMethodContractIR, ...]
     curated_cases: tuple[GoFixtureCaseIR, ...]
     generated_coverage_cases: tuple[GoFixtureCaseIR, ...]
     covered_family_ids: tuple[str, ...]
@@ -1382,6 +1395,64 @@ def _file_plan(cases: tuple[GoFixtureCaseIR, ...]) -> GoFixtureFilePlanIR:
     )
 
 
+def _family_builder_method_contracts(
+    callables: Mapping[tuple[str, str], Any],
+    inputs: Mapping[tuple[str, str], Any],
+) -> tuple[GoFixtureBuilderMethodContractIR, ...]:
+    contracts: list[GoFixtureBuilderMethodContractIR] = []
+    seen_symbols: set[str] = set()
+    for key in sorted(callables):
+        kind, source_id = key
+        if kind != "family_builder":
+            continue
+        path = f"go_api.callable[{kind}/{source_id}]"
+        callable_plan = callables[key]
+        symbol = _identifier(_read(callable_plan, "symbol", path), f"{path}.symbol")
+        if symbol in seen_symbols:
+            raise GoFixturePlanError("family builder method symbol is duplicated")
+        seen_symbols.add(symbol)
+        receiver_raw = _read(callable_plan, "receiver_type", path)
+        receiver = _type_ref(receiver_raw, f"{path}.receiver_type")
+        receiver_pointer = _read(callable_plan, "receiver_pointer", path)
+        if receiver != GoFixtureTypeRefIR("named", "FamilyBuilder") or receiver_pointer is not True:
+            raise GoFixturePlanError(f"{path}: family builder receiver must be *FamilyBuilder")
+        raw_parameters = _sequence(_read(callable_plan, "parameters", path), f"{path}.parameters", maximum=2)
+        if len(raw_parameters) != 1:
+            raise GoFixturePlanError(f"{path}: family builder must accept exactly one input")
+        parameter = raw_parameters[0]
+        if not isinstance(parameter, Sequence) or isinstance(parameter, (str, bytes, bytearray)) or len(parameter) != 2:
+            raise GoFixturePlanError(f"{path}: family builder parameter contract is invalid")
+        _identifier(parameter[0], f"{path}.parameters[0].name")
+        parameter_type = _type_ref(parameter[1], f"{path}.parameters[0].type")
+        input_plan = inputs.get(("family_input", source_id))
+        if input_plan is None:
+            raise GoFixturePlanError(f"{path}: family builder has no owned input struct")
+        input_symbol = _identifier(_read(input_plan, "symbol", path), f"{path}.input.symbol")
+        if parameter_type != GoFixtureTypeRefIR("named", input_symbol):
+            raise GoFixturePlanError(f"{path}: family builder input must be its named struct")
+        raw_results = _sequence(_read(callable_plan, "results", path), f"{path}.results", maximum=3)
+        results = tuple(_type_ref(result, f"{path}.results") for result in raw_results)
+        if results != (
+            GoFixtureTypeRefIR("named", "Record"),
+            GoFixtureTypeRefIR("builtin", "error"),
+        ):
+            raise GoFixturePlanError(f"{path}: family builder results must be (Record, error)")
+        variadic = _optional(callable_plan, "variadic", False)
+        if type(variadic) is not bool or variadic:
+            raise GoFixturePlanError(f"{path}: family builder must be nonvariadic")
+        contracts.append(
+            GoFixtureBuilderMethodContractIR(
+                symbol,
+                receiver,
+                receiver_pointer,
+                (parameter_type,),
+                results,
+                variadic,
+            )
+        )
+    return tuple(sorted(contracts, key=lambda contract: contract.symbol))
+
+
 def compile_go_fixture_plan(index: Any) -> GoFixturePlanIR:
     """Compile a complete, immutable, deterministic fixture authority."""
 
@@ -1478,9 +1549,12 @@ def compile_go_fixture_plan(index: Any) -> GoFixturePlanIR:
     )
     if set(covered_callables) != set(callables):
         raise GoFixturePlanError("generated fixture coverage does not cover every callable")
+    family_builder_methods = _family_builder_method_contracts(callables, inputs)
     family_ids = tuple(sorted(descriptors))
     if {source for kind, source in callables if kind == "family_builder"} != set(family_ids):
         raise GoFixturePlanError("active family descriptors and builder methods disagree")
+    if len(family_builder_methods) != len(family_ids):
+        raise GoFixturePlanError("family builder method contracts and descriptors disagree")
     all_cases = (*curated, *coverage)
     file_plan = _file_plan(all_cases)
     if file_plan.path != _FIXTURE_OUTPUT_PATH or file_plan.package_name != "observability":
@@ -1491,6 +1565,7 @@ def compile_go_fixture_plan(index: Any) -> GoFixturePlanIR:
         candidate,
         symbol_digest,
         api_digest,
+        family_builder_methods,
         tuple(curated),
         coverage,
         family_ids,
@@ -1506,6 +1581,7 @@ def compile_go_fixture_plan(index: Any) -> GoFixturePlanIR:
 
 __all__ = [
     "GoFixtureAssertionIR",
+    "GoFixtureBuilderMethodContractIR",
     "GoFixtureCaseIR",
     "GoFixtureCoverageIR",
     "GoFixtureExpressionIR",

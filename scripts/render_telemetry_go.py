@@ -72,6 +72,10 @@ _EXPECTED_HEADERS: Final = (
 _MAX_DECLARATIONS: Final = 10_000
 _MAX_PRIVATE_ROWS: Final = 100_000
 _MAX_GO_STRING_BYTES: Final = 1_048_576
+_SINGLE_LINE_IF: Final = re.compile(r"^(?P<indent>\t*)if (?P<condition>.+?) \{ (?P<body>.+) \}$")
+_KEYED_LITERAL_LINE: Final = re.compile(r"^(?P<indent>\t+)(?P<key>[A-Za-z][A-Za-z0-9]*): +(?P<value>\S.*),$")
+_STRUCT_FIELD_LINE: Final = re.compile(r"^(?P<indent>\t)(?P<name>[A-Za-z][A-Za-z0-9]*) (?P<type>.+)$")
+_CONST_LINE: Final = re.compile(r"^(?P<indent>\t)(?P<name>[A-Za-z][A-Za-z0-9]*) (?P<type>[^ ]+) = (?P<value>.+)$")
 
 
 def _read(value: Any, name: str, path: str) -> Any:
@@ -262,6 +266,96 @@ def _imports(items: Sequence[tuple[str | None, str]], path: str) -> list[str]:
     return lines
 
 
+def _align_keyed_literal_runs(lines: Sequence[str]) -> list[str]:
+    result = list(lines)
+    position = 0
+    while position < len(result):
+        match = _KEYED_LITERAL_LINE.fullmatch(result[position])
+        if match is None:
+            position += 1
+            continue
+        end = position + 1
+        matches = [match]
+        while end < len(result):
+            candidate = _KEYED_LITERAL_LINE.fullmatch(result[end])
+            if candidate is None or candidate.group("indent") != match.group("indent"):
+                break
+            matches.append(candidate)
+            end += 1
+        maximum = max(len(item.group("key")) for item in matches)
+        for offset, item in enumerate(matches):
+            padding = " " * (maximum - len(item.group("key")) + 1)
+            result[position + offset] = (
+                item.group("indent") + item.group("key") + ":" + padding + item.group("value") + ","
+            )
+        position = end
+    return result
+
+
+def _align_decl_block(lines: list[str], start: int, end: int, pattern: re.Pattern[str]) -> None:
+    matches = [pattern.fullmatch(lines[position]) for position in range(start, end)]
+    selected = [match for match in matches if match is not None]
+    if len(selected) != end - start or not selected:
+        return
+    maximum_name = max(len(match.group("name")) for match in selected)
+    if pattern is _CONST_LINE:
+        maximum_type = max(len(match.group("type")) for match in selected)
+        for position, match in zip(range(start, end), selected, strict=True):
+            lines[position] = (
+                match.group("indent")
+                + match.group("name").ljust(maximum_name)
+                + " "
+                + match.group("type").ljust(maximum_type)
+                + " = "
+                + match.group("value")
+            )
+        return
+    for position, match in zip(range(start, end), selected, strict=True):
+        lines[position] = match.group("indent") + match.group("name").ljust(maximum_name) + " " + match.group("type")
+
+
+def _go_style_lines(raw_lines: Sequence[str]) -> list[str]:
+    """Apply only the closed formatting rules used by renderer-owned templates."""
+
+    expanded: list[str] = []
+    for line in raw_lines:
+        match = _SINGLE_LINE_IF.fullmatch(line)
+        if match is None:
+            expanded.append(line)
+            continue
+        indent = match.group("indent")
+        expanded.extend(
+            (
+                indent + "if " + match.group("condition") + " {",
+                indent + "\t" + match.group("body"),
+                indent + "}",
+            )
+        )
+
+    position = 0
+    while position < len(expanded):
+        if expanded[position] == "const (":
+            end = position + 1
+            while end < len(expanded) and expanded[end] != ")":
+                end += 1
+            _align_decl_block(expanded, position + 1, end, _CONST_LINE)
+            position = end + 1
+            continue
+        if re.fullmatch(r"type [A-Za-z][A-Za-z0-9]* struct \{", expanded[position]):
+            end = position + 1
+            while end < len(expanded) and expanded[end] != "}":
+                end += 1
+            _align_decl_block(expanded, position + 1, end, _STRUCT_FIELD_LINE)
+            position = end + 1
+            continue
+        position += 1
+    return _align_keyed_literal_runs(expanded)
+
+
+def _go_source(lines: Sequence[str]) -> bytes:
+    return ("\n".join(_go_style_lines(lines)).rstrip() + "\n").encode("utf-8")
+
+
 def _struct_lines(symbol: str, fields: Sequence[Any], path: str) -> list[str]:
     lines = [f"type {_identifier(symbol, path)} struct {{"]
     ordered = sorted(fields, key=lambda item: _read(item, "order", path) if hasattr(item, "order") else 0)
@@ -307,7 +401,7 @@ def _render_ids_body(declarations: tuple[Any, ...]) -> bytes:
         lines.extend(
             ("const (", *(_constant_line(item, position) for position, item in enumerate(declarations)), ")", "")
         )
-    return ("\n".join(lines) + "\n").encode("utf-8")
+    return _go_source(lines)
 
 
 def _limits_literal(value: Any, path: str) -> str:
@@ -561,15 +655,7 @@ def _render_catalog_body(plan: Any) -> bytes:
                     "",
                 )
             )
-    return ("\n".join(lines) + "\n").encode()
-
-
-def _condition_state(selector: str) -> str:
-    return (
-        "func() familyConditionState { if input."
-        + selector
-        + " { return familyConditionTrue }; return familyConditionFalse }()"
-    )
+    return _go_source(lines)
 
 
 def _emit_value_bindings(bindings: Any, *, target: str, prefix: str = "generated") -> tuple[list[str], str]:
@@ -621,18 +707,30 @@ def _emit_value_bindings(bindings: Any, *, target: str, prefix: str = "generated
 
 
 def _conditions_literal(bindings: Any) -> str:
-    items = []
+    items: list[tuple[str, str]] = []
     for position, binding in enumerate(_sequence(bindings, "condition bindings", maximum=4096)):
         path = f"condition bindings[{position}]"
         selector = _identifier(_read(binding, "selector", path), f"{path}.selector")
-        items.append(
-            "{id: "
-            + _go_string(_read(binding, "condition_id", path), f"{path}.condition_id")
-            + ", state: "
-            + _condition_state(selector)
-            + "}"
+        items.append((_go_string(_read(binding, "condition_id", path), f"{path}.condition_id"), selector))
+    if not items:
+        return "familyConditionFacts{}"
+    lines = ["familyConditionFacts{"]
+    for condition_id, selector in items:
+        lines.extend(
+            (
+                "\t\t\t{",
+                f"\t\t\t\tid: {condition_id},",
+                "\t\t\t\tstate: func() familyConditionState {",
+                f"\t\t\t\t\tif input.{selector} {{",
+                "\t\t\t\t\t\treturn familyConditionTrue",
+                "\t\t\t\t\t}",
+                "\t\t\t\t\treturn familyConditionFalse",
+                "\t\t\t\t}(),",
+                "\t\t\t},",
+            )
         )
-    return "familyConditionFacts{" + ", ".join(items) + "}"
+    lines.append("\t\t}")
+    return "\n".join(lines)
 
 
 def _render_member_callable(callable_plan: Any, body: Any, path: str) -> list[str]:
@@ -1110,9 +1208,9 @@ def _render_domain_body(plan: Any, file_plan: Any, path: str) -> bytes:
         for arm_plan in _sequence(_read(structured_plan, "arms", path), path, maximum=128):
             symbol = _identifier(_read(arm_plan, "symbol", path), path)
             marker = _identifier(_read(arm_plan, "marker_method", path), path)
-            lines.extend((f"func ({symbol}) {marker}() {{}}", ""))
+            lines.extend((f"func ({symbol}) {marker}() {{", "}", ""))
         lines.extend(_render_structured_encoder(structured_plan, f"{path}.structured[{source_id}]"))
-    return ("\n".join(lines) + "\n").encode()
+    return _go_source(lines)
 
 
 def _producer_typed_string(value: Any, path: str) -> str:
@@ -1283,14 +1381,19 @@ def _render_producer_body(producer: Any, expected_path: str) -> bytes:
     lines.extend(("}", ""))
     index_symbol = _identifier(_read(variables[2], "symbol", "producer index variable"), "producer index variable")
     lines.append(f"var {index_symbol} = {_producer_type_name(_read(variables[2], 'go_type', 'index'), 'index')}{{")
+    index_entries: list[tuple[str, Any]] = []
     for entry in entries:
-        lines.append(
-            "\t{Kind: "
+        key = (
+            "{Kind: "
             + _producer_typed_string(_read(entry, "producer_kind", "lookup entry"), "lookup entry")
             + ", Key: "
             + _producer_typed_string(_read(entry, "producer_key", "lookup entry"), "lookup entry")
-            + f"}}: {_read(entry, 'group_index', 'lookup entry')},"
+            + "}"
         )
+        index_entries.append((key, _read(entry, "group_index", "lookup entry")))
+    maximum_key_length = max((len(key) for key, _ in index_entries), default=0)
+    for key, group_index in index_entries:
+        lines.append("\t" + key + ": " + " " * (maximum_key_length - len(key)) + f"{group_index},")
     lines.extend(("}", ""))
     functions = _sequence(_read(file_plan, "functions", "GoProducerFilePlanIR"), "producer functions", maximum=16)
     copy_operations = tuple(
@@ -1460,7 +1563,7 @@ def _render_producer_body(producer: Any, expected_path: str) -> bytes:
             "",
         )
     )
-    return ("\n".join(lines) + "\n").encode()
+    return _go_source(lines)
 
 
 def _fixture_scalar(value: Any, path: str) -> str:
@@ -1740,6 +1843,61 @@ def _render_fixture_case(function: Any, case: Any, path: str) -> list[str]:
     return lines
 
 
+def _render_family_builder_method_allowlist(fixture: Any) -> list[str]:
+    raw_contracts = _sequence(
+        _read(fixture, "family_builder_methods", "GoFixturePlanIR"),
+        "GoFixturePlanIR.family_builder_methods",
+        maximum=4096,
+    )
+    contracts: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for position, contract in enumerate(raw_contracts):
+        path = f"GoFixturePlanIR.family_builder_methods[{position}]"
+        symbol = _identifier(_read(contract, "symbol", path), f"{path}.symbol")
+        if symbol in seen:
+            raise GoRenderError("GoFixturePlanIR: duplicate FamilyBuilder method contract")
+        seen.add(symbol)
+        receiver = _read(contract, "receiver_type", path)
+        if _read(receiver, "arm", path) != "named" or _read(receiver, "name", path) != "FamilyBuilder":
+            raise GoRenderError(f"{path}: receiver must be FamilyBuilder")
+        receiver_pointer = _read(contract, "receiver_pointer", path)
+        variadic = _read(contract, "variadic", path)
+        if receiver_pointer is not True or variadic is not False:
+            raise GoRenderError(f"{path}: receiver/variadic contract is invalid")
+        parameters = _sequence(_read(contract, "parameter_types", path), f"{path}.parameter_types", maximum=2)
+        if len(parameters) != 1 or _read(parameters[0], "arm", path) != "named":
+            raise GoRenderError(f"{path}: method must accept one named input struct")
+        input_type = _identifier(_read(parameters[0], "name", path), f"{path}.input_type")
+        results = _sequence(_read(contract, "result_types", path), f"{path}.result_types", maximum=3)
+        if len(results) != 2:
+            raise GoRenderError(f"{path}: method must return Record and error")
+        result_names = tuple(_fixture_type_name(result, f"{path}.result_types") for result in results)
+        if result_names != ("Record", "error"):
+            raise GoRenderError(f"{path}: method must return Record and error")
+        contracts.append(
+            {
+                "name": symbol,
+                "receiver_type": "FamilyBuilder",
+                "receiver_pointer": True,
+                "input_type": input_type,
+                "input_named_struct": True,
+                "result_types": ["Record", "error"],
+                "variadic": False,
+            }
+        )
+    if tuple(item["name"] for item in contracts) != tuple(sorted(seen)):
+        raise GoRenderError("GoFixturePlanIR: FamilyBuilder method contracts are not ordered")
+    encoded = json.dumps(contracts, ensure_ascii=False, separators=(",", ":"))
+    return [
+        "const generatedFamilyBuilderMethodContractsJSON = " + _go_string(encoded, "FamilyBuilder allowlist"),
+        "",
+        "func TestGeneratedTelemetryFamilyBuilderAPIContract(t *testing.T) {",
+        "\tassertFamilyBuilderStaticAPIJSON(t, generatedFamilyBuilderMethodContractsJSON)",
+        "}",
+        "",
+    ]
+
+
 def _render_fixture_body(fixture: Any, expected_path: str) -> bytes:
     if _read(fixture, "version", "GoFixturePlanIR") != 1:
         raise GoRenderError("GoFixturePlanIR.version: only version 1 is supported")
@@ -1790,10 +1948,11 @@ def _render_fixture_body(fixture: Any, expected_path: str) -> bytes:
     ):
         raise GoRenderError("GoFixtureFilePlanIR: function origin disagrees with its case")
     lines = ["package observability", "", *_imports(import_rows, "fixture imports")]
+    lines.extend(_render_family_builder_method_allowlist(fixture))
     for position, function in enumerate(functions):
         case_id = _read(function, "case_id", f"fixture functions[{position}]")
         lines.extend(_render_fixture_case(function, by_id[case_id], f"fixture case {case_id}"))
-    return ("\n".join(lines) + "\n").encode()
+    return _go_source(lines)
 
 
 def _declaration_key(declaration: Any, position: int) -> GoDeclarationKey:

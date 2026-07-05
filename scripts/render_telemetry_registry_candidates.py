@@ -5938,14 +5938,15 @@ def _otlp_expectation(model: CandidateRenderIndex, example: Mapping[str, FrozenJ
     }
 
 
-def render_candidate_artifacts(view: object) -> Mapping[str, CandidateArtifact]:
-    """Return the complete immutable candidate artifact set for ``view``.
+def render_candidate_artifacts_from_index(model: CandidateRenderIndex) -> Mapping[str, CandidateArtifact]:
+    """Return the complete immutable candidate artifact set for ``model``.
 
     Paths are repository-relative and directly consumable by the generated-output
     transaction adapter.  This function performs no filesystem I/O.
     """
 
-    model = build_candidate_render_index(view)
+    if not isinstance(model, CandidateRenderIndex) or not model.verify_digest():
+        raise CandidateRenderError("renderer requires a digest-valid CandidateRenderIndex")
     artifacts: dict[str, CandidateArtifact] = {}
 
     def add_json(path: str, document: JSONObject) -> None:
@@ -6068,6 +6069,12 @@ def render_candidate_artifacts(view: object) -> Mapping[str, CandidateArtifact]:
     return _preflight_candidate_artifacts(artifacts)
 
 
+def render_candidate_artifacts(view: object) -> Mapping[str, CandidateArtifact]:
+    """Build one candidate index and render its complete immutable artifact set."""
+
+    return render_candidate_artifacts_from_index(build_candidate_render_index(view))
+
+
 __all__ = [
     "CANDIDATE_AUTHORITY",
     "CandidateArtifact",
@@ -6078,4 +6085,5 @@ __all__ = [
     "CandidateRenderError",
     "build_candidate_render_index",
     "render_candidate_artifacts",
+    "render_candidate_artifacts_from_index",
 ]

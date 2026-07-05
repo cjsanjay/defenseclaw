@@ -13,6 +13,7 @@ from __future__ import annotations
 import dataclasses
 import importlib.util
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -90,7 +91,20 @@ def test_real_candidate_renders_exact_complete_deterministic_outputs(
     assert domains.count(b"func New") == 178
     assert domains.count(b"type ") >= 459
     fixtures = payloads[coordinator.EXACT_GO_OUTPUT_PATHS[6]]
-    assert fixtures.count(b"func TestGeneratedTelemetry") == 426
+    assert fixtures.count(b"func TestGeneratedTelemetry") == 427
+    assert b"const generatedFamilyBuilderMethodContractsJSON = " in fixtures
+    assert fixtures.count(b'\\"receiver_type\\":\\"FamilyBuilder\\"') == 243
+    assert fixtures.count(b'\\"input_named_struct\\":true') == 243
+    assert all(b"func init(" not in payload for payload in payloads.values())
+    current_registry_symbols = (
+        b"registeredEventNameSet",
+        b"registeredEventNameOrder",
+        b"registeredLogEventNameSet",
+        b"registeredTraceEventNameSet",
+        b"registeredMetricEventNameSet",
+        b"buildEventNameRegistry",
+    )
+    assert all(symbol not in payload for payload in payloads.values() for symbol in current_registry_symbols)
 
 
 def test_real_candidate_preflights_with_one_digest_bound_inventory(rendered: Any) -> None:
@@ -108,7 +122,7 @@ def test_real_candidate_preflights_with_one_digest_bound_inventory(rendered: Any
     assert result.metadata.go_symbol_table_sha256 == rendered.go_symbol_table_sha256
 
 
-def test_real_render_is_go_parse_gofmt_and_compile_clean(rendered: Any, tmp_path: Path) -> None:
+def test_real_render_is_already_gofmt_clean_and_compiles_without_rewrite(rendered: Any, tmp_path: Path) -> None:
     replacements: dict[str, str] = {}
     generated_paths: list[str] = []
     for output in rendered.outputs:
@@ -119,7 +133,7 @@ def test_real_render_is_go_parse_gofmt_and_compile_clean(rendered: Any, tmp_path
         generated_paths.append(str(replacement))
 
     formatted = subprocess.run(
-        ["gofmt", "-w", *generated_paths],
+        ["gofmt", "-d", *generated_paths],
         cwd=ROOT,
         check=False,
         capture_output=True,
@@ -127,6 +141,7 @@ def test_real_render_is_go_parse_gofmt_and_compile_clean(rendered: Any, tmp_path
         timeout=120,
     )
     assert formatted.returncode == 0, formatted.stderr
+    assert formatted.stdout == "", formatted.stdout
 
     overlay = tmp_path / "overlay.json"
     overlay.write_text(json.dumps({"Replace": replacements}, sort_keys=True), encoding="utf-8")
@@ -139,14 +154,17 @@ def test_real_render_is_go_parse_gofmt_and_compile_clean(rendered: Any, tmp_path
             "-run",
             "^TestGeneratedTelemetry",
             "-count=1",
+            "-v",
         ],
         cwd=ROOT,
         check=False,
         capture_output=True,
         text=True,
         timeout=300,
+        env={**os.environ, "DEFENSECLAW_GENERATED_TELEMETRY_ROOT": str(tmp_path)},
     )
     assert compiled.returncode == 0, compiled.stdout + compiled.stderr
+    assert "--- PASS: TestGeneratedTelemetryExplicitOverlayCandidate" in compiled.stdout
 
 
 def test_supplied_api_plan_must_be_the_candidate_owned_plan(candidate_index: Any) -> None:

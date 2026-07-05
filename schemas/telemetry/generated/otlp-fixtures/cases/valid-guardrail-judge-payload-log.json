@@ -1,0 +1,83 @@
+{
+  "x-defenseclaw-generated": {
+    "artifact": "otlp-fixtures/cases/valid-guardrail-judge-payload-log.json",
+    "authority": "candidate-not-public-authority",
+    "generator": "defenseclaw-telemetry-candidate-renderer-v1",
+    "materialized_view_sha256": "738e1790c3cb11c634998bb5bc43294fe1b29ac611e771b781e58389c9eba140",
+    "registry_version": 1
+  },
+  "canonical_record": {
+    "body": {
+      "defenseclaw.judge.action": "block",
+      "defenseclaw.judge.input_bytes": 512,
+      "defenseclaw.judge.kind": "llm",
+      "defenseclaw.judge.latency_ms": 42
+    },
+    "bucket": "guardrail.evaluation",
+    "bucket_catalog_version": 1,
+    "correlation": {
+      "evaluation_id": "evaluation-001"
+    },
+    "event_name": "guardrail.judge.completed",
+    "field_classes": {
+      "/defenseclaw.judge.action": "metadata",
+      "/defenseclaw.judge.input_bytes": "metadata",
+      "/defenseclaw.judge.kind": "metadata",
+      "/defenseclaw.judge.latency_ms": "metadata"
+    },
+    "mandatory": false,
+    "outcome": "blocked",
+    "provenance": {
+      "binary_version": "8.0.0",
+      "config_generation": 8,
+      "producer": "defenseclaw",
+      "registry_schema_version": 1
+    },
+    "record_id": "rec-judge-001",
+    "schema_version": 1,
+    "severity": "MEDIUM",
+    "signal": "logs",
+    "source": "gateway",
+    "timestamp": "2026-07-03T12:00:03Z"
+  },
+  "conformance": {
+    "builder_parity": "pending-source-inputs",
+    "claim": "No generated-builder or producer parity is claimed by this candidate slice.",
+    "non_json_schema_gates": [
+      "builder_fact_conditions",
+      "canonical_json_byte_depth_and_property_bounds",
+      "complete_payload_leaf_field_class_coverage",
+      "deterministic_record_and_occurrence_identity",
+      "ordinary_shape_aware_utf8_byte_bounds",
+      "ordinary_container_depth_bounds",
+      "ordinary_string_leaf_utf8_byte_bounds",
+      "portable_re2_full_match_patterns",
+      "recursive_aggregate_max_items",
+      "recursive_property_count_bounds",
+      "typed_json_enum_membership",
+      "typed_numeric_arm_int64_vs_finite_double",
+      "span_name_pattern_rendering",
+      "trace_cross_field_derivation_equality",
+      "trace_time_order_relation"
+    ],
+    "otlp_projection": "candidate",
+    "required_materialized_inputs": [
+      "builder_facts",
+      "deterministic_occurrence_inputs"
+    ],
+    "scope": "canonical-schema-comparison-only"
+  },
+  "expect": {
+    "accepted": true,
+    "projection": {
+      "mode": "projected_record_json_string",
+      "projected_record_json": "{\"body\":{\"defenseclaw.judge.action\":\"block\",\"defenseclaw.judge.input_bytes\":512,\"defenseclaw.judge.kind\":\"llm\",\"defenseclaw.judge.latency_ms\":42},\"bucket\":\"guardrail.evaluation\",\"bucket_catalog_version\":1,\"correlation\":{\"evaluation_id\":\"evaluation-001\"},\"event_name\":\"guardrail.judge.completed\",\"field_classes\":{\"/defenseclaw.judge.action\":\"metadata\",\"/defenseclaw.judge.input_bytes\":\"metadata\",\"/defenseclaw.judge.kind\":\"metadata\",\"/defenseclaw.judge.latency_ms\":\"metadata\"},\"mandatory\":false,\"outcome\":\"blocked\",\"provenance\":{\"binary_version\":\"8.0.0\",\"config_generation\":8,\"producer\":\"defenseclaw\",\"registry_schema_version\":1},\"record_id\":\"rec-judge-001\",\"schema_version\":1,\"severity\":\"MEDIUM\",\"signal\":\"logs\",\"source\":\"gateway\",\"timestamp\":\"2026-07-03T12:00:03Z\"}",
+      "request_root": "resourceLogs"
+    }
+  },
+  "family": "log.guardrail.judge.completed",
+  "fixture_format": "defenseclaw-otlp-fixture-v1",
+  "id": "valid-guardrail-judge-payload-log",
+  "materialized_view_sha256": "738e1790c3cb11c634998bb5bc43294fe1b29ac611e771b781e58389c9eba140",
+  "signal": "logs"
+}

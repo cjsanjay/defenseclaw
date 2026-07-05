@@ -27,7 +27,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, is_dataclass, replace
 from dataclasses import fields as dataclass_fields
 from pathlib import Path
-from types import MappingProxyType
+from types import MappingProxyType, ModuleType
 from typing import Any, Final, TypeAlias
 
 import yaml
@@ -51,7 +51,72 @@ def _load_transaction_module():  # type: ignore[no-untyped-def]
 
 generated_transaction = _load_transaction_module()
 
-GENERATOR_VERSION: Final = 1
+
+def _load_sibling_module(module_name: str):  # type: ignore[no-untyped-def]
+    """Load one renderer dependency under its canonical process-wide identity."""
+
+    try:
+        path = Path(__file__).resolve().with_name(module_name + ".py").resolve(strict=True)
+        if not stat.S_ISREG(path.stat().st_mode):
+            raise OSError("renderer dependency is not a regular file")
+    except (OSError, RuntimeError) as exc:
+        raise RuntimeError(f"cannot load telemetry renderer dependency {module_name}") from exc
+    existing = sys.modules.get(module_name)
+    if existing is not None:
+        if not isinstance(existing, ModuleType):
+            raise RuntimeError(f"preloaded telemetry renderer dependency {module_name} is unsafe")
+        try:
+            existing_path = Path(existing.__file__).resolve(strict=True)
+            existing_spec = existing.__spec__
+            if (
+                existing.__name__ != module_name
+                or existing_spec is None
+                or existing_spec.name != module_name
+                or existing_spec.loader is None
+                or existing_spec.origin is None
+            ):
+                raise RuntimeError("preloaded renderer has no canonical import identity")
+            origin_path = Path(existing_spec.origin).resolve(strict=True)
+            existing_is_regular = stat.S_ISREG(existing_path.stat().st_mode) and stat.S_ISREG(
+                origin_path.stat().st_mode
+            )
+        except (AttributeError, OSError, RuntimeError, TypeError) as exc:
+            raise RuntimeError(f"preloaded telemetry renderer dependency {module_name} is unsafe") from exc
+        if not existing_is_regular:
+            raise RuntimeError(f"preloaded telemetry renderer dependency {module_name} is unsafe")
+        if existing_path != path or origin_path != path:
+            raise RuntimeError(f"preloaded telemetry renderer dependency {module_name} has foreign provenance")
+        return existing
+    spec = importlib.util.spec_from_file_location(module_name, path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"cannot load telemetry renderer dependency {module_name}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    try:
+        spec.loader.exec_module(module)
+    except Exception:
+        if sys.modules.get(module_name) is module:
+            del sys.modules[module_name]
+        raise
+    return module
+
+
+def _load_candidate_renderers():  # type: ignore[no-untyped-def]
+    """Return one identity-coherent portable/Go renderer module set."""
+
+    # The Go renderer constructs coordinator dataclasses and the coordinator
+    # validates them with isinstance, so these names must never be path-loaded
+    # under competing module identities.
+    coordinator = _load_sibling_module("telemetry_go_output_coordinator")
+    _load_sibling_module("telemetry_go_api_plan")
+    _load_sibling_module("telemetry_go_producer_plan")
+    _load_sibling_module("telemetry_go_fixture_plan")
+    portable = _load_sibling_module("render_telemetry_registry_candidates")
+    go_renderer = _load_sibling_module("render_telemetry_go")
+    return portable, go_renderer, coordinator
+
+
+GENERATOR_VERSION: Final = 2
 NORMALIZED_SNAPSHOT_FORMAT: Final = "defenseclaw-normalized-semconv-v1"
 MAX_AUTHORED_JSON_NESTING: Final = 256
 EXPECTED_IMPORTS: Final = ("genai.yaml", "security.yaml", "operations.yaml")
@@ -542,6 +607,16 @@ OUTPUT_MANIFEST_MARKER: Final = b'"generated_by": "scripts/generate_telemetry_re
 OUTPUT_MANIFEST_MODE: Final = 0o644
 OUTPUT_MANIFEST_MAX_BYTES: Final = 8 * 1024 * 1024
 OUTPUT_MANIFEST_SCHEMA_MAX_BYTES: Final = 64 * 1024
+GO_CANDIDATE_AUTHORITY: Final = "candidate-not-public-authority"
+GO_CANDIDATE_OUTPUT_PATHS: Final = (
+    "internal/observability/zz_generated_telemetry_ids.go",
+    "internal/observability/zz_generated_telemetry_catalog.go",
+    "internal/observability/zz_generated_telemetry_producers.go",
+    "internal/observability/zz_generated_telemetry_builders_genai.go",
+    "internal/observability/zz_generated_telemetry_builders_security.go",
+    "internal/observability/zz_generated_telemetry_builders_operations.go",
+    "internal/observability/zz_generated_telemetry_builder_fixtures_test.go",
+)
 
 EXPECTED_STRUCTURAL_CONTRACT_ID: Final = "defenseclaw.canonical-record"
 EXPECTED_OTLP_REPRESENTATION_ID: Final = "defenseclaw-otlp-v1"
@@ -8652,6 +8727,7 @@ def _validate_span_name_patterns(
 def _manifest_document(
     ir: RegistryIR,
     artifacts: Mapping[Path, Any],
+    go_candidate: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     artifact_inventory = [
         {
@@ -8712,16 +8788,91 @@ def _manifest_document(
                 "marker": OUTPUT_MANIFEST_MARKER.decode("ascii"),
             },
             "artifacts": artifact_inventory,
+            "go_candidate": dict(go_candidate) if go_candidate is not None else None,
         },
     }
     return manifest
 
 
+def _bounded_candidate_error(exc: Exception, reviewed_types: tuple[type[Exception], ...]) -> str:
+    if not isinstance(exc, reviewed_types):
+        return "unexpected candidate renderer failure"
+    detail = " ".join(str(exc).split())
+    if not detail:
+        detail = type(exc).__name__
+    return detail if len(detail) <= 512 else detail[:509] + "..."
+
+
 def render_outputs(ir: RegistryIR) -> dict[Path, bytes]:
-    # Later renderer work appends typed RenderedOutput values here.  Keeping the
-    # ownership metadata beside each payload avoids a second marker authority.
+    try:
+        portable_renderer, go_renderer, coordinator = _load_candidate_renderers()
+        index = portable_renderer.build_candidate_render_index(ir.materialized_view)
+        portable_outputs = portable_renderer.render_candidate_artifacts_from_index(index)
+        go_render = go_renderer.render_go_candidate(index)
+        if tuple(coordinator.EXACT_GO_OUTPUT_PATHS) != GO_CANDIDATE_OUTPUT_PATHS:
+            raise RegistryError("generated Go coordinator output paths disagree with the compiler contract")
+        if frozenset(GO_CANDIDATE_OUTPUT_PATHS) != generated_transaction.EXACT_INTERNAL_OUTPUTS:
+            raise RegistryError("generated Go transaction output paths disagree with the compiler contract")
+        go_preflight = coordinator.preflight_go_outputs(
+            go_render.outputs,
+            go_render.declaration_inventory,
+            expected_declaration_keys=go_render.expected_declaration_keys,
+            materialized_view_sha256=go_render.materialized_view_sha256,
+            candidate_render_index_sha256=go_render.candidate_render_index_sha256,
+            go_symbol_table_sha256=go_render.go_symbol_table_sha256,
+        )
+        if tuple(item.path for item in go_preflight.outputs) != GO_CANDIDATE_OUTPUT_PATHS:
+            raise RegistryError("generated Go preflight did not return the exact ordered output set")
+        if portable_renderer.CANDIDATE_AUTHORITY != GO_CANDIDATE_AUTHORITY:
+            raise RegistryError("portable and Go candidate authority markers disagree")
+    except RegistryError:
+        raise
+    except Exception as exc:
+        reviewed_types = tuple(
+            error_type
+            for module, name in (
+                (locals().get("portable_renderer"), "CandidateRenderError"),
+                (locals().get("go_renderer"), "GoRenderError"),
+                (locals().get("coordinator"), "GoOutputPreflightError"),
+            )
+            if module is not None and isinstance((error_type := getattr(module, name, None)), type)
+        )
+        raise RegistryError(
+            f"candidate telemetry rendering failed: {_bounded_candidate_error(exc, reviewed_types)}"
+        ) from exc
+
     artifacts: dict[Path, Any] = {}
-    manifest = _manifest_document(ir, artifacts)
+    for path, output in portable_outputs.items():
+        normalized = Path(path)
+        if normalized in artifacts:
+            raise RegistryError(f"candidate renderer produced a duplicate output path: {path}")
+        artifacts[normalized] = generated_transaction.RenderedOutput(
+            output.payload,
+            output.ownership_marker,
+            output.mode,
+        )
+    for output in go_preflight.outputs:
+        normalized = Path(output.path)
+        if normalized in artifacts:
+            raise RegistryError(f"candidate renderer produced a duplicate output path: {output.path}")
+        artifacts[normalized] = generated_transaction.RenderedOutput(
+            output.payload,
+            output.marker,
+            output.mode,
+        )
+    metadata = go_preflight.metadata
+    go_candidate = {
+        "format_version": metadata.format_version,
+        "authority": GO_CANDIDATE_AUTHORITY,
+        "paths": list(GO_CANDIDATE_OUTPUT_PATHS),
+        "materialized_view_sha256": metadata.materialized_view_sha256,
+        "candidate_render_index_sha256": metadata.candidate_render_index_sha256,
+        "go_symbol_table_sha256": metadata.go_symbol_table_sha256,
+        "declaration_inventory_sha256": metadata.declaration_inventory_sha256,
+        "output_inventory_sha256": metadata.output_inventory_sha256,
+        "coordinator_sha256": metadata.manifest_sha256,
+    }
+    manifest = _manifest_document(ir, artifacts, go_candidate)
     encoded = (json.dumps(manifest, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
     if OUTPUT_MANIFEST_MARKER not in encoded[: generated_transaction.MARKER_SCAN_BYTES]:
         raise RegistryError("generated output manifest does not carry its ownership marker")
@@ -8849,6 +9000,18 @@ def _validate_v2_output_manifest(root: Path, manifest: dict[str, Any]) -> None:
     expected_outputs = sorted([OUTPUT_MANIFEST.as_posix(), *artifact_paths])
     if manifest["outputs"] != expected_outputs:
         raise RegistryError("generated output manifest outputs disagree with its ownership inventory")
+    go_candidate = inventory.get("go_candidate")
+    internal_paths = tuple(path for path in artifact_paths if path in generated_transaction.EXACT_INTERNAL_OUTPUTS)
+    if go_candidate is None:
+        if internal_paths:
+            raise RegistryError("generated output manifest has Go outputs without candidate ownership")
+        return
+    if tuple(go_candidate["paths"]) != GO_CANDIDATE_OUTPUT_PATHS:
+        raise RegistryError("generated output manifest Go candidate paths are not the exact ordered set")
+    if set(internal_paths) != set(GO_CANDIDATE_OUTPUT_PATHS):
+        raise RegistryError("generated output manifest Go candidate inventory is partial or mixed")
+    if go_candidate["materialized_view_sha256"] != manifest["materialized_view_sha256"]:
+        raise RegistryError("generated output manifest Go candidate materialized-view digest disagrees")
 
 
 _V1_MANIFEST_KEYS: Final = frozenset(
@@ -8933,6 +9096,75 @@ def _prior_output_ownership(root: Path) -> dict[str, Any]:
     return prior
 
 
+def _validate_go_candidate_payload_binding(
+    manifest: Mapping[str, Any],
+    outputs: Mapping[Path, bytes],
+) -> None:
+    go_candidate = manifest["ownership_inventory"]["go_candidate"]
+    if go_candidate is None:
+        return
+    coordinator = _load_sibling_module("telemetry_go_output_coordinator")
+    artifact_records = {
+        record["path"]: record
+        for record in manifest["ownership_inventory"]["artifacts"]
+        if isinstance(record, Mapping) and isinstance(record.get("path"), str)
+    }
+    expected_headers = (
+        go_candidate["materialized_view_sha256"],
+        go_candidate["candidate_render_index_sha256"],
+        go_candidate["go_symbol_table_sha256"],
+    )
+    output_document: list[dict[str, Any]] = []
+    for path in GO_CANDIDATE_OUTPUT_PATHS:
+        payload = outputs.get(Path(path))
+        if payload is None:
+            raise RegistryError("generated output manifest Go candidate payload inventory is partial")
+        try:
+            observed_headers = coordinator._parse_header(payload, coordinator.OWNERSHIP_MARKER)  # noqa: SLF001
+        except coordinator.GoOutputPreflightError as exc:
+            raise RegistryError(f"generated output manifest Go candidate header is invalid: {path}") from exc
+        if observed_headers != expected_headers:
+            raise RegistryError("generated output manifest Go candidate digest headers disagree")
+        payload_sha256 = _sha256(payload)
+        record = artifact_records.get(path)
+        if (
+            record is None
+            or record.get("path") != path
+            or record.get("sha256") != payload_sha256
+            or record.get("marker") != coordinator.OWNERSHIP_MARKER.decode("ascii")
+            or record.get("mode") != coordinator.OUTPUT_MODE
+        ):
+            raise RegistryError(f"generated output manifest Go candidate ownership record disagrees: {path}")
+        output_document.append(
+            {
+                "path": path,
+                "sha256": payload_sha256,
+                "mode": coordinator.OUTPUT_MODE,
+                "marker": coordinator.OWNERSHIP_MARKER.decode("ascii"),
+            }
+        )
+    output_digest = _sha256(
+        coordinator._OUTPUT_INVENTORY_DIGEST_DOMAIN  # noqa: SLF001
+        + coordinator._canonical_json_bytes(output_document)  # noqa: SLF001
+    )
+    if output_digest != go_candidate["output_inventory_sha256"]:
+        raise RegistryError("generated output manifest Go candidate output-inventory digest disagrees")
+    coordinator_document = {
+        "format_version": go_candidate["format_version"],
+        "materialized_view_sha256": go_candidate["materialized_view_sha256"],
+        "candidate_render_index_sha256": go_candidate["candidate_render_index_sha256"],
+        "go_symbol_table_sha256": go_candidate["go_symbol_table_sha256"],
+        "declaration_inventory_sha256": go_candidate["declaration_inventory_sha256"],
+        "output_inventory_sha256": go_candidate["output_inventory_sha256"],
+    }
+    coordinator_digest = _sha256(
+        coordinator._MANIFEST_DIGEST_DOMAIN  # noqa: SLF001
+        + coordinator._canonical_json_bytes(coordinator_document)  # noqa: SLF001
+    )
+    if coordinator_digest != go_candidate["coordinator_sha256"]:
+        raise RegistryError("generated output manifest Go candidate coordinator digest disagrees")
+
+
 def _transaction_outputs(root: Path, outputs: Mapping[Path, bytes]) -> dict[str, Any]:
     manifest_raw = outputs.get(OUTPUT_MANIFEST)
     if manifest_raw is None:
@@ -8946,6 +9178,7 @@ def _transaction_outputs(root: Path, outputs: Mapping[Path, bytes]) -> dict[str,
             "rendered output payload paths disagree with the manifest: "
             f"missing={sorted(declared_paths - actual_paths)} extra={sorted(actual_paths - declared_paths)}"
         )
+    _validate_go_candidate_payload_binding(manifest, outputs)
     inventory = manifest.get("ownership_inventory")
     if not isinstance(inventory, dict) or not isinstance(inventory.get("artifacts"), list):
         raise RegistryError("rendered output manifest ownership inventory is invalid")
@@ -8973,6 +9206,16 @@ def _transaction_outputs(root: Path, outputs: Mapping[Path, bytes]) -> dict[str,
     return desired
 
 
+def _unmanifested_internal_generated_go_paths(root: Path, declared: set[str]) -> list[str]:
+    internal_root = root / "internal/observability"
+    extras: list[str] = []
+    for path in internal_root.glob("zz_generated_telemetry_*.go"):
+        relative = path.relative_to(root).as_posix()
+        if relative not in declared:
+            extras.append(relative)
+    return sorted(extras)
+
+
 def _unmanifested_generated_paths(root: Path, declared: set[str]) -> list[str]:
     generated_root = root / "schemas/telemetry/generated"
     extras: list[str] = []
@@ -8982,7 +9225,8 @@ def _unmanifested_generated_paths(root: Path, declared: set[str]) -> list[str]:
         relative = path.relative_to(root).as_posix()
         if relative not in declared:
             extras.append(relative)
-    return sorted(extras)
+    extras.extend(_unmanifested_internal_generated_go_paths(root, declared))
+    return sorted(set(extras))
 
 
 def check_outputs(root: Path, outputs: dict[Path, bytes]) -> None:
@@ -9004,6 +9248,11 @@ def write_outputs(root: Path, outputs: dict[Path, bytes]) -> None:
     try:
         desired = _transaction_outputs(root, outputs)
         prior = _prior_output_ownership(root)
+        extras = _unmanifested_generated_paths(root, set(desired))
+        if extras:
+            raise RegistryError(
+                f"generated output drift: unowned={extras}; remove unmanifested generated files before publication"
+            )
         generated_transaction.write_outputs(root, desired, prior)
     except generated_transaction.TransactionError as exc:
         raise RegistryError(str(exc)) from exc
