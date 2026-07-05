@@ -47,18 +47,25 @@ type observabilityV8SemconvLockDocument struct {
 }
 
 type observabilityV8SemconvLockDependency struct {
-	ID         string                             `yaml:"id"`
-	Repository string                             `yaml:"repository"`
-	Version    string                             `yaml:"version"`
-	ProfileID  string                             `yaml:"profile_id"`
-	Revision   string                             `yaml:"revision"`
-	Snapshot   observabilityV8SemconvLockSnapshot `yaml:"snapshot"`
+	ID               string                                      `yaml:"id"`
+	Repository       string                                      `yaml:"repository"`
+	Version          string                                      `yaml:"version"`
+	ProfileID        string                                      `yaml:"profile_id"`
+	Revision         string                                      `yaml:"revision"`
+	Snapshot         observabilityV8SemconvLockSnapshot          `yaml:"snapshot"`
+	StructuralInputs []observabilityV8SemconvLockStructuralInput `yaml:"structural_inputs,omitempty"`
 }
 
 type observabilityV8SemconvLockSnapshot struct {
 	Path   string `yaml:"path"`
 	Format string `yaml:"format"`
 	SHA256 string `yaml:"sha256"`
+}
+
+type observabilityV8SemconvLockStructuralInput struct {
+	UpstreamPath string `yaml:"upstream_path"`
+	Path         string `yaml:"path"`
+	SHA256       string `yaml:"sha256"`
 }
 
 func resolveObservabilityV8SemanticLock() (ObservabilityV8SemanticProfileLock, error) {
@@ -293,6 +300,9 @@ func validateObservabilityV8SemconvDependencies(
 			dependency.Snapshot.Format == "" || dependency.Snapshot.SHA256 == "" {
 			return nil, fmt.Errorf("semantic convention dependency %q is incomplete", dependency.ID)
 		}
+		if err := validateObservabilityV8StructuralInputs(dependency); err != nil {
+			return nil, err
+		}
 		observed[dependency.ID] = dependency
 	}
 	for id := range expected {
@@ -301,4 +311,47 @@ func validateObservabilityV8SemconvDependencies(
 		}
 	}
 	return observed, nil
+}
+
+func validateObservabilityV8StructuralInputs(dependency observabilityV8SemconvLockDependency) error {
+	if dependency.ID != "otel_genai" {
+		if len(dependency.StructuralInputs) != 0 {
+			return fmt.Errorf(
+				"semantic convention dependency %q must not declare structural inputs",
+				dependency.ID,
+			)
+		}
+		return nil
+	}
+	if len(dependency.StructuralInputs) == 0 {
+		return fmt.Errorf("semantic convention dependency %q is missing structural inputs", dependency.ID)
+	}
+	upstreamPaths := make(map[string]struct{}, len(dependency.StructuralInputs))
+	repositoryPaths := make(map[string]struct{}, len(dependency.StructuralInputs))
+	for index, input := range dependency.StructuralInputs {
+		if input.UpstreamPath == "" || input.Path == "" || input.SHA256 == "" {
+			return fmt.Errorf(
+				"semantic convention dependency %q structural input %d is incomplete",
+				dependency.ID,
+				index,
+			)
+		}
+		if _, duplicate := upstreamPaths[input.UpstreamPath]; duplicate {
+			return fmt.Errorf(
+				"semantic convention dependency %q structural input upstream path %q is duplicated",
+				dependency.ID,
+				input.UpstreamPath,
+			)
+		}
+		if _, duplicate := repositoryPaths[input.Path]; duplicate {
+			return fmt.Errorf(
+				"semantic convention dependency %q structural input path %q is duplicated",
+				dependency.ID,
+				input.Path,
+			)
+		}
+		upstreamPaths[input.UpstreamPath] = struct{}{}
+		repositoryPaths[input.Path] = struct{}{}
+	}
+	return nil
 }

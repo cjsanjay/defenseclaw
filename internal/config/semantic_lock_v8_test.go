@@ -33,6 +33,13 @@ func TestObservabilityV8SemanticLockDependencyCatalog(t *testing.T) {
 	if len(canonical.Dependencies) != 3 {
 		t.Fatalf("canonical dependency count = %d", len(canonical.Dependencies))
 	}
+	if got := len(canonical.Dependencies[1].StructuralInputs); got != 4 {
+		t.Fatalf("canonical GenAI structural input count = %d, want 4", got)
+	}
+	if len(canonical.Dependencies[0].StructuralInputs) != 0 ||
+		len(canonical.Dependencies[2].StructuralInputs) != 0 {
+		t.Fatal("non-GenAI dependency unexpectedly declares structural inputs")
+	}
 
 	tests := []struct {
 		name    string
@@ -169,6 +176,74 @@ func TestObservabilityV8SemanticLockRequiresCompleteDependencyMetadata(t *testin
 			err = validateObservabilityV8SemanticLockDocuments(profiles, candidateBytes)
 			if err == nil || !strings.Contains(err.Error(), "is incomplete") {
 				t.Fatalf("incomplete %s error = %v", test.name, err)
+			}
+		})
+	}
+}
+
+func TestObservabilityV8SemanticLockRequiresClosedStructuralInputMetadata(t *testing.T) {
+	profiles := publicschemas.TelemetryV8Registry()
+	var canonical observabilityV8SemconvLockDocument
+	if err := yaml.Unmarshal(publicschemas.TelemetryV8SemconvLock(), &canonical); err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name    string
+		mutate  func(*observabilityV8SemconvLockDocument)
+		message string
+	}{
+		{
+			name: "missing GenAI structural inputs",
+			mutate: func(lock *observabilityV8SemconvLockDocument) {
+				lock.Dependencies[1].StructuralInputs = nil
+			},
+			message: "is missing structural inputs",
+		},
+		{
+			name: "structural inputs on core dependency",
+			mutate: func(lock *observabilityV8SemconvLockDocument) {
+				lock.Dependencies[0].StructuralInputs = append(
+					[]observabilityV8SemconvLockStructuralInput(nil),
+					lock.Dependencies[1].StructuralInputs[0],
+				)
+			},
+			message: "must not declare structural inputs",
+		},
+		{
+			name: "incomplete structural input",
+			mutate: func(lock *observabilityV8SemconvLockDocument) {
+				lock.Dependencies[1].StructuralInputs[0].SHA256 = ""
+			},
+			message: "structural input 0 is incomplete",
+		},
+		{
+			name: "duplicate upstream path",
+			mutate: func(lock *observabilityV8SemconvLockDocument) {
+				lock.Dependencies[1].StructuralInputs[1].UpstreamPath =
+					lock.Dependencies[1].StructuralInputs[0].UpstreamPath
+			},
+			message: "upstream path",
+		},
+		{
+			name: "duplicate repository path",
+			mutate: func(lock *observabilityV8SemconvLockDocument) {
+				lock.Dependencies[1].StructuralInputs[1].Path =
+					lock.Dependencies[1].StructuralInputs[0].Path
+			},
+			message: "input path",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			candidate := cloneObservabilityV8SemconvLockDocument(t, canonical)
+			test.mutate(&candidate)
+			candidateBytes, err := yaml.Marshal(candidate)
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = validateObservabilityV8SemanticLockDocuments(profiles, candidateBytes)
+			if err == nil || !strings.Contains(err.Error(), test.message) {
+				t.Fatalf("structural input error = %v, want %q", err, test.message)
 			}
 		})
 	}
