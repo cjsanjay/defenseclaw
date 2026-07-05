@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import base64
+import builtins
 import dataclasses
 import hashlib
 import importlib.util
@@ -125,6 +126,23 @@ def _copy_materialized(value: Any) -> Any:
     return value
 
 
+def test_renderer_import_does_not_mask_a_missing_go_plan_transitive_dependency(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    real_import = builtins.__import__
+
+    def fail_nested_dependency(name: str, *args: Any, **kwargs: Any) -> Any:
+        if name == "scripts.telemetry_go_api_plan":
+            failure = ModuleNotFoundError("No module named 'go_plan_transitive_dependency'")
+            failure.name = "go_plan_transitive_dependency"
+            raise failure
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", fail_nested_dependency)
+    with pytest.raises(ModuleNotFoundError, match="go_plan_transitive_dependency"):
+        _load("telemetry_candidate_missing_go_plan_dependency", RENDERER)
+
+
 def _go_symbol_table_fields(facts: Mapping[str, Any]) -> dict[str, Any]:
     return facts["fields"]["go_symbol_table"]["fields"]
 
@@ -166,6 +184,9 @@ def test_public_candidate_render_index_is_identity_bound_deterministic_and_recur
 
     assert isinstance(first, renderer.CandidateRenderIndex)
     assert first == second
+    assert first.go_api_plan == second.go_api_plan
+    assert first.api_plan_sha256 == first.go_api_plan.api_plan_sha256
+    assert len(first.api_plan_sha256) == 64
     assert first.digest == view.typed_canonical_json_sha256
     assert first.schema_version == 1
     assert first.registry_version == 1
@@ -210,6 +231,45 @@ def test_public_candidate_render_index_is_identity_bound_deterministic_and_recur
     producer_domain = next(domain for domain in first.domains if domain.producer_mappings)
     with pytest.raises(TypeError):
         producer_domain.producer_mappings[0]["source"] = "changed"  # type: ignore[index]
+
+
+def test_go_api_plan_is_compiled_once_reused_by_identity_and_fully_digest_bound(
+    renderer: ModuleType,
+    view: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original_compile = renderer.compile_go_api_plan
+    observed: list[tuple[Any, Any]] = []
+
+    def compile_once(provisional: Any) -> Any:
+        plan = original_compile(provisional)
+        observed.append((provisional, plan))
+        return plan
+
+    monkeypatch.setattr(renderer, "compile_go_api_plan", compile_once)
+    baseline = renderer.build_candidate_render_index(view)
+
+    assert len(observed) == 1
+    provisional, compiled_plan = observed[0]
+    assert baseline.go_api_plan is compiled_plan
+    assert baseline.api_plan_sha256 == compiled_plan.api_plan_sha256
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        provisional.materialized_view_sha256 = "0" * 64
+    with pytest.raises(TypeError):
+        provisional.enriched_fields["new"] = next(iter(provisional.enriched_fields.values()))  # type: ignore[index]
+
+    forged_plan = dataclasses.replace(compiled_plan, version=compiled_plan.version + 1)
+    assert forged_plan.api_plan_sha256 == compiled_plan.api_plan_sha256
+    monkeypatch.setattr(renderer, "compile_go_api_plan", lambda _: forged_plan)
+    forged = renderer.build_candidate_render_index(view)
+
+    assert forged.go_api_plan is forged_plan
+    assert forged.api_plan_sha256 == baseline.api_plan_sha256
+    assert forged.candidate_render_index_sha256 != baseline.candidate_render_index_sha256
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        forged.go_api_plan.version = 1
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        forged.go_api_plan.inputs[0].fields[0].selector = "Changed"
 
 
 def test_candidate_enrichment_is_complete_typed_and_recursively_immutable(

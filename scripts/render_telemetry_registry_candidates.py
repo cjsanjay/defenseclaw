@@ -22,15 +22,35 @@ from __future__ import annotations
 import base64
 import dataclasses
 import hashlib
+import importlib.util
 import json
 import math
 import re
+import sys
 import unicodedata
 from collections import Counter
 from collections.abc import Mapping, Sequence
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 from types import MappingProxyType
 from typing import Any, Final, TypeAlias
+
+try:
+    from scripts.telemetry_go_api_plan import GoAPIPlanError, GoAPIPlanIR, compile_go_api_plan
+except ModuleNotFoundError as exc:  # pragma: no cover - exercised by path-loaded tests
+    if exc.name != "scripts":
+        raise
+    _go_plan_spec = importlib.util.spec_from_file_location(
+        "defenseclaw_telemetry_go_api_plan",
+        Path(__file__).with_name("telemetry_go_api_plan.py"),
+    )
+    if _go_plan_spec is None or _go_plan_spec.loader is None:
+        raise RuntimeError("telemetry Go API plan dependency is unavailable") from None
+    _go_plan_module = importlib.util.module_from_spec(_go_plan_spec)
+    sys.modules[_go_plan_spec.name] = _go_plan_module
+    _go_plan_spec.loader.exec_module(_go_plan_module)
+    GoAPIPlanError = _go_plan_module.GoAPIPlanError
+    GoAPIPlanIR = _go_plan_module.GoAPIPlanIR
+    compile_go_api_plan = _go_plan_module.compile_go_api_plan
 
 
 class CandidateRenderError(ValueError):
@@ -2325,6 +2345,28 @@ class CandidateRenderIndex:
     mandatory_programs: Mapping[str, ResolvedMandatoryProgramIR]
     expanded_producer_mappings: tuple[ExpandedProducerMappingDescriptor, ...]
     go_declaration_values: tuple[GoDeclarationValue, ...]
+    go_api_plan: GoAPIPlanIR
+    api_plan_sha256: str
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class _ProvisionalCandidateEnrichment:
+    """Immutable, digest-free input boundary for the compiler-owned Go plan."""
+
+    materialized_view_sha256: str
+    fields: Mapping[str, FrozenJSON]
+    go_symbol_policy: CandidateGoSymbolPolicy
+    go_symbol_table: CandidateGoSymbolTable
+    structured_types: Mapping[str, Mapping[str, FrozenJSON]]
+    examples: tuple[Mapping[str, FrozenJSON], ...]
+    enriched_fields: Mapping[str, EnrichedFieldDescriptor]
+    enriched_containers: Mapping[str, EnrichedContainerDescriptor]
+    enriched_families: Mapping[str, EnrichedFamilyDescriptor]
+    enriched_traces: Mapping[str, EnrichedTraceDescriptor]
+    enriched_metrics: Mapping[str, EnrichedMetricDescriptor]
+    mandatory_programs: Mapping[str, ResolvedMandatoryProgramIR]
+    expanded_producer_mappings: tuple[ExpandedProducerMappingDescriptor, ...]
+    go_declaration_values: tuple[GoDeclarationValue, ...]
 
 
 def _go_symbol_table_digest(rows: Sequence[CandidateGoSymbol]) -> str:
@@ -3116,6 +3158,8 @@ def _candidate_render_index_digest(
     mandatory_programs: Mapping[str, ResolvedMandatoryProgramIR],
     expanded_producer_mappings: tuple[ExpandedProducerMappingDescriptor, ...],
     go_declaration_values: tuple[GoDeclarationValue, ...],
+    go_api_plan: GoAPIPlanIR,
+    api_plan_sha256: str,
 ) -> str:
     payload = {
         "format": "defenseclaw-candidate-render-index-v1",
@@ -3128,6 +3172,8 @@ def _candidate_render_index_digest(
         "mandatory_programs": mandatory_programs,
         "expanded_producer_mappings": expanded_producer_mappings,
         "go_declaration_values": go_declaration_values,
+        "go_api_plan": go_api_plan,
+        "api_plan_sha256": api_plan_sha256,
     }
     typed = _typed_materialized_node(_freeze(_descriptor_payload(payload)))
     return hashlib.sha256(CANDIDATE_RENDER_INDEX_DIGEST_DOMAIN + _canonical_json_bytes(typed)).hexdigest()
@@ -4905,6 +4951,31 @@ def build_candidate_render_index(view: object) -> CandidateRenderIndex:
         mandatory_rule_contracts,
     )
     go_declaration_values = _go_declaration_values(go_symbol_table, fields)
+    frozen_fields = _freeze(fields)
+    frozen_structured_types = MappingProxyType(
+        {key: _freeze(_plain_ir(structured_types[key])) for key in structured_types}
+    )
+    frozen_examples = tuple(_freeze(item) for item in examples)
+    provisional = _ProvisionalCandidateEnrichment(
+        materialized_view_sha256=digest,
+        fields=frozen_fields,
+        go_symbol_policy=go_symbol_policy,
+        go_symbol_table=go_symbol_table,
+        structured_types=frozen_structured_types,
+        examples=frozen_examples,
+        enriched_fields=enriched_fields,
+        enriched_containers=enriched_containers,
+        enriched_families=enriched_families,
+        enriched_traces=enriched_traces,
+        enriched_metrics=enriched_metrics,
+        mandatory_programs=mandatory_programs,
+        expanded_producer_mappings=expanded_producer_mappings,
+        go_declaration_values=go_declaration_values,
+    )
+    try:
+        go_api_plan = compile_go_api_plan(provisional)
+    except GoAPIPlanError:
+        raise CandidateRenderError("candidate Go API plan is invalid") from None
     candidate_digest = _candidate_render_index_digest(
         digest,
         enriched_fields=enriched_fields,
@@ -4915,6 +4986,8 @@ def build_candidate_render_index(view: object) -> CandidateRenderIndex:
         mandatory_programs=mandatory_programs,
         expanded_producer_mappings=expanded_producer_mappings,
         go_declaration_values=go_declaration_values,
+        go_api_plan=go_api_plan,
+        api_plan_sha256=go_api_plan.api_plan_sha256,
     )
 
     frozen_attributes = MappingProxyType(
@@ -4937,12 +5010,12 @@ def build_candidate_render_index(view: object) -> CandidateRenderIndex:
         digest=digest,
         materialized_view_sha256=digest,
         candidate_render_index_sha256=candidate_digest,
-        fields=_freeze(fields),
+        fields=frozen_fields,
         go_symbol_policy=go_symbol_policy,
         go_symbol_overrides=go_symbol_overrides,
         go_symbol_table=go_symbol_table,
         attributes=frozen_attributes,
-        structured_types=MappingProxyType({key: _freeze(_plain_ir(structured_types[key])) for key in structured_types}),
+        structured_types=frozen_structured_types,
         structured_bindings=MappingProxyType(
             {key: _freeze(_plain_ir(structured_bindings[key])) for key in structured_bindings}
         ),
@@ -4952,7 +5025,7 @@ def build_candidate_render_index(view: object) -> CandidateRenderIndex:
         family_domains=MappingProxyType({key: family_domains[key] for key in sorted(family_domains)}),
         domains=sorted_domains,
         span_events=frozen_events,
-        examples=tuple(_freeze(item) for item in examples),
+        examples=frozen_examples,
         example_output_paths=example_output_paths,
         enriched_fields=enriched_fields,
         enriched_containers=enriched_containers,
@@ -4962,6 +5035,8 @@ def build_candidate_render_index(view: object) -> CandidateRenderIndex:
         mandatory_programs=mandatory_programs,
         expanded_producer_mappings=expanded_producer_mappings,
         go_declaration_values=go_declaration_values,
+        go_api_plan=go_api_plan,
+        api_plan_sha256=go_api_plan.api_plan_sha256,
     )
 
 
