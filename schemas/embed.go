@@ -35,6 +35,12 @@ var telemetryV8Registry []byte
 //go:embed telemetry/v8/semconv.lock.yaml
 var telemetryV8SemconvLock []byte
 
+//go:embed telemetry/generated/telemetry.schema.json
+var telemetryV8Schema []byte
+
+//go:embed telemetry/generated/catalog.json
+var telemetryV8Catalog []byte
+
 // DefenseClawConfigV8Schema returns a copy of the exact checked-in canonical v8
 // configuration schema bytes. Callers cannot mutate the process-wide embed.
 func DefenseClawConfigV8Schema() []byte {
@@ -63,4 +69,16 @@ func TelemetryV8Registry() []byte {
 // convention revisions used to validate those profiles.
 func TelemetryV8SemconvLock() []byte {
 	return append([]byte(nil), telemetryV8SemconvLock...)
+}
+
+// TelemetryV8Schema returns a copy of the generated canonical v8 telemetry
+// schema bundle. Callers cannot mutate the process-wide embed.
+func TelemetryV8Schema() []byte {
+	return append([]byte(nil), telemetryV8Schema...)
+}
+
+// TelemetryV8Catalog returns a copy of the generated canonical v8 telemetry
+// catalog. Callers cannot mutate the process-wide embed.
+func TelemetryV8Catalog() []byte {
+	return append([]byte(nil), telemetryV8Catalog...)
 }

@@ -73,6 +73,38 @@ func TestTelemetryV8LocksEmbeddedExactly(t *testing.T) {
 	}
 }
 
+func TestTelemetryV8GeneratedArtifactsEmbeddedExactly(t *testing.T) {
+	t.Parallel()
+	for _, fixture := range []struct {
+		path string
+		get  func() []byte
+	}{
+		{path: "telemetry/generated/telemetry.schema.json", get: TelemetryV8Schema},
+		{path: "telemetry/generated/catalog.json", get: TelemetryV8Catalog},
+	} {
+		fixture := fixture
+		t.Run(fixture.path, func(t *testing.T) {
+			t.Parallel()
+
+			want, err := os.ReadFile(fixture.path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := fixture.get()
+			if !bytes.Equal(got, want) {
+				t.Fatalf("embedded %s differs from checked-in bytes", fixture.path)
+			}
+			if !json.Valid(got) {
+				t.Fatalf("embedded %s is not valid JSON", fixture.path)
+			}
+			got[0] ^= 0xff
+			if !bytes.Equal(fixture.get(), want) {
+				t.Fatalf("caller mutated embedded %s", fixture.path)
+			}
+		})
+	}
+}
+
 func TestDefenseClawConfigV8SchemaIdentityAndClosure(t *testing.T) {
 	t.Parallel()
 
