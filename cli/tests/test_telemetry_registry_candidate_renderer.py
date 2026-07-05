@@ -57,8 +57,21 @@ def view(generator: ModuleType) -> Any:
 
 
 @pytest.fixture(scope="module")
-def artifacts(renderer: ModuleType, view: Any) -> Mapping[str, Any]:
-    return renderer.render_candidate_artifacts(view)
+def render_index(renderer: ModuleType, view: Any) -> Any:
+    return renderer.build_candidate_render_index(view)
+
+
+@pytest.fixture(scope="module")
+def artifacts(renderer: ModuleType, render_index: Any) -> Mapping[str, Any]:
+    return renderer.render_candidate_artifacts_from_index(render_index)
+
+
+@pytest.fixture(scope="module")
+def public_baseline_reader() -> ModuleType:
+    return _load(
+        "telemetry_candidate_test_public_schema_baseline",
+        ROOT / "scripts/telemetry_public_schema_baseline.py",
+    )
 
 
 def _json(artifacts: Mapping[str, Any], relative: str) -> dict[str, Any]:
@@ -124,6 +137,21 @@ def _copy_materialized(value: Any) -> Any:
     if isinstance(value, tuple):
         return tuple(_copy_materialized(item) for item in value)
     return value
+
+
+def _public_view_plan(renderer: ModuleType, render_index: Any) -> Any:
+    return renderer._validate_public_views(
+        render_index.fields["public_views_path"],
+        render_index.fields["public_views"],
+        render_index.registry_version,
+    )
+
+
+def _remove_public_view_marker(renderer: ModuleType, payload: bytes, marker: Mapping[str, Any]) -> bytes:
+    prefix = b"{" + renderer.JSON_OWNERSHIP_MARKER + b":" + renderer._canonical_json_bytes(marker) + b","
+    assert payload.startswith(prefix)
+    assert payload.endswith(b"}\n")
+    return b"{" + payload[len(prefix) : -1]
 
 
 @pytest.mark.parametrize("mode", ["direct", "package"])
@@ -713,7 +741,7 @@ def test_candidate_renderer_is_deterministic_complete_and_in_memory(
     assert {path: artifact.payload for path, artifact in from_index.items()} == {
         path: artifact.payload for path, artifact in artifacts.items()
     }
-    assert len(artifacts) == 29
+    assert len(artifacts) == 55
     assert {
         f"{PREFIX}/telemetry.schema.json",
         f"{PREFIX}/catalog.json",
@@ -768,7 +796,7 @@ def test_candidate_index_consumes_reviewed_go_symbol_contract_immutably_and_pres
     assert rows[("span_event", "model.retry")].symbol == "TelemetrySpanEventModelRetry"
     assert rows[("structured_type", "gen_ai.canonical_json")].declaration_form == "exported_type"
     assert rows[("span_link_constructor", "span.model.chat#caused_by")].symbol == ("NewSpanModelChatCausedByLink")
-    assert len(artifacts) == 29
+    assert len(artifacts) == 55
     with pytest.raises(TypeError):
         index.go_symbol_policy.brand_spellings["otel"] = "Otel"  # type: ignore[index]
     with pytest.raises(TypeError):
@@ -1112,23 +1140,263 @@ def test_real_registry_compile_and_candidate_render_smoke(
     assert f"{PREFIX}/catalog.json" in artifacts
 
 
+def test_public_view_candidates_have_exact_staged_portable_inventory_and_no_live_paths(
+    renderer: ModuleType,
+    render_index: Any,
+    artifacts: Mapping[str, Any],
+) -> None:
+    plan = _public_view_plan(renderer, render_index)
+    public_paths = tuple(renderer.PUBLIC_VIEW_CANDIDATE_OUTPUT_PATHS)
+    logical_paths = {entry.output_path for entry in plan.views}
+    logical_paths.update(
+        target.removeprefix(f"{renderer.PUBLIC_VIEW_CANDIDATE_PREFIX}/")
+        for entry in plan.views
+        for target in entry.target_paths
+    )
+
+    assert len(artifacts) == 55
+    assert len(plan.views) == 21
+    assert len(public_paths) == 26
+    assert len(set(public_paths)) == 26
+    assert len({renderer._candidate_path_identity(path) for path in public_paths}) == 26
+    assert tuple(sorted(public_paths, key=str.encode)) == public_paths
+    assert {path for path in artifacts if path.startswith(f"{renderer.PUBLIC_VIEW_CANDIDATE_PREFIX}/")} == set(
+        public_paths
+    )
+    assert not logical_paths.intersection(artifacts)
+    assert all("/wheel/" not in path and "/site-packages/" not in path for path in public_paths)
+    assert all(
+        artifact.media_type == "application/schema+json" for path, artifact in artifacts.items() if path in public_paths
+    )
+
+
+def test_public_view_candidates_preserve_exact_baseline_bytes_numbers_identities_and_refs(
+    renderer: ModuleType,
+    render_index: Any,
+    artifacts: Mapping[str, Any],
+    public_baseline_reader: ModuleType,
+) -> None:
+    def references(value: Any) -> list[str]:
+        result: list[str] = []
+        if isinstance(value, Mapping):
+            if isinstance(value.get("$ref"), str):
+                result.append(value["$ref"])
+            for child in value.values():
+                result.extend(references(child))
+        elif isinstance(value, tuple):
+            for child in value:
+                result.extend(references(child))
+        return result
+
+    plan = _public_view_plan(renderer, render_index)
+    raw_views = render_index.fields["public_views"]["fields"]["views"]
+    raw_by_id = {raw["fields"]["id"]: raw["fields"] for raw in raw_views}
+    resources: list[dict[str, Any]] = []
+    observed_references: list[str] = []
+    expected_references: list[str] = []
+
+    for entry in plan.views:
+        marker = {
+            "generator": plan.generator,
+            "registry_version": plan.registry_version,
+            "public_view_id": entry.id,
+            "baseline_epoch": plan.baseline_epoch,
+        }
+        primary = artifacts[entry.target_paths[0]].payload
+        restored = _remove_public_view_marker(renderer, primary, marker)
+        assert restored == entry.baseline_document_canonical_json
+
+        parsed = public_baseline_reader.parse_lossless_json(restored, entry.output_path)
+        assert parsed["$schema"] == entry.dialect
+        assert parsed["$id"] == entry.schema_id
+        expected_numbers = {
+            number["fields"]["pointer"]: number["fields"]["token"]
+            for number in raw_by_id[entry.id]["baseline_number_lexemes"]
+        }
+        assert public_baseline_reader.number_lexemes(parsed) == expected_numbers
+        parsed_with_marker = public_baseline_reader.parse_lossless_json(primary, entry.target_paths[0])
+        assert public_baseline_reader.number_lexemes(parsed_with_marker) == {
+            **expected_numbers,
+            "/x-defenseclaw-generated/registry_version": str(plan.registry_version),
+        }
+
+        resources.append({"path": entry.output_path, "document": parsed_with_marker})
+        observed_references.extend(references(parsed_with_marker))
+        expected_references.extend(reference["fields"]["reference"] for reference in raw_by_id[entry.id]["references"])
+
+    assert Counter(observed_references) == Counter(expected_references)
+    assert len(observed_references) == 39
+    public_baseline_reader.validate_reference_closure(resources)
+
+
+def test_public_view_mirror_candidates_are_byte_identical_to_their_primaries(
+    renderer: ModuleType,
+    render_index: Any,
+    artifacts: Mapping[str, Any],
+) -> None:
+    plan = _public_view_plan(renderer, render_index)
+    mirrored = [entry for entry in plan.views if len(entry.target_paths) == 2]
+
+    assert len(mirrored) == 5
+    for entry in mirrored:
+        primary = artifacts[entry.target_paths[0]].payload
+        mirror = artifacts[entry.target_paths[1]].payload
+        assert mirror == primary
+        assert mirror is primary
+
+
+@pytest.mark.parametrize(
+    ("document", "error"),
+    [
+        (b"[]", "not a compact object"),
+        (b" {}", "not a compact object"),
+        (b"{}\n", "not a compact object"),
+        (b'{"x-defenseclaw-generated":{}}', "already carries generated authority"),
+    ],
+)
+def test_public_view_payload_rejects_malformed_roots_and_preexisting_marker(
+    renderer: ModuleType,
+    document: bytes,
+    error: str,
+) -> None:
+    marker = {
+        "generator": "scripts/generate_telemetry_registry.py",
+        "registry_version": 1,
+        "public_view_id": "activity-event",
+        "baseline_epoch": "public-schemas-v7-marker-only-v1",
+    }
+    with pytest.raises(renderer.CandidateRenderError, match=error):
+        renderer._render_public_view_payload(document, marker)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ("missing-key", "extra-key", "bad-generator", "bad-version", "bad-id", "bad-epoch"),
+)
+def test_public_view_payload_rejects_non_closed_or_malformed_markers(
+    renderer: ModuleType,
+    mutation: str,
+) -> None:
+    marker: dict[str, Any] = {
+        "generator": "scripts/generate_telemetry_registry.py",
+        "registry_version": 1,
+        "public_view_id": "activity-event",
+        "baseline_epoch": "public-schemas-v7-marker-only-v1",
+    }
+    if mutation == "missing-key":
+        del marker["baseline_epoch"]
+    elif mutation == "extra-key":
+        marker["authority"] = "candidate-not-public-authority"
+    elif mutation == "bad-generator":
+        marker["generator"] = "other.py"
+    elif mutation == "bad-version":
+        marker["registry_version"] = True
+    elif mutation == "bad-id":
+        marker["public_view_id"] = ""
+    else:
+        marker["baseline_epoch"] = "other"
+    with pytest.raises(renderer.CandidateRenderError, match="generated marker is invalid"):
+        renderer._render_public_view_payload(b"{}", marker)
+
+
+@pytest.mark.parametrize("mutation", ("authority", "path", "root", "existing-marker"))
+def test_public_view_renderer_rejects_forged_render_plans(
+    renderer: ModuleType,
+    render_index: Any,
+    mutation: str,
+) -> None:
+    plan = _public_view_plan(renderer, render_index)
+    if mutation == "authority":
+        forged = dataclasses.replace(plan, authority_sha256="0" * 64)
+        expected = "authority is invalid"
+    else:
+        first = plan.views[0]
+        if mutation == "path":
+            first = dataclasses.replace(first, target_paths=(first.output_path,))
+            expected = "authority is invalid"
+        elif mutation == "root":
+            first = dataclasses.replace(first, baseline_document_canonical_json=b"[]")
+            expected = "not a compact object"
+        else:
+            first = dataclasses.replace(
+                first,
+                baseline_document_canonical_json=b'{"x-defenseclaw-generated":{}}',
+            )
+            expected = "already carries generated authority"
+        forged = dataclasses.replace(plan, views=(first, *plan.views[1:]))
+    with pytest.raises(renderer.CandidateRenderError, match=expected):
+        renderer._render_public_view_candidate_artifacts(forged)
+
+
+def test_public_view_authority_is_revalidated_at_render_sink(
+    renderer: ModuleType,
+    render_index: Any,
+) -> None:
+    fields = _copy_materialized(render_index.fields)
+    fields["public_views"]["fields"]["authority_sha256"] = "0" * 64
+    forged = dataclasses.replace(render_index, fields=fields)
+
+    assert forged.verify_digest()
+    with pytest.raises(renderer.CandidateRenderError, match="render authority digest is invalid"):
+        renderer.render_candidate_artifacts_from_index(forged)
+
+
+def test_public_view_candidate_render_is_deterministic_and_performs_no_filesystem_io(
+    renderer: ModuleType,
+    render_index: Any,
+    artifacts: Mapping[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def unexpected_io(*_args: Any, **_kwargs: Any) -> Any:
+        raise AssertionError("render sink performed filesystem I/O")
+
+    monkeypatch.setattr(Path, "read_bytes", unexpected_io)
+    monkeypatch.setattr(Path, "read_text", unexpected_io)
+    monkeypatch.setattr(Path, "open", unexpected_io)
+    repeated = renderer.render_candidate_artifacts_from_index(render_index)
+
+    public_paths = renderer.PUBLIC_VIEW_CANDIDATE_OUTPUT_PATHS
+    assert {path: repeated[path].payload for path in public_paths} == {
+        path: artifacts[path].payload for path in public_paths
+    }
+    assert not any(path.removeprefix(f"{renderer.PUBLIC_VIEW_CANDIDATE_PREFIX}/") in repeated for path in public_paths)
+
+
 def test_every_artifact_carries_candidate_authority_and_view_digest(
     renderer: ModuleType,
     view: Any,
+    render_index: Any,
     artifacts: Mapping[str, Any],
 ) -> None:
+    public_plan = _public_view_plan(renderer, render_index)
+    public_ids = {target: entry.id for entry in public_plan.views for target in entry.target_paths}
     for path, artifact in artifacts.items():
         if path.endswith(".json"):
             assert 0 <= artifact.payload.find(renderer.JSON_OWNERSHIP_MARKER) < 4096
             document = json.loads(artifact.payload)
             marker = document["x-defenseclaw-generated"]
-            assert marker == {
-                "artifact": path.removeprefix(f"{PREFIX}/"),
-                "authority": renderer.CANDIDATE_AUTHORITY,
-                "generator": renderer.GENERATOR_ID,
-                "materialized_view_sha256": view.typed_canonical_json_sha256,
-                "registry_version": 1,
-            }
+            if path in public_ids:
+                assert marker == {
+                    "generator": "scripts/generate_telemetry_registry.py",
+                    "registry_version": 1,
+                    "public_view_id": public_ids[path],
+                    "baseline_epoch": "public-schemas-v7-marker-only-v1",
+                }
+                assert set(marker) == {
+                    "generator",
+                    "registry_version",
+                    "public_view_id",
+                    "baseline_epoch",
+                }
+                assert artifact.media_type == "application/schema+json"
+            else:
+                assert marker == {
+                    "artifact": path.removeprefix(f"{PREFIX}/"),
+                    "authority": renderer.CANDIDATE_AUTHORITY,
+                    "generator": renderer.GENERATOR_ID,
+                    "materialized_view_sha256": view.typed_canonical_json_sha256,
+                    "registry_version": 1,
+                }
             assert artifact.ownership_marker == renderer.JSON_OWNERSHIP_MARKER
         else:
             rendered = artifact.payload.decode("utf-8")

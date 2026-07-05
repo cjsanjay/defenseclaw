@@ -10,6 +10,7 @@ import importlib.util
 import io
 import json
 import os
+import stat
 import subprocess
 import sys
 import tarfile
@@ -1341,6 +1342,7 @@ def _install_synthetic_candidate_renderers(
     monkeypatch: pytest.MonkeyPatch,
     *,
     build_error: Exception | None = None,
+    portable_mutation: str | None = None,
 ) -> tuple[object, list[tuple[str, object]]]:
     class CandidateRenderError(ValueError):
         pass
@@ -1360,19 +1362,53 @@ def _install_synthetic_candidate_renderers(
             raise build_error
         return index
 
-    portable_artifact = SimpleNamespace(
-        path="schemas/telemetry/generated/synthetic-candidate.json",
-        payload=b'{"x-defenseclaw-generated":true}\n',
-        ownership_marker=b'"x-defenseclaw-generated"',
-        mode=0o644,
+    staged_paths = tuple(
+        f"{module.PUBLIC_VIEW_CANDIDATE_PREFIX}/{path}"
+        for path in sorted(module.generated_transaction.EXACT_BASELINE_ADOPTION_PATHS)
     )
+    portable_paths = {
+        *module.PORTABLE_STATIC_OUTPUT_PATHS,
+        *staged_paths,
+        *(
+            f"schemas/telemetry/generated/examples/{'valid' if example.valid else 'invalid'}/{example.id}.json"
+            for example in ir.examples
+        ),
+        *(f"schemas/telemetry/generated/otlp-fixtures/cases/{example.id}.json" for example in ir.examples),
+    }
+
+    def portable_artifact(path: str) -> Any:
+        return SimpleNamespace(
+            path=path,
+            payload=b'{"x-defenseclaw-generated":true}\n',
+            ownership_marker=b'"x-defenseclaw-generated"',
+            mode=0o644,
+        )
 
     def render_portable(observed: object) -> dict[str, Any]:
         calls.append(("portable", observed))
-        return {portable_artifact.path: portable_artifact}
+        rendered = {path: portable_artifact(path) for path in portable_paths}
+        if portable_mutation == "partial":
+            rendered.pop(staged_paths[0])
+        elif portable_mutation == "substituted":
+            rendered.pop(staged_paths[0])
+            replacement = f"{module.PUBLIC_VIEW_CANDIDATE_PREFIX}/schemas/substituted.json"
+            rendered[replacement] = portable_artifact(replacement)
+        elif portable_mutation == "live":
+            live = sorted(module.generated_transaction.EXACT_BASELINE_ADOPTION_PATHS)[0]
+            rendered[live] = portable_artifact(live)
+        elif portable_mutation == "contract-substituted":
+            pass
+        elif portable_mutation is not None:
+            raise AssertionError(f"unsupported portable mutation {portable_mutation}")
+        return rendered
 
+    staged_contract = staged_paths
+    if portable_mutation == "contract-substituted":
+        staged_contract = (*staged_paths[:-1], f"{module.PUBLIC_VIEW_CANDIDATE_PREFIX}/schemas/substituted.json")
     portable = SimpleNamespace(
         CANDIDATE_AUTHORITY=module.GO_CANDIDATE_AUTHORITY,
+        PUBLIC_VIEW_CANDIDATE_PREFIX=module.PUBLIC_VIEW_CANDIDATE_PREFIX,
+        PUBLIC_VIEW_CANDIDATE_OUTPUT_PATHS=staged_contract,
         CandidateRenderError=CandidateRenderError,
         build_candidate_render_index=build,
         render_candidate_artifacts_from_index=render_portable,
@@ -1440,13 +1476,70 @@ def test_render_outputs_builds_one_index_and_fans_out_the_same_identity(
     assert [name for name, _ in calls] == ["build", "portable", "go", "preflight"]
     assert calls[1][1] is index
     assert calls[2][1] is index
+    staged_paths = tuple(
+        f"{module.PUBLIC_VIEW_CANDIDATE_PREFIX}/{path}"
+        for path in sorted(module.generated_transaction.EXACT_BASELINE_ADOPTION_PATHS)
+    )
+    expected_portable = module._expected_portable_output_paths(ir, staged_paths)
     assert set(outputs) == {
         module.OUTPUT_MANIFEST,
-        Path("schemas/telemetry/generated/synthetic-candidate.json"),
+        *(Path(path) for path in expected_portable),
         *(Path(path) for path in module.GO_CANDIDATE_OUTPUT_PATHS),
     }
     manifest = json.loads(outputs[module.OUTPUT_MANIFEST])
     assert manifest["ownership_inventory"]["go_candidate"]["paths"] == list(module.GO_CANDIDATE_OUTPUT_PATHS)
+
+
+@pytest.mark.parametrize("mutation", ["partial", "substituted", "contract-substituted", "live"])
+def test_render_outputs_rejects_inexact_or_live_staged_public_view_inventory(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mutation: str,
+) -> None:
+    root = _fixture_root(tmp_path)
+    module = _load_generator_module(f"telemetry_registry_staged_public_views_{mutation}")
+    ir = module.compile_registry(root)
+    _install_synthetic_candidate_renderers(module, ir, monkeypatch, portable_mutation=mutation)
+
+    if mutation == "live":
+        expected = "live public-view paths"
+    elif mutation == "contract-substituted":
+        expected = "staging inventory is not exact"
+    else:
+        expected = "partial or substituted"
+    with pytest.raises(module.RegistryError, match=expected):
+        module.render_outputs(ir)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [("sha256", "0" * 64), ("mode", 0o600), ("marker", '"foreign-generated-marker"')],
+)
+def test_render_outputs_rejects_stale_staged_public_view_ownership_record(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    field: str,
+    value: Any,
+) -> None:
+    root = _fixture_root(tmp_path)
+    module = _load_generator_module(f"telemetry_registry_staged_public_view_record_{field}")
+    ir = module.compile_registry(root)
+    _install_synthetic_candidate_renderers(module, ir, monkeypatch)
+    manifest_document = module._manifest_document
+
+    def stale_manifest(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        manifest = manifest_document(*args, **kwargs)
+        target = next(
+            record
+            for record in manifest["ownership_inventory"]["artifacts"]
+            if record["path"].startswith(f"{module.PUBLIC_VIEW_CANDIDATE_PREFIX}/")
+        )
+        target[field] = value
+        return manifest
+
+    monkeypatch.setattr(module, "_manifest_document", stale_manifest)
+    with pytest.raises(module.RegistryError, match="staged public-view ownership record disagrees"):
+        module.render_outputs(ir)
 
 
 def test_unexpected_renderer_failure_is_bounded_and_content_free(
@@ -1495,7 +1588,58 @@ def test_real_candidate_outputs_validate_as_one_complete_manifest_inventory(
     assert tuple(manifest["ownership_inventory"]["go_candidate"]["paths"]) == module.GO_CANDIDATE_OUTPUT_PATHS
     assert set(module.GO_CANDIDATE_OUTPUT_PATHS) <= set(desired)
     assert "schemas/telemetry/generated/telemetry.schema.json" in desired
-    assert len(desired) == len(manifest["outputs"])
+    expected_live = frozenset(module.generated_transaction.EXACT_BASELINE_ADOPTION_PATHS)
+    staged_prefix = f"{module.PUBLIC_VIEW_CANDIDATE_PREFIX}/"
+    expected_staged = tuple(f"{staged_prefix}{path}" for path in sorted(expected_live))
+    staged_outputs = tuple(path for path in manifest["outputs"] if path.startswith(staged_prefix))
+    records = manifest["ownership_inventory"]["artifacts"]
+    record_by_path = {record["path"]: record for record in records}
+
+    assert len(outputs) - len(module.GO_CANDIDATE_OUTPUT_PATHS) - 1 == 55
+    assert len(records) == 62
+    assert len(desired) == len(manifest["outputs"]) == 63
+    assert staged_outputs == expected_staged
+    assert expected_live.isdisjoint(manifest["outputs"])
+    assert expected_live.isdisjoint(record_by_path)
+    for path in expected_staged:
+        payload = outputs[Path(path)]
+        assert record_by_path[path] == {
+            "path": path,
+            "sha256": _sha256(payload),
+            "mode": 0o644,
+            "marker": '"x-defenseclaw-generated"',
+        }
+
+
+def test_staged_publication_is_deterministic_and_preserves_every_live_predecessor_byte(
+    tmp_path: Path,
+    real_candidate_outputs: tuple[ModuleType, dict[Path, bytes]],
+) -> None:
+    module, outputs = real_candidate_outputs
+    root = _fixture_root(tmp_path)
+    live_paths = tuple(sorted(module.generated_transaction.EXACT_BASELINE_ADOPTION_PATHS))
+    before: dict[str, tuple[bytes, int]] = {}
+    for path in live_paths:
+        source = ROOT / path
+        target = root / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(source.read_bytes())
+        target.chmod(0o644)
+        before[path] = (target.read_bytes(), stat.S_IMODE(target.stat().st_mode))
+
+    module.write_outputs(root, outputs)
+    manifest_path = root / module.OUTPUT_MANIFEST
+    first_manifest = manifest_path.read_bytes()
+    module.check_outputs(root, outputs)
+    module.write_outputs(root, outputs)
+
+    assert manifest_path.read_bytes() == first_manifest
+    for path, expected in before.items():
+        target = root / path
+        assert (target.read_bytes(), stat.S_IMODE(target.stat().st_mode)) == expected
+    manifest = json.loads(first_manifest)
+    assert set(live_paths).isdisjoint(manifest["outputs"])
+    assert set(live_paths).isdisjoint(record["path"] for record in manifest["ownership_inventory"]["artifacts"])
 
 
 @pytest.mark.parametrize(

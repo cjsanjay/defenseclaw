@@ -161,6 +161,32 @@
     "schemas/telemetry/generated/otlp-fixtures/cases/valid-telemetry-rejection-without-raw-payload.json",
     "schemas/telemetry/generated/otlp-fixtures/manifest.json",
     "schemas/telemetry/generated/output-manifest.json",
+    "schemas/telemetry/generated/public-views/internal/cli/embed/scan-result.json",
+    "schemas/telemetry/generated/public-views/internal/gatewaylog/schemas/activity-event.json",
+    "schemas/telemetry/generated/public-views/internal/gatewaylog/schemas/gateway-event-envelope.json",
+    "schemas/telemetry/generated/public-views/internal/gatewaylog/schemas/scan-event.json",
+    "schemas/telemetry/generated/public-views/internal/gatewaylog/schemas/scan-finding-event.json",
+    "schemas/telemetry/generated/public-views/schemas/activity-event.json",
+    "schemas/telemetry/generated/public-views/schemas/audit-event.json",
+    "schemas/telemetry/generated/public-views/schemas/gateway-event-envelope.json",
+    "schemas/telemetry/generated/public-views/schemas/hook-audit-envelope.json",
+    "schemas/telemetry/generated/public-views/schemas/network-egress-event.json",
+    "schemas/telemetry/generated/public-views/schemas/otel/agent-lifecycle-event.schema.json",
+    "schemas/telemetry/generated/public-views/schemas/otel/asset-lifecycle-event.schema.json",
+    "schemas/telemetry/generated/public-views/schemas/otel/connector-telemetry-event.schema.json",
+    "schemas/telemetry/generated/public-views/schemas/otel/galileo-export-profile.schema.json",
+    "schemas/telemetry/generated/public-views/schemas/otel/metrics.schema.json",
+    "schemas/telemetry/generated/public-views/schemas/otel/resource.schema.json",
+    "schemas/telemetry/generated/public-views/schemas/otel/runtime-agent-span.schema.json",
+    "schemas/telemetry/generated/public-views/schemas/otel/runtime-alert-event.schema.json",
+    "schemas/telemetry/generated/public-views/schemas/otel/runtime-approval-span.schema.json",
+    "schemas/telemetry/generated/public-views/schemas/otel/runtime-llm-span.schema.json",
+    "schemas/telemetry/generated/public-views/schemas/otel/runtime-tool-span.schema.json",
+    "schemas/telemetry/generated/public-views/schemas/otel/scan-finding-event.schema.json",
+    "schemas/telemetry/generated/public-views/schemas/otel/scan-result-event.schema.json",
+    "schemas/telemetry/generated/public-views/schemas/scan-event.json",
+    "schemas/telemetry/generated/public-views/schemas/scan-finding-event.json",
+    "schemas/telemetry/generated/public-views/schemas/scan-result.json",
     "schemas/telemetry/generated/telemetry.schema.json"
   ],
   "ownership_inventory": {
@@ -378,6 +404,162 @@
       {
         "path": "schemas/telemetry/generated/otlp-fixtures/manifest.json",
         "sha256": "faa4c002f3bc6c675a7b355c46660b4acb1dd2656e3ed076a301f48ffe9e468d",
+        "mode": 420,
+        "marker": "\"x-defenseclaw-generated\""
+      },
+      {
+        "path": "schemas/telemetry/generated/public-views/internal/cli/embed/scan-result.json",
+        "sha256": "88f8f7478835e6b46ba2ded4c5282569b93964181014ddabe935d9a4a259cb49",
+        "mode": 420,
+        "marker": "\"x-defenseclaw-generated\""
+      },
+      {
+        "path": "schemas/telemetry/generated/public-views/internal/gatewaylog/schemas/activity-event.json",
+        "sha256": "0fdc6fbec98f3772889df6fc314ef215958ef366069e0fe6ea1cf9e624b74f34",
+        "mode": 420,
+        "marker": "\"x-defenseclaw-generated\""
+      },
+      {
+        "path": "schemas/telemetry/generated/public-views/internal/gatewaylog/schemas/gateway-event-envelope.json",
+        "sha256": "08bfeef85c95a30b3c91827a151665ed3bc7a4d6a8ea10591f9cfb417fe4117a",
+        "mode": 420,
+        "marker": "\"x-defenseclaw-generated\""
+      },
+      {
+        "path": "schemas/telemetry/generated/public-views/internal/gatewaylog/schemas/scan-event.json",
+        "sha256": "376d0e42c2e938bb5e35feb74879beead2d6a22b5851a7453fdb82350e099d04",
+        "mode": 420,
+        "marker": "\"x-defenseclaw-generated\""
+      },
+      {
+        "path": "schemas/telemetry/generated/public-views/internal/gatewaylog/schemas/scan-finding-event.json",
+        "sha256": "aff4933558d04b8d59aaf2e0b3b026017f638dc478138ee64e975171b6869efd",
+        "mode": 420,
+        "marker": "\"x-defenseclaw-generated\""
+      },
+      {
+        "path": "schemas/telemetry/generated/public-views/schemas/activity-event.json",
+        "sha256": "0fdc6fbec98f3772889df6fc314ef215958ef366069e0fe6ea1cf9e624b74f34",
+        "mode": 420,
+        "marker": "\"x-defenseclaw-generated\""
+      },
+      {
+        "path": "schemas/telemetry/generated/public-views/schemas/audit-event.json",
+        "sha256": "f5569f50b939d0d1b9e75f7ec307c4f69906d07c5230fea902d0f90f818e01b0",
+        "mode": 420,
+        "marker": "\"x-defenseclaw-generated\""
+      },
+      {
+        "path": "schemas/telemetry/generated/public-views/schemas/gateway-event-envelope.json",
+        "sha256": "08bfeef85c95a30b3c91827a151665ed3bc7a4d6a8ea10591f9cfb417fe4117a",
+        "mode": 420,
+        "marker": "\"x-defenseclaw-generated\""
+      },
+      {
+        "path": "schemas/telemetry/generated/public-views/schemas/hook-audit-envelope.json",
+        "sha256": "5efeb2e6f950338a394623073500152bc15115bebe1e4e05343310a9374a275b",
+        "mode": 420,
+        "marker": "\"x-defenseclaw-generated\""
+      },
+      {
+        "path": "schemas/telemetry/generated/public-views/schemas/network-egress-event.json",
+        "sha256": "97b9325a2c1e61213d5a419d35fa9cb9c2286a55a3e17c377bfe2fcd6e3a5124",
+        "mode": 420,
+        "marker": "\"x-defenseclaw-generated\""
+      },
+      {
+        "path": "schemas/telemetry/generated/public-views/schemas/otel/agent-lifecycle-event.schema.json",
+        "sha256": "265270e00e90a2452b571033ccd9591b22278c913563c342c425c1ef875114e9",
+        "mode": 420,
+        "marker": "\"x-defenseclaw-generated\""
+      },
+      {
+        "path": "schemas/telemetry/generated/public-views/schemas/otel/asset-lifecycle-event.schema.json",
+        "sha256": "7e820523135e7370a7b3bbb2be7dc3d494999c1b01aec10f8e76b786e6d23dd1",
+        "mode": 420,
+        "marker": "\"x-defenseclaw-generated\""
+      },
+      {
+        "path": "schemas/telemetry/generated/public-views/schemas/otel/connector-telemetry-event.schema.json",
+        "sha256": "ec61a9d7ec0f9d12682d59575e1f32c58f2380924e7c7da001cb89f1451700a1",
+        "mode": 420,
+        "marker": "\"x-defenseclaw-generated\""
+      },
+      {
+        "path": "schemas/telemetry/generated/public-views/schemas/otel/galileo-export-profile.schema.json",
+        "sha256": "e90bb4aa24f6325556198c4463f8d7b176123c1da099855deeafef01e273519e",
+        "mode": 420,
+        "marker": "\"x-defenseclaw-generated\""
+      },
+      {
+        "path": "schemas/telemetry/generated/public-views/schemas/otel/metrics.schema.json",
+        "sha256": "f78130ba1183cda82a60e5f2182dfa4dac87814fb820ee7964c32f38dfd98f98",
+        "mode": 420,
+        "marker": "\"x-defenseclaw-generated\""
+      },
+      {
+        "path": "schemas/telemetry/generated/public-views/schemas/otel/resource.schema.json",
+        "sha256": "8641bb31bc1eae2c871f83e4194f30b5fc5cb85c8a4c671806eb198bee17cd13",
+        "mode": 420,
+        "marker": "\"x-defenseclaw-generated\""
+      },
+      {
+        "path": "schemas/telemetry/generated/public-views/schemas/otel/runtime-agent-span.schema.json",
+        "sha256": "b7d0bf7f3e6e9c39059ac97fe7d251f5fbb6e222527927b884fa8ba6075b81f7",
+        "mode": 420,
+        "marker": "\"x-defenseclaw-generated\""
+      },
+      {
+        "path": "schemas/telemetry/generated/public-views/schemas/otel/runtime-alert-event.schema.json",
+        "sha256": "8487c58b2ec17804b7f8df6177689003b1d717bfbbc7b5dbaae95760a99d1bbb",
+        "mode": 420,
+        "marker": "\"x-defenseclaw-generated\""
+      },
+      {
+        "path": "schemas/telemetry/generated/public-views/schemas/otel/runtime-approval-span.schema.json",
+        "sha256": "f7c2ef2fc5aa27f7ac83bb689db1b3d64297d13dc618b496b2e991d7e455be6d",
+        "mode": 420,
+        "marker": "\"x-defenseclaw-generated\""
+      },
+      {
+        "path": "schemas/telemetry/generated/public-views/schemas/otel/runtime-llm-span.schema.json",
+        "sha256": "968f2f2ac7f4ab594b7aedf6bc80309dd2b67206ee05b2d95b8a8b132450703c",
+        "mode": 420,
+        "marker": "\"x-defenseclaw-generated\""
+      },
+      {
+        "path": "schemas/telemetry/generated/public-views/schemas/otel/runtime-tool-span.schema.json",
+        "sha256": "32f121387776b15c3065bd61d7b4e939dd451cadfd647b420c570fd3debc62c7",
+        "mode": 420,
+        "marker": "\"x-defenseclaw-generated\""
+      },
+      {
+        "path": "schemas/telemetry/generated/public-views/schemas/otel/scan-finding-event.schema.json",
+        "sha256": "7bc597bd640b69e5d09684ff693169d08bff0c40668e63e0218844b0ada84ee3",
+        "mode": 420,
+        "marker": "\"x-defenseclaw-generated\""
+      },
+      {
+        "path": "schemas/telemetry/generated/public-views/schemas/otel/scan-result-event.schema.json",
+        "sha256": "9cc9039451f883f36243e52a81a26b46807904d5052522be16397e352990308c",
+        "mode": 420,
+        "marker": "\"x-defenseclaw-generated\""
+      },
+      {
+        "path": "schemas/telemetry/generated/public-views/schemas/scan-event.json",
+        "sha256": "376d0e42c2e938bb5e35feb74879beead2d6a22b5851a7453fdb82350e099d04",
+        "mode": 420,
+        "marker": "\"x-defenseclaw-generated\""
+      },
+      {
+        "path": "schemas/telemetry/generated/public-views/schemas/scan-finding-event.json",
+        "sha256": "aff4933558d04b8d59aaf2e0b3b026017f638dc478138ee64e975171b6869efd",
+        "mode": 420,
+        "marker": "\"x-defenseclaw-generated\""
+      },
+      {
+        "path": "schemas/telemetry/generated/public-views/schemas/scan-result.json",
+        "sha256": "88f8f7478835e6b46ba2ded4c5282569b93964181014ddabe935d9a4a259cb49",
         "mode": 420,
         "marker": "\"x-defenseclaw-generated\""
       },

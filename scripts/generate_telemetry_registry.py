@@ -708,6 +708,14 @@ GO_CANDIDATE_OUTPUT_PATHS: Final = (
     "internal/observability/zz_generated_telemetry_builders_operations.go",
     "internal/observability/zz_generated_telemetry_builder_fixtures_test.go",
 )
+PORTABLE_STATIC_OUTPUT_PATHS: Final = (
+    "schemas/telemetry/generated/telemetry.schema.json",
+    "schemas/telemetry/generated/catalog.json",
+    "schemas/telemetry/generated/catalog.md",
+    "schemas/telemetry/generated/examples/manifest.json",
+    "schemas/telemetry/generated/otlp-fixtures/manifest.json",
+)
+PUBLIC_VIEW_CANDIDATE_PREFIX: Final = "schemas/telemetry/generated/public-views"
 
 EXPECTED_STRUCTURAL_CONTRACT_ID: Final = "defenseclaw.canonical-record"
 EXPECTED_OTLP_REPRESENTATION_ID: Final = "defenseclaw-otlp-v1"
@@ -10095,11 +10103,100 @@ def _bounded_candidate_error(exc: Exception, reviewed_types: tuple[type[Exceptio
     return detail if len(detail) <= 512 else detail[:509] + "..."
 
 
+def _expected_portable_output_paths(
+    ir: RegistryIR,
+    public_view_paths: tuple[str, ...],
+) -> tuple[str, ...]:
+    paths = list(PORTABLE_STATIC_OUTPUT_PATHS)
+    for example in ir.examples:
+        category = "valid" if example.valid else "invalid"
+        paths.extend(
+            (
+                f"schemas/telemetry/generated/examples/{category}/{example.id}.json",
+                f"schemas/telemetry/generated/otlp-fixtures/cases/{example.id}.json",
+            )
+        )
+    paths.extend(public_view_paths)
+    if len(paths) != len(set(paths)):
+        raise RegistryError("candidate telemetry output plan contains duplicate paths")
+    return tuple(sorted(paths))
+
+
+def _validate_portable_candidate_inventory(
+    ir: RegistryIR,
+    portable_renderer: Any,
+    portable_outputs: Mapping[str, Any],
+) -> tuple[str, ...]:
+    """Bind the staged public-view set to the transaction's exact live allowlist."""
+
+    prefix = getattr(portable_renderer, "PUBLIC_VIEW_CANDIDATE_PREFIX", None)
+    staged = getattr(portable_renderer, "PUBLIC_VIEW_CANDIDATE_OUTPUT_PATHS", None)
+    if prefix != PUBLIC_VIEW_CANDIDATE_PREFIX or type(staged) is not tuple:
+        raise RegistryError("candidate renderer public-view staging contract is invalid")
+    expected_suffixes = tuple(sorted(generated_transaction.EXACT_BASELINE_ADOPTION_PATHS))
+    expected_staged = tuple(f"{PUBLIC_VIEW_CANDIDATE_PREFIX}/{path}" for path in expected_suffixes)
+    if staged != expected_staged:
+        raise RegistryError("candidate renderer public-view staging inventory is not exact")
+    if not isinstance(portable_outputs, Mapping) or any(type(path) is not str for path in portable_outputs):
+        raise RegistryError("candidate renderer output inventory is invalid")
+    actual = tuple(sorted(portable_outputs))
+    live_paths = frozenset(actual) & generated_transaction.EXACT_BASELINE_ADOPTION_PATHS
+    if live_paths:
+        raise RegistryError("candidate renderer attempted to publish live public-view paths")
+    expected = _expected_portable_output_paths(ir, expected_staged)
+    if actual != expected:
+        raise RegistryError("candidate renderer output inventory is partial or substituted")
+    if any(getattr(portable_outputs[path], "path", None) != path for path in actual):
+        raise RegistryError("candidate renderer output path disagrees with its artifact")
+    return expected
+
+
+def _validate_rendered_manifest_inventory(
+    manifest: Mapping[str, Any],
+    artifacts: Mapping[Path, Any],
+    expected_portable_paths: tuple[str, ...],
+) -> None:
+    """Cross-check staged ownership records before encoding the commit marker."""
+
+    expected_artifacts = tuple(sorted((*expected_portable_paths, *GO_CANDIDATE_OUTPUT_PATHS)))
+    actual_artifacts = tuple(sorted(path.as_posix() for path in artifacts))
+    if actual_artifacts != expected_artifacts:
+        raise RegistryError("generated manifest artifact inventory is partial or substituted")
+    expected_outputs = tuple(sorted((OUTPUT_MANIFEST.as_posix(), *expected_artifacts)))
+    if tuple(manifest.get("outputs", ())) != expected_outputs:
+        raise RegistryError("generated manifest output inventory is partial or substituted")
+    inventory = manifest.get("ownership_inventory")
+    records = inventory.get("artifacts") if isinstance(inventory, Mapping) else None
+    if not isinstance(records, list):
+        raise RegistryError("generated manifest ownership inventory is invalid")
+    record_paths = tuple(record.get("path") for record in records if isinstance(record, Mapping))
+    if record_paths != expected_artifacts or len(record_paths) != len(records):
+        raise RegistryError("generated manifest ownership records are partial or substituted")
+    if frozenset(expected_outputs) & generated_transaction.EXACT_BASELINE_ADOPTION_PATHS:
+        raise RegistryError("generated manifest attempted to claim live public-view ownership")
+    staged_prefix = f"{PUBLIC_VIEW_CANDIDATE_PREFIX}/"
+    staged_records = [record for record in records if record["path"].startswith(staged_prefix)]
+    expected_staged = tuple(
+        f"{staged_prefix}{path}" for path in sorted(generated_transaction.EXACT_BASELINE_ADOPTION_PATHS)
+    )
+    if tuple(record["path"] for record in staged_records) != expected_staged:
+        raise RegistryError("generated manifest staged public-view ownership is not exact")
+    for record in staged_records:
+        output = artifacts[Path(record["path"])]
+        if (
+            record.get("sha256") != _sha256(output.payload)
+            or record.get("mode") != output.mode
+            or record.get("marker") != output.marker.decode("ascii")
+        ):
+            raise RegistryError("generated manifest staged public-view ownership record disagrees")
+
+
 def render_outputs(ir: RegistryIR) -> dict[Path, bytes]:
     try:
         portable_renderer, go_renderer, coordinator = _load_candidate_renderers()
         index = portable_renderer.build_candidate_render_index(ir.materialized_view)
         portable_outputs = portable_renderer.render_candidate_artifacts_from_index(index)
+        expected_portable_paths = _validate_portable_candidate_inventory(ir, portable_renderer, portable_outputs)
         go_render = go_renderer.render_go_candidate(index)
         if tuple(coordinator.EXACT_GO_OUTPUT_PATHS) != GO_CANDIDATE_OUTPUT_PATHS:
             raise RegistryError("generated Go coordinator output paths disagree with the compiler contract")
@@ -10165,6 +10262,7 @@ def render_outputs(ir: RegistryIR) -> dict[Path, bytes]:
         "coordinator_sha256": metadata.manifest_sha256,
     }
     manifest = _manifest_document(ir, artifacts, go_candidate)
+    _validate_rendered_manifest_inventory(manifest, artifacts, expected_portable_paths)
     encoded = (json.dumps(manifest, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
     if OUTPUT_MANIFEST_MARKER not in encoded[: generated_transaction.MARKER_SCAN_BYTES]:
         raise RegistryError("generated output manifest does not carry its ownership marker")
