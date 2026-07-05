@@ -126,6 +126,10 @@ def _install_adoption_predecessors(
     return adoption, predecessors
 
 
+def _continued_adoption_authority(transaction: ModuleType) -> dict[str, Any]:
+    return {path: transaction.ContinuedAdoptionAuthority() for path in transaction.EXACT_BASELINE_ADOPTION_PATHS}
+
+
 def _assert_adoption_predecessors(
     repository: Path,
     predecessors: Mapping[str, tuple[bytes, int]],
@@ -172,17 +176,25 @@ def test_baseline_adoption_uses_the_exact_reviewed_26_path_authority_and_then_no
 
     transaction.write_outputs(repository, first, {}, adoption=adoption)
     _assert_outputs(repository, first)
-    transaction.check_outputs(repository, first, _ownership(transaction, first), adoption=adoption)
+    continued = _continued_adoption_authority(transaction)
+    transaction.check_outputs(repository, first, _ownership(transaction, first), adoption=continued)
 
     second = _adoption_outputs(transaction, 2)
     transaction.write_outputs(
         repository,
         second,
         _ownership(transaction, first),
-        adoption=adoption,
+        adoption=continued,
     )
     _assert_outputs(repository, second)
-    transaction.check_outputs(repository, second, _ownership(transaction, second), adoption=adoption)
+    transaction.check_outputs(repository, second, _ownership(transaction, second), adoption=continued)
+
+    continued_evidence = next(iter(continued.values()))
+    assert continued_evidence.__slots__ == ()
+    assert not hasattr(continued_evidence, "payload")
+    assert not hasattr(continued_evidence, "sha256")
+    with pytest.raises(TypeError):
+        transaction.ContinuedAdoptionAuthority(b"legacy bytes")
 
 
 def test_baseline_adoption_rejects_wrong_same_count_path_substitution_before_writes(
@@ -217,7 +229,7 @@ def test_baseline_adoption_rejects_partial_or_disappearing_authority(
 
     partial = dict(adoption)
     partial.pop(omitted)
-    with pytest.raises(transaction.TransactionError, match="exact 26-path authority set"):
+    with pytest.raises(transaction.TransactionError, match="exact 26-path set"):
         transaction.write_outputs(repository, outputs, {}, adoption=partial)
 
     missing_desired = dict(outputs)
@@ -227,10 +239,51 @@ def test_baseline_adoption_rejects_partial_or_disappearing_authority(
 
     transaction.write_outputs(repository, outputs, {}, adoption=adoption)
     partial_prior = {omitted: _ownership(transaction, outputs)[omitted]}
-    with pytest.raises(transaction.TransactionError, match="partially or inconsistently owned"):
+    with pytest.raises(transaction.TransactionError, match="zero adoption paths"):
         transaction.write_outputs(repository, outputs, partial_prior, adoption=adoption)
+    continued = _continued_adoption_authority(transaction)
+    with pytest.raises(transaction.TransactionError, match="all adoption paths"):
+        transaction.write_outputs(repository, outputs, partial_prior, adoption=continued)
+    missing_repeat_desired = dict(outputs)
+    missing_repeat_desired.pop(omitted)
+    with pytest.raises(transaction.TransactionError, match="authority cannot disappear"):
+        transaction.write_outputs(
+            repository,
+            missing_repeat_desired,
+            _ownership(transaction, outputs),
+            adoption=continued,
+        )
     with pytest.raises(transaction.TransactionError, match="outside the allowlist"):
         transaction.write_outputs(repository, outputs, _ownership(transaction, outputs))
+
+
+def test_adoption_modes_reject_mixed_or_wrong_phase_evidence_before_writes(
+    transaction: ModuleType,
+    repository: Path,
+) -> None:
+    baseline, _predecessors = _install_adoption_predecessors(transaction, repository)
+    outputs = _adoption_outputs(transaction, 1)
+    before = _worktree_snapshot(repository)
+    continued = _continued_adoption_authority(transaction)
+    mixed = dict(baseline)
+    mixed[sorted(mixed)[0]] = transaction.ContinuedAdoptionAuthority()
+
+    with pytest.raises(transaction.TransactionError, match="cannot mix baseline and continued"):
+        transaction.write_outputs(repository, outputs, {}, adoption=mixed)
+    with pytest.raises(transaction.TransactionError, match="all adoption paths"):
+        transaction.write_outputs(repository, outputs, {}, adoption=continued)
+    assert _worktree_snapshot(repository) == before
+
+    transaction.write_outputs(repository, outputs, {}, adoption=baseline)
+    generated = _worktree_snapshot(repository)
+    with pytest.raises(transaction.TransactionError, match="zero adoption paths"):
+        transaction.write_outputs(
+            repository,
+            _adoption_outputs(transaction, 2),
+            _ownership(transaction, outputs),
+            adoption=baseline,
+        )
+    assert _worktree_snapshot(repository) == generated
 
 
 @pytest.mark.parametrize("mutation", ["bytes", "mode", "symlink", "hardlink"])
@@ -397,6 +450,41 @@ def test_baseline_adoption_interruption_recovers_all_predecessors(
     assert not (repository / transaction.MANIFEST_PATH).exists()
 
 
+def test_continued_adoption_interruption_uses_v2_normal_prior_rollback(
+    transaction: ModuleType,
+    repository: Path,
+) -> None:
+    adoption, _predecessors = _install_adoption_predecessors(transaction, repository)
+    first = _adoption_outputs(transaction, 1)
+    second = _adoption_outputs(transaction, 2)
+    transaction.write_outputs(repository, first, {}, adoption=adoption)
+
+    class Crash(BaseException):
+        pass
+
+    def crash(stage: str, path: str | None) -> None:
+        if stage == "after_output_apply" and path in transaction.EXACT_BASELINE_ADOPTION_PATHS:
+            raise Crash
+
+    with pytest.raises(Crash):
+        transaction.write_outputs(
+            repository,
+            second,
+            _ownership(transaction, first),
+            adoption=_continued_adoption_authority(transaction),
+            fault_injector=crash,
+        )
+
+    state = repository / transaction.STATE_DIRECTORY.as_posix()
+    journal = transaction._read_journal(state)
+    assert journal is not None and journal.format_version == 2 and journal.phase == "prepared"
+    adopted = [item for item in journal.prior if item.adopted]
+    assert len(adopted) == 26
+    assert all(item.marker == JSON_MARKER and item.absent_marker is None for item in adopted)
+    assert transaction.recover_outputs(repository) == transaction.RecoveryResult(True, "rolled_back")
+    _assert_outputs(repository, first)
+
+
 def test_baseline_adoption_committed_interruption_completes_without_restoring_predecessors(
     transaction: ModuleType,
     repository: Path,
@@ -422,6 +510,41 @@ def test_baseline_adoption_committed_interruption_completes_without_restoring_pr
 
     assert transaction.recover_outputs(repository) == transaction.RecoveryResult(True, "completed")
     _assert_outputs(repository, outputs)
+
+
+def test_continued_adoption_committed_interruption_completes_new_outputs(
+    transaction: ModuleType,
+    repository: Path,
+) -> None:
+    adoption, _predecessors = _install_adoption_predecessors(transaction, repository)
+    first = _adoption_outputs(transaction, 1)
+    second = _adoption_outputs(transaction, 2)
+    transaction.write_outputs(repository, first, {}, adoption=adoption)
+
+    class Crash(BaseException):
+        pass
+
+    def crash(stage: str, _path: str | None) -> None:
+        if stage == "journal_committed":
+            raise Crash
+
+    with pytest.raises(Crash):
+        transaction.write_outputs(
+            repository,
+            second,
+            _ownership(transaction, first),
+            adoption=_continued_adoption_authority(transaction),
+            fault_injector=crash,
+        )
+
+    state = repository / transaction.STATE_DIRECTORY.as_posix()
+    journal = transaction._read_journal(state)
+    assert journal is not None and journal.format_version == 2 and journal.phase == "committed"
+    adopted = [item for item in journal.prior if item.adopted]
+    assert len(adopted) == 26
+    assert all(item.marker == JSON_MARKER and item.absent_marker is None for item in adopted)
+    assert transaction.recover_outputs(repository) == transaction.RecoveryResult(True, "completed")
+    _assert_outputs(repository, second)
 
 
 def test_baseline_adoption_lock_contention_never_touches_predecessors(
@@ -591,6 +714,7 @@ def test_recovery_rejects_repeat_owned_v2_adoption_missing_from_desired_set(
     adoption, _predecessors = _install_adoption_predecessors(transaction, repository)
     first = _adoption_outputs(transaction, 1)
     transaction.write_outputs(repository, first, {}, adoption=adoption)
+    continued = _continued_adoption_authority(transaction)
 
     class Crash(BaseException):
         pass
@@ -604,7 +728,7 @@ def test_recovery_rejects_repeat_owned_v2_adoption_missing_from_desired_set(
             repository,
             _adoption_outputs(transaction, 2),
             _ownership(transaction, first),
-            adoption=adoption,
+            adoption=continued,
             fault_injector=crash,
         )
 
@@ -619,6 +743,60 @@ def test_recovery_rejects_repeat_owned_v2_adoption_missing_from_desired_set(
     journal_path.write_bytes(transaction._canonical_json(journal))
 
     with pytest.raises(transaction.RecoveryRequiredError, match="adoption desired set is incomplete"):
+        transaction.recover_outputs(repository)
+
+
+@pytest.mark.parametrize("source_mode", ["baseline", "continued"])
+def test_recovery_rejects_mixed_v2_adoption_modes(
+    transaction: ModuleType,
+    repository: Path,
+    source_mode: str,
+) -> None:
+    adoption, _predecessors = _install_adoption_predecessors(transaction, repository)
+    first = _adoption_outputs(transaction, 1)
+    if source_mode == "continued":
+        transaction.write_outputs(repository, first, {}, adoption=adoption)
+        outputs = _adoption_outputs(transaction, 2)
+        prior_owned = _ownership(transaction, first)
+        authority = _continued_adoption_authority(transaction)
+    else:
+        outputs = first
+        prior_owned = {}
+        authority = adoption
+
+    class Crash(BaseException):
+        pass
+
+    def crash(stage: str, _path: str | None) -> None:
+        if stage == "journal_prepared":
+            raise Crash
+
+    with pytest.raises(Crash):
+        transaction.write_outputs(
+            repository,
+            outputs,
+            prior_owned,
+            adoption=authority,
+            fault_injector=crash,
+        )
+
+    state = repository / transaction.STATE_DIRECTORY.as_posix()
+    journal_path = state / transaction.JOURNAL_NAME
+    journal = json.loads(journal_path.read_bytes())
+    adopted_prior = [item for item in journal["prior"] if item["adopted"]]
+    assert len(adopted_prior) == 26
+    mutated = adopted_prior[0]
+    if source_mode == "baseline":
+        assert mutated["marker"] is None and mutated["absent_marker"] is not None
+        mutated["marker"] = transaction._marker_text(JSON_MARKER)
+        mutated["absent_marker"] = None
+    else:
+        assert mutated["marker"] is not None and mutated["absent_marker"] is None
+        mutated["marker"] = None
+        mutated["absent_marker"] = transaction._marker_text(JSON_MARKER)
+    journal_path.write_bytes(transaction._canonical_json(journal))
+
+    with pytest.raises(transaction.RecoveryRequiredError, match="adoption mode is mixed"):
         transaction.recover_outputs(repository)
 
 

@@ -189,15 +189,27 @@ class BaselineAdoption:
     """Authenticated pre-generation bytes for one exact one-time cutover path.
 
     The caller supplies the complete reviewed predecessor bytes and their digest,
-    mode, and absent future ownership marker.  Adoption is accepted only as one
-    exact 26-path set.  After commit, callers continue to pass the same mapping
-    solely as path authority; current manifest ownership takes precedence.
+    mode, and absent future ownership marker.  First adoption is accepted only as
+    one exact 26-path set and only while none of those paths is manifest-owned.
     """
 
     payload: bytes
     sha256: str
     absent_marker: bytes
     mode: int = 0o644
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class ContinuedAdoptionAuthority:
+    """Payload-free authority for one already adopted, manifest-owned path.
+
+    Repeat publication supplies the exact 26-path set of these empty typed
+    values.  All paths must also have ordinary prior-manifest ownership, so no
+    legacy predecessor bytes or digest are needed after the first commit.
+    """
+
+
+AdoptionAuthority: TypeAlias = BaselineAdoption | ContinuedAdoptionAuthority
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -348,42 +360,47 @@ def _validate_complete_internal_output_set(paths: set[str], *, inventory: str) -
 
 
 def _normalize_adoptions(
-    adoption: Mapping[str | Path, BaselineAdoption] | None,
-) -> dict[str, BaselineAdoption]:
+    adoption: Mapping[str | Path, AdoptionAuthority] | None,
+) -> dict[str, AdoptionAuthority]:
     if adoption is None:
         return {}
     if not isinstance(adoption, Mapping):
-        raise TransactionError("baseline adoption must be an exact typed mapping")
+        raise TransactionError("adoption authority must be an exact typed mapping")
     if len(adoption) != BASELINE_ADOPTION_PATH_COUNT:
-        raise TransactionError(
-            f"baseline adoption must contain the exact {BASELINE_ADOPTION_PATH_COUNT}-path authority set"
-        )
-    normalized: dict[str, BaselineAdoption] = {}
-    for raw_path, predecessor in adoption.items():
+        raise TransactionError(f"adoption authority must contain the exact {BASELINE_ADOPTION_PATH_COUNT}-path set")
+    normalized: dict[str, AdoptionAuthority] = {}
+    evidence_types: set[type[AdoptionAuthority]] = set()
+    for raw_path, evidence in adoption.items():
         path = _normalized_adoption_path(raw_path)
         if path in normalized:
-            raise TransactionError(f"duplicate baseline adoption path: {path}")
-        if not isinstance(predecessor, BaselineAdoption) or not isinstance(predecessor.payload, bytes):
-            raise TransactionError(f"baseline adoption predecessor is not typed immutable bytes: {path}")
-        if not isinstance(predecessor.sha256, str) or _SHA256.fullmatch(predecessor.sha256) is None:
-            raise TransactionError(f"baseline adoption predecessor digest is invalid: {path}")
-        if _sha256(predecessor.payload) != predecessor.sha256:
-            raise TransactionError(f"baseline adoption predecessor bytes disagree with their digest: {path}")
-        _validate_mode(predecessor.mode)
-        _validate_marker(predecessor.absent_marker)
-        if predecessor.absent_marker in predecessor.payload[:MARKER_SCAN_BYTES]:
-            raise TransactionError(f"baseline adoption predecessor already carries generated authority: {path}")
-        normalized[path] = predecessor
+            raise TransactionError(f"duplicate adoption authority path: {path}")
+        if type(evidence) is BaselineAdoption:
+            if type(evidence.payload) is not bytes:
+                raise TransactionError(f"baseline adoption predecessor is not typed immutable bytes: {path}")
+            if not isinstance(evidence.sha256, str) or _SHA256.fullmatch(evidence.sha256) is None:
+                raise TransactionError(f"baseline adoption predecessor digest is invalid: {path}")
+            if _sha256(evidence.payload) != evidence.sha256:
+                raise TransactionError(f"baseline adoption predecessor bytes disagree with their digest: {path}")
+            _validate_mode(evidence.mode)
+            _validate_marker(evidence.absent_marker)
+            if evidence.absent_marker in evidence.payload[:MARKER_SCAN_BYTES]:
+                raise TransactionError(f"baseline adoption predecessor already carries generated authority: {path}")
+        elif type(evidence) is not ContinuedAdoptionAuthority:
+            raise TransactionError(f"adoption authority evidence has an invalid type: {path}")
+        evidence_types.add(type(evidence))
+        normalized[path] = evidence
+    if len(evidence_types) != 1:
+        raise TransactionError("adoption authority cannot mix baseline and continued evidence")
     if set(normalized) != set(EXACT_BASELINE_ADOPTION_PATHS):
-        raise TransactionError("baseline adoption paths are not the exact reviewed authority set")
+        raise TransactionError("adoption paths are not the exact reviewed authority set")
     return normalized
 
 
 def _normalize_inputs(
     outputs: Mapping[str | Path, RenderedOutput],
     prior: Mapping[str | Path, PriorOwnedOutput],
-    adoption: Mapping[str | Path, BaselineAdoption] | None = None,
-) -> tuple[dict[str, RenderedOutput], dict[str, PriorOwnedOutput], dict[str, BaselineAdoption]]:
+    adoption: Mapping[str | Path, AdoptionAuthority] | None = None,
+) -> tuple[dict[str, RenderedOutput], dict[str, PriorOwnedOutput], dict[str, AdoptionAuthority]]:
     normalized_adoption = _normalize_adoptions(adoption)
     adoption_paths = frozenset(normalized_adoption)
     if (
@@ -419,13 +436,19 @@ def _normalize_inputs(
     _validate_complete_internal_output_set(set(normalized_prior), inventory="prior ownership inventory")
     if normalized_adoption:
         if not adoption_paths.issubset(normalized_outputs):
-            raise TransactionError("baseline adoption authority cannot disappear from desired outputs")
-        for path, predecessor in normalized_adoption.items():
-            if normalized_outputs[path].marker != predecessor.absent_marker:
-                raise TransactionError(f"baseline adoption absent marker disagrees with desired ownership: {path}")
-        previously_owned = adoption_paths & normalized_prior.keys()
-        if previously_owned and previously_owned != adoption_paths:
-            raise TransactionError("baseline adoption authority is partially or inconsistently owned")
+            raise TransactionError("adoption authority cannot disappear from desired outputs")
+        evidence = next(iter(normalized_adoption.values()))
+        if type(evidence) is BaselineAdoption:
+            if not adoption_paths.isdisjoint(normalized_prior):
+                raise TransactionError("baseline adoption requires zero adoption paths to be prior-owned")
+            for path, predecessor in normalized_adoption.items():
+                assert type(predecessor) is BaselineAdoption
+                if normalized_outputs[path].marker != predecessor.absent_marker:
+                    raise TransactionError(f"baseline adoption absent marker disagrees with desired ownership: {path}")
+        else:
+            assert type(evidence) is ContinuedAdoptionAuthority
+            if not adoption_paths.issubset(normalized_prior):
+                raise TransactionError("continued adoption requires all adoption paths to be prior-owned")
     return normalized_outputs, normalized_prior, normalized_adoption
 
 
@@ -1439,6 +1462,9 @@ def _read_journal(state_root: Path) -> _Journal | None:
     adoption_paths = frozenset(item.path for item in prior if item.adopted)
     if adoption_paths and adoption_paths != EXACT_BASELINE_ADOPTION_PATHS:
         raise RecoveryRequiredError("generated-output transaction journal adoption authority is incomplete")
+    adoption_modes = {"baseline" if item.marker is None else "continued" for item in prior if item.adopted}
+    if len(adoption_modes) > 1:
+        raise RecoveryRequiredError("generated-output transaction journal adoption mode is mixed")
     desired: list[_DesiredState] = []
     if not isinstance(root["desired"], list):
         raise RecoveryRequiredError("generated-output transaction journal desired set is invalid")
@@ -1564,9 +1590,14 @@ def check_outputs(
     outputs: Mapping[str | Path, RenderedOutput],
     prior: Mapping[str | Path, PriorOwnedOutput],
     *,
-    adoption: Mapping[str | Path, BaselineAdoption] | None = None,
+    adoption: Mapping[str | Path, AdoptionAuthority] | None = None,
 ) -> None:
-    """Verify exact bytes/modes/ownership without creating locks or state."""
+    """Verify exact bytes/modes/ownership without creating locks or state.
+
+    First adoption uses an exact ``BaselineAdoption`` mapping.  Repeat checks
+    use an exact ``ContinuedAdoptionAuthority`` mapping plus ordinary prior
+    manifest ownership for every adopted path.
+    """
 
     root = _safe_root(root)
     _validate_required_roots(root)
@@ -1584,7 +1615,7 @@ def check_outputs(
             continue
         if path not in normalized_prior and _lstat(root / path) is not None:
             predecessor = normalized_adoption.get(path)
-            if predecessor is None:
+            if type(predecessor) is not BaselineAdoption:
                 problems.append(f"unowned={path}")
                 continue
             try:
@@ -1627,7 +1658,7 @@ def _planned_journal(
     token: str,
     outputs: Mapping[str, RenderedOutput],
     prior: Mapping[str, PriorOwnedOutput],
-    adoption: Mapping[str, BaselineAdoption],
+    adoption: Mapping[str, AdoptionAuthority],
     created_directories: tuple[str, ...],
 ) -> _Journal:
     prior_states: list[_PathState] = []
@@ -1660,6 +1691,8 @@ def _planned_journal(
             )
             continue
         if predecessor is not None:
+            if type(predecessor) is not BaselineAdoption:
+                raise TransactionError("continued adoption authority lacks prior manifest ownership")
             prior_states.append(
                 _PathState(
                     path,
@@ -1726,7 +1759,7 @@ def _prepare_journal(
     token: str,
     outputs: Mapping[str, RenderedOutput],
     prior: Mapping[str, PriorOwnedOutput],
-    adoption: Mapping[str, BaselineAdoption],
+    adoption: Mapping[str, AdoptionAuthority],
     created_directories: tuple[str, ...],
     injector: FaultInjector | None,
 ) -> tuple[_Journal, Path]:
@@ -2260,7 +2293,7 @@ def write_outputs(
     outputs: Mapping[str | Path, RenderedOutput],
     prior: Mapping[str | Path, PriorOwnedOutput],
     *,
-    adoption: Mapping[str | Path, BaselineAdoption] | None = None,
+    adoption: Mapping[str | Path, AdoptionAuthority] | None = None,
     fault_injector: FaultInjector | None = None,
 ) -> RecoveryResult:
     """Write all outputs with manifest-last logical commit and recovery.
@@ -2275,13 +2308,14 @@ def write_outputs(
     interrupted transaction.  A normal successful write returns ``action``
     ``"written"`` regardless of whether the generated bytes were unchanged.
 
-    ``adoption`` is the one-time baseline authority for the exact reviewed
-    26-path public-schema/mirror set.  On first use, all predecessor files must
-    match it exactly and lack the future ownership marker; they are journaled and
-    restored on rollback.  On repeat writes, all 26 paths must already be present
-    in ``prior`` and ordinary manifest ownership governs their replacement.  The
-    same quiescent-worktree requirement covers both predecessor and generated
-    bytes throughout adoption and recovery.
+    ``adoption`` has exactly one mode for the reviewed 26-path public-schema and
+    mirror set.  First use supplies ``BaselineAdoption`` for every path while
+    none is prior-owned; predecessor files must match exactly and lack the future
+    marker, and rollback restores them.  Repeat publication supplies empty
+    ``ContinuedAdoptionAuthority`` values while all 26 paths have ordinary prior
+    manifest ownership.  Mixed or partial evidence fails before filesystem
+    mutation, and repeat callers retain no legacy payload bytes.  The same
+    quiescent-worktree requirement covers publication and recovery.
     """
 
     root = _safe_root(root)
@@ -2293,7 +2327,7 @@ def write_outputs(
         recovered = _recover_locked(root, state_root, fault_injector)
         _fault(fault_injector, "recovery_checked")
         active_adoption = {
-            path: predecessor for path, predecessor in normalized_adoption.items() if path not in normalized_prior
+            path: evidence for path, evidence in normalized_adoption.items() if type(evidence) is BaselineAdoption
         }
         created_directories = _validate_current_ownership(
             root,
@@ -2384,6 +2418,7 @@ def write_outputs(
 
 __all__ = [
     "BaselineAdoption",
+    "ContinuedAdoptionAuthority",
     "EXACT_INTERNAL_OUTPUTS",
     "EXACT_BASELINE_ADOPTION_PATHS",
     "GeneratedOutputDriftError",
