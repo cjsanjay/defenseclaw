@@ -4727,9 +4727,11 @@ def _validate_public_views(path_value: FrozenJSON, value: FrozenJSON, registry_v
             _string(reference["reference"], f"{context} reference")
             if _string(reference["target_view"], f"{context} reference target") not in known_view_ids:
                 raise CandidateRenderError("materialized public view reference target is invalid")
-            target_pointer = reference["target_pointer"]
-            if not isinstance(target_pointer, str) or (target_pointer and not target_pointer.startswith("/")):
-                raise CandidateRenderError("materialized public view reference pointer is invalid")
+            pointer(
+                reference["target_pointer"],
+                f"{context} reference target pointer",
+                allow_root=True,
+            )
         if reference_pointers != sorted(set(reference_pointers)):
             raise CandidateRenderError("materialized public view reference inventory is invalid")
         total_references += len(reference_pointers)

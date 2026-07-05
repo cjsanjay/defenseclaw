@@ -75,8 +75,6 @@ def _validated_local_module(
 
 def _reject_opposite_sibling_identity(module_name: str, path: Path, purpose: str) -> None:
     opposite_name = module_name if _GENERATOR_PACKAGE_MODE else f"scripts.{module_name}"
-    if _GENERATOR_PACKAGE_MODE:
-        opposite_name = module_name
     opposite = sys.modules.get(opposite_name)
     if not isinstance(opposite, ModuleType):
         return
@@ -4531,7 +4529,7 @@ def _parse_public_views(
 
     frozen_views = tuple(views)
     authority_sha256 = _public_view_authority_sha256(frozen_views)
-    if PUBLIC_VIEW_AUTHORITY_SHA256 and authority_sha256 != PUBLIC_VIEW_AUTHORITY_SHA256:
+    if authority_sha256 != PUBLIC_VIEW_AUTHORITY_SHA256:
         raise RegistryError("public_views.views: reviewed public-view render authority digest drift")
     public_views = PublicViewsIR(
         schema_version,

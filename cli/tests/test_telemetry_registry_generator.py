@@ -7666,6 +7666,19 @@ def test_checked_in_public_views_are_exact_immutable_materialized_authority() ->
         ir.materialized_view.facts["fields"]["public_views"] = None
 
 
+def test_public_view_render_authority_pin_cannot_be_empty(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _load_generator_module("telemetry_registry_public_views_empty_authority")
+    monkeypatch.setattr(module, "PUBLIC_VIEW_AUTHORITY_SHA256", "")
+
+    with pytest.raises(
+        module.RegistryError,
+        match="reviewed public-view render authority digest drift",
+    ):
+        module.compile_registry(ROOT)
+
+
 def test_candidate_renderer_rejects_mutually_consistent_forged_public_view_authority() -> None:
     module = _load_generator_module("telemetry_registry_public_views_renderer_authority")
     ir = module.compile_registry(ROOT)
@@ -7708,6 +7721,50 @@ def test_candidate_renderer_rejects_mutually_consistent_forged_public_view_autho
     with pytest.raises(
         portable_renderer.CandidateRenderError,
         match="public view render authority digest is invalid",
+    ):
+        portable_renderer.build_candidate_render_index(forged_materialized)
+
+
+def test_candidate_renderer_rejects_malformed_public_view_reference_target_pointer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _load_generator_module("telemetry_registry_public_views_reference_pointer")
+    ir = module.compile_registry(ROOT)
+    portable_renderer, _go_renderer, _coordinator = module._load_candidate_renderers()
+    values = {
+        field.name: getattr(ir, field.name)
+        for field in module.dataclass_fields(module.RegistryIR)
+        if field.name != "materialized_view"
+    }
+    view_index = next(index for index, view in enumerate(ir.public_views.views) if view.references)
+    original_view = ir.public_views.views[view_index]
+    forged_reference = module.replace(
+        original_view.references[0],
+        target_pointer="/malformed~pointer",
+    )
+    forged_view = module.replace(
+        original_view,
+        references=(forged_reference, *original_view.references[1:]),
+    )
+    forged_views = tuple(
+        forged_view if index == view_index else view for index, view in enumerate(ir.public_views.views)
+    )
+    forged_authority = module._public_view_authority_sha256(forged_views)
+    forged_public_views = module.replace(
+        ir.public_views,
+        views=forged_views,
+        authority_sha256=forged_authority,
+    )
+    forged_materialized = module._build_materialized_registry_view(dict(values, public_views=forged_public_views))
+    monkeypatch.setattr(
+        portable_renderer,
+        "_PUBLIC_VIEW_AUTHORITY_SHA256",
+        forged_authority,
+    )
+
+    with pytest.raises(
+        portable_renderer.CandidateRenderError,
+        match="reference target pointer is invalid",
     ):
         portable_renderer.build_candidate_render_index(forged_materialized)
 
