@@ -16,6 +16,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"go.opentelemetry.io/otel/trace"
 )
 
 const (
@@ -194,6 +196,9 @@ func (builder *FamilyBuilder) buildGeneratedTrace(
 	if parent, present := input.parentSpanID.Get(); present && !validateOTelID(parent, 16) {
 		return Record{}, familyBuildFailure(FamilyBuildInvalidTrace)
 	}
+	if traceState, present := input.traceState.Get(); present && !validW3CTraceState(traceState) {
+		return Record{}, familyBuildFailure(FamilyBuildInvalidTrace)
+	}
 	if err := validateTraceStatus(input.status); err != nil {
 		return Record{}, err
 	}
@@ -244,6 +249,7 @@ func (builder *FamilyBuilder) buildGeneratedTrace(
 		"kind":                 input.kind,
 		"start_time_unix_nano": input.startTimeUnixNano,
 		"end_time_unix_nano":   input.endTimeUnixNano,
+		"flags":                input.flags,
 		"status":               familyTraceStatusObject(input.status),
 		"resource":             resource,
 		"scope":                scope,
@@ -251,6 +257,9 @@ func (builder *FamilyBuilder) buildGeneratedTrace(
 	}
 	if parent, present := input.parentSpanID.Get(); present {
 		body["parent_span_id"] = parent
+	}
+	if traceState, present := input.traceState.Get(); present {
+		body["trace_state"] = traceState
 	}
 	if count, present := input.droppedAttributesCount.Get(); present {
 		body["dropped_attributes_count"] = count
@@ -271,12 +280,16 @@ func (builder *FamilyBuilder) buildGeneratedTrace(
 	classes["/kind"] = FieldClassMetadata
 	classes["/start_time_unix_nano"] = FieldClassMetadata
 	classes["/end_time_unix_nano"] = FieldClassMetadata
+	classes["/flags"] = FieldClassMetadata
 	classes["/status/code"] = FieldClassMetadata
 	if _, present := input.status.Description(); present {
 		classes["/status/description"] = FieldClassError
 	}
 	if _, present := input.parentSpanID.Get(); present {
 		classes["/parent_span_id"] = FieldClassIdentifier
+	}
+	if _, present := input.traceState.Get(); present {
+		classes["/trace_state"] = FieldClassMetadata
 	}
 	for _, pointer := range []string{
 		"/dropped_attributes_count", "/dropped_events_count", "/dropped_links_count",
@@ -355,8 +368,7 @@ func activeFamilyTraceConditionFacts(
 				!containsString(contract.allowedLinks, linkInput.relation) {
 				return nil, familyBuildFailure(FamilyBuildInvalidTrace)
 			}
-			if traceState, present := linkInput.TraceState.Get(); present &&
-				(!utf8.ValidString(traceState) || len(traceState) > 512) {
+			if traceState, present := linkInput.TraceState.Get(); present && !validW3CTraceState(traceState) {
 				return nil, familyBuildFailure(FamilyBuildInvalidTrace)
 			}
 			if _, err := validatedConditionStates(contract.linkFields, linkInput.conditions); err != nil {
@@ -983,4 +995,12 @@ func validFamilySchemaURL(value string) bool {
 	}
 	parsed, err := url.ParseRequestURI(value)
 	return err == nil && parsed.Scheme != "" && parsed.User == nil
+}
+
+func validW3CTraceState(value string) bool {
+	if !utf8.ValidString(value) || len(value) > 512 {
+		return false
+	}
+	parsed, err := trace.ParseTraceState(value)
+	return err == nil && parsed.String() == value
 }

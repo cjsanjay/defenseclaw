@@ -721,21 +721,31 @@ def _emit_value_bindings(bindings: Any, *, target: str, prefix: str = "generated
 
 
 def _conditions_literal(bindings: Any) -> str:
-    items: list[tuple[str, str]] = []
+    items: list[tuple[str, str, bool]] = []
     for position, binding in enumerate(_sequence(bindings, "condition bindings", maximum=4096)):
         path = f"condition bindings[{position}]"
         selector = _identifier(_read(binding, "selector", path), f"{path}.selector")
-        items.append((_go_string(_read(binding, "condition_id", path), f"{path}.condition_id"), selector))
+        optional_source = _read(binding, "optional_source", path)
+        if type(optional_source) is not bool:
+            raise GoRenderError(f"{path}.optional_source: expected boolean")
+        items.append(
+            (_go_string(_read(binding, "condition_id", path), f"{path}.condition_id"), selector, optional_source)
+        )
     if not items:
         return "familyConditionFacts{}"
     lines = ["familyConditionFacts{"]
-    for condition_id, selector in items:
+    for condition_id, selector, optional_source in items:
+        predicate = (
+            f"value, present := input.{selector}.Get(); present && value"
+            if optional_source
+            else f"input.{selector}"
+        )
         lines.extend(
             (
                 "\t\t\t{",
                 f"\t\t\t\tid: {condition_id},",
                 "\t\t\t\tstate: func() familyConditionState {",
-                f"\t\t\t\t\tif input.{selector} {{",
+                f"\t\t\t\t\tif {predicate} {{",
                 "\t\t\t\t\t\treturn familyConditionTrue",
                 "\t\t\t\t\t}",
                 "\t\t\t\t\treturn familyConditionFalse",
@@ -874,6 +884,8 @@ def _render_family_callable(callable_plan: Any, body: Any, input_plan: Any, desc
                 "\t\tstartTimeUnixNano: input.StartTimeUnixNano,",
                 "\t\tendTimeUnixNano: input.EndTimeUnixNano,",
                 "\t\tparentSpanID: input.ParentSpanID,",
+                "\t\ttraceState: input.TraceState,",
+                "\t\tflags: input.Flags,",
                 "\t\tstatus: input.Status,",
                 "\t\tresource: resource,",
                 "\t\tscope: input.Scope,",
@@ -2142,8 +2154,8 @@ def render_go_candidate(index: Any, plan: Any | None = None) -> GoRenderCandidat
     )
     files = _validate_file_plans(plan, declarations)
     _validate_private_declaration_coverage(plan, files)
-    if len(declarations) != 1778:
-        raise GoRenderError("GoAPIPlanIR.declarations: exact 1,778-declaration inventory is required")
+    if len(declarations) != 1781:
+        raise GoRenderError("GoAPIPlanIR.declarations: exact 1,781-declaration inventory is required")
     if len(_sequence(_read(plan, "private_declarations", "GoAPIPlanIR"), "private declarations", maximum=4096)) != 741:
         raise GoRenderError("GoAPIPlanIR.private_declarations: exact 741-declaration inventory is required")
     producer = compile_go_producer_plan(index)

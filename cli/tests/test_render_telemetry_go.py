@@ -70,9 +70,9 @@ def test_real_candidate_renders_exact_complete_deterministic_outputs(
     assert repeated == rendered
     assert tuple(item.path for item in rendered.outputs) == coordinator.EXACT_GO_OUTPUT_PATHS
     assert tuple(item.path for item in rendered.declaration_inventory) == coordinator.EXACT_GO_OUTPUT_PATHS
-    assert len(rendered.expected_declaration_keys) == 1778
+    assert len(rendered.expected_declaration_keys) == 1781
     assert tuple(len(item.declaration_keys) for item in rendered.declaration_inventory) == (
-        898,
+        901,
         0,
         0,
         282,
@@ -84,7 +84,7 @@ def test_real_candidate_renders_exact_complete_deterministic_outputs(
     assert all(isinstance(item, coordinator.GoFileDeclarationInventory) for item in rendered.declaration_inventory)
 
     payloads = {item.path: item.payload for item in rendered.outputs}
-    assert payloads[coordinator.EXACT_GO_OUTPUT_PATHS[0]].count(b"\n\tTelemetry") == 898
+    assert payloads[coordinator.EXACT_GO_OUTPUT_PATHS[0]].count(b"\n\tTelemetry") == 901
     catalog = payloads[coordinator.EXACT_GO_OUTPUT_PATHS[1]]
     assert catalog.count(b" familyDescriptorContract() familyDescriptorContract {") == 243
     assert catalog.count(b" familyTraceContract() familyTraceContract {") == 25

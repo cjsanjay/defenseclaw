@@ -3,7 +3,7 @@
     "artifact": "catalog.json",
     "authority": "candidate-not-public-authority",
     "generator": "defenseclaw-telemetry-candidate-renderer-v1",
-    "materialized_view_sha256": "26121f75397999a4fd1818e84dde325ca55d673b090238cbc61e60f1b6f47380",
+    "materialized_view_sha256": "191557b76fca6d94576eee0fc9127d1f37360d5f9db1dc9ebbfb48278708121b",
     "registry_version": 1
   },
   "attributes": [
@@ -7254,6 +7254,69 @@
     },
     {
       "alias_of": null,
+      "brief": "Stable destination token targeted by a runtime-pipeline canary",
+      "cardinality": "low",
+      "deprecated_in": null,
+      "examples": [
+        "otlp-primary"
+      ],
+      "field_class": "identifier",
+      "id": "defenseclaw.telemetry.canary.destination",
+      "introduced_in": "telemetry-registry-v1",
+      "normalization": {
+        "effective_constraints": {
+          "max_utf8_bytes": 128,
+          "pattern": "^[a-z0-9][a-z0-9_.-]{0,127}$"
+        },
+        "id": "identifier-v1",
+        "notes": "bounded stable destination token",
+        "overrides": {
+          "max_utf8_bytes": 128,
+          "pattern": "^[a-z0-9][a-z0-9_.-]{0,127}$"
+        }
+      },
+      "owner": "defenseclaw",
+      "projection_only": false,
+      "removed_in": null,
+      "sensitivity": "safe",
+      "stability": "stable",
+      "type": "string"
+    },
+    {
+      "alias_of": null,
+      "brief": "Closed runtime-pipeline canary operation",
+      "cardinality": "low",
+      "deprecated_in": null,
+      "examples": [
+        "runtime-pipeline-test"
+      ],
+      "field_class": "metadata",
+      "id": "defenseclaw.telemetry.canary.operation",
+      "introduced_in": "telemetry-registry-v1",
+      "normalization": {
+        "effective_constraints": {
+          "enum": [
+            "runtime-pipeline-test"
+          ],
+          "max_utf8_bytes": 256
+        },
+        "id": "enum-v1",
+        "notes": "closed canary operation vocabulary",
+        "overrides": {
+          "enum": [
+            "runtime-pipeline-test"
+          ]
+        }
+      },
+      "owner": "defenseclaw",
+      "projection_only": false,
+      "removed_in": null,
+      "sensitivity": "safe",
+      "stability": "stable",
+      "type": "string"
+    },
+    {
+      "alias_of": null,
       "brief": "Producer reported input",
       "cardinality": "low",
       "deprecated_in": null,
@@ -10001,6 +10064,16 @@
       },
       "false_requirement": "forbidden",
       "id": "agent-reported-cost-available-v1"
+    },
+    {
+      "description": "The producer explicitly marked this runtime-pipeline canary; absence and false both disable the canary-only attributes.",
+      "enforcement": {
+        "attribute": "defenseclaw.telemetry.canary",
+        "fact": null,
+        "kind": "boolean_attribute"
+      },
+      "false_requirement": "forbidden",
+      "id": "telemetry-canary-enabled-v1"
     }
   ],
   "conformance": {
@@ -44528,6 +44601,7 @@
         "defenseclaw.agent.reported_cost.usd",
         "defenseclaw.connector.source",
         "defenseclaw.outcome",
+        "defenseclaw.telemetry.canary.operation",
         "error.type"
       ],
       "event_name": "span.agent.invoke",
@@ -45085,6 +45159,45 @@
           "constraints": {},
           "field_class": "metadata",
           "owner": "defenseclaw",
+          "ref": "defenseclaw.telemetry.canary",
+          "requirement_level": "optional",
+          "role": "attributes",
+          "sensitivity": "safe",
+          "stability": "stable",
+          "type": "boolean"
+        },
+        {
+          "cardinality": "low",
+          "condition": "telemetry-canary-enabled-v1",
+          "constraints": {},
+          "field_class": "identifier",
+          "owner": "defenseclaw",
+          "ref": "defenseclaw.telemetry.canary.destination",
+          "requirement_level": "optional",
+          "role": "attributes",
+          "sensitivity": "safe",
+          "stability": "stable",
+          "type": "string"
+        },
+        {
+          "cardinality": "low",
+          "condition": "telemetry-canary-enabled-v1",
+          "constraints": {},
+          "field_class": "metadata",
+          "owner": "defenseclaw",
+          "ref": "defenseclaw.telemetry.canary.operation",
+          "requirement_level": "conditional",
+          "role": "attributes",
+          "sensitivity": "safe",
+          "stability": "stable",
+          "type": "string"
+        },
+        {
+          "cardinality": "low",
+          "condition": null,
+          "constraints": {},
+          "field_class": "metadata",
+          "owner": "defenseclaw",
           "ref": "defenseclaw.telemetry.input.reported",
           "requirement_level": "required",
           "role": "attributes",
@@ -45406,6 +45519,8 @@
         "defenseclaw.session.resumed",
         "defenseclaw.session.root.id",
         "defenseclaw.session.source",
+        "defenseclaw.telemetry.canary",
+        "defenseclaw.telemetry.canary.destination",
         "defenseclaw.tool.id",
         "defenseclaw.tool.provider",
         "defenseclaw.tool.skill_key",
@@ -52897,6 +53012,7 @@
         "defenseclaw.agent.reported_cost.usd",
         "defenseclaw.connector.source",
         "defenseclaw.outcome",
+        "defenseclaw.telemetry.canary.operation",
         "error.type"
       ],
       "event_name": "span.model.chat",
@@ -53571,6 +53687,45 @@
           "constraints": {},
           "field_class": "metadata",
           "owner": "defenseclaw",
+          "ref": "defenseclaw.telemetry.canary",
+          "requirement_level": "optional",
+          "role": "attributes",
+          "sensitivity": "safe",
+          "stability": "stable",
+          "type": "boolean"
+        },
+        {
+          "cardinality": "low",
+          "condition": "telemetry-canary-enabled-v1",
+          "constraints": {},
+          "field_class": "identifier",
+          "owner": "defenseclaw",
+          "ref": "defenseclaw.telemetry.canary.destination",
+          "requirement_level": "optional",
+          "role": "attributes",
+          "sensitivity": "safe",
+          "stability": "stable",
+          "type": "string"
+        },
+        {
+          "cardinality": "low",
+          "condition": "telemetry-canary-enabled-v1",
+          "constraints": {},
+          "field_class": "metadata",
+          "owner": "defenseclaw",
+          "ref": "defenseclaw.telemetry.canary.operation",
+          "requirement_level": "conditional",
+          "role": "attributes",
+          "sensitivity": "safe",
+          "stability": "stable",
+          "type": "string"
+        },
+        {
+          "cardinality": "low",
+          "condition": null,
+          "constraints": {},
+          "field_class": "metadata",
+          "owner": "defenseclaw",
           "ref": "defenseclaw.telemetry.input.reported",
           "requirement_level": "required",
           "role": "attributes",
@@ -53915,6 +54070,8 @@
         "defenseclaw.session.resumed",
         "defenseclaw.session.root.id",
         "defenseclaw.session.source",
+        "defenseclaw.telemetry.canary",
+        "defenseclaw.telemetry.canary.destination",
         "defenseclaw.telemetry.tokens.reported",
         "defenseclaw.turn.id",
         "defenseclaw.user.name",
@@ -58877,7 +59034,7 @@
     ],
     "version": 1
   },
-  "materialized_view_sha256": "26121f75397999a4fd1818e84dde325ca55d673b090238cbc61e60f1b6f47380",
+  "materialized_view_sha256": "191557b76fca6d94576eee0fc9127d1f37360d5f9db1dc9ebbfb48278708121b",
   "registry_version": 1,
   "schema_version": 1,
   "semantic_profiles": [

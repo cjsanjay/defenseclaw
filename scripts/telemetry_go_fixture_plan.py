@@ -294,6 +294,8 @@ _COMMON_RECORD_PATHS: Final = {
     "StartTimeUnixNano": ("body", "start_time_unix_nano"),
     "EndTimeUnixNano": ("body", "end_time_unix_nano"),
     "ParentSpanID": ("body", "parent_span_id"),
+    "TraceState": ("body", "trace_state"),
+    "Flags": ("body", "flags"),
     "DroppedAttributesCount": ("body", "dropped_attributes_count"),
     "DroppedEventsCount": ("body", "dropped_events_count"),
     "DroppedLinksCount": ("body", "dropped_links_count"),

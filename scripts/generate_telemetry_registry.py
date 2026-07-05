@@ -333,13 +333,13 @@ GO_SYMBOL_KIND_ORDER: Final = (
     "span_link_constructor",
 )
 EXPECTED_GO_SYMBOL_KIND_COUNTS: Final = {
-    "attribute": 329,
+    "attribute": 331,
     "family": 243,
     "log_event": 87,
     "span_event": 15,
     "link_relation": 4,
     "metric_instrument": 131,
-    "condition": 8,
+    "condition": 9,
     "condition_fact": 7,
     "phase": 12,
     "phase_code": 12,
@@ -357,16 +357,16 @@ EXPECTED_GO_SYMBOL_KIND_COUNTS: Final = {
     "span_link_constructor": 100,
 }
 EXPECTED_GO_SYMBOL_DECLARATION_COUNTS: Final = {
-    "exported_const": 898,
+    "exported_const": 901,
     "exported_type": 459,
     "exported_function": 178,
     "family_builder_method": 243,
 }
-EXPECTED_GO_SYMBOL_COUNT: Final = 1778
-EXPECTED_GO_SYMBOL_TABLE_SHA256: Final = "8488349afc135212c436225a154bd834afe9a2751d2b76e13e12d895405a8b32"
+EXPECTED_GO_SYMBOL_COUNT: Final = 1781
+EXPECTED_GO_SYMBOL_TABLE_SHA256: Final = "4a8563120e248a344683b87999620dac744bbda4b9794214d15197d0abde2f54"
 GO_SYMBOL_TABLE_BASELINES: Final = Path("schemas/telemetry/v8/baselines/go-symbol-table")
 GO_SYMBOL_TABLE_BASELINE_FORMAT: Final = "defenseclaw-go-symbol-table-baseline-v1"
-EXPECTED_GO_SYMBOL_TABLE_BASELINE_SHA256: Final = "eb90d5b5056aa28293f8235d65dab0429faab03e7a0dc32247797a16f52a210a"
+EXPECTED_GO_SYMBOL_TABLE_BASELINE_SHA256: Final = "1f01353b8adf5021e42fef2675e0d3b690f2bcde2af9d22558d66f62c841e9e7"
 _GO_IDENTIFIER = re.compile(r"^[A-Za-z][A-Za-z0-9]*$")
 _GO_SOURCE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:/#-]{0,511}$")
 _GO_SOURCE_ID_PART = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,255}$")
@@ -757,7 +757,9 @@ _STRUCTURAL_FIELD_TYPE: Final = frozenset(
         "metric_number",
     }
 )
-STRUCTURAL_SEMANTIC_FORMATS: Final = frozenset({"otel-trace-id-v1", "otel-span-id-v1"})
+STRUCTURAL_SEMANTIC_FORMATS: Final = frozenset(
+    {"otel-trace-id-v1", "otel-span-id-v1", "w3c-tracestate-v1"}
+)
 TRACE_DERIVATION_BINDINGS: Final = (
     (
         "trace-bucket-equality-v1",
@@ -905,6 +907,8 @@ OTLP_FIELD_MAPPINGS: Final = {
         "start_time_unix_nano": ("startTimeUnixNano", "uint64_string"),
         "end_time_unix_nano": ("endTimeUnixNano", "uint64_string"),
         "parent_span_id": ("parentSpanId", "hex"),
+        "trace_state": ("traceState", "direct"),
+        "flags": ("flags", "direct"),
         "status": ("status", "message"),
         "attributes": ("attributes", "key_value_array"),
         "dropped_attributes_count": ("droppedAttributesCount", "direct"),
@@ -977,6 +981,55 @@ _RESERVED_DOS_DEVICE_IDS: Final = frozenset(
     | {f"com{number}" for number in range(1, 10)}
     | {f"lpt{number}" for number in range(1, 10)}
 )
+
+
+def _w3c_tracestate_key_accepts(value: str) -> bool:
+    def key_part_accepts(part: str, *, first_may_be_digit: bool, max_tail: int) -> bool:
+        if not part or len(part) - 1 > max_tail:
+            return False
+        first = part[0]
+        if not ("a" <= first <= "z" or first_may_be_digit and "0" <= first <= "9"):
+            return False
+        return all("a" <= char <= "z" or "0" <= char <= "9" or char in "_-*/" for char in part[1:])
+
+    tenant, separator, system = value.partition("@")
+    if not separator:
+        return key_part_accepts(tenant, first_may_be_digit=False, max_tail=255)
+    return key_part_accepts(tenant, first_may_be_digit=True, max_tail=240) and key_part_accepts(
+        system,
+        first_may_be_digit=False,
+        max_tail=13,
+    )
+
+
+def _w3c_tracestate_accepts(value: Any) -> bool:
+    """Accept the canonical W3C Trace Context list-member representation."""
+
+    if not isinstance(value, str) or len(value.encode("utf-8")) > 512:
+        return False
+    if value == "":
+        return True
+    members = value.split(",")
+    if len(members) > 32 or any(not member for member in members):
+        return False
+    keys: set[str] = set()
+    for member in members:
+        key, separator, member_value = member.partition("=")
+        if not separator or "=" in member_value or not _w3c_tracestate_key_accepts(key) or key in keys:
+            return False
+        keys.add(key)
+        if not 1 <= len(member_value) <= 256:
+            return False
+        for char in member_value[:-1]:
+            codepoint = ord(char)
+            if codepoint < 0x20 or codepoint > 0x7E or char in ",=":
+                return False
+        last = ord(member_value[-1])
+        if last < 0x21 or last > 0x7E or member_value[-1] in ",=":
+            return False
+    return True
+
+
 _FIELD_TYPE = frozenset(
     {
         "string",
@@ -5888,8 +5941,8 @@ def _parse_attribute_uses(
         if requirement_level == "conditional":
             if "conditional" not in item:
                 raise RegistryError(f"{item_path}.conditional: required for conditional fields")
-        elif "conditional" in item:
-            raise RegistryError(f"{item_path}.conditional: allowed only for conditional fields")
+        elif "conditional" in item and requirement_level != "optional":
+            raise RegistryError(f"{item_path}.conditional: allowed only for conditional or optional fields")
         conditional = None
         if "conditional" in item:
             conditional = _string(item["conditional"], f"{item_path}.conditional")
@@ -6836,9 +6889,11 @@ def _structural_value_accepts(value: Any, field: StructuralFieldIR) -> bool:
         return False
     if field.normalization is not None and not _normalization_accepts(value, field.normalization):
         return False
-    if field.semantic_format is not None:
+    if field.semantic_format in {"otel-trace-id-v1", "otel-span-id-v1"}:
         if not isinstance(value, str) or set(value) == {"0"}:
             return False
+    elif field.semantic_format == "w3c-tracestate-v1" and not _w3c_tracestate_accepts(value):
+        return False
     return True
 
 
@@ -7642,13 +7697,15 @@ def _parse_explicit_builder_context(
         elif condition.enforcement.kind == "boolean_attribute":
             source_ref = condition.enforcement.attribute
             fact_value = attributes.get(source_ref) if source_ref is not None else None
-            if type(fact_value) is not bool:
+            if fact_value is None:
+                fact_value = False
+            elif type(fact_value) is not bool:
                 raise RegistryError(f"{path}: condition {condition.id} requires boolean source attribute {source_ref}")
             source_path = f"{path}.attributes.{source_ref}"
         else:
             raise RegistryError(f"{path}: condition {condition.id} has unsupported enforcement")
         present = use.ref in attributes
-        if fact_value and not present:
+        if fact_value and use.requirement_level == "conditional" and not present:
             raise RegistryError(f"{source_path}: true requires {use.ref}")
         if not fact_value and condition.false_requirement == "forbidden" and present:
             raise RegistryError(f"{source_path}: false forbids {use.ref}")
@@ -8045,7 +8102,7 @@ def _validate_condition_references(
     for group in groups.values():
         resolved = {use.ref: use for use in group.resolved_uses}
         for use in group.resolved_uses:
-            if use.requirement_level != "conditional":
+            if use.conditional is None:
                 continue
             condition = known.get(use.conditional or "")
             if condition is None:
@@ -8056,7 +8113,11 @@ def _validate_condition_references(
             if source_ref is None:
                 raise RegistryError(f"condition {condition.id}: boolean attribute source is missing")
             source_use = resolved.get(source_ref)
-            if source_use is None or source_use.requirement_level != "required" or source_use.conditional is not None:
+            if (
+                source_use is None
+                or source_use.requirement_level not in {"required", "recommended", "optional"}
+                or source_use.conditional is not None
+            ):
                 raise RegistryError(
                     f"group {group.id}: condition {condition.id} requires unconditional boolean source {source_ref}"
                 )
@@ -8263,6 +8324,19 @@ def _validate_structural_contract_bindings(
     for object_ir in structural_objects:
         for field in object_ir.fields:
             if field.semantic_format is None:
+                continue
+            if field.semantic_format == "w3c-tracestate-v1":
+                constraints = field.normalization.effective_constraints if field.normalization is not None else {}
+                if (
+                    field.field_type != "string"
+                    or field.normalization is None
+                    or field.normalization.id != "bounded-v1"
+                    or constraints.get("max_utf8_bytes") != 512
+                    or "pattern" in constraints
+                ):
+                    raise RegistryError(
+                        f"structural contract {object_ir.id}.{field.name}: semantic-format mismatch"
+                    )
                 continue
             expected_max, expected_pattern = semantic_format_contract[field.semantic_format]
             constraints = field.normalization.effective_constraints if field.normalization is not None else {}
@@ -9755,14 +9829,13 @@ def _resolve_group_uses(
                 origins,
                 key=lambda origin: _REQUIREMENT_RANK[origin.requirement_level],
             ).requirement_level
-            conditional = None
-            if dominant == "conditional":
-                clauses = tuple(
-                    dict.fromkeys(origin.conditional for origin in origins if origin.requirement_level == "conditional")
-                )
-                if len(clauses) != 1 or clauses[0] is None:
-                    raise RegistryError(f"group {group.id}: conflicting dominant conditional clauses for {reference}")
-                conditional = clauses[0]
+            dominant_origins = tuple(origin for origin in origins if origin.requirement_level == dominant)
+            clauses = tuple(dict.fromkeys(origin.conditional for origin in dominant_origins))
+            if len(clauses) != 1:
+                raise RegistryError(f"group {group.id}: conflicting dominant conditional clauses for {reference}")
+            conditional = clauses[0]
+            if dominant == "conditional" and conditional is None:
+                raise RegistryError(f"group {group.id}: dominant conditional clause is absent for {reference}")
             materialized.append(
                 ResolvedAttributeUseIR(
                     reference,

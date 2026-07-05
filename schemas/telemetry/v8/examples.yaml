@@ -37,6 +37,8 @@ examples:
       kind: CLIENT
       start_time_unix_nano: 1783080000000000000
       end_time_unix_nano: 1783080000100000000
+      trace_state: dc=runtime-pipeline-test
+      flags: 257
       attributes:
         defenseclaw.bucket: model.io
         defenseclaw.span.family: span.model.chat
@@ -44,6 +46,9 @@ examples:
         defenseclaw.source: gateway
         defenseclaw.config.generation: 8
         defenseclaw.outcome: completed
+        defenseclaw.telemetry.canary: true
+        defenseclaw.telemetry.canary.operation: runtime-pipeline-test
+        defenseclaw.telemetry.canary.destination: otlp-primary
         gen_ai.operation.name: chat
         gen_ai.provider.name: example
         gen_ai.request.model: gpt-example
@@ -81,12 +86,17 @@ examples:
       /kind: metadata
       /start_time_unix_nano: metadata
       /end_time_unix_nano: metadata
+      /trace_state: metadata
+      /flags: metadata
       /attributes/defenseclaw.bucket: metadata
       /attributes/defenseclaw.span.family: identifier
       /attributes/defenseclaw.span.family_schema_version: metadata
       /attributes/defenseclaw.source: identifier
       /attributes/defenseclaw.config.generation: metadata
       /attributes/defenseclaw.outcome: metadata
+      /attributes/defenseclaw.telemetry.canary: metadata
+      /attributes/defenseclaw.telemetry.canary.operation: metadata
+      /attributes/defenseclaw.telemetry.canary.destination: identifier
       /attributes/gen_ai.operation.name: metadata
       /attributes/gen_ai.provider.name: metadata
       /attributes/gen_ai.request.model: identifier
@@ -151,6 +161,7 @@ examples:
       kind: INTERNAL
       start_time_unix_nano: 1783080001000000000
       end_time_unix_nano: 1783080001001000000
+      flags: 256
       attributes:
         defenseclaw.bucket: agent.lifecycle
         defenseclaw.span.family: span.agent.transition
@@ -193,6 +204,7 @@ examples:
       /kind: metadata
       /start_time_unix_nano: metadata
       /end_time_unix_nano: metadata
+      /flags: metadata
       /attributes/defenseclaw.bucket: metadata
       /attributes/defenseclaw.span.family: identifier
       /attributes/defenseclaw.span.family_schema_version: metadata
@@ -465,6 +477,8 @@ examples:
       kind: CLIENT
       start_time_unix_nano: 1783080000000000000
       end_time_unix_nano: 1783080000100000000
+      trace_state: dc=runtime-pipeline-test
+      flags: 257
       attributes:
         defenseclaw.bucket: tool.activity
         defenseclaw.span.family: span.model.chat
@@ -472,6 +486,9 @@ examples:
         defenseclaw.source: gateway
         defenseclaw.config.generation: 8
         defenseclaw.outcome: completed
+        defenseclaw.telemetry.canary: true
+        defenseclaw.telemetry.canary.operation: runtime-pipeline-test
+        defenseclaw.telemetry.canary.destination: otlp-primary
         gen_ai.operation.name: chat
         gen_ai.provider.name: example
         gen_ai.request.model: gpt-example
@@ -509,12 +526,17 @@ examples:
       /kind: metadata
       /start_time_unix_nano: metadata
       /end_time_unix_nano: metadata
+      /trace_state: metadata
+      /flags: metadata
       /attributes/defenseclaw.bucket: metadata
       /attributes/defenseclaw.span.family: identifier
       /attributes/defenseclaw.span.family_schema_version: metadata
       /attributes/defenseclaw.source: identifier
       /attributes/defenseclaw.config.generation: metadata
       /attributes/defenseclaw.outcome: metadata
+      /attributes/defenseclaw.telemetry.canary: metadata
+      /attributes/defenseclaw.telemetry.canary.operation: metadata
+      /attributes/defenseclaw.telemetry.canary.destination: identifier
       /attributes/gen_ai.operation.name: metadata
       /attributes/gen_ai.provider.name: metadata
       /attributes/gen_ai.request.model: identifier
@@ -581,6 +603,7 @@ examples:
       kind: INTERNAL
       start_time_unix_nano: 1783080001000000000
       end_time_unix_nano: 1783080001001000000
+      flags: 256
       attributes:
         defenseclaw.bucket: agent.lifecycle
         defenseclaw.span.family: span.agent.transition
@@ -623,6 +646,7 @@ examples:
       /kind: metadata
       /start_time_unix_nano: metadata
       /end_time_unix_nano: metadata
+      /flags: metadata
       /attributes/defenseclaw.bucket: metadata
       /attributes/defenseclaw.span.family: identifier
       /attributes/defenseclaw.span.family_schema_version: metadata

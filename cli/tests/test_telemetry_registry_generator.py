@@ -1010,6 +1010,7 @@ def _fixture_root(tmp_path: Path) -> Path:
                             "kind": "CLIENT",
                             "start_time_unix_nano": 1,
                             "end_time_unix_nano": 2,
+                            "flags": 256,
                             "attributes": {
                                 "defenseclaw.bucket": "model.io",
                                 "defenseclaw.span.family": "span.model.chat",
@@ -1037,6 +1038,7 @@ def _fixture_root(tmp_path: Path) -> Path:
                             "/kind": "metadata",
                             "/start_time_unix_nano": "metadata",
                             "/end_time_unix_nano": "metadata",
+                            "/flags": "metadata",
                             "/attributes/defenseclaw.bucket": "metadata",
                             "/attributes/defenseclaw.span.family": "identifier",
                             "/attributes/defenseclaw.span.family_schema_version": "metadata",
@@ -3495,13 +3497,12 @@ def test_group_runtime_vocabularies_are_closed(
 
 
 @pytest.mark.parametrize(
-    ("requirement_level", "include_clause", "expected"),
-    [
-        ("conditional", False, "required for conditional fields"),
-        ("required", True, "allowed only for conditional fields"),
-        ("recommended", True, "allowed only for conditional fields"),
-        ("optional", True, "allowed only for conditional fields"),
-    ],
+        ("requirement_level", "include_clause", "expected"),
+        [
+            ("conditional", False, "required for conditional fields"),
+            ("required", True, "allowed only for conditional or optional fields"),
+            ("recommended", True, "allowed only for conditional or optional fields"),
+        ],
 )
 def test_attribute_use_conditional_clause_is_exactly_coupled_to_level(
     tmp_path: Path,
@@ -5263,6 +5264,8 @@ def test_structural_contract_ir_is_closed_lossless_and_runtime_bound(tmp_path: P
         "start_time_unix_nano",
         "end_time_unix_nano",
         "parent_span_id",
+        "trace_state",
+        "flags",
         "status",
         "resource",
         "scope",
@@ -5276,6 +5279,10 @@ def test_structural_contract_ir_is_closed_lossless_and_runtime_bound(tmp_path: P
     trace_fields = {field.name: field for field in contract.trace_body.fields}
     assert trace_fields["start_time_unix_nano"].field_type == "uint64"
     assert trace_fields["start_time_unix_nano"].otlp_target == "startTimeUnixNano"
+    assert trace_fields["trace_state"].semantic_format == "w3c-tracestate-v1"
+    assert trace_fields["trace_state"].otlp_target == "traceState"
+    assert trace_fields["flags"].field_type == "uint32"
+    assert trace_fields["flags"].otlp_target == "flags"
     assert trace_fields["attributes"].semantic_ref == "registry.family_attributes"
     assert trace_fields["resource"].otlp_target is None
     assert trace_fields["scope"].otlp_target is None
@@ -5399,11 +5406,17 @@ def test_structural_contract_ir_is_closed_lossless_and_runtime_bound(tmp_path: P
         "judge-output-parse-failed-v1",
         "admin-principal-known-v1",
         "agent-reported-cost-available-v1",
+        "telemetry-canary-enabled-v1",
     )
     assert sum(condition.enforcement.kind == "builder_fact" for condition in ir.conditions) == 7
-    attribute_condition = next(
+    attribute_conditions = tuple(
         condition for condition in ir.conditions if condition.enforcement.kind == "boolean_attribute"
     )
+    assert tuple(condition.id for condition in attribute_conditions) == (
+        "agent-reported-cost-available-v1",
+        "telemetry-canary-enabled-v1",
+    )
+    attribute_condition = attribute_conditions[0]
     assert attribute_condition.id == "agent-reported-cost-available-v1"
     assert attribute_condition.enforcement.fact is None
     assert attribute_condition.enforcement.attribute == "defenseclaw.agent.reported_cost.present"
@@ -5463,6 +5476,25 @@ def test_family_schema_version_materializes_as_uint32_with_exact_otlp_projection
     assert materialized_attribute["fields"]["field_type"] == "uint32"
     assert ("uint32", "intValue") in ir.structural_contract.canonical_to_otlp.any_value_mapping
     assert 2**32 - 1 <= 2**63 - 1
+
+
+@pytest.mark.parametrize(
+    ("value", "accepted"),
+    (
+        ("", True),
+        ("vendor=value", True),
+        ("tenant@system=value", True),
+        ("a=1,b=two words", True),
+        ("Vendor=value", False),
+        ("vendor=value,vendor=duplicate", False),
+        ("vendor=value, other=value", False),
+        ("vendor=value ", False),
+        ("vendor=value=extra", False),
+    ),
+)
+def test_w3c_tracestate_semantic_format_is_closed(value: str, accepted: bool) -> None:
+    module = _load_generator_module("telemetry_registry_w3c_tracestate")
+    assert module._w3c_tracestate_accepts(value) is accepted
 
 
 def test_family_schema_version_above_uint32_is_rejected_before_rendering(tmp_path: Path) -> None:
@@ -8934,6 +8966,21 @@ def test_core_runtime_span_context_cost_and_compatibility_contracts_are_exact() 
         assert cost.conditional == "agent-reported-cost-available-v1"
         assert "llm.cost.total" not in uses
 
+    canary_fields = {
+        "defenseclaw.telemetry.canary",
+        "defenseclaw.telemetry.canary.operation",
+        "defenseclaw.telemetry.canary.destination",
+    }
+    for family_id in ("span.agent.invoke", "span.model.chat"):
+        uses = {use.ref: use for use in groups[family_id].resolved_uses}
+        assert canary_fields <= set(uses)
+        assert uses["defenseclaw.telemetry.canary"].requirement_level == "optional"
+        assert uses["defenseclaw.telemetry.canary.operation"].requirement_level == "conditional"
+        assert uses["defenseclaw.telemetry.canary.destination"].requirement_level == "optional"
+        assert uses["defenseclaw.telemetry.canary.operation"].conditional == "telemetry-canary-enabled-v1"
+        assert uses["defenseclaw.telemetry.canary.destination"].conditional == "telemetry-canary-enabled-v1"
+    assert canary_fields.isdisjoint(use.ref for use in groups["span.diagnostic.canary"].resolved_uses)
+
     lifecycle_capable = ("span.agent.transition", "span.agent.invoke", "span.workflow.run")
     model_identity = {
         "gen_ai.provider.name",
@@ -9026,7 +9073,7 @@ def test_condition_enforcement_arms_are_shape_closed(
     ("mode", "expected"),
     (
         ("missing", "requires unconditional boolean source"),
-        ("not_required", "requires unconditional boolean source"),
+        ("conditioned", "requires unconditional boolean source"),
         ("not_boolean", "must be a boolean attribute"),
     ),
 )
@@ -9046,10 +9093,17 @@ def test_boolean_attribute_conditions_fail_closed_at_compile_time(mode: str, exp
     amount = next(use for use in cost_group.resolved_uses if use.ref == "defenseclaw.agent.reported_cost.usd")
     if mode == "missing":
         changed = module.replace(cost_group, resolved_uses=(amount,))
-    elif mode == "not_required":
+    elif mode == "conditioned":
         changed = module.replace(
             cost_group,
-            resolved_uses=(module.replace(present, requirement_level="recommended"), amount),
+            resolved_uses=(
+                module.replace(
+                    present,
+                    requirement_level="optional",
+                    conditional="agent-reported-cost-available-v1",
+                ),
+                amount,
+            ),
         )
     else:
         string_source = module.replace(present, ref="defenseclaw.agent.type")
@@ -9379,16 +9433,16 @@ def test_canonical_go_symbol_table_matches_digest_addressed_reviewed_baseline(
     table = ir.go_symbol_table
     baseline_digest = module._validate_reviewed_go_symbol_baseline(ROOT, table)
 
-    assert len(table.rows) == 1778
+    assert len(table.rows) == 1781
     assert dict(table.kind_counts) == module.EXPECTED_GO_SYMBOL_KIND_COUNTS
     assert dict(table.declaration_form_counts) == {
-        "exported_const": 898,
+        "exported_const": 901,
         "exported_type": 459,
         "exported_function": 178,
         "family_builder_method": 243,
     }
-    assert table.table_sha256 == "8488349afc135212c436225a154bd834afe9a2751d2b76e13e12d895405a8b32"
-    assert baseline_digest.sha256 == "eb90d5b5056aa28293f8235d65dab0429faab03e7a0dc32247797a16f52a210a"
+    assert table.table_sha256 == "4a8563120e248a344683b87999620dac744bbda4b9794214d15197d0abde2f54"
+    assert baseline_digest.sha256 == "1f01353b8adf5021e42fef2675e0d3b690f2bcde2af9d22558d66f62c841e9e7"
     assert baseline_digest.path.endswith(f"/{baseline_digest.sha256}.json")
     rank = {kind: index for index, kind in enumerate(module.GO_SYMBOL_KIND_ORDER)}
     assert list(table.rows) == sorted(
@@ -9450,7 +9504,7 @@ def test_go_symbol_file_domain_ownership_counts_are_frozen(
         else:
             family_id = row.source_id.split("#", 1)[0]
             ownership[family_domains[family_id]] += 1
-    assert ownership == {"ids": 898, "genai": 282, "security": 212, "operations": 386}
+    assert ownership == {"ids": 901, "genai": 282, "security": 212, "operations": 386}
 
 
 def test_go_symbol_policy_and_table_are_materialized_and_row_order_is_digest_significant(

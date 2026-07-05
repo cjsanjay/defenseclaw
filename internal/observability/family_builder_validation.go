@@ -140,7 +140,11 @@ func validateFamilyFieldDescriptors(descriptors []familyFieldDescriptor) error {
 		if expected, derived := familyDerivedSourceType(descriptor.source); derived && descriptor.typeOf != expected {
 			return familyBuildFailure(FamilyBuildInvalidDescriptor)
 		}
-		if descriptor.requirement == familyRequirementConditional {
+		if descriptor.conditionID != "" {
+			if descriptor.requirement != familyRequirementConditional &&
+				descriptor.requirement != familyRequirementOptional {
+				return familyBuildFailure(FamilyBuildInvalidDescriptor)
+			}
 			if descriptor.conditionID == "" ||
 				(descriptor.falseRequirement != familyFalseOptional &&
 					descriptor.falseRequirement != familyFalseForbidden) {
@@ -458,7 +462,7 @@ func validatedConditionStates(
 ) (map[string]familyConditionState, error) {
 	known := make(map[string]struct{})
 	for _, descriptor := range descriptors {
-		if descriptor.requirement == familyRequirementConditional {
+		if descriptor.conditionID != "" {
 			known[descriptor.conditionID] = struct{}{}
 		}
 	}
@@ -488,8 +492,20 @@ func resolvedFamilyRequirement(
 	switch descriptor.requirement {
 	case familyRequirementRequired:
 		return true, false, nil
-	case familyRequirementRecommended, familyRequirementOptional:
+	case familyRequirementRecommended:
 		return false, false, nil
+	case familyRequirementOptional:
+		if descriptor.conditionID == "" {
+			return false, false, nil
+		}
+		switch states[descriptor.conditionID] {
+		case familyConditionTrue:
+			return false, false, nil
+		case familyConditionFalse:
+			return false, descriptor.falseRequirement == familyFalseForbidden, nil
+		default:
+			return false, false, familyBuildFailure(FamilyBuildInvalidCondition)
+		}
 	case familyRequirementConditional:
 		switch states[descriptor.conditionID] {
 		case familyConditionTrue:

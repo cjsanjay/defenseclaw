@@ -12,8 +12,11 @@ package telemetry
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -188,6 +191,8 @@ func v8HandoffRecord(
 	start, end time.Time,
 	configDigest string,
 	parentSpanID string,
+	traceState observability.Optional[string],
+	flags uint32,
 	resourceProvider *Provider,
 ) observability.Record {
 	t.Helper()
@@ -218,7 +223,7 @@ func v8HandoffRecord(
 				return observability.Absent[string]()
 			}
 			return observability.Present(parentSpanID)
-		}(), Status: observability.NewTraceStatusUnset(),
+		}(), TraceState: traceState, Flags: flags, Status: observability.NewTraceStatusUnset(),
 		Resource: observability.TraceResourceInput{
 			SchemaURL: "https://opentelemetry.io/schemas/1.42.0",
 		},
@@ -285,12 +290,20 @@ func v8StartHandoffSpanContext(
 		ctx, "pending", trace.WithTimestamp(start), trace.WithSpanKind(trace.SpanKindInternal),
 	)
 	parentSpanID := ""
+	otlpFlags := uint32(span.SpanContext().TraceFlags()) | 0x100
 	if parent := trace.SpanContextFromContext(ctx); parent.IsValid() {
 		parentSpanID = parent.SpanID().String()
+		if parent.IsRemote() {
+			otlpFlags |= 0x200
+		}
+	}
+	traceState := observability.Absent[string]()
+	if value := span.SpanContext().TraceState().String(); value != "" {
+		traceState = observability.Present(value)
 	}
 	record := v8HandoffRecord(
 		t, span.SpanContext().TraceID(), span.SpanContext().SpanID(), start, end,
-		rig.provider.v8.planDigest, parentSpanID, rig.provider,
+		rig.provider.v8.planDigest, parentSpanID, traceState, otlpFlags, rig.provider,
 	)
 	canonical, ok := newV8CanonicalEndedSpan(record)
 	if !ok {
@@ -473,6 +486,123 @@ func TestV8CompositeMissingOrMismatchedHandoffDropsCanonicalOnly(t *testing.T) {
 	}
 }
 
+func TestV8CanonicalRecordOwnsTraceStateAndFullFlagsParity(t *testing.T) {
+	consumer := &v8HandoffConsumer{}
+	legacy := &v8HandoffLegacyProcessor{}
+	rig := newV8HandoffRig(t,
+		V8GenerationSpanPipeline{Destination: "canonical", Canonical: consumer},
+		V8GenerationSpanPipeline{Destination: "legacy", Legacy: legacy},
+	)
+	start := time.Unix(1_783_080_225, 0).UTC()
+	end := start.Add(time.Millisecond)
+	span, _ := v8StartHandoffSpan(t, rig, start, end, nil)
+	wrongFlags := v8HandoffRecord(
+		t, span.SpanContext().TraceID(), span.SpanContext().SpanID(), start, end,
+		rig.provider.v8.planDigest, "", observability.Absent[string](), 0x100, rig.provider,
+	)
+	if got := rig.provider.EndV8CanonicalSpan(span, wrongFlags); got != V8CanonicalSpanHandoffNotConsumed {
+		t.Fatalf("wrong-flags result = %s", got)
+	}
+	reservedFlags := v8HandoffRecord(
+		t, span.SpanContext().TraceID(), span.SpanContext().SpanID(), start, end,
+		rig.provider.v8.planDigest, "", observability.Absent[string](), 0x500, rig.provider,
+	)
+	if _, ok := newV8CanonicalEndedSpan(reservedFlags); ok {
+		t.Fatal("runtime-sourced canonical span accepted reserved OTLP flag bits")
+	}
+
+	state, err := trace.ParseTraceState("vendor=value")
+	if err != nil {
+		t.Fatal(err)
+	}
+	parent := trace.NewSpanContext(trace.SpanContextConfig{
+		TraceID: trace.TraceID{9, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16},
+		SpanID:  trace.SpanID{9, 2, 3, 4, 5, 6, 7, 8}, TraceFlags: trace.FlagsSampled,
+		TraceState: state, Remote: true,
+	})
+	ctx := trace.ContextWithRemoteSpanContext(context.Background(), parent)
+	stateSpan, _ := v8StartHandoffSpanContext(t, rig, ctx, start, end, nil)
+	wrongState := v8HandoffRecord(
+		t, stateSpan.SpanContext().TraceID(), stateSpan.SpanContext().SpanID(), start, end,
+		rig.provider.v8.planDigest, parent.SpanID().String(), observability.Absent[string](), 0x301, rig.provider,
+	)
+	if got := rig.provider.EndV8CanonicalSpan(stateSpan, wrongState); got != V8CanonicalSpanHandoffNotConsumed {
+		t.Fatalf("wrong-trace-state result = %s", got)
+	}
+	if len(consumer.snapshot()) != 0 || legacy.ends.Load() != 2 {
+		t.Fatalf("canonical/legacy deliveries = %d/%d", len(consumer.snapshot()), legacy.ends.Load())
+	}
+}
+
+func TestV8CanonicalHandoffParsersRejectAdversarialValues(t *testing.T) {
+	t.Run("trace state", func(t *testing.T) {
+		for _, value := range []any{
+			123,
+			strings.Repeat("a", 513),
+			"vendor=value ",
+			"vendor=value,vendor=duplicate",
+		} {
+			if _, ok := v8CanonicalTraceState(value); ok {
+				t.Fatalf("trace state accepted %#v", value)
+			}
+		}
+	})
+	t.Run("uint32", func(t *testing.T) {
+		for _, value := range []any{
+			"1",
+			json.Number("-1"),
+			json.Number("1.5"),
+			json.Number("4294967296"),
+		} {
+			if _, ok := v8CanonicalUint32(value); ok {
+				t.Fatalf("uint32 accepted %#v", value)
+			}
+		}
+		if value, ok := v8CanonicalUint32(json.Number("4294967295")); !ok || value != math.MaxUint32 {
+			t.Fatalf("maximum uint32 = %d/%t", value, ok)
+		}
+	})
+	t.Run("unix nanos", func(t *testing.T) {
+		for _, value := range []any{
+			int64(1),
+			json.Number("0"),
+			json.Number("-1"),
+			json.Number("1.5"),
+			json.Number("9223372036854775808"),
+		} {
+			if _, ok := v8CanonicalUnixNanos(value); ok {
+				t.Fatalf("unix nanos accepted %#v", value)
+			}
+		}
+	})
+	t.Run("parent span id", func(t *testing.T) {
+		for _, value := range []any{123, "0000000000000000", "not-a-span-id"} {
+			if _, _, ok := v8CanonicalParentSpanID(value); ok {
+				t.Fatalf("parent span ID accepted %#v", value)
+			}
+		}
+	})
+	t.Run("kind", func(t *testing.T) {
+		for _, value := range []any{123, "UNSPECIFIED", "client"} {
+			if _, ok := v8CanonicalSpanKind(value); ok {
+				t.Fatalf("span kind accepted %#v", value)
+			}
+		}
+	})
+	t.Run("status", func(t *testing.T) {
+		for _, value := range []any{
+			"OK",
+			map[string]any{},
+			map[string]any{"code": "UNKNOWN"},
+			map[string]any{"code": "ERROR", "description": 123},
+		} {
+			if _, _, ok := v8CanonicalSpanStatus(value); ok {
+				t.Fatalf("span status accepted %#v", value)
+			}
+		}
+	})
+}
+
 func TestV8EndHelperAlwaysEndsAndUsesCanonicalTimeOnlyAfterRegistration(t *testing.T) {
 	consumer := &v8HandoffConsumer{}
 	legacy := &v8HandoffLegacyProcessor{}
@@ -485,7 +615,8 @@ func TestV8EndHelperAlwaysEndsAndUsesCanonicalTimeOnlyAfterRegistration(t *testi
 	span, _ := v8StartHandoffSpan(t, rig, start, canonicalEnd, nil)
 	wrongPlan := v8HandoffRecord(
 		t, span.SpanContext().TraceID(), span.SpanContext().SpanID(), start, canonicalEnd,
-		"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "", rig.provider,
+		"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "",
+		observability.Absent[string](), 0x101, rig.provider,
 	)
 	if got := rig.provider.EndV8CanonicalSpan(span, wrongPlan); got != V8CanonicalSpanPlanMismatch {
 		t.Fatalf("plan mismatch result = %s", got)
@@ -665,7 +796,7 @@ func TestV8HandoffCountBytesDuplicateInactiveSamplingAndShutdown(t *testing.T) {
 	defer func() { _ = sdk.Shutdown(context.Background()) }()
 	start := time.Unix(1_783_080_300, 0).UTC()
 	_, firstSpan := sdk.Tracer("test").Start(context.Background(), "first", trace.WithTimestamp(start))
-	firstRecord := v8HandoffRecord(t, firstSpan.SpanContext().TraceID(), firstSpan.SpanContext().SpanID(), start, start.Add(time.Millisecond), "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "", nil)
+	firstRecord := v8HandoffRecord(t, firstSpan.SpanContext().TraceID(), firstSpan.SpanContext().SpanID(), start, start.Add(time.Millisecond), "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "", observability.Absent[string](), 0x101, nil)
 	first, got := composite.handoff.register(firstSpan, mustV8CanonicalEndedSpan(t, firstRecord))
 	if got != V8CanonicalSpanRegistered {
 		t.Fatalf("first registration = %s", got)
@@ -674,7 +805,7 @@ func TestV8HandoffCountBytesDuplicateInactiveSamplingAndShutdown(t *testing.T) {
 		t.Fatalf("duplicate registration = %s", got)
 	}
 	_, secondSpan := sdk.Tracer("test").Start(context.Background(), "second", trace.WithTimestamp(start))
-	secondRecord := v8HandoffRecord(t, secondSpan.SpanContext().TraceID(), secondSpan.SpanContext().SpanID(), start, start.Add(time.Millisecond), "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "", nil)
+	secondRecord := v8HandoffRecord(t, secondSpan.SpanContext().TraceID(), secondSpan.SpanContext().SpanID(), start, start.Add(time.Millisecond), "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "", observability.Absent[string](), 0x101, nil)
 	if _, got = composite.handoff.register(secondSpan, mustV8CanonicalEndedSpan(t, secondRecord)); got != V8CanonicalSpanCapacityExceeded {
 		t.Fatalf("count capacity = %s", got)
 	}
@@ -694,7 +825,7 @@ func TestV8HandoffCountBytesDuplicateInactiveSamplingAndShutdown(t *testing.T) {
 	recordOnly := sdktrace.NewTracerProvider(sdktrace.WithSampler(v8RecordOnlySampler{}))
 	defer func() { _ = recordOnly.Shutdown(context.Background()) }()
 	_, unsampled := recordOnly.Tracer("test").Start(context.Background(), "unsampled", trace.WithTimestamp(start))
-	unsampledRecord := v8HandoffRecord(t, unsampled.SpanContext().TraceID(), unsampled.SpanContext().SpanID(), start, start.Add(time.Millisecond), "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "", nil)
+	unsampledRecord := v8HandoffRecord(t, unsampled.SpanContext().TraceID(), unsampled.SpanContext().SpanID(), start, start.Add(time.Millisecond), "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "", observability.Absent[string](), 0x100, nil)
 	composite.handoff.setActive(true)
 	if _, got = composite.handoff.register(unsampled, mustV8CanonicalEndedSpan(t, unsampledRecord)); got != V8CanonicalSpanNotSampled {
 		t.Fatalf("unsampled registration = %s", got)

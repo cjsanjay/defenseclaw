@@ -392,6 +392,8 @@ type familyTraceBuildInput struct {
 	startTimeUnixNano      uint64
 	endTimeUnixNano        uint64
 	parentSpanID           Optional[string]
+	traceState             Optional[string]
+	flags                  uint32
 	status                 TraceStatusInput
 	resource               TraceResourceInput
 	scope                  TraceScopeInput

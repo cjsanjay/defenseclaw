@@ -592,13 +592,13 @@ def test_real_candidate_index_compiles_complete_semantic_plan() -> None:
     second = plan.compile_go_api_plan(index)
 
     assert first == second
-    assert first.api_plan_sha256 == "60b5c908da5b3a37b6db1ed9c50765228106bcaaae4c6880605c869fc2b8de07"
-    assert len(first.declarations) == 1778
+    assert first.api_plan_sha256 == "e5dc9a7faadc654391c5ef410582d7337bbed3e18e6b64c36a32daca8ecc24ce"
+    assert len(first.declarations) == 1781
     assert len(first.inputs) == len(first.callables) == 421
     assert len(first.descriptors) == 243
     assert len(first.structured) == 21
     assert len(first.fixtures) == 12
-    assert sum(len(item.fields) for item in first.inputs) == 4706
+    assert sum(len(item.fields) for item in first.inputs) == 4762
     assert len(first.private_declarations) == 741
     assert tuple(helper.symbol for helper in first.kernel_helpers) == (
         "buildGeneratedMetric",
@@ -639,7 +639,7 @@ def test_real_candidate_index_compiles_complete_semantic_plan() -> None:
     assert sum(part.arm == "literal" for item in first.descriptors for part in item.span_name_parts) == 25
     assert sum(part.arm == "field" for item in first.descriptors for part in item.span_name_parts) == 19
     model_input = input_by_source(first, "span.model.chat")
-    assert len(model_input.fields) == 98
+    assert len(model_input.fields) == 103
     assert tuple(field.selector for field in model_input.fields if field.conversion_op == "condition_fact") == (
         "ConditionConnectorKnown",
         "ConditionOperationTerminal",
@@ -652,16 +652,24 @@ def test_real_candidate_index_compiles_complete_semantic_plan() -> None:
     )
     assert isinstance(model_builder.body, plan.GoFamilyCallableBodyPlanIR)
     assert tuple(
-        (condition.condition_id, condition.fact_id, condition.selector) for condition in model_builder.body.conditions
+        (condition.condition_id, condition.fact_id, condition.selector, condition.optional_source)
+        for condition in model_builder.body.conditions
     ) == (
         (
             "agent-reported-cost-available-v1",
             "attribute:defenseclaw.agent.reported_cost.present",
             "DefenseClawAgentReportedCostPresent",
+            False,
         ),
-        ("connector-known-v1", "connector_known", "ConditionConnectorKnown"),
-        ("operation-terminal-v1", "operation_terminal", "ConditionOperationTerminal"),
-        ("technical-failure-v1", "technical_failure", "ConditionTechnicalFailure"),
+        ("connector-known-v1", "connector_known", "ConditionConnectorKnown", False),
+        ("operation-terminal-v1", "operation_terminal", "ConditionOperationTerminal", False),
+        (
+            "telemetry-canary-enabled-v1",
+            "attribute:defenseclaw.telemetry.canary",
+            "DefenseClawTelemetryCanary",
+            True,
+        ),
+        ("technical-failure-v1", "technical_failure", "ConditionTechnicalFailure", False),
     )
     assert (
         sum(
@@ -747,7 +755,7 @@ def test_real_candidate_index_compiles_complete_semantic_plan() -> None:
     assert owned == list(catalog.private_descriptor_ids)
     assert len(owned) == len(set(owned)) == 264
     counts = {item.path: len(item.declarations) for item in first.files}
-    assert counts["internal/observability/zz_generated_telemetry_ids.go"] == 898
+    assert counts["internal/observability/zz_generated_telemetry_ids.go"] == 901
     assert counts["internal/observability/zz_generated_telemetry_builders_genai.go"] == 282
     assert counts["internal/observability/zz_generated_telemetry_builders_security.go"] == 212
     assert counts["internal/observability/zz_generated_telemetry_builders_operations.go"] == 386
@@ -786,13 +794,15 @@ def test_compiler_owns_names_types_layouts_signatures_and_constant_values() -> N
     assert log_input.fields[6].conversion_op == "structured_encoder"
 
     span_input = input_by_source(compiled, "span.test")
-    assert tuple(field.selector for field in span_input.fields[:14]) == (
+    assert tuple(field.selector for field in span_input.fields[:16]) == (
         "Envelope",
         "Outcome",
         "Kind",
         "StartTimeUnixNano",
         "EndTimeUnixNano",
         "ParentSpanID",
+        "TraceState",
+        "Flags",
         "Status",
         "Resource",
         "Scope",
@@ -802,7 +812,7 @@ def test_compiler_owns_names_types_layouts_signatures_and_constant_values() -> N
         "Links",
         "DroppedLinksCount",
     )
-    assert tuple(field.selector for field in span_input.fields[14:]) == ("ResourceServiceName", "GenAIOperationName")
+    assert tuple(field.selector for field in span_input.fields[16:]) == ("ResourceServiceName", "GenAIOperationName")
     metric_input = input_by_source(compiled, "metric.test")
     assert metric_input.fields[1].selector == "Value"
     assert metric_input.fields[1].type_ref == plan.GoTypeRefIR("builtin", name="float64")
@@ -913,6 +923,7 @@ def test_catalog_structured_and_callable_rendering_contracts_are_closed_and_type
             "condition.payload_available",
             "payload_available",
             "ConditionPayloadAvailable",
+            False,
         ),
     )
     assert log_builder.body.mandatory_terms == (
@@ -974,7 +985,7 @@ def test_conditional_derived_field_adds_only_the_owned_fact_selector_and_body_bi
 
     compiled = plan.compile_go_api_plan(index)
     span_input = input_by_source(compiled, "span.test")
-    assert len(span_input.fields) == 17
+    assert len(span_input.fields) == 19
     assert tuple(field.selector for field in span_input.fields[-3:]) == (
         "ResourceServiceName",
         "GenAIOperationName",
@@ -992,6 +1003,7 @@ def test_conditional_derived_field_adds_only_the_owned_fact_selector_and_body_bi
             "condition.operation_terminal",
             "operation_terminal",
             "ConditionOperationTerminal",
+            False,
         ),
     )
 
@@ -1254,7 +1266,7 @@ def test_integer_declaration_values_use_portable_signed_32_bit_range() -> None:
 def partition_index(*, wrong_domain: bool = False) -> SimpleNamespace:
     rows: list[dict[str, str]] = []
     constants: list[dict[str, Any]] = []
-    for index in range(599):
+    for index in range(602):
         source_id = f"attribute.{index:04d}"
         rows.append(symbol("attribute", source_id, f"TelemetryAttributeA{index:04d}"))
         constants.append(constant_value("attribute", source_id, f"TelemetryAttributeA{index:04d}", source_id))
@@ -1325,18 +1337,18 @@ def partition_index(*, wrong_domain: bool = False) -> SimpleNamespace:
     )
 
 
-def test_exact_1778_row_partition_and_every_declaration_file_assignment() -> None:
+def test_exact_1781_row_partition_and_every_declaration_file_assignment() -> None:
     compiled = plan.compile_go_api_plan(partition_index())
     counts = {item.path: len(item.declarations) for item in compiled.files}
-    assert counts["internal/observability/zz_generated_telemetry_ids.go"] == 898
+    assert counts["internal/observability/zz_generated_telemetry_ids.go"] == 901
     assert counts["internal/observability/zz_generated_telemetry_builders_genai.go"] == 282
     assert counts["internal/observability/zz_generated_telemetry_builders_security.go"] == 212
     assert counts["internal/observability/zz_generated_telemetry_builders_operations.go"] == 386
-    assert sum(counts.values()) == 1778
+    assert sum(counts.values()) == 1781
     keys = [key for file in compiled.files for key in file.declaration_keys]
-    assert len(keys) == len(set(keys)) == 1778
+    assert len(keys) == len(set(keys)) == 1781
 
-    with pytest.raises(plan.GoAPIPlanError, match="898/282/212/386"):
+    with pytest.raises(plan.GoAPIPlanError, match="901/282/212/386"):
         plan.compile_go_api_plan(partition_index(wrong_domain=True))
 
 
@@ -1436,3 +1448,29 @@ def test_reported_cost_condition_is_derived_from_the_public_present_selector() -
         )
         assert reported.fact_id == "attribute:defenseclaw.agent.reported_cost.present"
         assert reported.selector == "DefenseClawAgentReportedCostPresent"
+        assert reported.optional_source is False
+
+    for family_id in ("span.agent.invoke", "span.model.chat"):
+        family_input = input_by_source(compiled, family_id)
+        selectors = {field.selector: field for field in family_input.fields}
+        assert selectors["DefenseClawTelemetryCanary"].type_ref == plan._optional_type(plan._builtin("bool"))
+        assert selectors["DefenseClawTelemetryCanaryOperation"].type_ref == plan._optional_type(
+            plan._builtin("string")
+        )
+        assert selectors["DefenseClawTelemetryCanaryDestination"].type_ref == plan._optional_type(
+            plan._builtin("string")
+        )
+        builder = next(
+            item
+            for item in compiled.callables
+            if item.declaration_kind == "family_builder" and item.declaration_source_id == family_id
+        )
+        assert isinstance(builder.body, plan.GoFamilyCallableBodyPlanIR)
+        canary = next(
+            condition
+            for condition in builder.body.conditions
+            if condition.condition_id == "telemetry-canary-enabled-v1"
+        )
+        assert canary.fact_id == "attribute:defenseclaw.telemetry.canary"
+        assert canary.selector == "DefenseClawTelemetryCanary"
+        assert canary.optional_source is True

@@ -623,6 +623,40 @@ attributes:
     id: identity-v1
     notes: boolean
   introduced_in: telemetry-registry-v1
+- id: defenseclaw.telemetry.canary.operation
+  type: string
+  brief: Closed runtime-pipeline canary operation
+  examples:
+  - runtime-pipeline-test
+  stability: stable
+  owner: defenseclaw
+  field_class: metadata
+  sensitivity: safe
+  cardinality: low
+  normalization:
+    id: enum-v1
+    overrides:
+      enum:
+      - runtime-pipeline-test
+    notes: closed canary operation vocabulary
+  introduced_in: telemetry-registry-v1
+- id: defenseclaw.telemetry.canary.destination
+  type: string
+  brief: Stable destination token targeted by a runtime-pipeline canary
+  examples:
+  - otlp-primary
+  stability: stable
+  owner: defenseclaw
+  field_class: identifier
+  sensitivity: safe
+  cardinality: low
+  normalization:
+    id: identifier-v1
+    overrides:
+      max_utf8_bytes: 128
+      pattern: '^[a-z0-9][a-z0-9_.-]{0,127}$'
+    notes: bounded stable destination token
+  introduced_in: telemetry-registry-v1
 - id: defenseclaw.user.name
   type: string
   brief: Redactable user display identity
@@ -1948,6 +1982,22 @@ groups:
     requirement_level: conditional
     conditional: operation-terminal-v1
   body_fields: []
+- id: telemetry.canary
+  type: attribute_group
+  brief: Optional, fail-closed marker and target metadata for runtime-pipeline canary spans.
+  stability: stable
+  introduced_in: telemetry-registry-v1
+  extends: []
+  attributes:
+  - ref: defenseclaw.telemetry.canary
+    requirement_level: optional
+  - ref: defenseclaw.telemetry.canary.operation
+    requirement_level: conditional
+    conditional: telemetry-canary-enabled-v1
+  - ref: defenseclaw.telemetry.canary.destination
+    requirement_level: optional
+    conditional: telemetry-canary-enabled-v1
+  body_fields: []
 - id: correlation.request
   type: attribute_group
   brief: Request and turn correlation.
@@ -2594,6 +2644,7 @@ groups:
   introduced_in: telemetry-registry-v1
   extends:
   - span.core
+  - telemetry.canary
   - correlation.interaction
   - correlation.agent
   - correlation.model.identity
@@ -2719,6 +2770,7 @@ groups:
   introduced_in: telemetry-registry-v1
   extends:
   - span.core
+  - telemetry.canary
   - correlation.interaction
   - correlation.agent
   - cost.agent.reported

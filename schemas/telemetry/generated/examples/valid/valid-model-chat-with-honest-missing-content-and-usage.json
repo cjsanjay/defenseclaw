@@ -3,7 +3,7 @@
     "artifact": "examples/valid/valid-model-chat-with-honest-missing-content-and-usage.json",
     "authority": "candidate-not-public-authority",
     "generator": "defenseclaw-telemetry-candidate-renderer-v1",
-    "materialized_view_sha256": "26121f75397999a4fd1818e84dde325ca55d673b090238cbc61e60f1b6f47380",
+    "materialized_view_sha256": "191557b76fca6d94576eee0fc9127d1f37360d5f9db1dc9ebbfb48278708121b",
     "registry_version": 1
   },
   "base_example": null,
@@ -76,6 +76,9 @@
     "/attributes/defenseclaw.source": "identifier",
     "/attributes/defenseclaw.span.family": "identifier",
     "/attributes/defenseclaw.span.family_schema_version": "metadata",
+    "/attributes/defenseclaw.telemetry.canary": "metadata",
+    "/attributes/defenseclaw.telemetry.canary.destination": "identifier",
+    "/attributes/defenseclaw.telemetry.canary.operation": "metadata",
     "/attributes/defenseclaw.telemetry.input.reported": "metadata",
     "/attributes/defenseclaw.telemetry.output.reported": "metadata",
     "/attributes/defenseclaw.telemetry.tokens.reported": "metadata",
@@ -85,6 +88,7 @@
     "/attributes/gen_ai.provider.name": "metadata",
     "/attributes/gen_ai.request.model": "identifier",
     "/end_time_unix_nano": "metadata",
+    "/flags": "metadata",
     "/kind": "metadata",
     "/resource/attributes/defenseclaw.instance.id": "identifier",
     "/resource/attributes/deployment.environment.name": "metadata",
@@ -99,10 +103,11 @@
     "/scope/schema_url": "metadata",
     "/scope/version": "metadata",
     "/start_time_unix_nano": "metadata",
-    "/status/code": "metadata"
+    "/status/code": "metadata",
+    "/trace_state": "metadata"
   },
   "id": "valid-model-chat-with-honest-missing-content-and-usage",
-  "materialized_view_sha256": "26121f75397999a4fd1818e84dde325ca55d673b090238cbc61e60f1b6f47380",
+  "materialized_view_sha256": "191557b76fca6d94576eee0fc9127d1f37360d5f9db1dc9ebbfb48278708121b",
   "mutation": null,
   "record": {
     "body": {
@@ -120,6 +125,9 @@
         "defenseclaw.source": "gateway",
         "defenseclaw.span.family": "span.model.chat",
         "defenseclaw.span.family_schema_version": 1,
+        "defenseclaw.telemetry.canary": true,
+        "defenseclaw.telemetry.canary.destination": "otlp-primary",
+        "defenseclaw.telemetry.canary.operation": "runtime-pipeline-test",
         "defenseclaw.telemetry.input.reported": false,
         "defenseclaw.telemetry.output.reported": false,
         "defenseclaw.telemetry.tokens.reported": false,
@@ -130,6 +138,7 @@
         "gen_ai.request.model": "gpt-example"
       },
       "end_time_unix_nano": 1783080000100000000,
+      "flags": 257,
       "kind": "CLIENT",
       "resource": {
         "attributes": {
@@ -154,7 +163,8 @@
       "start_time_unix_nano": 1783080000000000000,
       "status": {
         "code": "OK"
-      }
+      },
+      "trace_state": "dc=runtime-pipeline-test"
     },
     "bucket": "model.io",
     "bucket_catalog_version": 1,
@@ -181,6 +191,9 @@
       "/attributes/defenseclaw.source": "identifier",
       "/attributes/defenseclaw.span.family": "identifier",
       "/attributes/defenseclaw.span.family_schema_version": "metadata",
+      "/attributes/defenseclaw.telemetry.canary": "metadata",
+      "/attributes/defenseclaw.telemetry.canary.destination": "identifier",
+      "/attributes/defenseclaw.telemetry.canary.operation": "metadata",
       "/attributes/defenseclaw.telemetry.input.reported": "metadata",
       "/attributes/defenseclaw.telemetry.output.reported": "metadata",
       "/attributes/defenseclaw.telemetry.tokens.reported": "metadata",
@@ -190,6 +203,7 @@
       "/attributes/gen_ai.provider.name": "metadata",
       "/attributes/gen_ai.request.model": "identifier",
       "/end_time_unix_nano": "metadata",
+      "/flags": "metadata",
       "/kind": "metadata",
       "/resource/attributes/defenseclaw.instance.id": "identifier",
       "/resource/attributes/deployment.environment.name": "metadata",
@@ -204,7 +218,8 @@
       "/scope/schema_url": "metadata",
       "/scope/version": "metadata",
       "/start_time_unix_nano": "metadata",
-      "/status/code": "metadata"
+      "/status/code": "metadata",
+      "/trace_state": "metadata"
     },
     "outcome": "completed",
     "provenance": {

@@ -3,7 +3,7 @@
     "artifact": "examples/invalid/invalid-legacy-audit-as-canonical-family.json",
     "authority": "candidate-not-public-authority",
     "generator": "defenseclaw-telemetry-candidate-renderer-v1",
-    "materialized_view_sha256": "26121f75397999a4fd1818e84dde325ca55d673b090238cbc61e60f1b6f47380",
+    "materialized_view_sha256": "191557b76fca6d94576eee0fc9127d1f37360d5f9db1dc9ebbfb48278708121b",
     "registry_version": 1
   },
   "base_example": "valid-asset-scan-started",
@@ -48,7 +48,7 @@
   "family": null,
   "field_classes": {},
   "id": "invalid-legacy-audit-as-canonical-family",
-  "materialized_view_sha256": "26121f75397999a4fd1818e84dde325ca55d673b090238cbc61e60f1b6f47380",
+  "materialized_view_sha256": "191557b76fca6d94576eee0fc9127d1f37360d5f9db1dc9ebbfb48278708121b",
   "mutation": {
     "changes": [
       {

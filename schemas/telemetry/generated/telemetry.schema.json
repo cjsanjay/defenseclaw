@@ -3,7 +3,7 @@
     "artifact": "telemetry.schema.json",
     "authority": "candidate-not-public-authority",
     "generator": "defenseclaw-telemetry-candidate-renderer-v1",
-    "materialized_view_sha256": "26121f75397999a4fd1818e84dde325ca55d673b090238cbc61e60f1b6f47380",
+    "materialized_view_sha256": "191557b76fca6d94576eee0fc9127d1f37360d5f9db1dc9ebbfb48278708121b",
     "registry_version": 1
   },
   "$defs": {
@@ -6288,6 +6288,60 @@
         "id": "identity-v1",
         "notes": "boolean",
         "overrides": {}
+      },
+      "x-defenseclaw-owner": "defenseclaw",
+      "x-defenseclaw-sensitivity": "safe"
+    },
+    "attribute:defenseclaw.telemetry.canary.destination": {
+      "pattern": "^(?:^[a-z0-9][a-z0-9_.-]{0,127}$)$(?![\\s\\S])",
+      "type": "string",
+      "x-defenseclaw-field-class": "identifier",
+      "x-defenseclaw-max-utf8-bytes": 128,
+      "x-defenseclaw-max-utf8-bytes-enforcement": "builder-runtime-shape-aware-utf8-byte-gate",
+      "x-defenseclaw-max-utf8-bytes-semantics": "raw-scalar-string-utf8",
+      "x-defenseclaw-normalization": {
+        "effective_constraints": {
+          "max_utf8_bytes": 128,
+          "pattern": "^[a-z0-9][a-z0-9_.-]{0,127}$"
+        },
+        "id": "identifier-v1",
+        "notes": "bounded stable destination token",
+        "overrides": {
+          "max_utf8_bytes": 128,
+          "pattern": "^[a-z0-9][a-z0-9_.-]{0,127}$"
+        }
+      },
+      "x-defenseclaw-owner": "defenseclaw",
+      "x-defenseclaw-pattern-enforcement": "builder-runtime-and-anchored-public-schema",
+      "x-defenseclaw-pattern-semantics": "portable-re2-full-match",
+      "x-defenseclaw-pattern-source": "^[a-z0-9][a-z0-9_.-]{0,127}$",
+      "x-defenseclaw-sensitivity": "safe"
+    },
+    "attribute:defenseclaw.telemetry.canary.operation": {
+      "enum": [
+        "runtime-pipeline-test"
+      ],
+      "type": "string",
+      "x-defenseclaw-enum-enforcement": "builder-runtime-typed-json-enum-gate",
+      "x-defenseclaw-enum-membership-semantics": "typed-json-scalar",
+      "x-defenseclaw-field-class": "metadata",
+      "x-defenseclaw-max-utf8-bytes": 256,
+      "x-defenseclaw-max-utf8-bytes-enforcement": "builder-runtime-shape-aware-utf8-byte-gate",
+      "x-defenseclaw-max-utf8-bytes-semantics": "raw-scalar-string-utf8",
+      "x-defenseclaw-normalization": {
+        "effective_constraints": {
+          "enum": [
+            "runtime-pipeline-test"
+          ],
+          "max_utf8_bytes": 256
+        },
+        "id": "enum-v1",
+        "notes": "closed canary operation vocabulary",
+        "overrides": {
+          "enum": [
+            "runtime-pipeline-test"
+          ]
+        }
       },
       "x-defenseclaw-owner": "defenseclaw",
       "x-defenseclaw-sensitivity": "safe"
@@ -78342,6 +78396,77 @@
                           "x-defenseclaw-requirement-level": "required",
                           "x-defenseclaw-sensitivity": "safe"
                         },
+                        "defenseclaw.telemetry.canary": {
+                          "type": "boolean",
+                          "x-defenseclaw-field-class": "metadata",
+                          "x-defenseclaw-normalization": {
+                            "effective_constraints": {},
+                            "id": "identity-v1",
+                            "notes": "boolean",
+                            "overrides": {}
+                          },
+                          "x-defenseclaw-owner": "defenseclaw",
+                          "x-defenseclaw-requirement-level": "optional",
+                          "x-defenseclaw-sensitivity": "safe"
+                        },
+                        "defenseclaw.telemetry.canary.destination": {
+                          "pattern": "^(?:^[a-z0-9][a-z0-9_.-]{0,127}$)$(?![\\s\\S])",
+                          "type": "string",
+                          "x-defenseclaw-condition": "telemetry-canary-enabled-v1",
+                          "x-defenseclaw-field-class": "identifier",
+                          "x-defenseclaw-max-utf8-bytes": 128,
+                          "x-defenseclaw-max-utf8-bytes-enforcement": "builder-runtime-shape-aware-utf8-byte-gate",
+                          "x-defenseclaw-max-utf8-bytes-semantics": "raw-scalar-string-utf8",
+                          "x-defenseclaw-normalization": {
+                            "effective_constraints": {
+                              "max_utf8_bytes": 128,
+                              "pattern": "^[a-z0-9][a-z0-9_.-]{0,127}$"
+                            },
+                            "id": "identifier-v1",
+                            "notes": "bounded stable destination token",
+                            "overrides": {
+                              "max_utf8_bytes": 128,
+                              "pattern": "^[a-z0-9][a-z0-9_.-]{0,127}$"
+                            }
+                          },
+                          "x-defenseclaw-owner": "defenseclaw",
+                          "x-defenseclaw-pattern-enforcement": "builder-runtime-and-anchored-public-schema",
+                          "x-defenseclaw-pattern-semantics": "portable-re2-full-match",
+                          "x-defenseclaw-pattern-source": "^[a-z0-9][a-z0-9_.-]{0,127}$",
+                          "x-defenseclaw-requirement-level": "optional",
+                          "x-defenseclaw-sensitivity": "safe"
+                        },
+                        "defenseclaw.telemetry.canary.operation": {
+                          "enum": [
+                            "runtime-pipeline-test"
+                          ],
+                          "type": "string",
+                          "x-defenseclaw-condition": "telemetry-canary-enabled-v1",
+                          "x-defenseclaw-enum-enforcement": "builder-runtime-typed-json-enum-gate",
+                          "x-defenseclaw-enum-membership-semantics": "typed-json-scalar",
+                          "x-defenseclaw-field-class": "metadata",
+                          "x-defenseclaw-max-utf8-bytes": 256,
+                          "x-defenseclaw-max-utf8-bytes-enforcement": "builder-runtime-shape-aware-utf8-byte-gate",
+                          "x-defenseclaw-max-utf8-bytes-semantics": "raw-scalar-string-utf8",
+                          "x-defenseclaw-normalization": {
+                            "effective_constraints": {
+                              "enum": [
+                                "runtime-pipeline-test"
+                              ],
+                              "max_utf8_bytes": 256
+                            },
+                            "id": "enum-v1",
+                            "notes": "closed canary operation vocabulary",
+                            "overrides": {
+                              "enum": [
+                                "runtime-pipeline-test"
+                              ]
+                            }
+                          },
+                          "x-defenseclaw-owner": "defenseclaw",
+                          "x-defenseclaw-requirement-level": "conditional",
+                          "x-defenseclaw-sensitivity": "safe"
+                        },
                         "defenseclaw.telemetry.input.reported": {
                           "type": "boolean",
                           "x-defenseclaw-field-class": "metadata",
@@ -79600,7 +79725,8 @@
           "agent-reported-cost-available-v1",
           "connector-known-v1",
           "operation-terminal-v1",
-          "technical-failure-v1"
+          "technical-failure-v1",
+          "telemetry-canary-enabled-v1"
         ],
         "event_name": "span.agent.invoke",
         "family_schema_version": 1,
@@ -105470,6 +105596,77 @@
                           "x-defenseclaw-requirement-level": "required",
                           "x-defenseclaw-sensitivity": "safe"
                         },
+                        "defenseclaw.telemetry.canary": {
+                          "type": "boolean",
+                          "x-defenseclaw-field-class": "metadata",
+                          "x-defenseclaw-normalization": {
+                            "effective_constraints": {},
+                            "id": "identity-v1",
+                            "notes": "boolean",
+                            "overrides": {}
+                          },
+                          "x-defenseclaw-owner": "defenseclaw",
+                          "x-defenseclaw-requirement-level": "optional",
+                          "x-defenseclaw-sensitivity": "safe"
+                        },
+                        "defenseclaw.telemetry.canary.destination": {
+                          "pattern": "^(?:^[a-z0-9][a-z0-9_.-]{0,127}$)$(?![\\s\\S])",
+                          "type": "string",
+                          "x-defenseclaw-condition": "telemetry-canary-enabled-v1",
+                          "x-defenseclaw-field-class": "identifier",
+                          "x-defenseclaw-max-utf8-bytes": 128,
+                          "x-defenseclaw-max-utf8-bytes-enforcement": "builder-runtime-shape-aware-utf8-byte-gate",
+                          "x-defenseclaw-max-utf8-bytes-semantics": "raw-scalar-string-utf8",
+                          "x-defenseclaw-normalization": {
+                            "effective_constraints": {
+                              "max_utf8_bytes": 128,
+                              "pattern": "^[a-z0-9][a-z0-9_.-]{0,127}$"
+                            },
+                            "id": "identifier-v1",
+                            "notes": "bounded stable destination token",
+                            "overrides": {
+                              "max_utf8_bytes": 128,
+                              "pattern": "^[a-z0-9][a-z0-9_.-]{0,127}$"
+                            }
+                          },
+                          "x-defenseclaw-owner": "defenseclaw",
+                          "x-defenseclaw-pattern-enforcement": "builder-runtime-and-anchored-public-schema",
+                          "x-defenseclaw-pattern-semantics": "portable-re2-full-match",
+                          "x-defenseclaw-pattern-source": "^[a-z0-9][a-z0-9_.-]{0,127}$",
+                          "x-defenseclaw-requirement-level": "optional",
+                          "x-defenseclaw-sensitivity": "safe"
+                        },
+                        "defenseclaw.telemetry.canary.operation": {
+                          "enum": [
+                            "runtime-pipeline-test"
+                          ],
+                          "type": "string",
+                          "x-defenseclaw-condition": "telemetry-canary-enabled-v1",
+                          "x-defenseclaw-enum-enforcement": "builder-runtime-typed-json-enum-gate",
+                          "x-defenseclaw-enum-membership-semantics": "typed-json-scalar",
+                          "x-defenseclaw-field-class": "metadata",
+                          "x-defenseclaw-max-utf8-bytes": 256,
+                          "x-defenseclaw-max-utf8-bytes-enforcement": "builder-runtime-shape-aware-utf8-byte-gate",
+                          "x-defenseclaw-max-utf8-bytes-semantics": "raw-scalar-string-utf8",
+                          "x-defenseclaw-normalization": {
+                            "effective_constraints": {
+                              "enum": [
+                                "runtime-pipeline-test"
+                              ],
+                              "max_utf8_bytes": 256
+                            },
+                            "id": "enum-v1",
+                            "notes": "closed canary operation vocabulary",
+                            "overrides": {
+                              "enum": [
+                                "runtime-pipeline-test"
+                              ]
+                            }
+                          },
+                          "x-defenseclaw-owner": "defenseclaw",
+                          "x-defenseclaw-requirement-level": "conditional",
+                          "x-defenseclaw-sensitivity": "safe"
+                        },
                         "defenseclaw.telemetry.input.reported": {
                           "type": "boolean",
                           "x-defenseclaw-field-class": "metadata",
@@ -106734,7 +106931,8 @@
           "agent-reported-cost-available-v1",
           "connector-known-v1",
           "operation-terminal-v1",
-          "technical-failure-v1"
+          "technical-failure-v1",
+          "telemetry-canary-enabled-v1"
         ],
         "event_name": "span.model.chat",
         "family_schema_version": 1,
@@ -122071,6 +122269,15 @@
           "x-defenseclaw-otlp-target": "events",
           "x-defenseclaw-sensitivity": "critical"
         },
+        "flags": {
+          "maximum": 4294967295,
+          "minimum": 0,
+          "type": "integer",
+          "x-defenseclaw-field-class": "metadata",
+          "x-defenseclaw-otlp-encoding": "direct",
+          "x-defenseclaw-otlp-target": "flags",
+          "x-defenseclaw-sensitivity": "safe"
+        },
         "kind": {
           "enum": [
             "INTERNAL",
@@ -122215,12 +122422,31 @@
           "x-defenseclaw-otlp-encoding": "message",
           "x-defenseclaw-otlp-target": "status",
           "x-defenseclaw-sensitivity": "sensitive"
+        },
+        "trace_state": {
+          "type": "string",
+          "x-defenseclaw-field-class": "metadata",
+          "x-defenseclaw-json-schema-item-bound-scope": "root-collection-safe-subset",
+          "x-defenseclaw-max-item-utf8-bytes": 4096,
+          "x-defenseclaw-max-item-utf8-bytes-enforcement": "builder-runtime-string-leaf-utf8-byte-gate",
+          "x-defenseclaw-max-item-utf8-bytes-semantics": "every-string-element-or-structured-string-leaf",
+          "x-defenseclaw-max-items": 256,
+          "x-defenseclaw-max-items-enforcement": "builder-runtime-recursive-aggregate-gate",
+          "x-defenseclaw-max-items-semantics": "recursive-aggregate-members",
+          "x-defenseclaw-max-utf8-bytes": 512,
+          "x-defenseclaw-max-utf8-bytes-enforcement": "builder-runtime-shape-aware-utf8-byte-gate",
+          "x-defenseclaw-max-utf8-bytes-semantics": "raw-scalar-string-utf8",
+          "x-defenseclaw-otlp-encoding": "direct",
+          "x-defenseclaw-otlp-target": "traceState",
+          "x-defenseclaw-semantic-format": "w3c-tracestate-v1",
+          "x-defenseclaw-sensitivity": "internal"
         }
       },
       "required": [
         "kind",
         "start_time_unix_nano",
         "end_time_unix_nano",
+        "flags",
         "status",
         "resource",
         "scope",
@@ -122385,6 +122611,7 @@
           "x-defenseclaw-max-utf8-bytes-semantics": "raw-scalar-string-utf8",
           "x-defenseclaw-otlp-encoding": "direct",
           "x-defenseclaw-otlp-target": "traceState",
+          "x-defenseclaw-semantic-format": "w3c-tracestate-v1",
           "x-defenseclaw-sensitivity": "internal"
         }
       },
@@ -126557,6 +126784,16 @@
       },
       "false_requirement": "forbidden",
       "id": "agent-reported-cost-available-v1"
+    },
+    {
+      "description": "The producer explicitly marked this runtime-pipeline canary; absence and false both disable the canary-only attributes.",
+      "enforcement": {
+        "attribute": "defenseclaw.telemetry.canary",
+        "fact": null,
+        "kind": "boolean_attribute"
+      },
+      "false_requirement": "forbidden",
+      "id": "telemetry-canary-enabled-v1"
     }
   ],
   "x-defenseclaw-conformance": {
@@ -129645,7 +129882,7 @@
   ],
   "x-defenseclaw-versions": {
     "bucket_catalog_version": 1,
-    "materialized_view_sha256": "26121f75397999a4fd1818e84dde325ca55d673b090238cbc61e60f1b6f47380",
+    "materialized_view_sha256": "191557b76fca6d94576eee0fc9127d1f37360d5f9db1dc9ebbfb48278708121b",
     "registry_version": 1,
     "schema_version": 1
   }

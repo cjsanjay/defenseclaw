@@ -118,6 +118,7 @@ class GoConditionBindingPlanIR:
     condition_id: str
     fact_id: str
     selector: str
+    optional_source: bool
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -556,7 +557,7 @@ class GoAPIPlanIR:
 
 _GO_API_PLAN_DIGEST_DOMAIN: Final = b"DefenseClaw GoAPIPlanIR v1\x00"
 _GO_SYMBOL_TABLE_DIGEST_DOMAIN: Final = b"DefenseClaw GoSymbolTableIR v1\x00"
-_CANONICAL_SYMBOL_TABLE_SHA256: Final = "8488349afc135212c436225a154bd834afe9a2751d2b76e13e12d895405a8b32"
+_CANONICAL_SYMBOL_TABLE_SHA256: Final = "4a8563120e248a344683b87999620dac744bbda4b9794214d15197d0abde2f54"
 _SHA256: Final = re.compile(r"^[0-9a-f]{64}$")
 _GO_IDENTIFIER: Final = re.compile(r"^[A-Za-z][A-Za-z0-9]*$")
 
@@ -644,14 +645,14 @@ GO_OUTPUT_FILES: Final = (
     _FIXTURES_FILE,
 )
 _EXPECTED_REVIEWED_PARTITION: Final = {
-    _IDS_FILE: 898,
+    _IDS_FILE: 901,
     _DOMAIN_FILES["genai"]: 282,
     _DOMAIN_FILES["security"]: 212,
     _DOMAIN_FILES["operations"]: 386,
 }
 _EXPECTED_CANONICAL_PUBLIC_VALUES: Final = {
     "log": 1427,
-    "span": 772,
+    "span": 778,
     "resource": 325,
     "metric": 346,
 }
@@ -1297,12 +1298,12 @@ def _fields(index: Any) -> dict[str, _Field]:
             raise GoAPIPlanError(f"{path}: unknown component or requirement")
         if field.value_source not in _VALUE_SOURCES or field.input_owner_kind not in _INPUT_OWNER_KINDS:
             raise GoAPIPlanError(f"{path}: unknown value source or input owner")
-        if field.requirement == "conditional":
+        if field.requirement in {"conditional", "optional"} and field.condition_id is not None:
             _string(field.condition_fact, f"{path}.condition_fact")
             _string(field.condition_id, f"{path}.condition_id")
             _string(field.false_requirement, f"{path}.condition_false_requirement")
         elif field.condition_fact is not None:
-            raise GoAPIPlanError(f"{path}.condition_fact: only conditional fields bind facts")
+            raise GoAPIPlanError(f"{path}.condition_fact: only conditional or guarded optional fields bind facts")
         if field.value_source == "input" and field.input_owner_kind == "none":
             raise GoAPIPlanError(f"{path}: input value has no public owner")
         if field.value_source != "input" and field.input_owner_kind != "none":
@@ -1622,7 +1623,7 @@ def _condition_bindings(
         field.condition_binding: field.selector for field in owner_fields if field.conversion_op == "condition_fact"
     }
     selector_by_attribute = {
-        field.semantic_source_id: field.selector
+        field.semantic_source_id: (field.selector, field.presence != "required")
         for field in owner_fields
         if field.value_source == "input" and field.conversion_op != "condition_fact"
     }
@@ -1640,14 +1641,16 @@ def _condition_bindings(
             raise GoAPIPlanError("condition selector coverage disagrees with enriched fields")
     bindings: list[GoConditionBindingPlanIR] = []
     for fact, condition_id in condition_by_fact.items():
+        optional_source = False
         if fact.startswith("attribute:"):
             source_ref = fact.removeprefix("attribute:")
-            selector = selector_by_attribute.get(source_ref)
-            if selector is None:
+            source = selector_by_attribute.get(source_ref)
+            if source is None:
                 raise GoAPIPlanError("Boolean-attribute condition source is absent from the public input")
+            selector, optional_source = source
         else:
             selector = selector_by_fact[fact]
-        bindings.append(GoConditionBindingPlanIR(condition_id, fact, selector))
+        bindings.append(GoConditionBindingPlanIR(condition_id, fact, selector, optional_source))
     return tuple(bindings)
 
 
@@ -1975,6 +1978,8 @@ def _span_common(owner: str) -> tuple[GoFieldPlanIR, ...]:
         ("StartTimeUnixNano", _builtin("uint64"), "required", "required_scalar"),
         ("EndTimeUnixNano", _builtin("uint64"), "required", "required_scalar"),
         ("ParentSpanID", _optional_type(_builtin("string")), "optional", "optional_scalar"),
+        ("TraceState", _optional_type(_builtin("string")), "optional", "optional_scalar"),
+        ("Flags", _builtin("uint32"), "required", "required_scalar"),
         ("Status", _named("TraceStatusInput"), "required", "required_scalar"),
         ("Resource", _named("TraceResourceInput"), "required", "required_scalar"),
         ("Scope", _named("TraceScopeInput"), "required", "required_scalar"),
@@ -3149,10 +3154,10 @@ def _file_assignments(
     expected = [(row.kind, row.source_id) for row in rows]
     if len(flattened) != len(set(flattened)) or set(flattened) != set(expected):
         raise GoAPIPlanError("Go declaration file assignment is incomplete or duplicated")
-    if len(rows) == 1778:
+    if len(rows) == 1781:
         counts = {path: len(assigned[path]) for path in _EXPECTED_REVIEWED_PARTITION}
         if counts != _EXPECTED_REVIEWED_PARTITION:
-            raise GoAPIPlanError("reviewed Go declaration partition is not 898/282/212/386")
+            raise GoAPIPlanError("reviewed Go declaration partition is not 901/282/212/386")
     return {path: tuple(assigned[path]) for path in GO_OUTPUT_FILES}
 
 

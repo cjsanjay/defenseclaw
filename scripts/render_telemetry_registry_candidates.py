@@ -309,7 +309,7 @@ _STRUCTURED_EXPECTED_KNOWN_VALUES: Final = {
 }
 _STRUCTURED_DISPOSITIONS_SHA256: Final = "19aa6a80165bed241ae9e427b9b4f7cea9d0b7001c11e5f6460b84c89bd4c0c3"
 _STRUCTURED_TYPES_SHA256: Final = "912186e674a5296b588df0b602af5891e9ae13e100b2a3674616acf2041ec5e6"
-_STRUCTURAL_CONTRACT_SHA256: Final = "4270b5ef436d9e7fa7187d2ae7ce4e02ee9ae016ef72a26ad46a16f695e5d177"
+_STRUCTURAL_CONTRACT_SHA256: Final = "6b2d6e5f48ebfda90fb2db86d320580e10b1e93b835f114677247eb59dc49ace"
 _CANONICAL_JSON_LIMITS: Final = {
     "max_depth": 8,
     "max_aggregate_members": 256,
@@ -376,13 +376,13 @@ _GO_SYMBOL_KIND_ORDER: Final = (
     "span_link_constructor",
 )
 _GO_SYMBOL_KIND_COUNTS: Final = {
-    "attribute": 329,
+    "attribute": 331,
     "family": 243,
     "log_event": 87,
     "span_event": 15,
     "link_relation": 4,
     "metric_instrument": 131,
-    "condition": 8,
+    "condition": 9,
     "condition_fact": 7,
     "phase": 12,
     "phase_code": 12,
@@ -400,12 +400,12 @@ _GO_SYMBOL_KIND_COUNTS: Final = {
     "span_link_constructor": 100,
 }
 _GO_SYMBOL_DECLARATION_COUNTS: Final = {
-    "exported_const": 898,
+    "exported_const": 901,
     "exported_type": 459,
     "exported_function": 178,
     "family_builder_method": 243,
 }
-_GO_SYMBOL_DOMAIN_COUNTS: Final = {"ids": 898, "genai": 282, "security": 212, "operations": 386}
+_GO_SYMBOL_DOMAIN_COUNTS: Final = {"ids": 901, "genai": 282, "security": 212, "operations": 386}
 _GO_SYMBOL_DECLARATION_BY_KIND: Final = {
     "attribute": "exported_const",
     "family": "exported_const",
@@ -430,9 +430,9 @@ _GO_SYMBOL_DECLARATION_BY_KIND: Final = {
     "span_link_input": "exported_type",
     "span_link_constructor": "exported_function",
 }
-_GO_SYMBOL_ROW_COUNT: Final = 1778
+_GO_SYMBOL_ROW_COUNT: Final = 1781
 _GO_SYMBOL_TABLE_DIGEST_DOMAIN: Final = b"DefenseClaw GoSymbolTableIR v1\x00"
-_GO_SYMBOL_TABLE_SHA256: Final = "8488349afc135212c436225a154bd834afe9a2751d2b76e13e12d895405a8b32"
+_GO_SYMBOL_TABLE_SHA256: Final = "4a8563120e248a344683b87999620dac744bbda4b9794214d15197d0abde2f54"
 
 
 def _normalized_candidate_path(raw: str) -> str:
@@ -1668,16 +1668,13 @@ def _recompute_resolved_group_uses(
                 origins,
                 key=lambda origin: _REQUIREMENT_RANK[origin["requirement_level"]],
             )["requirement_level"]
-            conditional = None
-            if dominant == "conditional":
-                clauses = tuple(
-                    dict.fromkeys(
-                        origin["conditional"] for origin in origins if origin["requirement_level"] == "conditional"
-                    )
-                )
-                if len(clauses) != 1 or clauses[0] is None:
-                    raise CandidateRenderError("materialized dominant conditional is ambiguous")
-                conditional = clauses[0]
+            dominant_origins = tuple(origin for origin in origins if origin["requirement_level"] == dominant)
+            clauses = tuple(dict.fromkeys(origin["conditional"] for origin in dominant_origins))
+            if len(clauses) != 1:
+                raise CandidateRenderError("materialized dominant conditional is ambiguous")
+            conditional = clauses[0]
+            if dominant == "conditional" and conditional is None:
+                raise CandidateRenderError("materialized dominant conditional is absent")
             materialized.append(
                 {
                     "ref": reference,
@@ -2739,7 +2736,9 @@ def _candidate_go_symbol_contract(
     if _SHA256.fullmatch(table_sha256) is None or computed_digest != table_sha256:
         raise CandidateRenderError("materialized Go symbol table digest does not match rows")
     if table_sha256 != _GO_SYMBOL_TABLE_SHA256:
-        raise CandidateRenderError("materialized Go symbol table is not the reviewed version 1 table")
+        raise CandidateRenderError(
+            f"materialized Go symbol table is not the reviewed version 1 table: observed {table_sha256}"
+        )
     table = CandidateGoSymbolTable(
         version=1,
         package="observability",
@@ -3390,7 +3389,7 @@ def _go_declaration_values(
             continue
         value = row.source_id.split("#", 1)[1] if row.kind == "structured_member" else row.source_id
         declarations.append(GoDeclarationValue(row.kind, row.source_id, row.symbol, "string", "string", value))
-    if len(declarations) != 898 or Counter(item.kind for item in declarations) != {
+    if len(declarations) != 901 or Counter(item.kind for item in declarations) != {
         kind: count
         for kind, count in _GO_SYMBOL_KIND_COUNTS.items()
         if _GO_SYMBOL_DECLARATION_BY_KIND[kind] == "exported_const"
@@ -3960,9 +3959,9 @@ def _enriched_field_descriptors(
                     origin=f"structured_types.{type_id}.canonical_json.{arm_id}",
                 )
                 order += 1
-    if len(descriptors) != 2807:
+    if len(descriptors) != 2813:
         raise CandidateRenderError(
-            f"enriched field descriptor inventory is incomplete: expected 2807, got {len(descriptors)}"
+            f"enriched field descriptor inventory is incomplete: expected 2813, got {len(descriptors)}"
         )
     return MappingProxyType({key: descriptors[key] for key in sorted(descriptors)})
 
@@ -5234,7 +5233,7 @@ def build_candidate_render_index(view: object) -> CandidateRenderIndex:
                 requirement = direct_use["requirement_level"]
                 conditional = direct_use["conditional"]
                 conditional_is_valid = (
-                    requirement == "conditional"
+                    requirement in {"conditional", "optional"}
                     and isinstance(conditional, str)
                     and bool(conditional)
                     and conditional in condition_ids
@@ -5344,7 +5343,7 @@ def build_candidate_render_index(view: object) -> CandidateRenderIndex:
             if use["role"] != expected_role or use["requirement_level"] not in _REQUIREMENT_RANK:
                 raise CandidateRenderError("materialized resolved attribute use is invalid")
             resolved_condition_is_valid = (
-                use["requirement_level"] == "conditional"
+                use["requirement_level"] in {"conditional", "optional"}
                 and isinstance(use["conditional"], str)
                 and bool(use["conditional"])
                 and use["conditional"] in condition_ids
@@ -5383,7 +5382,7 @@ def build_candidate_render_index(view: object) -> CandidateRenderIndex:
                     _ATTRIBUTE_USE_ORIGIN_FIELDS,
                 )
                 origin_condition_is_valid = (
-                    origin["requirement_level"] == "conditional"
+                    origin["requirement_level"] in {"conditional", "optional"}
                     and isinstance(origin["conditional"], str)
                     and bool(origin["conditional"])
                     and origin["conditional"] in condition_ids
@@ -5417,14 +5416,13 @@ def build_candidate_render_index(view: object) -> CandidateRenderIndex:
                 origins,
                 key=lambda item: _REQUIREMENT_RANK[item["requirement_level"]],
             )["requirement_level"]
-            dominant_conditional = None
-            if dominant_requirement == "conditional":
-                dominant_clauses = tuple(
-                    dict.fromkeys(item["conditional"] for item in origins if item["requirement_level"] == "conditional")
-                )
-                if len(dominant_clauses) != 1 or dominant_clauses[0] is None:
-                    raise CandidateRenderError("materialized resolved attribute conditions disagree")
-                dominant_conditional = dominant_clauses[0]
+            dominant_origins = tuple(item for item in origins if item["requirement_level"] == dominant_requirement)
+            dominant_clauses = tuple(dict.fromkeys(item["conditional"] for item in dominant_origins))
+            if len(dominant_clauses) != 1:
+                raise CandidateRenderError("materialized resolved attribute conditions disagree")
+            dominant_conditional = dominant_clauses[0]
+            if dominant_requirement == "conditional" and dominant_conditional is None:
+                raise CandidateRenderError("materialized resolved conditional attribute has no condition")
             if use["requirement_level"] != dominant_requirement or use["conditional"] != dominant_conditional:
                 raise CandidateRenderError("materialized resolved attribute requirement disagrees with origins")
             derived_constraints = _derive_resolved_constraints(tuple(origins))
@@ -5483,7 +5481,9 @@ def build_candidate_render_index(view: object) -> CandidateRenderIndex:
         _canonical_json_bytes(_plain(_semantic_digest_projection(raw_structural_contract)))
     ).hexdigest()
     if structural_contract_digest != _STRUCTURAL_CONTRACT_SHA256:
-        raise CandidateRenderError("materialized structural contract is not canonical")
+        raise CandidateRenderError(
+            f"materialized structural contract is not canonical: observed {structural_contract_digest}"
+        )
     contract = _tagged(raw_structural_contract, "StructuralContractIR")
     required_contract = {
         "id",
@@ -6387,6 +6387,8 @@ def _trace_otlp(record: Mapping[str, Any], contract: Mapping[str, FrozenJSON]) -
     }
     direct_fields = {
         "parent_span_id": "parentSpanId",
+        "trace_state": "traceState",
+        "flags": "flags",
         "dropped_attributes_count": "droppedAttributesCount",
         "dropped_events_count": "droppedEventsCount",
         "dropped_links_count": "droppedLinksCount",

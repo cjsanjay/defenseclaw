@@ -257,7 +257,8 @@ func validTraceBuildInput(family *testGeneratedTraceFamily) familyTraceBuildInpu
 	return familyTraceBuildInput{
 		envelope: envelope, outcome: Present(OutcomeCompleted), kind: "INTERNAL",
 		startTimeUnixNano: 10, endTimeUnixNano: 20,
-		parentSpanID: Present("1111111111111111"), status: NewTraceStatusOK(),
+		parentSpanID: Present("1111111111111111"), traceState: Present("vendor=value"), flags: 0x301,
+		status: NewTraceStatusOK(),
 		resource: TraceResourceInput{
 			SchemaURL:              "https://opentelemetry.io/schemas/1.42.0",
 			DroppedAttributesCount: Present(uint32(0)),
@@ -439,6 +440,9 @@ func TestFamilyBuilderBuildsExactTraceStructure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if body["trace_state"] != "vendor=value" || body["flags"] != json.Number("769") {
+		t.Fatalf("trace context body = state=%#v flags=%#v", body["trace_state"], body["flags"])
+	}
 	attributes := body["attributes"].(map[string]any)
 	for key, expected := range map[string]any{
 		"defenseclaw.bucket":                     string(BucketAgentLifecycle),
@@ -455,6 +459,7 @@ func TestFamilyBuilderBuildsExactTraceStructure(t *testing.T) {
 	}
 	classes := record.FieldClasses()
 	for _, pointer := range []string{
+		"/trace_state", "/flags",
 		"/events/0/attributes", "/events/0/dropped_attributes_count",
 		"/links/0/attributes/defenseclaw.link.relation", "/links/0/trace_state",
 		"/resource/dropped_attributes_count", "/scope/dropped_attributes_count",
@@ -567,6 +572,9 @@ func TestFamilyBuilderRejectsAdversarialTraceInputs(t *testing.T) {
 		}, code: FamilyBuildInvalidTrace},
 		{name: "end before start", mutate: func(_ *testGeneratedTraceFamily, input *familyTraceBuildInput) {
 			input.endTimeUnixNano = input.startTimeUnixNano - 1
+		}, code: FamilyBuildInvalidTrace},
+		{name: "noncanonical trace state", mutate: func(_ *testGeneratedTraceFamily, input *familyTraceBuildInput) {
+			input.traceState = Present("vendor=value, vendor2=value")
 		}, code: FamilyBuildInvalidTrace},
 		{name: "unknown kind", mutate: func(_ *testGeneratedTraceFamily, input *familyTraceBuildInput) { input.kind = "CLIENT" }, code: FamilyBuildInvalidTrace},
 		{name: "bad workflow token", mutate: func(_ *testGeneratedTraceFamily, input *familyTraceBuildInput) {

@@ -47,6 +47,10 @@ conditions:
     description: The connector explicitly supplied a cumulative agent/session cost in USD; reported zero is available, while an absent value is not.
     enforcement: {kind: boolean_attribute, attribute: defenseclaw.agent.reported_cost.present}
     false_requirement: forbidden
+  - id: telemetry-canary-enabled-v1
+    description: The producer explicitly marked this runtime-pipeline canary; absence and false both disable the canary-only attributes.
+    enforcement: {kind: boolean_attribute, attribute: defenseclaw.telemetry.canary}
+    false_requirement: forbidden
 mandatory_rule_catalog:
   version: 1
   rules:
@@ -557,6 +561,8 @@ structural_contract:
         - {name: start_time_unix_nano, type: uint64, required: true, field_class: metadata, sensitivity: safe, normalization: {id: numeric-range-v1, overrides: {min: 1, max: 18446744073709551615}}, otlp: {target: startTimeUnixNano, encoding: uint64_string}}
         - {name: end_time_unix_nano, type: uint64, required: true, field_class: metadata, sensitivity: safe, normalization: {id: numeric-range-v1, overrides: {min: 1, max: 18446744073709551615}}, otlp: {target: endTimeUnixNano, encoding: uint64_string}}
         - {name: parent_span_id, type: string, required: false, semantic_format: otel-span-id-v1, field_class: identifier, sensitivity: internal, normalization: {id: digest-v1, overrides: {max_utf8_bytes: 16, pattern: '^[0-9a-f]{16}$'}}, otlp: {target: parentSpanId, encoding: hex}}
+        - {name: trace_state, type: string, required: false, semantic_format: w3c-tracestate-v1, field_class: metadata, sensitivity: internal, normalization: {id: bounded-v1, overrides: {max_utf8_bytes: 512}}, otlp: {target: traceState, encoding: direct}}
+        - {name: flags, type: uint32, required: true, field_class: metadata, sensitivity: safe, normalization: {id: numeric-range-v1, overrides: {min: 0, max: 4294967295}}, otlp: {target: flags, encoding: direct}}
         - {name: status, type: object, required: true, object_ref: trace_status, field_class: metadata, sensitivity: sensitive, normalization: {id: structured-content-v1, overrides: {max_utf8_bytes: 65536, max_item_utf8_bytes: 65536, max_items: 2, max_depth: 1, max_properties: 2}}, otlp: {target: status, encoding: message}}
         - {name: resource, type: object, required: true, object_ref: trace_resource, field_class: metadata, sensitivity: sensitive, normalization: {id: structured-content-v1, overrides: {max_utf8_bytes: 65536, max_item_utf8_bytes: 4096, max_items: 256, max_depth: 2, max_properties: 256}}}
         - {name: scope, type: object, required: true, object_ref: trace_scope, field_class: metadata, sensitivity: internal, normalization: {id: structured-content-v1, overrides: {max_utf8_bytes: 65536, max_item_utf8_bytes: 4096, max_items: 256, max_depth: 2, max_properties: 256}}}
@@ -599,7 +605,7 @@ structural_contract:
       fields:
         - {name: trace_id, type: string, required: true, semantic_format: otel-trace-id-v1, field_class: identifier, sensitivity: internal, normalization: {id: digest-v1, overrides: {max_utf8_bytes: 32, pattern: '^[0-9a-f]{32}$'}}, otlp: {target: traceId, encoding: hex}}
         - {name: span_id, type: string, required: true, semantic_format: otel-span-id-v1, field_class: identifier, sensitivity: internal, normalization: {id: digest-v1, overrides: {max_utf8_bytes: 16, pattern: '^[0-9a-f]{16}$'}}, otlp: {target: spanId, encoding: hex}}
-        - {name: trace_state, type: string, required: false, field_class: metadata, sensitivity: internal, normalization: {id: bounded-v1, overrides: {max_utf8_bytes: 512}}, otlp: {target: traceState, encoding: direct}}
+        - {name: trace_state, type: string, required: false, semantic_format: w3c-tracestate-v1, field_class: metadata, sensitivity: internal, normalization: {id: bounded-v1, overrides: {max_utf8_bytes: 512}}, otlp: {target: traceState, encoding: direct}}
         - {name: attributes, type: canonical_json, required: true, semantic_ref: link.core, field_class: metadata, sensitivity: sensitive, normalization: {id: structured-content-v1, overrides: {max_utf8_bytes: 262144, max_item_utf8_bytes: 65536, max_items: 64, max_depth: 8, max_properties: 64}}, otlp: {target: attributes, encoding: key_value_array}}
         - {name: dropped_attributes_count, type: uint32, required: false, field_class: metadata, sensitivity: safe, normalization: {id: numeric-range-v1, overrides: {min: 0, max: 4294967295}}, otlp: {target: droppedAttributesCount, encoding: direct}}
   metric:

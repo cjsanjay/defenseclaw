@@ -248,6 +248,8 @@ on a body copy or synthesize either ID.
 | `parent_span_id` | Optional nonzero lowercase 16-hex OTel span ID |
 | `start_time_unix_nano` | Required positive `uint64` |
 | `end_time_unix_nano` | Required `uint64`, greater than or equal to start |
+| `trace_state` | Optional canonical W3C tracestate string, at most 512 bytes; malformed or non-canonical values fail closed |
+| `flags` | Required complete OTLP `uint32` flags word; for an SDK-runtime-sourced span, bits 10–31 MUST be zero |
 | `attributes` | Required exact family-resolved attribute object |
 | `dropped_attributes_count` | Optional `uint32`; absence means zero |
 | `events` | Optional bounded array of registered event objects |
@@ -305,7 +307,12 @@ ordinary attribute registry.
 The registry representation is executable mapping data, not adapter prose. It
 maps envelope correlation IDs to `Span.trace_id`/`Span.span_id`,
 `body.parent_span_id` to `Span.parent_span_id`, `span_name` to `Span.name`, and
-every canonical body field to its matching OTLP protobuf field. Resource/scope
+`body.trace_state`/`body.flags` directly to `Span.trace_state`/`Span.flags`; it
+maps every other canonical body field to its matching OTLP protobuf field. The
+full `uint32` flags word survives projection. For a span created from the OTel
+SDK runtime representation, bits 0–7 preserve the W3C trace flags, bit 8 states
+that parent-remoteness is known, bit 9 records a remote parent, and bits 10–31
+are zero. Resource/scope
 `schema_url` maps to `ResourceSpans.schema_url`/`ScopeSpans.schema_url`, not to a
 field on `Resource` or `InstrumentationScope`. Status codes map `UNSET=0`, `OK=1`,
 and `ERROR=2`; description maps to the OTLP status message. Every span-, event-,
@@ -373,12 +380,15 @@ that closes only after its worker and exporter have actually ended, including wh
 the public shutdown deadline expires or exporter shutdown panics; generation-owned
 canary acknowledgement cannot outlive that signal.
 
-This substrate is not authority to activate canonical destination consumers. The
-generated `Record` MUST first own W3C `trace_state` and the complete OTLP flags
-word, including sampled and remote-parent bits; no canonical projector may recover
-or overwrite either value from the physical SDK callback. Configured safe custom
-resource attributes likewise require one typed bounded canonical representation,
-not acceptance as unregistered SDK-only extras. Activation additionally requires
+The generated `Record` owns W3C `trace_state` and the complete OTLP flags word,
+including sampled and remote-parent bits. The physical callback performs exact
+parity only; no handoff or projector may recover, overwrite, or repair either
+canonical value from SDK state. Runtime-sourced records with any reserved flag bit
+set fail before handoff registration, while the registry retains the general
+lossless `uint32` representation needed for equivalent OTLP input. This substrate
+still does not authorize canonical destination activation: configured safe custom
+resource attributes first require one typed bounded canonical representation, not
+acceptance as unregistered SDK-only extras. Activation additionally requires
 the generated two-span root-agent/model canary, a runtime-graph lease/reload E2E
 from start through end, PR #403 producer and Galileo projection migration, and PR
 #412 local-observability validation through the dedicated Agent360 branch that

@@ -678,9 +678,12 @@ Required cases:
 - Physical/canonical parity covers trace/span/parent IDs, rendered name, exact
   start/end, kind, status, bucket/family/family-version/config-generation,
   canonical scope metadata, and every registered resource key; canonical-record
-  validation separately fixes source and plan digest. Until the generated record
-  also owns W3C trace state and the full OTLP flags word, no canonical destination
-  is activated.
+  validation separately fixes source and plan digest. The generated record owns
+  canonical W3C trace state and the full OTLP flags word; the SDK callback may
+  only verify exact parity and cannot recover or overwrite either value. Direct
+  adversarial tests reject malformed/oversized/non-canonical tracestate, invalid
+  numeric words, and reserved bits 10–31 on SDK-runtime-sourced spans. Canonical
+  destination activation remains closed on the other requirements in section 9.1.
 - Flush visits children in destination order. Shutdown first closes provider and
   callback intake, waits for already-entered callbacks, retires pending handoff
   state after that drain, and visits children in reverse order. Malformed partial

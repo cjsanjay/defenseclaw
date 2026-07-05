@@ -3,7 +3,7 @@
     "artifact": "otlp-fixtures/cases/valid-telemetry-rejection-without-raw-payload.json",
     "authority": "candidate-not-public-authority",
     "generator": "defenseclaw-telemetry-candidate-renderer-v1",
-    "materialized_view_sha256": "26121f75397999a4fd1818e84dde325ca55d673b090238cbc61e60f1b6f47380",
+    "materialized_view_sha256": "191557b76fca6d94576eee0fc9127d1f37360d5f9db1dc9ebbfb48278708121b",
     "registry_version": 1
   },
   "canonical_record": {
@@ -78,6 +78,6 @@
   "family": "log.telemetry.batch.rejected",
   "fixture_format": "defenseclaw-otlp-fixture-v1",
   "id": "valid-telemetry-rejection-without-raw-payload",
-  "materialized_view_sha256": "26121f75397999a4fd1818e84dde325ca55d673b090238cbc61e60f1b6f47380",
+  "materialized_view_sha256": "191557b76fca6d94576eee0fc9127d1f37360d5f9db1dc9ebbfb48278708121b",
   "signal": "logs"
 }

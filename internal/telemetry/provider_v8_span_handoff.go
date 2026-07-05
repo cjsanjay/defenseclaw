@@ -31,9 +31,10 @@ import (
 )
 
 const (
-	v8DefaultCanonicalSpanHandoffCapacity = 2_048
-	v8DefaultCanonicalSpanHandoffBytes    = 64 * 1_024 * 1_024
-	v8MaxDestinationNameBytes             = 128
+	v8DefaultCanonicalSpanHandoffCapacity        = 2_048
+	v8DefaultCanonicalSpanHandoffBytes           = 64 * 1_024 * 1_024
+	v8MaxDestinationNameBytes                    = 128
+	v8RuntimeOTLPFlagsMask                uint32 = 0x3ff
 )
 
 // V8CanonicalEndedSpan is the generation-owned, copy-safe handoff form of a
@@ -268,14 +269,7 @@ func (handoff *v8SpanHandoff) consume(span sdktrace.ReadOnlySpan) (V8CanonicalEn
 		return V8CanonicalEndedSpan{}, false
 	}
 	pending.state.CompareAndSwap(v8HandoffStatePending, v8HandoffStateConsumed)
-	canonical := pending.span
-	canonical.traceState = strings.Clone(span.SpanContext().TraceState().String())
-	canonical.traceFlags = byte(span.SpanContext().TraceFlags())
-	canonical.otlpFlags = uint32(span.SpanContext().TraceFlags()) | 0x100
-	if span.Parent().IsValid() && span.Parent().IsRemote() {
-		canonical.otlpFlags |= 0x200
-	}
-	return canonical, true
+	return pending.span, true
 }
 
 func (registration v8SpanHandoffRegistration) cancel() {
@@ -692,6 +686,19 @@ func newV8CanonicalEndedSpan(record observability.Record) (V8CanonicalEndedSpan,
 	if !ok {
 		return V8CanonicalEndedSpan{}, false
 	}
+	traceState, ok := v8CanonicalTraceState(object["trace_state"])
+	if !ok {
+		return V8CanonicalEndedSpan{}, false
+	}
+	otlpFlags, ok := v8CanonicalUint32(object["flags"])
+	// This handoff is constructed from an SDK runtime span rather than an
+	// equivalent OTLP message. OTLP reserves bits 10-31 for future use and
+	// requires runtime-sourced producers to clear them. Keep the registry's
+	// general uint32 contract lossless while rejecting impossible runtime
+	// parity before registration.
+	if !ok || otlpFlags&^v8RuntimeOTLPFlagsMask != 0 {
+		return V8CanonicalEndedSpan{}, false
+	}
 	controls, ok := v8CanonicalControlAttributes(record, object)
 	if !ok {
 		return V8CanonicalEndedSpan{}, false
@@ -709,6 +716,9 @@ func newV8CanonicalEndedSpan(record observability.Record) (V8CanonicalEndedSpan,
 		scopeSchemaURL:     controls.scopeSchemaURL,
 		resourceSchemaURL:  controls.resourceSchemaURL,
 		resourceAttributes: controls.resourceAttributes,
+		traceState:         traceState,
+		traceFlags:         byte(otlpFlags),
+		otlpFlags:          otlpFlags,
 	}, true
 }
 
@@ -831,6 +841,31 @@ func v8CanonicalParentSpanID(value any) (trace.SpanID, bool, bool) {
 	return parent, true, true
 }
 
+func v8CanonicalTraceState(value any) (string, bool) {
+	if value == nil {
+		return "", true
+	}
+	text, ok := value.(string)
+	if !ok || len(text) > 512 {
+		return "", false
+	}
+	parsed, err := trace.ParseTraceState(text)
+	return strings.Clone(text), err == nil && parsed.String() == text
+}
+
+func v8CanonicalUint32(value any) (uint32, bool) {
+	number, ok := value.(json.Number)
+	if !ok {
+		return 0, false
+	}
+	rational, ok := new(big.Rat).SetString(number.String())
+	if !ok || !rational.IsInt() || rational.Sign() < 0 || !rational.Num().IsUint64() {
+		return 0, false
+	}
+	unsigned := rational.Num().Uint64()
+	return uint32(unsigned), unsigned <= math.MaxUint32
+}
+
 func v8CanonicalSpanStatus(value any) (codes.Code, string, bool) {
 	status, ok := value.(map[string]any)
 	if !ok {
@@ -866,7 +901,10 @@ func v8CanonicalPhysicalParity(canonical V8CanonicalEndedSpan, physical sdktrace
 		canonical.name != physical.Name() ||
 		!canonical.start.Equal(physical.StartTime()) ||
 		!canonical.end.Equal(physical.EndTime()) ||
-		canonical.kind != physical.SpanKind() {
+		canonical.kind != physical.SpanKind() ||
+		canonical.traceState != physical.SpanContext().TraceState().String() ||
+		canonical.traceFlags != byte(physical.SpanContext().TraceFlags()) ||
+		canonical.otlpFlags != v8PhysicalOTLPFlags(physical) {
 		return false
 	}
 	physicalParent := physical.Parent()
@@ -878,6 +916,14 @@ func v8CanonicalPhysicalParity(canonical V8CanonicalEndedSpan, physical sdktrace
 	return canonical.statusCode == status.Code && canonical.statusDescription == status.Description &&
 		v8PhysicalControlAttributesMatch(canonical, physical.Attributes()) &&
 		v8PhysicalScopeMatches(canonical, physical) && v8PhysicalResourceMatches(canonical, physical)
+}
+
+func v8PhysicalOTLPFlags(span sdktrace.ReadOnlySpan) uint32 {
+	flags := uint32(span.SpanContext().TraceFlags()) | 0x100
+	if span.Parent().IsValid() && span.Parent().IsRemote() {
+		flags |= 0x200
+	}
+	return flags
 }
 
 func v8PhysicalControlAttributesMatch(
