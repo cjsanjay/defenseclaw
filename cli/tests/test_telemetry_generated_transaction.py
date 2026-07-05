@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 import os
@@ -87,6 +88,54 @@ def _ownership(transaction: ModuleType, outputs: Mapping[str, Any]) -> dict[str,
     return {path: transaction.PriorOwnedOutput.from_rendered(output) for path, output in outputs.items()}
 
 
+def _adoption_outputs(transaction: ModuleType, version: int) -> dict[str, Any]:
+    outputs = _outputs(transaction, version, include_extra=False)
+    for index, path in enumerate(sorted(transaction.EXACT_BASELINE_ADOPTION_PATHS)):
+        outputs[path] = transaction.RenderedOutput(
+            _json_payload(version, f"adopted-{index}"),
+            JSON_MARKER,
+        )
+    return outputs
+
+
+def _install_adoption_predecessors(
+    transaction: ModuleType,
+    repository: Path,
+) -> tuple[dict[str, Any], dict[str, tuple[bytes, int]]]:
+    adoption: dict[str, Any] = {}
+    predecessors: dict[str, tuple[bytes, int]] = {}
+    for index, path in enumerate(sorted(transaction.EXACT_BASELINE_ADOPTION_PATHS)):
+        payload = (
+            json.dumps(
+                {"legacy": True, "ordinal": index, "path": path},
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            + "\n"
+        ).encode()
+        target = repository / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(payload)
+        target.chmod(0o644)
+        adoption[path] = transaction.BaselineAdoption(
+            payload=payload,
+            sha256=hashlib.sha256(payload).hexdigest(),
+            absent_marker=JSON_MARKER,
+        )
+        predecessors[path] = (payload, 0o644)
+    return adoption, predecessors
+
+
+def _assert_adoption_predecessors(
+    repository: Path,
+    predecessors: Mapping[str, tuple[bytes, int]],
+) -> None:
+    for path, (payload, mode) in predecessors.items():
+        target = repository / path
+        assert target.read_bytes() == payload
+        assert stat.S_IMODE(target.stat().st_mode) == mode
+
+
 def _worktree_snapshot(root: Path) -> dict[str, tuple[bytes, int]]:
     result: dict[str, tuple[bytes, int]] = {}
     for base in (root / "schemas", root / "internal"):
@@ -111,6 +160,466 @@ def _worktree_repository(tmp_path: Path) -> Path:
     (root / "schemas/telemetry/generated").mkdir(parents=True)
     (root / "internal/observability").mkdir(parents=True)
     return root
+
+
+def test_baseline_adoption_uses_the_exact_reviewed_26_path_authority_and_then_normal_ownership(
+    transaction: ModuleType,
+    repository: Path,
+) -> None:
+    assert len(transaction.EXACT_BASELINE_ADOPTION_PATHS) == 26
+    adoption, _predecessors = _install_adoption_predecessors(transaction, repository)
+    first = _adoption_outputs(transaction, 1)
+
+    transaction.write_outputs(repository, first, {}, adoption=adoption)
+    _assert_outputs(repository, first)
+    transaction.check_outputs(repository, first, _ownership(transaction, first), adoption=adoption)
+
+    second = _adoption_outputs(transaction, 2)
+    transaction.write_outputs(
+        repository,
+        second,
+        _ownership(transaction, first),
+        adoption=adoption,
+    )
+    _assert_outputs(repository, second)
+    transaction.check_outputs(repository, second, _ownership(transaction, second), adoption=adoption)
+
+
+def test_baseline_adoption_rejects_wrong_same_count_path_substitution_before_writes(
+    transaction: ModuleType,
+    repository: Path,
+) -> None:
+    adoption, _predecessors = _install_adoption_predecessors(transaction, repository)
+    before = _worktree_snapshot(repository)
+    removed = sorted(adoption)[0]
+    replacement = "schemas/not-a-reviewed-public-schema.json"
+    substituted = dict(adoption)
+    substituted[replacement] = substituted.pop(removed)
+
+    with pytest.raises(transaction.TransactionError, match="outside the exact reviewed allowlist"):
+        transaction.write_outputs(
+            repository,
+            _adoption_outputs(transaction, 1),
+            {},
+            adoption=substituted,
+        )
+
+    assert _worktree_snapshot(repository) == before
+
+
+def test_baseline_adoption_rejects_partial_or_disappearing_authority(
+    transaction: ModuleType,
+    repository: Path,
+) -> None:
+    adoption, _predecessors = _install_adoption_predecessors(transaction, repository)
+    outputs = _adoption_outputs(transaction, 1)
+    omitted = sorted(adoption)[0]
+
+    partial = dict(adoption)
+    partial.pop(omitted)
+    with pytest.raises(transaction.TransactionError, match="exact 26-path authority set"):
+        transaction.write_outputs(repository, outputs, {}, adoption=partial)
+
+    missing_desired = dict(outputs)
+    missing_desired.pop(omitted)
+    with pytest.raises(transaction.TransactionError, match="authority cannot disappear"):
+        transaction.write_outputs(repository, missing_desired, {}, adoption=adoption)
+
+    transaction.write_outputs(repository, outputs, {}, adoption=adoption)
+    partial_prior = {omitted: _ownership(transaction, outputs)[omitted]}
+    with pytest.raises(transaction.TransactionError, match="partially or inconsistently owned"):
+        transaction.write_outputs(repository, outputs, partial_prior, adoption=adoption)
+    with pytest.raises(transaction.TransactionError, match="outside the allowlist"):
+        transaction.write_outputs(repository, outputs, _ownership(transaction, outputs))
+
+
+@pytest.mark.parametrize("mutation", ["bytes", "mode", "symlink", "hardlink"])
+def test_baseline_adoption_authenticates_each_regular_single_link_predecessor(
+    transaction: ModuleType,
+    repository: Path,
+    mutation: str,
+) -> None:
+    adoption, _predecessors = _install_adoption_predecessors(transaction, repository)
+    path = sorted(adoption)[0]
+    target = repository / path
+    if mutation == "bytes":
+        target.write_bytes(b"changed legacy bytes\n")
+    elif mutation == "mode":
+        target.chmod(0o600)
+    elif mutation == "symlink":
+        target.unlink()
+        outside = repository.parent / "adoption-outside"
+        outside.write_bytes(adoption[path].payload)
+        target.symlink_to(outside)
+    else:
+        outside = repository.parent / "adoption-hardlink"
+        outside.write_bytes(adoption[path].payload)
+        target.unlink()
+        os.link(outside, target)
+
+    before = _worktree_snapshot(repository)
+    with pytest.raises(transaction.TransactionError):
+        transaction.write_outputs(
+            repository,
+            _adoption_outputs(transaction, 1),
+            {},
+            adoption=adoption,
+        )
+    assert _worktree_snapshot(repository) == before
+
+
+def test_baseline_adoption_rejects_unauthenticated_digest_and_marker_binding(
+    transaction: ModuleType,
+    repository: Path,
+) -> None:
+    adoption, _predecessors = _install_adoption_predecessors(transaction, repository)
+    path = sorted(adoption)[0]
+    predecessor = adoption[path]
+
+    wrong_digest = dict(adoption)
+    wrong_digest[path] = transaction.BaselineAdoption(
+        predecessor.payload,
+        "0" * 64,
+        predecessor.absent_marker,
+        predecessor.mode,
+    )
+    with pytest.raises(transaction.TransactionError, match="bytes disagree with their digest"):
+        transaction.write_outputs(
+            repository,
+            _adoption_outputs(transaction, 1),
+            {},
+            adoption=wrong_digest,
+        )
+
+    wrong_marker = dict(adoption)
+    wrong_marker[path] = transaction.BaselineAdoption(
+        predecessor.payload,
+        predecessor.sha256,
+        b"different-future-marker",
+        predecessor.mode,
+    )
+    with pytest.raises(transaction.TransactionError, match="absent marker disagrees"):
+        transaction.write_outputs(
+            repository,
+            _adoption_outputs(transaction, 1),
+            {},
+            adoption=wrong_marker,
+        )
+
+    marked_payload = predecessor.payload + JSON_MARKER + b"\n"
+    marker_present = dict(adoption)
+    marker_present[path] = transaction.BaselineAdoption(
+        marked_payload,
+        hashlib.sha256(marked_payload).hexdigest(),
+        JSON_MARKER,
+        predecessor.mode,
+    )
+    with pytest.raises(transaction.TransactionError, match="already carries generated authority"):
+        transaction.write_outputs(
+            repository,
+            _adoption_outputs(transaction, 1),
+            {},
+            adoption=marker_present,
+        )
+
+
+@pytest.mark.parametrize(
+    ("failure_stage", "failure_path"),
+    [
+        ("stage_created", None),
+        ("output_staged", None),
+        ("staging_fsynced", None),
+        ("output_backed_up", None),
+        ("backups_complete", None),
+        ("transaction_ancestors_fsynced", None),
+        ("journal_published", "prepared"),
+        ("journal_prepared", None),
+        ("target_directories_created", None),
+        ("before_output_apply", None),
+        ("after_output_apply", None),
+        ("before_manifest_apply", None),
+        ("after_manifest_apply", None),
+    ],
+)
+def test_baseline_adoption_precommit_faults_restore_every_predecessor(
+    transaction: ModuleType,
+    repository: Path,
+    failure_stage: str,
+    failure_path: str | None,
+) -> None:
+    adoption, predecessors = _install_adoption_predecessors(transaction, repository)
+    failed = False
+
+    def fail(stage: str, path: str | None) -> None:
+        nonlocal failed
+        if not failed and stage == failure_stage and (failure_path is None or path == failure_path):
+            failed = True
+            raise RuntimeError("adoption fault")
+
+    with pytest.raises(transaction.TransactionError):
+        transaction.write_outputs(
+            repository,
+            _adoption_outputs(transaction, 1),
+            {},
+            adoption=adoption,
+            fault_injector=fail,
+        )
+
+    assert failed
+    _assert_adoption_predecessors(repository, predecessors)
+    assert not (repository / transaction.MANIFEST_PATH).exists()
+
+
+def test_baseline_adoption_interruption_recovers_all_predecessors(
+    transaction: ModuleType,
+    repository: Path,
+) -> None:
+    adoption, predecessors = _install_adoption_predecessors(transaction, repository)
+
+    class Crash(BaseException):
+        pass
+
+    def crash(stage: str, path: str | None) -> None:
+        if stage == "after_output_apply" and path in adoption:
+            raise Crash
+
+    with pytest.raises(Crash):
+        transaction.write_outputs(
+            repository,
+            _adoption_outputs(transaction, 1),
+            {},
+            adoption=adoption,
+            fault_injector=crash,
+        )
+
+    assert transaction.recover_outputs(repository) == transaction.RecoveryResult(True, "rolled_back")
+    _assert_adoption_predecessors(repository, predecessors)
+    assert not (repository / transaction.MANIFEST_PATH).exists()
+
+
+def test_baseline_adoption_committed_interruption_completes_without_restoring_predecessors(
+    transaction: ModuleType,
+    repository: Path,
+) -> None:
+    adoption, _predecessors = _install_adoption_predecessors(transaction, repository)
+    outputs = _adoption_outputs(transaction, 1)
+
+    class Crash(BaseException):
+        pass
+
+    def crash(stage: str, _path: str | None) -> None:
+        if stage == "journal_committed":
+            raise Crash
+
+    with pytest.raises(Crash):
+        transaction.write_outputs(
+            repository,
+            outputs,
+            {},
+            adoption=adoption,
+            fault_injector=crash,
+        )
+
+    assert transaction.recover_outputs(repository) == transaction.RecoveryResult(True, "completed")
+    _assert_outputs(repository, outputs)
+
+
+def test_baseline_adoption_lock_contention_never_touches_predecessors(
+    transaction: ModuleType,
+    repository: Path,
+) -> None:
+    adoption, predecessors = _install_adoption_predecessors(transaction, repository)
+    state = transaction._state_root(repository, create=True)
+
+    with transaction._exclusive_lock(state):
+        with pytest.raises(transaction.TransactionBusyError):
+            transaction.write_outputs(
+                repository,
+                _adoption_outputs(transaction, 1),
+                {},
+                adoption=adoption,
+            )
+
+    _assert_adoption_predecessors(repository, predecessors)
+
+
+def test_baseline_adoption_concurrent_predecessor_change_is_never_overwritten(
+    transaction: ModuleType,
+    repository: Path,
+) -> None:
+    adoption, _predecessors = _install_adoption_predecessors(transaction, repository)
+    path = sorted(adoption)[0]
+    manual = b"concurrent operator content\n"
+    changed = False
+
+    def change_before_apply(stage: str, candidate: str | None) -> None:
+        nonlocal changed
+        if stage == "before_output_apply" and candidate == path and not changed:
+            (repository / path).write_bytes(manual)
+            changed = True
+
+    with pytest.raises(transaction.RollbackError, match="rollback both failed"):
+        transaction.write_outputs(
+            repository,
+            _adoption_outputs(transaction, 1),
+            {},
+            adoption=adoption,
+            fault_injector=change_before_apply,
+        )
+
+    assert changed
+    assert (repository / path).read_bytes() == manual
+
+
+def test_recovery_accepts_pre_adoption_v1_journal_format(
+    transaction: ModuleType,
+    repository: Path,
+) -> None:
+    first = _outputs(transaction, 1, include_extra=False)
+    transaction.write_outputs(repository, first, {})
+
+    class Crash(BaseException):
+        pass
+
+    def crash(stage: str, _path: str | None) -> None:
+        if stage == "journal_prepared":
+            raise Crash
+
+    with pytest.raises(Crash):
+        transaction.write_outputs(
+            repository,
+            _outputs(transaction, 2, include_extra=False),
+            _ownership(transaction, first),
+            fault_injector=crash,
+        )
+
+    state = repository / transaction.STATE_DIRECTORY.as_posix()
+    journal_path = state / transaction.JOURNAL_NAME
+    journal = json.loads(journal_path.read_bytes())
+    journal["format_version"] = 1
+    for prior in journal["prior"]:
+        prior.pop("adopted")
+        prior.pop("absent_marker")
+    journal_path.write_bytes(transaction._canonical_json(journal))
+
+    assert transaction.recover_outputs(repository) == transaction.RecoveryResult(True, "rolled_back")
+    _assert_outputs(repository, first)
+
+
+def test_recovery_completes_pre_adoption_committed_v1_journal_format(
+    transaction: ModuleType,
+    repository: Path,
+) -> None:
+    first = _outputs(transaction, 1, include_extra=False)
+    second = _outputs(transaction, 2, include_extra=False)
+    transaction.write_outputs(repository, first, {})
+
+    class Crash(BaseException):
+        pass
+
+    def crash(stage: str, _path: str | None) -> None:
+        if stage == "journal_committed":
+            raise Crash
+
+    with pytest.raises(Crash):
+        transaction.write_outputs(
+            repository,
+            second,
+            _ownership(transaction, first),
+            fault_injector=crash,
+        )
+
+    state = repository / transaction.STATE_DIRECTORY.as_posix()
+    journal_path = state / transaction.JOURNAL_NAME
+    journal = json.loads(journal_path.read_bytes())
+    assert journal["phase"] == "committed"
+    journal["format_version"] = 1
+    for prior in journal["prior"]:
+        prior.pop("adopted")
+        prior.pop("absent_marker")
+    journal_path.write_bytes(transaction._canonical_json(journal))
+
+    assert transaction.recover_outputs(repository) == transaction.RecoveryResult(True, "completed")
+    _assert_outputs(repository, second)
+
+
+def test_recovery_rejects_partial_v2_adoption_authority(
+    transaction: ModuleType,
+    repository: Path,
+) -> None:
+    adoption, _predecessors = _install_adoption_predecessors(transaction, repository)
+
+    class Crash(BaseException):
+        pass
+
+    def crash(stage: str, _path: str | None) -> None:
+        if stage == "journal_prepared":
+            raise Crash
+
+    with pytest.raises(Crash):
+        transaction.write_outputs(
+            repository,
+            _adoption_outputs(transaction, 1),
+            {},
+            adoption=adoption,
+            fault_injector=crash,
+        )
+
+    state = repository / transaction.STATE_DIRECTORY.as_posix()
+    journal_path = state / transaction.JOURNAL_NAME
+    journal = json.loads(journal_path.read_bytes())
+    removed_path = sorted(transaction.EXACT_BASELINE_ADOPTION_PATHS)[-1]
+    journal["prior"] = [item for item in journal["prior"] if item["path"] != removed_path]
+    journal["desired"] = [item for item in journal["desired"] if item["path"] != removed_path]
+    for index, item in enumerate(journal["prior"]):
+        parent = Path(item["path"]).parent.as_posix()
+        item["apply_detached"] = f"{parent}/.defenseclaw-telemetry-{journal['token']}-{index:06d}-apply"
+        item["rollback_detached"] = f"{parent}/.defenseclaw-telemetry-{journal['token']}-{index:06d}-rollback"
+        item["retired"] = f"retired/{index:06d}.retired"
+        item["discard_apply"] = f"discard/{index:06d}.apply"
+        item["discard_rollback"] = f"discard/{index:06d}.rollback"
+    journal_path.write_bytes(transaction._canonical_json(journal))
+
+    with pytest.raises(transaction.RecoveryRequiredError, match="adoption authority is incomplete"):
+        transaction.recover_outputs(repository)
+
+
+def test_recovery_rejects_repeat_owned_v2_adoption_missing_from_desired_set(
+    transaction: ModuleType,
+    repository: Path,
+) -> None:
+    adoption, _predecessors = _install_adoption_predecessors(transaction, repository)
+    first = _adoption_outputs(transaction, 1)
+    transaction.write_outputs(repository, first, {}, adoption=adoption)
+
+    class Crash(BaseException):
+        pass
+
+    def crash(stage: str, _path: str | None) -> None:
+        if stage == "journal_prepared":
+            raise Crash
+
+    with pytest.raises(Crash):
+        transaction.write_outputs(
+            repository,
+            _adoption_outputs(transaction, 2),
+            _ownership(transaction, first),
+            adoption=adoption,
+            fault_injector=crash,
+        )
+
+    state = repository / transaction.STATE_DIRECTORY.as_posix()
+    journal_path = state / transaction.JOURNAL_NAME
+    journal = json.loads(journal_path.read_bytes())
+    adopted_prior = [item for item in journal["prior"] if item["adopted"]]
+    assert len(adopted_prior) == 26
+    assert all(item["marker"] is not None and item["absent_marker"] is None for item in adopted_prior)
+    removed_path = sorted(transaction.EXACT_BASELINE_ADOPTION_PATHS)[0]
+    journal["desired"] = [item for item in journal["desired"] if item["path"] != removed_path]
+    journal_path.write_bytes(transaction._canonical_json(journal))
+
+    with pytest.raises(transaction.RecoveryRequiredError, match="adoption desired set is incomplete"):
+        transaction.recover_outputs(repository)
 
 
 def test_write_check_update_and_delete_are_deterministic_and_manifest_last(
@@ -984,12 +1493,11 @@ def test_mutation_identity_guard_preserves_concurrent_unowned_swap(
             staged: Path,
             candidate: Path,
             prior_state: Any,
-            ownership: Any,
             transaction_root: Path,
         ) -> None:
             if candidate == target and concurrent.exists():
                 os.replace(concurrent, candidate)
-            original(staged, candidate, prior_state, ownership, transaction_root)
+            original(staged, candidate, prior_state, transaction_root)
 
         monkeypatch.setattr(transaction, "_replace_file_durable", swap_before_replace)
         second = _outputs(transaction, 2)
@@ -999,12 +1507,11 @@ def test_mutation_identity_guard_preserves_concurrent_unowned_swap(
         def swap_before_delete(
             candidate: Path,
             prior_state: Any,
-            ownership: Any,
             transaction_root: Path,
         ) -> None:
             if candidate == target and concurrent.exists():
                 os.replace(concurrent, candidate)
-            original(candidate, prior_state, ownership, transaction_root)
+            original(candidate, prior_state, transaction_root)
 
         monkeypatch.setattr(transaction, "_delete_file_durable", swap_before_delete)
         second = _outputs(transaction, 2, include_extra=False)
@@ -1034,12 +1541,11 @@ def test_previously_absent_target_uses_no_clobber_install(
         staged: Path,
         candidate: Path,
         prior_state: Any,
-        ownership: Any,
         transaction_root: Path,
     ) -> None:
         if candidate == target and not candidate.exists():
             candidate.write_bytes(manual)
-        original(staged, candidate, prior_state, ownership, transaction_root)
+        original(staged, candidate, prior_state, transaction_root)
 
     monkeypatch.setattr(transaction, "_replace_file_durable", create_before_install)
     with pytest.raises(transaction.RollbackError, match="rollback both failed"):
@@ -1098,7 +1604,6 @@ def test_parent_swap_after_precondition_cannot_escape_repository(
         staged: Path,
         candidate: Path,
         prior_state: Any,
-        ownership: Any,
         transaction_root: Path,
     ) -> None:
         nonlocal swapped
@@ -1106,7 +1611,7 @@ def test_parent_swap_after_precondition_cannot_escape_repository(
             original_parent.rename(detached_parent)
             original_parent.symlink_to(outside, target_is_directory=True)
             swapped = True
-        original(staged, candidate, prior_state, ownership, transaction_root)
+        original(staged, candidate, prior_state, transaction_root)
 
     monkeypatch.setattr(transaction, "_replace_file_durable", swap_parent_before_leaf_mutation)
     with pytest.raises(transaction.RollbackError, match="rollback both failed"):
@@ -1208,7 +1713,7 @@ def test_maximum_inventory_is_rejected_when_exact_journal_would_be_unreadable(
     prior = _ownership(transaction, outputs)
 
     with pytest.raises(transaction.TransactionError, match="journal exceeds its size limit"):
-        transaction._planned_journal("0" * 32, outputs, prior, ())
+        transaction._planned_journal("0" * 32, outputs, prior, {}, ())
 
 
 def test_new_transaction_ancestors_are_synced_before_journal_publication(
@@ -1324,7 +1829,13 @@ def test_journal_mode_is_applied_before_journal_fsync(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     state = transaction._state_root(repository, create=True)
-    journal = transaction._planned_journal("0" * 32, _outputs(transaction, 1, include_extra=False), {}, ())
+    journal = transaction._planned_journal(
+        "0" * 32,
+        _outputs(transaction, 1, include_extra=False),
+        {},
+        {},
+        (),
+    )
     events: list[tuple[str, int]] = []
     original_fchmod = os.fchmod
     original_fsync = os.fsync

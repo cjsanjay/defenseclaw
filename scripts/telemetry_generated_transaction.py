@@ -81,7 +81,38 @@ STATE_DIRECTORY: Final = PurePosixPath(".git/defenseclaw-telemetry-generated")
 STATE_SUBDIRECTORY: Final = "defenseclaw-telemetry-generated"
 LOCK_NAME: Final = "transaction.lock"
 JOURNAL_NAME: Final = "journal.json"
-JOURNAL_FORMAT_VERSION: Final = 1
+JOURNAL_FORMAT_VERSION: Final = 2
+EXACT_BASELINE_ADOPTION_PATHS: Final = frozenset(
+    {
+        "internal/cli/embed/scan-result.json",
+        "internal/gatewaylog/schemas/activity-event.json",
+        "internal/gatewaylog/schemas/gateway-event-envelope.json",
+        "internal/gatewaylog/schemas/scan-event.json",
+        "internal/gatewaylog/schemas/scan-finding-event.json",
+        "schemas/activity-event.json",
+        "schemas/audit-event.json",
+        "schemas/gateway-event-envelope.json",
+        "schemas/hook-audit-envelope.json",
+        "schemas/network-egress-event.json",
+        "schemas/otel/agent-lifecycle-event.schema.json",
+        "schemas/otel/asset-lifecycle-event.schema.json",
+        "schemas/otel/connector-telemetry-event.schema.json",
+        "schemas/otel/galileo-export-profile.schema.json",
+        "schemas/otel/metrics.schema.json",
+        "schemas/otel/resource.schema.json",
+        "schemas/otel/runtime-agent-span.schema.json",
+        "schemas/otel/runtime-alert-event.schema.json",
+        "schemas/otel/runtime-approval-span.schema.json",
+        "schemas/otel/runtime-llm-span.schema.json",
+        "schemas/otel/runtime-tool-span.schema.json",
+        "schemas/otel/scan-finding-event.schema.json",
+        "schemas/otel/scan-result-event.schema.json",
+        "schemas/scan-event.json",
+        "schemas/scan-finding-event.json",
+        "schemas/scan-result.json",
+    }
+)
+BASELINE_ADOPTION_PATH_COUNT: Final = len(EXACT_BASELINE_ADOPTION_PATHS)
 MAX_MARKER_BYTES: Final = 512
 MARKER_SCAN_BYTES: Final = 4096
 MAX_OUTPUTS: Final = 4096
@@ -154,6 +185,22 @@ class PriorOwnedOutput:
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
+class BaselineAdoption:
+    """Authenticated pre-generation bytes for one exact one-time cutover path.
+
+    The caller supplies the complete reviewed predecessor bytes and their digest,
+    mode, and absent future ownership marker.  Adoption is accepted only as one
+    exact 26-path set.  After commit, callers continue to pass the same mapping
+    solely as path authority; current manifest ownership takes precedence.
+    """
+
+    payload: bytes
+    sha256: str
+    absent_marker: bytes
+    mode: int = 0o644
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
 class RecoveryResult:
     recovered: bool
     action: str
@@ -172,6 +219,8 @@ class _PathState:
     retired: str
     discard_apply: str
     discard_rollback: str
+    adopted: bool
+    absent_marker: bytes | None
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -184,6 +233,7 @@ class _DesiredState:
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class _Journal:
+    format_version: int
     token: str
     phase: str
     prior: tuple[_PathState, ...]
@@ -236,7 +286,7 @@ def _fault(injector: FaultInjector | None, stage: str, path: str | None = None) 
         injector(stage, path)
 
 
-def _normalized_output_path(raw: str | Path) -> str:
+def _canonical_repository_relative_path(raw: str | Path) -> str:
     if isinstance(raw, Path):
         raw = raw.as_posix()
     if not isinstance(raw, str) or not raw or "\\" in raw or "\x00" in raw:
@@ -249,9 +299,27 @@ def _normalized_output_path(raw: str | Path) -> str:
     normalized = path.as_posix()
     if normalized != raw:
         raise TransactionError("generated output path is not canonical")
+    if path.parts[0] == ".git":
+        raise TransactionError("generated output path enters repository transaction state")
+    return normalized
+
+
+def _normalized_output_path(
+    raw: str | Path,
+    adoption_paths: frozenset[str] = frozenset(),
+) -> str:
+    normalized = _canonical_repository_relative_path(raw)
+    path = PurePosixPath(normalized)
     under_generated = len(path.parts) > len(GENERATED_ROOT.parts) and path.is_relative_to(GENERATED_ROOT)
-    if not under_generated and normalized not in EXACT_INTERNAL_OUTPUTS:
+    if not under_generated and normalized not in EXACT_INTERNAL_OUTPUTS and normalized not in adoption_paths:
         raise TransactionError(f"generated output path is outside the allowlist: {normalized}")
+    return normalized
+
+
+def _normalized_adoption_path(raw: str | Path) -> str:
+    normalized = _canonical_repository_relative_path(raw)
+    if normalized not in EXACT_BASELINE_ADOPTION_PATHS:
+        raise TransactionError(f"baseline adoption path is outside the exact reviewed allowlist: {normalized}")
     return normalized
 
 
@@ -279,15 +347,54 @@ def _validate_complete_internal_output_set(paths: set[str], *, inventory: str) -
         raise TransactionError(f"{inventory} must contain either none or all exact internal generated outputs")
 
 
+def _normalize_adoptions(
+    adoption: Mapping[str | Path, BaselineAdoption] | None,
+) -> dict[str, BaselineAdoption]:
+    if adoption is None:
+        return {}
+    if not isinstance(adoption, Mapping):
+        raise TransactionError("baseline adoption must be an exact typed mapping")
+    if len(adoption) != BASELINE_ADOPTION_PATH_COUNT:
+        raise TransactionError(
+            f"baseline adoption must contain the exact {BASELINE_ADOPTION_PATH_COUNT}-path authority set"
+        )
+    normalized: dict[str, BaselineAdoption] = {}
+    for raw_path, predecessor in adoption.items():
+        path = _normalized_adoption_path(raw_path)
+        if path in normalized:
+            raise TransactionError(f"duplicate baseline adoption path: {path}")
+        if not isinstance(predecessor, BaselineAdoption) or not isinstance(predecessor.payload, bytes):
+            raise TransactionError(f"baseline adoption predecessor is not typed immutable bytes: {path}")
+        if not isinstance(predecessor.sha256, str) or _SHA256.fullmatch(predecessor.sha256) is None:
+            raise TransactionError(f"baseline adoption predecessor digest is invalid: {path}")
+        if _sha256(predecessor.payload) != predecessor.sha256:
+            raise TransactionError(f"baseline adoption predecessor bytes disagree with their digest: {path}")
+        _validate_mode(predecessor.mode)
+        _validate_marker(predecessor.absent_marker)
+        if predecessor.absent_marker in predecessor.payload[:MARKER_SCAN_BYTES]:
+            raise TransactionError(f"baseline adoption predecessor already carries generated authority: {path}")
+        normalized[path] = predecessor
+    if set(normalized) != set(EXACT_BASELINE_ADOPTION_PATHS):
+        raise TransactionError("baseline adoption paths are not the exact reviewed authority set")
+    return normalized
+
+
 def _normalize_inputs(
     outputs: Mapping[str | Path, RenderedOutput],
     prior: Mapping[str | Path, PriorOwnedOutput],
-) -> tuple[dict[str, RenderedOutput], dict[str, PriorOwnedOutput]]:
-    if len(outputs) > MAX_OUTPUTS or len(prior) > MAX_OUTPUTS or len(set(outputs) | set(prior)) > MAX_OUTPUTS:
+    adoption: Mapping[str | Path, BaselineAdoption] | None = None,
+) -> tuple[dict[str, RenderedOutput], dict[str, PriorOwnedOutput], dict[str, BaselineAdoption]]:
+    normalized_adoption = _normalize_adoptions(adoption)
+    adoption_paths = frozenset(normalized_adoption)
+    if (
+        len(outputs) > MAX_OUTPUTS
+        or len(prior) > MAX_OUTPUTS
+        or len(set(outputs) | set(prior) | set(adoption or ())) > MAX_OUTPUTS
+    ):
         raise TransactionError("generated output transaction exceeds the bounded file inventory")
     normalized_outputs: dict[str, RenderedOutput] = {}
     for raw_path, output in outputs.items():
-        path = _normalized_output_path(raw_path)
+        path = _normalized_output_path(raw_path, adoption_paths)
         if path in normalized_outputs:
             raise TransactionError(f"duplicate generated output path: {path}")
         if not isinstance(output, RenderedOutput) or not isinstance(output.payload, bytes):
@@ -301,7 +408,7 @@ def _normalize_inputs(
 
     normalized_prior: dict[str, PriorOwnedOutput] = {}
     for raw_path, ownership in prior.items():
-        path = _normalized_output_path(raw_path)
+        path = _normalized_output_path(raw_path, adoption_paths)
         if path in normalized_prior:
             raise TransactionError(f"duplicate prior generated ownership path: {path}")
         if not isinstance(ownership, PriorOwnedOutput) or _SHA256.fullmatch(ownership.sha256) is None:
@@ -310,7 +417,16 @@ def _normalize_inputs(
         _validate_marker(ownership.marker)
         normalized_prior[path] = ownership
     _validate_complete_internal_output_set(set(normalized_prior), inventory="prior ownership inventory")
-    return normalized_outputs, normalized_prior
+    if normalized_adoption:
+        if not adoption_paths.issubset(normalized_outputs):
+            raise TransactionError("baseline adoption authority cannot disappear from desired outputs")
+        for path, predecessor in normalized_adoption.items():
+            if normalized_outputs[path].marker != predecessor.absent_marker:
+                raise TransactionError(f"baseline adoption absent marker disagrees with desired ownership: {path}")
+        previously_owned = adoption_paths & normalized_prior.keys()
+        if previously_owned and previously_owned != adoption_paths:
+            raise TransactionError("baseline adoption authority is partially or inconsistently owned")
+    return normalized_outputs, normalized_prior, normalized_adoption
 
 
 def _safe_root(root: Path) -> Path:
@@ -550,15 +666,21 @@ def _validate_current_ownership(
     root: Path,
     outputs: Mapping[str, RenderedOutput],
     prior: Mapping[str, PriorOwnedOutput],
+    adoption: Mapping[str, BaselineAdoption],
 ) -> tuple[str, ...]:
     missing_directories: set[str] = set()
-    for path in sorted(set(outputs) | set(prior)):
+    for path in sorted(set(outputs) | set(prior) | set(adoption)):
         missing_directories.update(_validate_existing_parents(root, path))
         target = root / path
         metadata = _lstat(target)
         owner = prior.get(path)
+        predecessor = adoption.get(path) if owner is None else None
         if owner is None:
-            if metadata is not None:
+            if predecessor is not None:
+                if metadata is None:
+                    raise GeneratedOutputDriftError((f"missing-adoption-predecessor={path}",))
+                _validate_adoption_predecessor(target, predecessor)
+            elif metadata is not None:
                 raise TransactionError(f"refusing unowned generated-output collision: {path}")
             continue
         if metadata is None:
@@ -569,6 +691,19 @@ def _validate_current_ownership(
             raise TransactionError(f"prior generated output digest no longer matches its manifest: {path}")
         _validate_marker(owner.marker, payload)
     return tuple(sorted(missing_directories, key=lambda item: (item.count("/"), item)))
+
+
+def _validate_adoption_predecessor(path: Path, predecessor: BaselineAdoption) -> _PathIdentity:
+    metadata = _validate_regular_file(path, expected_mode=predecessor.mode)
+    payload = _read_regular_file(path)
+    if payload != predecessor.payload or _sha256(payload) != predecessor.sha256:
+        raise TransactionError(f"baseline adoption predecessor changed: {path.name}")
+    if predecessor.absent_marker in payload[:MARKER_SCAN_BYTES]:
+        raise TransactionError(f"baseline adoption predecessor acquired generated authority: {path.name}")
+    identity = _path_identity(metadata)
+    if _identity_at_mutation(path) != identity:
+        raise TransactionError(f"baseline adoption predecessor changed while validating: {path.name}")
+    return identity
 
 
 def _read_gitfile(path: Path, expected: os.stat_result) -> bytes:
@@ -960,10 +1095,9 @@ def _replace_file_durable(
     staged: Path,
     target: Path,
     prior_state: _PathState,
-    ownership: PriorOwnedOutput | None,
     transaction_root: Path,
 ) -> None:
-    if ownership is None:
+    if not prior_state.existed:
         _rename_no_replace(staged, target)
         _fsync_directory(target.parent)
         return
@@ -973,7 +1107,7 @@ def _replace_file_durable(
     _fsync_directory(target.parent)
     try:
         payload = _read_regular_file(detached)
-        if not _target_matches(payload, ownership.sha256, ownership.marker):
+        if not _prior_state_matches(payload, prior_state):
             raise TransactionError(f"prior generated output changed during atomic detach: {prior_state.path}")
         _rename_no_replace(staged, target)
         _fsync_directory(target.parent)
@@ -994,7 +1128,6 @@ def _replace_file_durable(
 def _delete_file_durable(
     target: Path,
     prior_state: _PathState,
-    ownership: PriorOwnedOutput,
     transaction_root: Path,
 ) -> None:
     detached = target.parent / Path(prior_state.apply_detached).name
@@ -1002,7 +1135,7 @@ def _delete_file_durable(
     _fsync_directory(target.parent)
     try:
         payload = _read_regular_file(detached)
-        if not _target_matches(payload, ownership.sha256, ownership.marker):
+        if not _prior_state_matches(payload, prior_state):
             raise TransactionError(f"prior generated output changed during atomic delete: {prior_state.path}")
     except Exception:
         if _lstat(detached) is not None and _lstat(target) is None:
@@ -1041,30 +1174,34 @@ def _marker_bytes(value: object) -> bytes:
 
 
 def _journal_document(journal: _Journal) -> dict[str, object]:
+    prior: list[dict[str, object]] = []
+    for item in journal.prior:
+        record: dict[str, object] = {
+            "backup": item.backup,
+            "apply_detached": item.apply_detached,
+            "discard_apply": item.discard_apply,
+            "discard_rollback": item.discard_rollback,
+            "existed": item.existed,
+            "marker": None if item.marker is None else _marker_text(item.marker),
+            "mode": item.mode,
+            "path": item.path,
+            "sha256": item.sha256,
+            "rollback_detached": item.rollback_detached,
+            "retired": item.retired,
+        }
+        if journal.format_version >= 2:
+            record["adopted"] = item.adopted
+            record["absent_marker"] = None if item.absent_marker is None else _marker_text(item.absent_marker)
+        prior.append(record)
     return {
         "created_directories": list(journal.created_directories),
         "desired": [
             {"marker": _marker_text(item.marker), "mode": item.mode, "path": item.path, "sha256": item.sha256}
             for item in journal.desired
         ],
-        "format_version": JOURNAL_FORMAT_VERSION,
+        "format_version": journal.format_version,
         "phase": journal.phase,
-        "prior": [
-            {
-                "backup": item.backup,
-                "apply_detached": item.apply_detached,
-                "discard_apply": item.discard_apply,
-                "discard_rollback": item.discard_rollback,
-                "existed": item.existed,
-                "marker": None if item.marker is None else _marker_text(item.marker),
-                "mode": item.mode,
-                "path": item.path,
-                "sha256": item.sha256,
-                "rollback_detached": item.rollback_detached,
-                "retired": item.retired,
-            }
-            for item in journal.prior
-        ],
+        "prior": prior,
         "token": journal.token,
     }
 
@@ -1183,7 +1320,7 @@ def _read_journal(state_root: Path) -> _Journal | None:
     phase = root["phase"]
     if (
         type(format_version) is not int
-        or format_version != JOURNAL_FORMAT_VERSION
+        or format_version not in {1, JOURNAL_FORMAT_VERSION}
         or not isinstance(phase, str)
         or phase not in {"prepared", "committed"}
     ):
@@ -1196,25 +1333,28 @@ def _read_journal(state_root: Path) -> _Journal | None:
     if not isinstance(root["prior"], list):
         raise RecoveryRequiredError("generated-output transaction journal prior set is invalid")
     for raw_item in root["prior"]:
+        prior_keys = {
+            "apply_detached",
+            "backup",
+            "discard_apply",
+            "discard_rollback",
+            "existed",
+            "marker",
+            "mode",
+            "path",
+            "rollback_detached",
+            "retired",
+            "sha256",
+        }
+        if format_version >= 2:
+            prior_keys.update({"absent_marker", "adopted"})
         item = _expect_keys(
             raw_item,
-            {
-                "apply_detached",
-                "backup",
-                "discard_apply",
-                "discard_rollback",
-                "existed",
-                "marker",
-                "mode",
-                "path",
-                "rollback_detached",
-                "retired",
-                "sha256",
-            },
+            prior_keys,
             "prior entry",
         )
         try:
-            path_value = _normalized_output_path(item["path"] if isinstance(item["path"], str) else "")
+            path_value = _canonical_repository_relative_path(item["path"] if isinstance(item["path"], str) else "")
         except TransactionError as exc:
             raise RecoveryRequiredError("generated-output transaction journal prior path is invalid") from exc
         index = len(prior)
@@ -1233,7 +1373,8 @@ def _read_journal(state_root: Path) -> _Journal | None:
         ):
             raise RecoveryRequiredError("generated-output transaction journal detached path is invalid")
         existed = item["existed"]
-        if type(existed) is not bool:
+        adopted = item["adopted"] if format_version >= 2 else False
+        if type(existed) is not bool or type(adopted) is not bool or (adopted and not existed):
             raise RecoveryRequiredError("generated-output transaction journal existence flag is invalid")
         if existed:
             digest = item["sha256"]
@@ -1248,13 +1389,34 @@ def _read_journal(state_root: Path) -> _Journal | None:
                 or re.fullmatch(r"[0-9]{6}\.backup", backup) is None
             ):
                 raise RecoveryRequiredError("generated-output transaction journal prior metadata is invalid")
-            marker = _marker_bytes(item["marker"])
+            absent_marker_value = item["absent_marker"] if format_version >= 2 else None
+            if adopted and item["marker"] is None:
+                marker = None
+                absent_marker = _marker_bytes(absent_marker_value)
+            else:
+                if absent_marker_value is not None:
+                    raise RecoveryRequiredError("generated-output transaction journal prior marker is invalid")
+                marker = _marker_bytes(item["marker"])
+                absent_marker = None
+            try:
+                if adopted:
+                    _normalized_adoption_path(path_value)
+                else:
+                    _normalized_output_path(path_value)
+            except TransactionError as exc:
+                raise RecoveryRequiredError("generated-output transaction journal prior path is invalid") from exc
         else:
-            if any(item[key] is not None for key in ("sha256", "mode", "marker", "backup")):
+            absent_marker_value = item["absent_marker"] if format_version >= 2 else None
+            if (
+                adopted
+                or any(item[key] is not None for key in ("sha256", "mode", "marker", "backup"))
+                or (absent_marker_value is not None)
+            ):
                 raise RecoveryRequiredError("generated-output transaction journal absent-path metadata is invalid")
             digest = None
             mode = None
             marker = None
+            absent_marker = None
             backup = None
         prior.append(
             _PathState(
@@ -1269,16 +1431,24 @@ def _read_journal(state_root: Path) -> _Journal | None:
                 expected_retired,
                 expected_discard_apply,
                 expected_discard_rollback,
+                adopted,
+                absent_marker,
             )
         )
 
+    adoption_paths = frozenset(item.path for item in prior if item.adopted)
+    if adoption_paths and adoption_paths != EXACT_BASELINE_ADOPTION_PATHS:
+        raise RecoveryRequiredError("generated-output transaction journal adoption authority is incomplete")
     desired: list[_DesiredState] = []
     if not isinstance(root["desired"], list):
         raise RecoveryRequiredError("generated-output transaction journal desired set is invalid")
     for raw_item in root["desired"]:
         item = _expect_keys(raw_item, {"marker", "mode", "path", "sha256"}, "desired entry")
         try:
-            path_value = _normalized_output_path(item["path"] if isinstance(item["path"], str) else "")
+            path_value = _normalized_output_path(
+                item["path"] if isinstance(item["path"], str) else "",
+                adoption_paths,
+            )
         except TransactionError as exc:
             raise RecoveryRequiredError("generated-output transaction journal desired path is invalid") from exc
         digest = item["sha256"]
@@ -1310,6 +1480,15 @@ def _read_journal(state_root: Path) -> _Journal | None:
     desired_paths = {item.path for item in desired}
     if MANIFEST_PATH not in desired_paths or not desired_paths.issubset(prior_paths):
         raise RecoveryRequiredError("generated-output transaction journal path sets are inconsistent")
+    desired_by_path = {item.path: item for item in desired}
+    if adoption_paths and not adoption_paths.issubset(desired_paths):
+        raise RecoveryRequiredError("generated-output transaction journal adoption desired set is incomplete")
+    if any(
+        item.absent_marker is not None
+        and (item.path not in desired_by_path or item.absent_marker != desired_by_path[item.path].marker)
+        for item in prior
+    ):
+        raise RecoveryRequiredError("generated-output transaction journal adoption binding is invalid")
     if [item.path for item in prior] != sorted(prior_paths) or [item.path for item in desired] != sorted(desired_paths):
         raise RecoveryRequiredError("generated-output transaction journal paths are not canonical ordered sets")
     allowed_directories = {
@@ -1321,6 +1500,7 @@ def _read_journal(state_root: Path) -> _Journal | None:
     if any(directory not in allowed_directories for directory in normalized_directories):
         raise RecoveryRequiredError("generated-output transaction journal created-directory set is unsafe")
     return _Journal(
+        format_version,
         token,
         phase,
         tuple(prior),
@@ -1383,12 +1563,14 @@ def check_outputs(
     root: Path,
     outputs: Mapping[str | Path, RenderedOutput],
     prior: Mapping[str | Path, PriorOwnedOutput],
+    *,
+    adoption: Mapping[str | Path, BaselineAdoption] | None = None,
 ) -> None:
     """Verify exact bytes/modes/ownership without creating locks or state."""
 
     root = _safe_root(root)
     _validate_required_roots(root)
-    normalized_outputs, normalized_prior = _normalize_inputs(outputs, prior)
+    normalized_outputs, normalized_prior, normalized_adoption = _normalize_inputs(outputs, prior, adoption)
     state_root = _state_root(root, create=False)
     if state_root.exists() and (_read_journal(state_root) is not None or _has_orphan_state(state_root)):
         raise RecoveryRequiredError("generated-output transaction recovery is required before check mode")
@@ -1401,8 +1583,15 @@ def check_outputs(
             problems.append(f"parent={path}")
             continue
         if path not in normalized_prior and _lstat(root / path) is not None:
-            problems.append(f"unowned={path}")
-            continue
+            predecessor = normalized_adoption.get(path)
+            if predecessor is None:
+                problems.append(f"unowned={path}")
+                continue
+            try:
+                _validate_adoption_predecessor(root / path, predecessor)
+            except TransactionError:
+                problems.append(f"unsafe-adoption={path}")
+                continue
         problems.extend(item.replace(Path(path).name, path) for item in _check_one(root / path, output))
     for path, ownership in sorted(normalized_prior.items()):
         if path in normalized_outputs:
@@ -1438,10 +1627,11 @@ def _planned_journal(
     token: str,
     outputs: Mapping[str, RenderedOutput],
     prior: Mapping[str, PriorOwnedOutput],
+    adoption: Mapping[str, BaselineAdoption],
     created_directories: tuple[str, ...],
 ) -> _Journal:
     prior_states: list[_PathState] = []
-    for index, path in enumerate(sorted(set(outputs) | set(prior))):
+    for index, path in enumerate(sorted(set(outputs) | set(prior) | set(adoption))):
         parent = PurePosixPath(path).parent
         apply_detached = (parent / f".defenseclaw-telemetry-{token}-{index:06d}-apply").as_posix()
         rollback_detached = (parent / f".defenseclaw-telemetry-{token}-{index:06d}-rollback").as_posix()
@@ -1449,7 +1639,8 @@ def _planned_journal(
         discard_apply = f"discard/{index:06d}.apply"
         discard_rollback = f"discard/{index:06d}.rollback"
         ownership = prior.get(path)
-        if ownership is None:
+        predecessor = adoption.get(path) if ownership is None else None
+        if ownership is None and predecessor is None:
             prior_states.append(
                 _PathState(
                     path,
@@ -1463,9 +1654,31 @@ def _planned_journal(
                     retired,
                     discard_apply,
                     discard_rollback,
+                    False,
+                    None,
                 )
             )
             continue
+        if predecessor is not None:
+            prior_states.append(
+                _PathState(
+                    path,
+                    True,
+                    predecessor.sha256,
+                    predecessor.mode,
+                    None,
+                    f"{index:06d}.backup",
+                    apply_detached,
+                    rollback_detached,
+                    retired,
+                    discard_apply,
+                    discard_rollback,
+                    True,
+                    predecessor.absent_marker,
+                )
+            )
+            continue
+        assert ownership is not None
         prior_states.append(
             _PathState(
                 path,
@@ -1479,13 +1692,22 @@ def _planned_journal(
                 retired,
                 discard_apply,
                 discard_rollback,
+                path in adoption,
+                None,
             )
         )
     desired = tuple(
         _DesiredState(path, _sha256(output.payload), output.mode, output.marker)
         for path, output in sorted(outputs.items())
     )
-    journal = _Journal(token, "prepared", tuple(prior_states), desired, created_directories)
+    journal = _Journal(
+        JOURNAL_FORMAT_VERSION,
+        token,
+        "prepared",
+        tuple(prior_states),
+        desired,
+        created_directories,
+    )
     committed = dataclasses.replace(journal, phase="committed")
     if (
         max(
@@ -1504,10 +1726,11 @@ def _prepare_journal(
     token: str,
     outputs: Mapping[str, RenderedOutput],
     prior: Mapping[str, PriorOwnedOutput],
+    adoption: Mapping[str, BaselineAdoption],
     created_directories: tuple[str, ...],
     injector: FaultInjector | None,
 ) -> tuple[_Journal, Path]:
-    journal = _planned_journal(token, outputs, prior, created_directories)
+    journal = _planned_journal(token, outputs, prior, adoption, created_directories)
     for state in journal.prior:
         if _lstat(root / state.apply_detached) is not None or _lstat(root / state.rollback_detached) is not None:
             raise TransactionError("generated-output transaction detached path collision")
@@ -1536,11 +1759,10 @@ def _prepare_journal(
         assert prior_state.backup is not None
         assert prior_state.mode is not None
         assert prior_state.sha256 is not None
-        assert prior_state.marker is not None
         backup = backup_root / prior_state.backup
         _copy_backup(root / prior_state.path, backup, prior_state.mode)
         backup_payload = _read_regular_file(backup)
-        if not _target_matches(backup_payload, prior_state.sha256, prior_state.marker):
+        if not _prior_state_matches(backup_payload, prior_state):
             raise TransactionError(f"generated-output backup changed during preparation: {prior_state.path}")
         _fault(injector, "output_backed_up", prior_state.path)
     _fsync_directory_tree(backup_root)
@@ -1646,6 +1868,18 @@ def _target_matches(payload: bytes, digest: str, marker: bytes) -> bool:
     return _sha256(payload) == digest and marker in payload[:MARKER_SCAN_BYTES]
 
 
+def _prior_state_matches(payload: bytes, prior_state: _PathState) -> bool:
+    if not prior_state.existed or prior_state.sha256 is None or _sha256(payload) != prior_state.sha256:
+        return False
+    if prior_state.absent_marker is not None:
+        return prior_state.marker is None and prior_state.absent_marker not in payload[:MARKER_SCAN_BYTES]
+    return (
+        prior_state.marker is not None
+        and prior_state.absent_marker is None
+        and prior_state.marker in payload[:MARKER_SCAN_BYTES]
+    )
+
+
 def _classify_transaction_file(
     path: Path,
     prior_state: _PathState,
@@ -1657,15 +1891,18 @@ def _classify_transaction_file(
         return "unknown"
     if opened is None:
         return "absent"
-    payload, _ = opened
+    payload, metadata = opened
     if (
-        prior_state.existed
-        and prior_state.sha256 is not None
-        and prior_state.marker is not None
-        and _target_matches(payload, prior_state.sha256, prior_state.marker)
+        prior_state.mode is not None
+        and stat.S_IMODE(metadata.st_mode) == prior_state.mode
+        and _prior_state_matches(payload, prior_state)
     ):
         return "prior"
-    if desired is not None and _target_matches(payload, desired.sha256, desired.marker):
+    if (
+        desired is not None
+        and stat.S_IMODE(metadata.st_mode) == desired.mode
+        and _target_matches(payload, desired.sha256, desired.marker)
+    ):
         return "desired"
     return "unknown"
 
@@ -1691,9 +1928,8 @@ def _install_prior_from_backup(
 ) -> None:
     assert prior_state.mode is not None
     assert prior_state.sha256 is not None
-    assert prior_state.marker is not None
     payload = _read_regular_file(backup)
-    if not _target_matches(payload, prior_state.sha256, prior_state.marker):
+    if not _prior_state_matches(payload, prior_state):
         raise RollbackError(f"generated-output backup is invalid: {prior_state.path}")
     if _lstat(slot) is None:
         _write_file_durable(slot, payload, prior_state.mode)
@@ -1708,12 +1944,18 @@ def _assert_target_precondition(
     root: Path,
     path: str,
     prior: Mapping[str, PriorOwnedOutput],
+    adoption: Mapping[str, BaselineAdoption],
 ) -> _PathIdentity | None:
     _validate_existing_parents(root, path)
     target = root / path
     ownership = prior.get(path)
+    predecessor = adoption.get(path) if ownership is None else None
     metadata = _lstat(target)
     if ownership is None:
+        if predecessor is not None:
+            if metadata is None:
+                raise TransactionError(f"baseline adoption predecessor disappeared during transaction: {path}")
+            return _validate_adoption_predecessor(target, predecessor)
         if metadata is not None:
             raise TransactionError(f"unowned generated output appeared during transaction: {path}")
         return None
@@ -1740,9 +1982,8 @@ def _rollback(root: Path, state_root: Path, journal: _Journal, injector: FaultIn
             continue
         assert prior_state.backup is not None
         assert prior_state.sha256 is not None
-        assert prior_state.marker is not None
         backup_payload = _read_regular_file(backup_root / prior_state.backup)
-        if not _target_matches(backup_payload, prior_state.sha256, prior_state.marker):
+        if not _prior_state_matches(backup_payload, prior_state):
             raise RollbackError(f"generated-output backup is invalid: {prior_state.path}")
     for prior_state in reversed(journal.prior):
         target = root / prior_state.path
@@ -2019,6 +2260,7 @@ def write_outputs(
     outputs: Mapping[str | Path, RenderedOutput],
     prior: Mapping[str | Path, PriorOwnedOutput],
     *,
+    adoption: Mapping[str | Path, BaselineAdoption] | None = None,
     fault_injector: FaultInjector | None = None,
 ) -> RecoveryResult:
     """Write all outputs with manifest-last logical commit and recovery.
@@ -2032,17 +2274,33 @@ def write_outputs(
     The return value reports whether this invocation first recovered an older
     interrupted transaction.  A normal successful write returns ``action``
     ``"written"`` regardless of whether the generated bytes were unchanged.
+
+    ``adoption`` is the one-time baseline authority for the exact reviewed
+    26-path public-schema/mirror set.  On first use, all predecessor files must
+    match it exactly and lack the future ownership marker; they are journaled and
+    restored on rollback.  On repeat writes, all 26 paths must already be present
+    in ``prior`` and ordinary manifest ownership governs their replacement.  The
+    same quiescent-worktree requirement covers both predecessor and generated
+    bytes throughout adoption and recovery.
     """
 
     root = _safe_root(root)
     _validate_required_roots(root, allow_missing_generated=True)
-    normalized_outputs, normalized_prior = _normalize_inputs(outputs, prior)
+    normalized_outputs, normalized_prior, normalized_adoption = _normalize_inputs(outputs, prior, adoption)
     state_root = _state_root(root, create=True)
     with _exclusive_lock(state_root):
         _fault(fault_injector, "lock_acquired")
         recovered = _recover_locked(root, state_root, fault_injector)
         _fault(fault_injector, "recovery_checked")
-        created_directories = _validate_current_ownership(root, normalized_outputs, normalized_prior)
+        active_adoption = {
+            path: predecessor for path, predecessor in normalized_adoption.items() if path not in normalized_prior
+        }
+        created_directories = _validate_current_ownership(
+            root,
+            normalized_outputs,
+            normalized_prior,
+            active_adoption,
+        )
         _fault(fault_injector, "outputs_validated")
         token = uuid.uuid4().hex
         journal: _Journal | None = None
@@ -2056,6 +2314,7 @@ def write_outputs(
                 token,
                 normalized_outputs,
                 normalized_prior,
+                normalized_adoption,
                 created_directories,
                 fault_injector,
             )
@@ -2070,33 +2329,30 @@ def write_outputs(
             deleted = sorted(path for path in normalized_prior if path not in normalized_outputs)
             for path in non_manifest:
                 _fault(fault_injector, "before_output_apply", path)
-                _assert_target_precondition(root, path, normalized_prior)
+                _assert_target_precondition(root, path, normalized_prior, active_adoption)
                 _replace_file_durable(
                     stage_root / path,
                     root / path,
                     prior_states[path],
-                    normalized_prior.get(path),
                     transaction_root,
                 )
                 _fault(fault_injector, "after_output_apply", path)
             for path in deleted:
                 _fault(fault_injector, "before_output_delete", path)
                 target = root / path
-                _assert_target_precondition(root, path, normalized_prior)
+                _assert_target_precondition(root, path, normalized_prior, active_adoption)
                 _delete_file_durable(
                     target,
                     prior_states[path],
-                    normalized_prior[path],
                     transaction_root,
                 )
                 _fault(fault_injector, "after_output_delete", path)
             _fault(fault_injector, "before_manifest_apply", MANIFEST_PATH)
-            _assert_target_precondition(root, MANIFEST_PATH, normalized_prior)
+            _assert_target_precondition(root, MANIFEST_PATH, normalized_prior, active_adoption)
             _replace_file_durable(
                 stage_root / MANIFEST_PATH,
                 root / MANIFEST_PATH,
                 prior_states[MANIFEST_PATH],
-                normalized_prior.get(MANIFEST_PATH),
                 transaction_root,
             )
             _fault(fault_injector, "after_manifest_apply", MANIFEST_PATH)
@@ -2127,7 +2383,9 @@ def write_outputs(
 
 
 __all__ = [
+    "BaselineAdoption",
     "EXACT_INTERNAL_OUTPUTS",
+    "EXACT_BASELINE_ADOPTION_PATHS",
     "GeneratedOutputDriftError",
     "MANIFEST_PATH",
     "PriorOwnedOutput",
