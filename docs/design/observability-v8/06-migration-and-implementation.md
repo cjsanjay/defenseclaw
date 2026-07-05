@@ -457,6 +457,13 @@ Deliver:
 - Generated log/trace/metric family builders and detailed family payload schemas;
   every generated builder terminates at the Phase 2 generic canonical-record
   constructor rather than creating a parallel record representation.
+- A generation-owned ended-span handoff that synchronizes the generated canonical
+  trace record with the SDK `OnEnd` callback without exposing the provider-owned
+  SDK span object to canonical destination workers. Each named destination owns
+  exactly one canonical consumer or one legacy SDK processor, never both; callback
+  fanout is exact-once, panic-contained, generation-bound, and bounded by the
+  common trace queue count/byte limits in P-062, while canonical enqueue is
+  nonblocking.
 - A single checked-in compiler entry point,
   `scripts/generate_telemetry_registry.py`, with `--write` and `--check` modes.
   `scripts/check_schemas.py` invokes its `--check` mode so the existing
@@ -480,6 +487,17 @@ Deliver:
 - Generated versioned v7 exporter/family compatibility selection consumed by the
   pure converter, covering current logs, traces, metrics, audit actions,
   JSONL/console eligibility, OTel filters, and destination-specific behavior.
+
+Canonical destination consumers MUST remain inactive until all of the following
+are generated and verified together: record-authoritative W3C `trace_state` and
+full OTLP flags; a typed bounded representation for configured safe custom
+resource attributes; the generated two-span root-agent/model canary; runtime-graph
+lease/reload E2E coverage from span start through canonical end; PR #403 producer
+and Galileo projection migration; and PR #412 local-observability projection
+validation, including exclusion of diagnostic canaries from Agent360 spanmetrics.
+The handoff substrate may coexist with named legacy processors before this gate,
+but a canonical destination has no legacy fallback when registration or parity
+fails.
 
 Primary areas:
 

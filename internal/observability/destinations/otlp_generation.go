@@ -152,7 +152,10 @@ func (factory *Factory) PrepareOTLPGenerationPipelines(
 				SpanProcessor: processor,
 				release:       func() { factory.releaseOTLPCanaryProcessor(generation, canaryRegistry) },
 			}
-			pipelines.SpanProcessors = append(pipelines.SpanProcessors, processor)
+			pipelines.SpanPipelines = append(pipelines.SpanPipelines, telemetry.V8GenerationSpanPipeline{
+				Destination: candidate.destination.Name,
+				Legacy:      processor,
+			})
 		}
 		if candidate.metrics != nil {
 			reader, err := prepared.NewFilteredPeriodicMetricReader(ctx, candidate.metrics)
@@ -436,11 +439,44 @@ func cleanupOTLPGenerationPipelines(pipelines telemetry.V8GenerationPipelines) {
 			_ = pipelines.MetricReaders[index].Shutdown(ctx)
 		}
 	}
-	for index := len(pipelines.SpanProcessors) - 1; index >= 0; index-- {
-		if pipelines.SpanProcessors[index] != nil {
-			_ = pipelines.SpanProcessors[index].Shutdown(ctx)
+	seen := make(map[otlpCleanupIdentity]struct{}, len(pipelines.SpanPipelines)*2)
+	for index := len(pipelines.SpanPipelines) - 1; index >= 0; index-- {
+		pipeline := pipelines.SpanPipelines[index]
+		if otlpCleanupChild(pipeline.Legacy, seen) {
+			otlpCleanupShutdown(func() error { return pipeline.Legacy.Shutdown(ctx) })
+		}
+		if otlpCleanupChild(pipeline.Canonical, seen) {
+			otlpCleanupShutdown(func() error { return pipeline.Canonical.Shutdown(ctx) })
 		}
 	}
+}
+
+func otlpCleanupShutdown(shutdown func() error) {
+	defer func() { _ = recover() }()
+	_ = shutdown()
+}
+
+type otlpCleanupIdentity struct {
+	typeName string
+	pointer  uintptr
+}
+
+func otlpCleanupChild(value any, seen map[otlpCleanupIdentity]struct{}) bool {
+	if value == nil {
+		return false
+	}
+	reflected := reflect.ValueOf(value)
+	if reflected.Kind() == reflect.Pointer {
+		if reflected.IsNil() {
+			return false
+		}
+		identity := otlpCleanupIdentity{typeName: reflected.Type().String(), pointer: reflected.Pointer()}
+		if _, duplicate := seen[identity]; duplicate {
+			return false
+		}
+		seen[identity] = struct{}{}
+	}
+	return true
 }
 
 func hasAuthenticationLikeCompiledHeader(headers map[string]config.ObservabilityV8HeaderValue) bool {
@@ -565,21 +601,42 @@ func (factory *Factory) OTLPGenerationAcknowledgedCanaryTrace(generation uint64,
 
 type canaryRegisteredSpanProcessor struct {
 	sdktrace.SpanProcessor
-	mu       sync.Mutex
-	released bool
-	release  func()
+	mu          sync.Mutex
+	shutdown    bool
+	releaseOnce sync.Once
+	release     func()
 }
 
 func (processor *canaryRegisteredSpanProcessor) Shutdown(ctx context.Context) error {
 	processor.mu.Lock()
-	defer processor.mu.Unlock()
-	if processor.released {
+	if processor.shutdown {
+		processor.mu.Unlock()
 		return nil
 	}
+	processor.shutdown = true
+	processor.mu.Unlock()
 	err := processor.SpanProcessor.Shutdown(ctx)
-	processor.released = true
-	if processor.release != nil {
-		processor.release()
+	if terminal, ok := processor.SpanProcessor.(interface{ TerminalDone() <-chan struct{} }); ok {
+		done := terminal.TerminalDone()
+		select {
+		case <-done:
+			processor.releaseTerminalOwnership()
+		default:
+			go func() {
+				<-done
+				processor.releaseTerminalOwnership()
+			}()
+		}
+	} else {
+		processor.releaseTerminalOwnership()
 	}
 	return err
+}
+
+func (processor *canaryRegisteredSpanProcessor) releaseTerminalOwnership() {
+	processor.releaseOnce.Do(func() {
+		if processor.release != nil {
+			processor.release()
+		}
+	})
 }

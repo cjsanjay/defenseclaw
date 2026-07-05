@@ -658,6 +658,30 @@ Required cases:
 - Span attributes, events, links, status descriptions, exceptions, content aliases,
   and vendor wrappers are independently redacted per destination.
 - Trace/span IDs remain stable across projections.
+- The generation-owned end helper always ends the physical span. It reports
+  success only when the sampled, recording, collected span is synchronously
+  consumed under the same nonempty plan digest and config generation; rejected,
+  duplicate, over-capacity, retired, cancelled, and parity-mismatched
+  registrations leave no pending canonical record or encoded-byte ownership.
+- Per destination, canonical-consumer and legacy-processor arms are an exact XOR.
+  Names and child identities are unique, one callback fans out exactly once to
+  every selected arm, a missing/mismatched canonical handoff never falls back to
+  the legacy arm, and destination panics/failures do not suppress siblings.
+- The pending handoff enforces both 2,048-record and 64-MiB exact-canonical-byte
+  limits. Concurrent end, retirement, shutdown, duplicate identity, and panic
+  tests prove terminal states cannot leak count or byte capacity.
+- Physical/canonical parity covers trace/span/parent IDs, rendered name, exact
+  start/end, kind, status, bucket/family/family-version/config-generation,
+  canonical scope metadata, and every registered resource key; canonical-record
+  validation separately fixes source and plan digest. Until the generated record
+  also owns W3C trace state and the full OTLP flags word, no canonical destination
+  is activated.
+- Flush visits children in destination order. Shutdown first closes provider and
+  callback intake, waits for already-entered callbacks, retires pending handoff
+  state after that drain, and visits children in reverse order. Malformed partial
+  construction still cleans both XOR arms once by pointer identity, and a timed-out
+  or panicking OTLP exporter eventually closes its terminal-cleanup signal before
+  generation-owned canary registration is released.
 - Canonical traces keep IDs in envelope correlation and the rendered name in
   `span_name`; `traceId`, `spanId`, `name`, and other camelCase OTLP-JSON copies in
   `body` are rejected.
@@ -678,6 +702,11 @@ Required cases:
 - Galileo retains current agent/LLM/tool eligibility and validates new
   retriever/workflow and judge-chat shapes without affecting general OTLP
   destinations.
+- Activation coverage constructs the generated two-span root-agent/model canary,
+  carries one runtime-graph lease coherently from start through canonical end and
+  reload, migrates the PR #403 root/subagent/model/tool producers and Galileo
+  projection, preserves the PR #412 Tempo/resource compatibility aliases, and
+  proves diagnostic canaries enter Tempo but not Agent360 spanmetrics.
 
 ### 9.2 Sampling
 

@@ -194,6 +194,7 @@ func TestV8TargetedCanaryBypassesSamplingExactlyAndDebugIsSafe(t *testing.T) {
 	plan := v8PlanForTest(t, "always_off", "", nil)
 	exporter := tracetest.NewInMemoryExporter()
 	provider, err := NewProviderV8Inactive(context.Background(), plan, 1, V8ProviderOptions{
+		Version: "test-version", Environment: "test",
 		SpanProcessorFactory: func(uint64) (sdktrace.SpanProcessor, error) {
 			return sdktrace.NewSimpleSpanProcessor(exporter), nil
 		},
@@ -632,9 +633,10 @@ func TestV8ResourceUsesPlanAndSafeProcessMetadataOnly(t *testing.T) {
 		"service.name": "custom-service", "service.namespace": "defenseclaw",
 		"service.instance.id": "test-instance", "service.version": "test-version",
 		"deployment.environment.name": "test", "deployment.environment": "test", "tenant.id": "tenant-a",
-		"workspace.id": "workspace-a", "deployment.mode": "unmanaged", "defenseclaw.claw.mode": "multi",
+		"workspace.id": "workspace-a", "defenseclaw.deployment.mode": "unmanaged", "deployment.mode": "unmanaged", "defenseclaw.claw.mode": "multi",
 		"defenseclaw.instance.id": "defenseclaw-instance", "discovery.source": "registry",
-		"defenseclaw.device.id": fingerprint, "custom.safe": "configured",
+		"defenseclaw.device.public_key_fingerprint": fingerprint, "defenseclaw.device.id": fingerprint,
+		"custom.safe": "configured",
 	} {
 		if got := resourceAttribute(provider, key); got != want {
 			t.Errorf("resource %s=%q, want %q", key, got, want)
@@ -656,7 +658,7 @@ func TestV8ResourceTrustedPrecedenceFallsBackToValidatedPlanValues(t *testing.T)
 		}
 	})
 	provider, err := NewProviderV8Inactive(context.Background(), plan, 1, V8ProviderOptions{
-		Version: "trusted-version", ServiceInstanceID: "trusted-service-instance",
+		Version: "trusted-version", Environment: "test", ServiceInstanceID: "trusted-service-instance",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -665,15 +667,15 @@ func TestV8ResourceTrustedPrecedenceFallsBackToValidatedPlanValues(t *testing.T)
 	t.Cleanup(func() { _ = provider.Shutdown(context.Background()) })
 	for key, want := range map[string]string{
 		"tenant.id": "plan-tenant", "workspace.id": "plan-workspace",
-		"deployment.environment": "plan-environment", "deployment.environment.name": "plan-environment",
-		"service.version": "trusted-version", "service.instance.id": "trusted-service-instance",
+		"deployment.environment.name": "test",
+		"service.version":             "trusted-version", "service.instance.id": "trusted-service-instance",
 		"defenseclaw.instance.id": "trusted-service-instance",
 	} {
 		if got := resourceAttribute(provider, key); got != want {
 			t.Errorf("resource %s=%q, want %q", key, got, want)
 		}
 	}
-	for _, key := range []string{"deployment.mode", "defenseclaw.claw.mode", "discovery.source", "defenseclaw.device.id"} {
+	for _, key := range []string{"deployment.mode", "defenseclaw.deployment.mode", "defenseclaw.claw.mode", "discovery.source", "defenseclaw.device.id", "defenseclaw.device.public_key_fingerprint"} {
 		if got := resourceAttribute(provider, key); got != "" {
 			t.Errorf("resource %s=%q, want spoofed plan value omitted", key, got)
 		}
@@ -763,6 +765,7 @@ func TestV8GenerationPipelineFactoryBindsExactCandidateAndOwnsChildren(t *testin
 	reader := sdkmetric.NewManualReader()
 	var calls atomic.Uint64
 	provider, err := NewProviderV8Inactive(context.Background(), plan, 17, V8ProviderOptions{
+		Version: "test-version", Environment: "test",
 		GenerationPipelines: func(
 			ctx context.Context,
 			gotPlan *config.ObservabilityV8Plan,
@@ -775,8 +778,8 @@ func TestV8GenerationPipelineFactoryBindsExactCandidateAndOwnsChildren(t *testin
 				t.Fatalf("pipeline input plan/generation/spec=%p/%d/%+v", gotPlan, generation, spec)
 			}
 			return V8GenerationPipelines{
-				SpanProcessors: []sdktrace.SpanProcessor{processor},
-				MetricReaders:  []sdkmetric.Reader{reader},
+				SpanPipelines: []V8GenerationSpanPipeline{{Destination: "test", Legacy: processor}},
+				MetricReaders: []sdkmetric.Reader{reader},
 				CanaryAcknowledged: func(destination, traceID string) bool {
 					return destination == "galileo" && traceID == "0102030405060708090a0b0c0d0e0f10"
 				},
@@ -814,6 +817,7 @@ func TestV8GenerationPipelineFactoryInvalidPartialSetCleansReturnedChildren(t *t
 	plan := v8PlanForTest(t, "always_on", "", nil)
 	processor := &v8TrackingProcessor{}
 	provider, err := NewProviderV8Inactive(context.Background(), plan, 1, V8ProviderOptions{
+		Version: "test-version", Environment: "test",
 		GenerationPipelines: func(
 			context.Context,
 			*config.ObservabilityV8Plan,
@@ -821,8 +825,8 @@ func TestV8GenerationPipelineFactoryInvalidPartialSetCleansReturnedChildren(t *t
 			V8MetricReaderSpec,
 		) (V8GenerationPipelines, error) {
 			return V8GenerationPipelines{
-				SpanProcessors: []sdktrace.SpanProcessor{processor},
-				MetricReaders:  []sdkmetric.Reader{nil},
+				SpanPipelines: []V8GenerationSpanPipeline{{Destination: "test", Legacy: processor}},
+				MetricReaders: []sdkmetric.Reader{nil},
 			}, nil
 		},
 	})
@@ -873,6 +877,8 @@ func TestV8SignalFactoryPanicsRejectCandidateWithBoundedCode(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
+			test.options.Version = "test-version"
+			test.options.Environment = "test"
 			provider, err := NewProviderV8Inactive(context.Background(), plan, 1, test.options)
 			if provider != nil || err == nil || strings.Contains(err.Error(), "sensitive") {
 				t.Fatalf("provider/error = %v/%v", provider, err)
@@ -888,11 +894,12 @@ func TestV8SignalFactoryPanicsRejectCandidateWithBoundedCode(t *testing.T) {
 func TestV8CanaryAcknowledgementLookupPanicFailsClosed(t *testing.T) {
 	plan := v8PlanForTest(t, "always_on", "", nil)
 	provider, err := NewProviderV8Inactive(context.Background(), plan, 1, V8ProviderOptions{
+		Version: "test-version", Environment: "test",
 		GenerationPipelines: func(
 			context.Context, *config.ObservabilityV8Plan, uint64, V8MetricReaderSpec,
 		) (V8GenerationPipelines, error) {
 			return V8GenerationPipelines{
-				SpanProcessors: []sdktrace.SpanProcessor{&v8TrackingProcessor{}},
+				SpanPipelines: []V8GenerationSpanPipeline{{Destination: "test", Legacy: &v8TrackingProcessor{}}},
 				CanaryAcknowledged: func(string, string) bool {
 					panic("sensitive canary backend panic")
 				},
@@ -940,6 +947,7 @@ func TestV8BackendErrorsAreBoundedAndPreserveOnlyContextIdentity(t *testing.T) {
 	secret := "https://user:token@collector.internal/v1/traces"
 	plan := v8PlanForTest(t, "always_on", "", nil)
 	factory := NewV8ProviderFactory(V8ProviderOptions{
+		Version: "test-version", Environment: "test",
 		SpanProcessorFactory: func(uint64) (sdktrace.SpanProcessor, error) {
 			return nil, fmt.Errorf("connect %s: %w", secret, context.Canceled)
 		},
@@ -960,6 +968,7 @@ func TestV8BackendErrorsAreBoundedAndPreserveOnlyContextIdentity(t *testing.T) {
 		shutdownError:   fmt.Errorf("shutdown %s", secret),
 	}
 	provider, err := NewProviderV8Inactive(context.Background(), plan, 1, V8ProviderOptions{
+		Version: "test-version", Environment: "test",
 		SpanProcessorFactory: func(uint64) (sdktrace.SpanProcessor, error) { return processor, nil },
 	})
 	if err != nil {
@@ -984,7 +993,9 @@ func TestNewProviderV8InactiveDoesNotMutateGlobalProviders(t *testing.T) {
 	beforeMeter := otel.GetMeterProvider()
 	beforeLogger := logglobal.GetLoggerProvider()
 	plan := v8PlanForTest(t, "always_on", "", nil)
-	provider, err := NewProviderV8Inactive(context.Background(), plan, 1, V8ProviderOptions{})
+	provider, err := NewProviderV8Inactive(context.Background(), plan, 1, V8ProviderOptions{
+		Version: "test-version", Environment: "test",
+	})
 	if err != nil {
 		t.Fatal(err)
 	}

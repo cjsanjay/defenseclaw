@@ -51,6 +51,9 @@ const V8ProviderComponentName = "otel-provider"
 const (
 	v8CanaryOperationAttribute = "defenseclaw.telemetry.canary.operation"
 	v8CanaryOperationValue     = "runtime-pipeline-test"
+	v8TraceScopeName           = "defenseclaw.telemetry"
+	v8TraceScopeSchemaURL      = "https://defenseclaw.io/schemas/telemetry/v8"
+	v8ResourceSchemaURL        = "https://opentelemetry.io/schemas/1.42.0"
 )
 
 // V8SpanProcessorFactory creates processors owned by exactly one graph
@@ -79,8 +82,8 @@ type V8MetricReaderFactory func(generation uint64, spec V8MetricReaderSpec) (sdk
 // a returned partial set when the factory reports failure. A factory must still
 // release any allocated child that it does not include in the returned set.
 type V8GenerationPipelines struct {
-	SpanProcessors []sdktrace.SpanProcessor
-	MetricReaders  []sdkmetric.Reader
+	SpanPipelines []V8GenerationSpanPipeline
+	MetricReaders []sdkmetric.Reader
 	// CanaryAcknowledged queries only the exact candidate generation's
 	// destination acknowledgement registry. It must be nonblocking, panic-safe
 	// at the provider boundary, and return false after its processors retire.
@@ -189,15 +192,17 @@ func v8ContextCause(err error) error {
 }
 
 type v8ProviderState struct {
-	active     atomic.Bool
-	generation uint64
-	planDigest string
-	collect    map[observability.Bucket]bool
-	metrics    map[observability.Bucket]bool
-	metricSpec V8MetricReaderSpec
-	limits     config.ObservabilityV8TraceLimitsSource
-	debug      *v8SamplingDebug
-	canaryAck  func(destination, traceID string) bool
+	active        atomic.Bool
+	generation    uint64
+	planDigest    string
+	collect       map[observability.Bucket]bool
+	metrics       map[observability.Bucket]bool
+	metricSpec    V8MetricReaderSpec
+	limits        config.ObservabilityV8TraceLimitsSource
+	debug         *v8SamplingDebug
+	canaryAck     func(destination, traceID string) bool
+	handoff       *v8SpanHandoff
+	spanProcessor *v8CompositeSpanProcessor
 }
 
 // MetricBucketEnabled is the collection-before-construction predicate for
@@ -322,6 +327,12 @@ func NewProviderV8Inactive(
 	if ctx == nil || plan == nil || generation == 0 {
 		return nil, errors.New("telemetry: invalid v8 provider input")
 	}
+	// The lower-level processor factory is a deliberately isolated test seam.
+	// Combining it with named production pipelines would bypass destination XOR
+	// ownership and could deliver the same physical span twice.
+	if options.SpanProcessorFactory != nil && options.GenerationPipelines != nil {
+		return nil, newV8ProviderError(V8ProviderErrorInitialization, nil)
+	}
 	if err := ctx.Err(); err != nil {
 		return nil, newV8ProviderError(V8ProviderErrorInitialization, err)
 	}
@@ -339,6 +350,10 @@ func NewProviderV8Inactive(
 			metricCollect[bucket.Bucket] = true
 		}
 	}
+	if len(traceCollect) > 0 &&
+		(strings.TrimSpace(options.Version) == "" || strings.TrimSpace(options.Environment) == "") {
+		return nil, newV8ProviderError(V8ProviderErrorInitialization, nil)
+	}
 	metricSpec := v8MetricReaderSpec(snapshot.MetricPolicy)
 
 	debug := newV8SamplingDebug(options.SamplingObserver)
@@ -349,7 +364,7 @@ func NewProviderV8Inactive(
 
 	res := buildV8Resource(snapshot, options)
 	limits := snapshot.TracePolicy.Limits
-	preparedProcessors := make([]sdktrace.SpanProcessor, 0, 1)
+	preparedProcessors := make([]sdktrace.SpanProcessor, 0, 2)
 	preparedReaders := make([]sdkmetric.Reader, 0, len(options.MetricReaderFactories))
 	pipelines := V8GenerationPipelines{}
 	cleanupPrepared := func() {
@@ -373,16 +388,30 @@ func NewProviderV8Inactive(
 		pipelines, pipelineErr = callV8GenerationPipelineFactory(
 			options.GenerationPipelines, ctx, plan, generation, metricSpec,
 		)
-		preparedProcessors = append(preparedProcessors, pipelines.SpanProcessors...)
 		preparedReaders = append(preparedReaders, pipelines.MetricReaders...)
 		if pipelineErr != nil || !validV8GenerationPipelines(pipelines, len(traceCollect) > 0, len(metricCollect) > 0) {
+			cleanupV8SpanPipelines(pipelines.SpanPipelines, options.PrepareCleanupTimeout)
 			cleanupPrepared()
 			return nil, newV8ProviderError(V8ProviderErrorPipelineInitialization, pipelineErr)
 		}
 		if err := ctx.Err(); err != nil {
+			cleanupV8SpanPipelines(pipelines.SpanPipelines, options.PrepareCleanupTimeout)
 			cleanupPrepared()
 			return nil, newV8ProviderError(V8ProviderErrorPipelineInitialization, err)
 		}
+	}
+	var composite *v8CompositeSpanProcessor
+	if len(pipelines.SpanPipelines) > 0 {
+		var compositeErr error
+		composite, compositeErr = newV8CompositeSpanProcessor(
+			generation, v8DefaultCanonicalSpanHandoffCapacity, pipelines.SpanPipelines,
+		)
+		if compositeErr != nil {
+			cleanupV8SpanPipelines(pipelines.SpanPipelines, options.PrepareCleanupTimeout)
+			cleanupPrepared()
+			return nil, newV8ProviderError(V8ProviderErrorPipelineInitialization, compositeErr)
+		}
+		preparedProcessors = append(preparedProcessors, composite)
 	}
 	if options.SpanProcessorFactory != nil {
 		processor, processorErr := callV8SpanProcessorFactory(options.SpanProcessorFactory, generation)
@@ -410,7 +439,13 @@ func NewProviderV8Inactive(
 
 	tracerProvider := sdktrace.NewTracerProvider(traceOptions...)
 	version := strings.TrimSpace(options.Version)
-	tracerOptions := make([]trace.TracerOption, 0, 1)
+	tracerOptions := []trace.TracerOption{
+		trace.WithSchemaURL(v8TraceScopeSchemaURL),
+		trace.WithInstrumentationAttributes(
+			attribute.String("defenseclaw.semantic_profile", observability.RuntimeSemanticProfileID),
+			attribute.String("defenseclaw.trace.schema_version", observability.RuntimeTraceSchemaVersion),
+		),
+	}
 	if version != "" {
 		tracerOptions = append(tracerOptions, trace.WithInstrumentationVersion(version))
 	}
@@ -418,7 +453,7 @@ func NewProviderV8Inactive(
 		TracerProvider: tracerProvider, maxBytes: limits.MaxAttributeValueBytes,
 		maxStacktraceBytes: limits.MaxStacktraceBytes,
 	}
-	tracer := boundedTracerProvider.Tracer("defenseclaw", tracerOptions...)
+	tracer := boundedTracerProvider.Tracer(v8TraceScopeName, tracerOptions...)
 	logger := logNoop.NewLoggerProvider().Logger("defenseclaw")
 	meter := metricNoop.NewMeterProvider().Meter("defenseclaw")
 	var meterProvider *sdkmetric.MeterProvider
@@ -480,6 +515,13 @@ func NewProviderV8Inactive(
 			generation: generation, planDigest: plan.Digest(), collect: traceCollect,
 			metrics: metricCollect, metricSpec: metricSpec, limits: limits, debug: debug,
 			canaryAck: pipelines.CanaryAcknowledged,
+			handoff: func() *v8SpanHandoff {
+				if composite == nil {
+					return nil
+				}
+				return composite.handoff
+			}(),
+			spanProcessor: composite,
 		},
 	}, nil
 }
@@ -532,19 +574,17 @@ func validV8GenerationPipelines(
 	tracesCollected bool,
 	metricsCollected bool,
 ) bool {
-	if !tracesCollected && len(pipelines.SpanProcessors) != 0 {
+	if !tracesCollected && len(pipelines.SpanPipelines) != 0 {
 		return false
 	}
-	if pipelines.CanaryAcknowledged != nil && (!tracesCollected || len(pipelines.SpanProcessors) == 0) {
+	if pipelines.CanaryAcknowledged != nil && (!tracesCollected || len(pipelines.SpanPipelines) == 0) {
 		return false
 	}
 	if !metricsCollected && len(pipelines.MetricReaders) != 0 {
 		return false
 	}
-	for _, processor := range pipelines.SpanProcessors {
-		if processor == nil || reflect.ValueOf(processor).Kind() == reflect.Pointer && reflect.ValueOf(processor).IsNil() {
-			return false
-		}
+	if !validV8SpanPipelines(pipelines.SpanPipelines) && len(pipelines.SpanPipelines) != 0 {
+		return false
 	}
 	for _, reader := range pipelines.MetricReaders {
 		if reader == nil || reflect.ValueOf(reader).Kind() == reflect.Pointer && reflect.ValueOf(reader).IsNil() {
@@ -649,14 +689,17 @@ func buildV8Resource(snapshot config.ObservabilityV8EffectivePlan, options V8Pro
 	}
 	setTrusted("tenant.id", options.TenantID)
 	setTrusted("workspace.id", options.WorkspaceID)
+	setTrusted("defenseclaw.deployment.mode", options.DeploymentMode)
 	setTrusted("deployment.mode", options.DeploymentMode)
 	setTrusted("defenseclaw.claw.mode", options.ConnectorMode)
 	setTrusted("discovery.source", options.DiscoverySource)
-	if environment := strings.TrimSpace(options.Environment); environment != "" {
+	environment := strings.TrimSpace(options.Environment)
+	if environment != "" {
 		values["deployment.environment.name"] = environment
 		values["deployment.environment"] = environment
 	}
 	if fingerprint := deviceFingerprint(strings.TrimSpace(options.DeviceKeyFile)); fingerprint != "" {
+		values["defenseclaw.device.public_key_fingerprint"] = fingerprint
 		values["defenseclaw.device.id"] = fingerprint
 	}
 	keys := make([]string, 0, len(values))
@@ -670,16 +713,17 @@ func buildV8Resource(snapshot config.ObservabilityV8EffectivePlan, options V8Pro
 			attrs = append(attrs, attribute.String(key, values[key]))
 		}
 	}
-	return resource.NewWithAttributes("", attrs...)
+	return resource.NewWithAttributes(v8ResourceSchemaURL, attrs...)
 }
 
 var v8AlwaysProcessOwnedResourceKeys = map[string]bool{
 	"service.version": true, "service.namespace": true, "service.instance.id": true,
 	"host.name": true, "host.arch": true, "os.type": true,
-	"defenseclaw.instance.id": true,
-	"deployment.mode":         true, "defenseclaw.claw.mode": true,
+	"defenseclaw.instance.id":     true,
+	"defenseclaw.deployment.mode": true, "defenseclaw.claw.mode": true,
 	"defenseclaw.claw.home_dir": true, "discovery.source": true,
-	"defenseclaw.device.id": true,
+	"defenseclaw.device.public_key_fingerprint": true,
+	"deployment.mode": true, "deployment.environment": true, "defenseclaw.device.id": true,
 }
 
 // V8ProviderFactory owns the process-stable service.instance.id while each
@@ -731,6 +775,7 @@ func (component *V8ProviderComponent) Activate() {
 		return
 	}
 	component.provider.v8.active.Store(true)
+	component.provider.v8.handoff.setActive(true)
 }
 
 func (component *V8ProviderComponent) Provider() (*Provider, bool) {
@@ -743,6 +788,7 @@ func (component *V8ProviderComponent) Provider() (*Provider, bool) {
 func (component *V8ProviderComponent) StopIntake(context.Context) error {
 	if component != nil && component.provider != nil && component.provider.v8 != nil {
 		component.provider.v8.active.Store(false)
+		component.provider.v8.handoff.setActive(false)
 	}
 	return nil
 }

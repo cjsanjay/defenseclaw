@@ -13,12 +13,12 @@ package destinations
 import (
 	"context"
 	"encoding/pem"
-	"errors"
 	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -153,13 +153,17 @@ func TestOTLPGenerationAssemblerUsesUnmaskedRuntimeTransportAndDefaultAllSignals
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(pipelines.SpanProcessors) != 1 || len(pipelines.MetricReaders) != 1 ||
+	if len(pipelines.SpanPipelines) != 1 || len(pipelines.MetricReaders) != 1 ||
 		pipelines.CanaryAcknowledged == nil || secrets.callCount("OTLP_AUTH") != 1 || loader.callCount(caPath) != 1 {
-		t.Fatalf("pipelines=%d/%d secret=%d CA=%d", len(pipelines.SpanProcessors), len(pipelines.MetricReaders), secrets.callCount("OTLP_AUTH"), loader.callCount(caPath))
+		t.Fatalf("pipelines=%d/%d secret=%d CA=%d", len(pipelines.SpanPipelines), len(pipelines.MetricReaders), secrets.callCount("OTLP_AUTH"), loader.callCount(caPath))
+	}
+	if pipelines.SpanPipelines[0].Destination != "all-signals" ||
+		pipelines.SpanPipelines[0].Legacy == nil || pipelines.SpanPipelines[0].Canonical != nil {
+		t.Fatalf("OTLP trace pipeline is not a named legacy XOR: %+v", pipelines.SpanPipelines[0])
 	}
 
 	tracerProvider := sdktrace.NewTracerProvider(
-		sdktrace.WithSampler(sdktrace.AlwaysSample()), sdktrace.WithSpanProcessor(pipelines.SpanProcessors[0]),
+		sdktrace.WithSampler(sdktrace.AlwaysSample()), sdktrace.WithSpanProcessor(pipelines.SpanPipelines[0].Legacy),
 	)
 	_, span := tracerProvider.Tracer("test").Start(context.Background(), "generation.trace",
 		trace.WithAttributes(attribute.String("defenseclaw.bucket", string(observability.BucketAgentLifecycle))),
@@ -215,12 +219,16 @@ func TestOTLPGenerationAssemblerAppliesBucketRoutesAcrossMultipleDestinations(t 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(pipelines.SpanProcessors) != 2 || len(pipelines.MetricReaders) != 1 {
-		t.Fatalf("pipelines = %d/%d", len(pipelines.SpanProcessors), len(pipelines.MetricReaders))
+	if len(pipelines.SpanPipelines) != 2 || len(pipelines.MetricReaders) != 1 {
+		t.Fatalf("pipelines = %d/%d", len(pipelines.SpanPipelines), len(pipelines.MetricReaders))
+	}
+	if pipelines.SpanPipelines[0].Destination != "agent-traces" ||
+		pipelines.SpanPipelines[1].Destination != "tool-traces" {
+		t.Fatalf("named OTLP pipeline order = %q/%q", pipelines.SpanPipelines[0].Destination, pipelines.SpanPipelines[1].Destination)
 	}
 	tracerOptions := []sdktrace.TracerProviderOption{sdktrace.WithSampler(sdktrace.AlwaysSample())}
-	for _, processor := range pipelines.SpanProcessors {
-		tracerOptions = append(tracerOptions, sdktrace.WithSpanProcessor(processor))
+	for _, pipeline := range pipelines.SpanPipelines {
+		tracerOptions = append(tracerOptions, sdktrace.WithSpanProcessor(pipeline.Legacy))
 	}
 	tracerProvider := sdktrace.NewTracerProvider(tracerOptions...)
 	tracer := tracerProvider.Tracer("test")
@@ -295,8 +303,8 @@ func TestOTLPGenerationAssemblerAppliesMetricEventNameFirstMatchRoutes(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(pipelines.SpanProcessors) != 0 || len(pipelines.MetricReaders) != 1 {
-		t.Fatalf("pipelines=%d/%d", len(pipelines.SpanProcessors), len(pipelines.MetricReaders))
+	if len(pipelines.SpanPipelines) != 0 || len(pipelines.MetricReaders) != 1 {
+		t.Fatalf("pipelines=%d/%d", len(pipelines.SpanPipelines), len(pipelines.MetricReaders))
 	}
 	if pipelines.CanaryAcknowledged != nil {
 		t.Fatal("metric-only pipeline exposed a trace acknowledgement callback")
@@ -358,7 +366,7 @@ func TestOTLPGenerationAssemblerRejectsTransformedAndUnsupportedTracePoliciesBef
 			}
 			plan := compileGenerationPlan(t, test.destination)
 			pipelines, err := factory.PrepareOTLPGenerationPipelines(context.Background(), plan, 20, generationMetricSpec())
-			if len(pipelines.SpanProcessors) != 0 || len(pipelines.MetricReaders) != 0 || !IsError(err, ErrorUnsupportedPolicy) {
+			if len(pipelines.SpanPipelines) != 0 || len(pipelines.MetricReaders) != 0 || !IsError(err, ErrorUnsupportedPolicy) {
 				t.Fatalf("pipelines=%+v error=%v", pipelines, err)
 			}
 		})
@@ -399,12 +407,12 @@ func TestOTLPGenerationCanaryTargetIsolationAcknowledgementAndSplitBatch(t *test
 			traceID := trace.TraceID{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16}
 			for _, operation := range []string{"chat", "invoke_agent"} {
 				span := generationCanarySpan(traceID, operation, "target")
-				for _, processor := range pipelines.SpanProcessors {
-					processor.OnEnd(span)
+				for _, pipeline := range pipelines.SpanPipelines {
+					pipeline.Legacy.OnEnd(span)
 				}
 			}
-			for _, processor := range pipelines.SpanProcessors {
-				if err := processor.ForceFlush(context.Background()); err != nil {
+			for _, pipeline := range pipelines.SpanPipelines {
+				if err := pipeline.Legacy.ForceFlush(context.Background()); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -416,8 +424,8 @@ func TestOTLPGenerationCanaryTargetIsolationAcknowledgementAndSplitBatch(t *test
 			if got := factory.OTLPGenerationAcknowledgedCanaryTrace(31, "target", traceID.String()); got != test.wantAck {
 				t.Fatalf("acknowledged=%t want=%t", got, test.wantAck)
 			}
-			for _, processor := range pipelines.SpanProcessors {
-				_ = processor.Shutdown(context.Background())
+			for _, pipeline := range pipelines.SpanPipelines {
+				_ = pipeline.Legacy.Shutdown(context.Background())
 			}
 			if factory.OTLPGenerationAcknowledgedCanaryTrace(31, "target", traceID.String()) {
 				t.Fatal("acknowledgement outlived generation processors")
@@ -443,14 +451,14 @@ func TestOTLPGenerationAssemblerKeepsReloadGenerationsIsolated(t *testing.T) {
 		cleanupOTLPGenerationPipelines(oldPipelines)
 		t.Fatal(err)
 	}
-	if len(oldPipelines.SpanProcessors) != 1 || len(newPipelines.SpanProcessors) != 1 {
-		t.Fatalf("old/new processors=%d/%d", len(oldPipelines.SpanProcessors), len(newPipelines.SpanProcessors))
+	if len(oldPipelines.SpanPipelines) != 1 || len(newPipelines.SpanPipelines) != 1 {
+		t.Fatalf("old/new processors=%d/%d", len(oldPipelines.SpanPipelines), len(newPipelines.SpanPipelines))
 	}
 
 	oldTraceID := trace.TraceID{1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1}
 	newTraceID := trace.TraceID{2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2}
-	emitGenerationCanary(t, oldPipelines.SpanProcessors, oldTraceID, "reload-traces")
-	emitGenerationCanary(t, newPipelines.SpanProcessors, newTraceID, "reload-traces")
+	emitGenerationCanary(t, oldPipelines.SpanPipelines, oldTraceID, "reload-traces")
+	emitGenerationCanary(t, newPipelines.SpanPipelines, newTraceID, "reload-traces")
 	if oldPipelines.CanaryAcknowledged == nil || newPipelines.CanaryAcknowledged == nil ||
 		!oldPipelines.CanaryAcknowledged("reload-traces", oldTraceID.String()) ||
 		!newPipelines.CanaryAcknowledged("reload-traces", newTraceID.String()) {
@@ -504,8 +512,8 @@ func TestOTLPGenerationAssemblerCleansPartialFailureWithoutAffectingActiveGenera
 		secureTraceSend("z-invalid-ca", server.URL, invalidCA, []observability.Bucket{observability.BucketDiagnostic}),
 	)
 	failed, err := factory.PrepareOTLPGenerationPipelines(context.Background(), failingPlan, 52, generationMetricSpec())
-	if err == nil || len(failed.SpanProcessors) != 0 || len(failed.MetricReaders) != 0 {
-		t.Fatalf("failed pipelines=%d/%d error=%v", len(failed.SpanProcessors), len(failed.MetricReaders), err)
+	if err == nil || len(failed.SpanPipelines) != 0 || len(failed.MetricReaders) != 0 {
+		t.Fatalf("failed pipelines=%d/%d error=%v", len(failed.SpanPipelines), len(failed.MetricReaders), err)
 	}
 	factory.canaryMu.RLock()
 	_, failedGenerationPresent := factory.canary[52]
@@ -519,7 +527,7 @@ func TestOTLPGenerationAssemblerCleansPartialFailureWithoutAffectingActiveGenera
 	}
 
 	traceID := trace.TraceID{5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5}
-	emitGenerationCanary(t, active.SpanProcessors, traceID, "active-traces")
+	emitGenerationCanary(t, active.SpanPipelines, traceID, "active-traces")
 	if !factory.OTLPGenerationAcknowledgedCanaryTrace(51, "active-traces", traceID.String()) {
 		t.Fatal("later assembly failure disrupted the active generation")
 	}
@@ -545,19 +553,113 @@ func TestOTLPGenerationCanaryRegistryReleasesAfterProcessorShutdownError(t *test
 	if retained {
 		t.Fatal("failed processor shutdown retained a stale generation registry")
 	}
+	if !inner.terminal {
+		t.Fatal("shutdown error returned before the owned processor reached terminal state")
+	}
 	if err := processor.Shutdown(context.Background()); err != nil || inner.shutdowns != 1 {
 		t.Fatalf("second shutdown error=%v inner calls=%d", err, inner.shutdowns)
 	}
 }
 
-type shutdownErrorSpanProcessor struct{ shutdowns int }
+func TestOTLPGenerationCanaryOwnershipWaitsForTerminalCleanupAfterShutdownTimeout(t *testing.T) {
+	const generation = 72
+	factory := &Factory{canary: make(map[uint64]*otlpGenerationCanaryRegistry)}
+	registry := &otlpGenerationCanaryRegistry{processors: 1}
+	factory.canary[generation] = registry
+	inner := &terminalTimeoutSpanProcessor{terminal: make(chan struct{})}
+	processor := &canaryRegisteredSpanProcessor{
+		SpanProcessor: inner,
+		release:       func() { factory.releaseOTLPCanaryProcessor(generation, registry) },
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := processor.Shutdown(ctx); err == nil {
+		t.Fatal("timed-out processor shutdown unexpectedly succeeded")
+	}
+	factory.canaryMu.RLock()
+	_, retained := factory.canary[generation]
+	factory.canaryMu.RUnlock()
+	if !retained {
+		t.Fatal("canary ownership released before worker/exporter terminal cleanup")
+	}
+	close(inner.terminal)
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		factory.canaryMu.RLock()
+		_, retained = factory.canary[generation]
+		factory.canaryMu.RUnlock()
+		if !retained {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if retained {
+		t.Fatal("terminal cleanup did not release canary ownership")
+	}
+	if err := processor.Shutdown(context.Background()); err != nil || inner.shutdowns.Load() != 1 {
+		t.Fatalf("second shutdown error/calls = %v/%d", err, inner.shutdowns.Load())
+	}
+}
+
+type terminalTimeoutSpanProcessor struct {
+	terminal  chan struct{}
+	shutdowns atomic.Int64
+}
+
+func (*terminalTimeoutSpanProcessor) OnStart(context.Context, sdktrace.ReadWriteSpan) {}
+func (*terminalTimeoutSpanProcessor) OnEnd(sdktrace.ReadOnlySpan)                     {}
+func (*terminalTimeoutSpanProcessor) ForceFlush(context.Context) error                { return nil }
+func (processor *terminalTimeoutSpanProcessor) Shutdown(context.Context) error {
+	processor.shutdowns.Add(1)
+	return context.DeadlineExceeded
+}
+func (processor *terminalTimeoutSpanProcessor) TerminalDone() <-chan struct{} {
+	return processor.terminal
+}
+
+type shutdownErrorSpanProcessor struct {
+	shutdowns int
+	terminal  bool
+}
 
 func (*shutdownErrorSpanProcessor) OnStart(context.Context, sdktrace.ReadWriteSpan) {}
 func (*shutdownErrorSpanProcessor) OnEnd(sdktrace.ReadOnlySpan)                     {}
 func (*shutdownErrorSpanProcessor) ForceFlush(context.Context) error                { return nil }
 func (processor *shutdownErrorSpanProcessor) Shutdown(context.Context) error {
 	processor.shutdowns++
-	return errors.New("test shutdown failure")
+	processor.terminal = true
+	return context.DeadlineExceeded
+}
+
+type cleanupDualSpanChild struct {
+	shutdowns atomic.Int64
+	panic     bool
+}
+
+func (*cleanupDualSpanChild) OnStart(context.Context, sdktrace.ReadWriteSpan) {}
+func (*cleanupDualSpanChild) OnEnd(sdktrace.ReadOnlySpan)                     {}
+func (*cleanupDualSpanChild) ForceFlush(context.Context) error                { return nil }
+func (*cleanupDualSpanChild) TryEnqueue(telemetry.V8CanonicalEndedSpan) telemetry.V8CanonicalSpanEnqueueResult {
+	return telemetry.V8CanonicalSpanEnqueueAccepted
+}
+func (child *cleanupDualSpanChild) Shutdown(context.Context) error {
+	child.shutdowns.Add(1)
+	if child.panic {
+		panic("cleanup panic")
+	}
+	return nil
+}
+
+func TestCleanupOTLPGenerationPipelinesVisitsBothMalformedArmsDedupesAndContainsPanic(t *testing.T) {
+	panicking := &cleanupDualSpanChild{panic: true}
+	good := &cleanupDualSpanChild{}
+	cleanupOTLPGenerationPipelines(telemetry.V8GenerationPipelines{SpanPipelines: []telemetry.V8GenerationSpanPipeline{
+		{Destination: "bad", Canonical: panicking, Legacy: panicking},
+		{Destination: "bad-reused", Canonical: panicking, Legacy: good},
+	}})
+	if panicking.shutdowns.Load() != 1 || good.shutdowns.Load() != 1 {
+		t.Fatalf("shutdowns = %d/%d", panicking.shutdowns.Load(), good.shutdowns.Load())
+	}
 }
 
 func secureTraceSend(name, endpoint, caPath string, buckets []observability.Bucket) config.ObservabilityV8DestinationSource {
@@ -568,19 +670,19 @@ func secureTraceSend(name, endpoint, caPath string, buckets []observability.Buck
 
 func emitGenerationCanary(
 	t *testing.T,
-	processors []sdktrace.SpanProcessor,
+	pipelines []telemetry.V8GenerationSpanPipeline,
 	traceID trace.TraceID,
 	destination string,
 ) {
 	t.Helper()
 	for _, operation := range []string{"chat", "invoke_agent"} {
 		span := generationCanarySpan(traceID, operation, destination)
-		for _, processor := range processors {
-			processor.OnEnd(span)
+		for _, pipeline := range pipelines {
+			pipeline.Legacy.OnEnd(span)
 		}
 	}
-	for _, processor := range processors {
-		if err := processor.ForceFlush(context.Background()); err != nil {
+	for _, pipeline := range pipelines {
+		if err := pipeline.Legacy.ForceFlush(context.Background()); err != nil {
 			t.Fatal(err)
 		}
 	}

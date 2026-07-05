@@ -342,6 +342,7 @@ func TestRejectedProviderCandidateReleasesListener(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err = telemetry.NewProviderV8Inactive(context.Background(), plan, 1, telemetry.V8ProviderOptions{
+		Version: "test", Environment: "test",
 		GenerationPipelines: func(
 			ctx context.Context,
 			candidate *config.ObservabilityV8Plan,
@@ -453,6 +454,7 @@ func TestNoCollectedMetricsDoesNotConstructReaderOrBind(t *testing.T) {
 		t.Fatal(err)
 	}
 	provider, err := telemetry.NewProviderV8Inactive(context.Background(), plan, 1, telemetry.V8ProviderOptions{
+		Version: "test", Environment: "test",
 		GenerationPipelines: func(
 			ctx context.Context,
 			candidate *config.ObservabilityV8Plan,

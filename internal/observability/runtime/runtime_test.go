@@ -320,7 +320,7 @@ func TestRuntimeTelemetryProviderSharesExactGraphGenerationAndRetirement(t *test
 	initialPlan := runtimeTestPlan(t, dependencies.storePath, dependencies.judgePath, 90, nil)
 	options := dependencies.options()
 	options.TelemetryProviderFactory = telemetry.NewV8ProviderFactory(telemetry.V8ProviderOptions{
-		Version: "runtime-test", ServiceInstanceID: "runtime-test-instance",
+		Version: "runtime-test", Environment: "test", ServiceInstanceID: "runtime-test-instance",
 	})
 	runtime, err := New(t.Context(), runtimegraph.ConfigFromPlan(initialPlan, false), options)
 	if err != nil {

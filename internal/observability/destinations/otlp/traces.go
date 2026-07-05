@@ -149,6 +149,15 @@ func (processor *filteredSpanProcessor) Shutdown(ctx context.Context) error {
 	return processor.inner.Shutdown(ctx)
 }
 
+func (processor *filteredSpanProcessor) TerminalDone() <-chan struct{} {
+	if terminal, ok := processor.inner.(interface{ TerminalDone() <-chan struct{} }); ok {
+		return terminal.TerminalDone()
+	}
+	closed := make(chan struct{})
+	close(closed)
+	return closed
+}
+
 type SpanExporter struct {
 	inner         sdktrace.SpanExporter
 	connection    *grpc.ClientConn

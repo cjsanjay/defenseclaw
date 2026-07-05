@@ -182,7 +182,7 @@ func TestGenerationPipelineFactoryRuntimeGraphFanoutReloadAndGlobalIsolation(t *
 	}
 
 	providerFactory := telemetry.NewV8ProviderFactory(telemetry.V8ProviderOptions{
-		Version: "composite-test", ServiceInstanceID: "composite-process",
+		Version: "composite-test", Environment: "test", ServiceInstanceID: "composite-process",
 		GenerationPipelines: factory.GenerationPipelineFactory(prometheus.Options{
 			Listen: listeners.listen,
 		}),
@@ -296,7 +296,7 @@ func TestGenerationPipelineFactoryPrometheusFailureRollsBackOTLP(t *testing.T) {
 	provider, err := telemetry.NewProviderV8Inactive(
 		t.Context(), plan, 91,
 		telemetry.V8ProviderOptions{
-			ServiceInstanceID: "rollback-test",
+			Version: "test", Environment: "test", ServiceInstanceID: "rollback-test",
 			GenerationPipelines: factory.GenerationPipelineFactory(prometheus.Options{
 				Listen: func(context.Context, string, string) (net.Listener, error) {
 					return nil, errors.New("untrusted configured address")

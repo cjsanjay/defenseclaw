@@ -12,6 +12,7 @@ package otlp
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"time"
 
@@ -42,6 +43,10 @@ type boundedSpanProcessor struct {
 	stop         chan struct{}
 	done         chan struct{}
 	stopOnce     sync.Once
+	shutdownOnce sync.Once
+	terminal     chan struct{}
+	shutdownMu   sync.Mutex
+	shutdownErr  error
 }
 
 type spanFlushRequest struct {
@@ -53,6 +58,7 @@ func newBoundedSpanProcessor(exporter *SpanExporter, config BatchConfig) *bounde
 	processor := &boundedSpanProcessor{
 		exporter: exporter, config: config, wake: make(chan struct{}, 1),
 		flush: make(chan spanFlushRequest), stop: make(chan struct{}), done: make(chan struct{}),
+		terminal: make(chan struct{}),
 	}
 	go processor.run()
 	return processor
@@ -184,19 +190,54 @@ func (processor *boundedSpanProcessor) Shutdown(ctx context.Context) error {
 	if ctx == nil {
 		return newError(ErrorShutdown, nil)
 	}
-	processor.mu.Lock()
-	processor.stopped = true
-	processor.mu.Unlock()
-	if err := processor.ForceFlush(ctx); err != nil {
-		return err
-	}
-	processor.stopOnce.Do(func() { close(processor.stop) })
+	processor.shutdownOnce.Do(func() {
+		processor.mu.Lock()
+		processor.stopped = true
+		processor.mu.Unlock()
+		flushErr := processor.ForceFlush(ctx)
+		processor.stopOnce.Do(func() { close(processor.stop) })
+		go processor.finishShutdown(flushErr)
+	})
 	select {
-	case <-processor.done:
-		return processor.exporter.Shutdown(ctx)
+	case <-processor.terminal:
+		processor.shutdownMu.Lock()
+		err := processor.shutdownErr
+		processor.shutdownMu.Unlock()
+		return err
 	case <-ctx.Done():
 		return newError(ErrorShutdown, ctx.Err())
 	}
+}
+
+func (processor *boundedSpanProcessor) finishShutdown(flushErr error) {
+	var exporterErr error
+	defer func() {
+		if recover() != nil {
+			exporterErr = newError(ErrorShutdown, nil)
+		}
+		processor.shutdownMu.Lock()
+		if err := errors.Join(flushErr, exporterErr); err != nil {
+			processor.shutdownErr = newError(ErrorShutdown, err)
+		}
+		close(processor.terminal)
+		processor.shutdownMu.Unlock()
+	}()
+	<-processor.done
+	cleanupContext, cancel := context.WithTimeout(context.Background(), processor.exporter.config.timeout)
+	defer cancel()
+	exporterErr = processor.exporter.Shutdown(cleanupContext)
+}
+
+// TerminalDone closes only after the worker and exporter are both closed.
+// Generation ownership (including canary acknowledgement state) must remain
+// live until this terminal point, even if the caller's Shutdown context ends.
+func (processor *boundedSpanProcessor) TerminalDone() <-chan struct{} {
+	if processor == nil {
+		closed := make(chan struct{})
+		close(closed)
+		return closed
+	}
+	return processor.terminal
 }
 
 func (processor *boundedSpanProcessor) Counters() ExportCounters {

@@ -326,6 +326,64 @@ stringify a typed value merely to satisfy a backend. A value that cannot be
 represented under the pinned type fails projection for that destination without
 mutating the canonical record or another destination projection.
 
+### 5.6 Generation-owned ended-span handoff
+
+Generated builders produce the immutable canonical `Record`; the OTel SDK span is
+only the timing/sampling callback carrier. A generation-owned handoff registers a
+clone-isolated ended-span value before ending the SDK span, then atomically consumes
+that value from the synchronous `OnEnd` callback. Destination consumers receive
+the value form and can obtain only a cloned `Record`; they never receive an
+`sdktrace.ReadOnlySpan` or retain provider-owned SDK state.
+
+Registration requires all of the following to agree before any canonical fanout:
+
+- the provider generation is active, trace collection for the record bucket is
+  enabled, and the physical span is both recording and sampled;
+- the canonical record has valid nonzero trace/span identity and exact start/end,
+  kind, parent, rendered name, status, bucket, family, family schema version,
+  source, scope, resource, config generation, and nonempty plan digest;
+- record generation and plan digest equal the provider's immutable runtime plan;
+  and
+- the synchronous SDK callback observes exact physical/canonical parity for the
+  registered fields.
+
+The end helper always ends the physical span. Before successful registration it
+uses the caller's ordinary SDK end path; after registration it supplies the exact
+canonical end timestamp. It reports `registered` only after the callback consumes
+the same pending identity. All rejection, panic, duplicate, parity-failure,
+retirement, and concurrent-end paths atomically cancel or retire pending ownership.
+No path may leak a pending count or encoded byte.
+
+Pending handoff state is generation-private and bounded by the P-062 defaults of
+2,048 records and 64 MiB of exact canonical encoded bytes. One physical callback
+fans out the consumed immutable value independently to every canonical destination
+and the physical SDK value independently to every legacy destination. A named
+destination configures exactly one of those arms, destination names and child
+identities are unique, and a missing or rejected canonical registration never
+falls back to the legacy arm. Enqueue is nonblocking; destination return values and
+panics cannot change the application operation or suppress sibling destinations.
+
+Shutdown closes provider and composite-callback intake before waiting for callbacks
+that already entered the composite processor. After those callbacks drain, it
+retires pending handoff state and traverses children in reverse order; flush
+traverses children in configured order. Candidate rollback and malformed
+partial-pipeline cleanup visit both arms, deduplicate the same child by pointer
+identity, and contain child panics. An OTLP child exposes a terminal cleanup signal
+that closes only after its worker and exporter have actually ended, including when
+the public shutdown deadline expires or exporter shutdown panics; generation-owned
+canary acknowledgement cannot outlive that signal.
+
+This substrate is not authority to activate canonical destination consumers. The
+generated `Record` MUST first own W3C `trace_state` and the complete OTLP flags
+word, including sampled and remote-parent bits; no canonical projector may recover
+or overwrite either value from the physical SDK callback. Configured safe custom
+resource attributes likewise require one typed bounded canonical representation,
+not acceptance as unregistered SDK-only extras. Activation additionally requires
+the generated two-span root-agent/model canary, a runtime-graph lease/reload E2E
+from start through end, PR #403 producer and Galileo projection migration, and PR
+#412 local-observability validation with diagnostic canaries excluded from the
+Agent360 spanmetrics connector while remaining available in Tempo.
+
 ## 6. Resource and Scope Attributes
 
 Every exported trace resource includes:

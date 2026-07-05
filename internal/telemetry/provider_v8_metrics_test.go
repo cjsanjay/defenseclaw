@@ -123,6 +123,7 @@ func metricPlanForTest(t *testing.T, enabled ...observability.Bucket) *config.Ob
 	return v8PlanForTest(t, "always_on", "", func(source *config.ObservabilityV8Source) {
 		no := false
 		yes := true
+		source.Defaults.Collect.Traces = &no
 		source.Defaults.Collect.Metrics = &no
 		source.Buckets = make(map[observability.Bucket]config.ObservabilityV8BucketPolicySource)
 		for _, bucket := range enabled {
@@ -544,7 +545,7 @@ func TestV8MetricReadersAndProvidersAreGenerationOwnedAcrossReload(t *testing.T)
 	var mutex sync.Mutex
 	readers := map[uint64]*sdkmetric.ManualReader{}
 	factory := NewV8ProviderFactory(V8ProviderOptions{
-		ServiceInstanceID: "metric-reload",
+		Version: "test", Environment: "test", ServiceInstanceID: "metric-reload",
 		MetricReaderFactories: []V8MetricReaderFactory{func(generation uint64, spec V8MetricReaderSpec) (sdkmetric.Reader, error) {
 			reader := sdkmetric.NewManualReader(sdkmetric.WithTemporalitySelector(func(sdkmetric.InstrumentKind) metricdata.Temporality {
 				return spec.Temporality

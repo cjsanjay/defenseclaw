@@ -1349,6 +1349,64 @@ func TestBoundedSpanProcessorEnforcesQueueAndBatchBytes(t *testing.T) {
 	}
 }
 
+func TestBoundedSpanProcessorShutdownAfterFlushTimeoutStillTerminatesWorkerAndExporter(t *testing.T) {
+	inner := &capturingSpanExporter{}
+	exporter := &SpanExporter{
+		inner:  inner,
+		config: signalConfig{timeout: time.Second, observer: SignalObserverFunc(func(SignalEvent) {})},
+	}
+	processor := newBoundedSpanProcessor(exporter, BatchConfig{
+		MaxQueueSize: 1, MaxQueueBytes: 1024, MaxExportBatchSize: 1,
+		MaxExportBatchBytes: 1024, ScheduledDelay: time.Hour,
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := processor.Shutdown(ctx); err == nil {
+		t.Fatal("canceled shutdown unexpectedly succeeded")
+	}
+	select {
+	case <-processor.done:
+	case <-time.After(time.Second):
+		t.Fatal("flush timeout stranded the span worker")
+	}
+	deadline := time.Now().Add(time.Second)
+	for inner.shutdowns.Load() == 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if inner.shutdowns.Load() != 1 {
+		t.Fatalf("inner exporter shutdowns = %d", inner.shutdowns.Load())
+	}
+	exporter.mu.RLock()
+	closed := exporter.closed
+	exporter.mu.RUnlock()
+	if !closed {
+		t.Fatal("flush timeout left the span exporter open")
+	}
+}
+
+func TestBoundedSpanProcessorPanickingExporterShutdownStillClosesTerminal(t *testing.T) {
+	inner := &capturingSpanExporter{panicShutdown: true}
+	exporter := &SpanExporter{
+		inner:  inner,
+		config: signalConfig{timeout: time.Second, observer: SignalObserverFunc(func(SignalEvent) {})},
+	}
+	processor := newBoundedSpanProcessor(exporter, BatchConfig{
+		MaxQueueSize: 1, MaxQueueBytes: 1024, MaxExportBatchSize: 1,
+		MaxExportBatchBytes: 1024, ScheduledDelay: time.Hour,
+	})
+	if err := processor.Shutdown(context.Background()); err == nil {
+		t.Fatal("panicking exporter shutdown was not converted to a bounded error")
+	}
+	select {
+	case <-processor.TerminalDone():
+	default:
+		t.Fatal("panicking exporter stranded terminal completion")
+	}
+	if inner.shutdowns.Load() != 1 {
+		t.Fatalf("inner exporter shutdowns = %d", inner.shutdowns.Load())
+	}
+}
+
 func TestMetricExporterPreflightRejectsAboveEncodedByteCeiling(t *testing.T) {
 	metrics := testMetricData("defenseclaw.metric.boundary")
 	bound, ok := conservativeMetricBytes(metrics)
@@ -1442,8 +1500,10 @@ func (server *negativePartialGRPCLogServer) Export(context.Context, *collectorlo
 }
 
 type capturingSpanExporter struct {
-	mu      sync.Mutex
-	batches []int
+	mu            sync.Mutex
+	batches       []int
+	shutdowns     atomic.Int64
+	panicShutdown bool
 }
 
 type signalEventCapture struct {
@@ -1476,7 +1536,13 @@ func (exporter *capturingSpanExporter) ExportSpans(_ context.Context, spans []sd
 	return nil
 }
 
-func (*capturingSpanExporter) Shutdown(context.Context) error { return nil }
+func (exporter *capturingSpanExporter) Shutdown(context.Context) error {
+	exporter.shutdowns.Add(1)
+	if exporter.panicShutdown {
+		panic("exporter shutdown panic")
+	}
+	return nil
+}
 
 func (exporter *capturingSpanExporter) batchSizes() []int {
 	exporter.mu.Lock()
