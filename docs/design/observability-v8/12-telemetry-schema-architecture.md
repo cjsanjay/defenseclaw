@@ -237,7 +237,7 @@ The v8 reusable groups are:
 
 | Group | Contents |
 |---|---|
-| `resource.core` | Service, deployment, instance, host, tenant/workspace, device identity |
+| `resource.core` | Service, deployment, instance, host, tenant/workspace, device identity, one bounded dynamic custom-member contract, and documented derived compatibility aliases |
 | `span.core` | Bucket, family, family schema version, source, config generation, outcome |
 | `correlation.request` | Request/turn/trace identifiers |
 | `correlation.agent` | Conversation, agent, root/parent, lifecycle, execution, phase, sequence |
@@ -1250,7 +1250,7 @@ Generated family input layouts are exact:
 | Signal/input | Ordered common fields before generated value fields |
 |---|---|
 | Log | `Envelope FamilyEnvelopeInput`; `Severity Optional[Severity]`; `LogLevel Optional[LogLevel]`; then `Outcome` as `Outcome`, `Optional[Outcome]`, or omitted according to the family outcome policy |
-| Span | `Envelope FamilyEnvelopeInput`; `Outcome Outcome`; `Kind string`; `StartTimeUnixNano uint64`; `EndTimeUnixNano uint64`; `ParentSpanID Optional[string]`; `Status TraceStatusInput`; `Resource TraceResourceInput`; `Scope TraceScopeInput`; `DroppedAttributesCount Optional[uint32]`; `Events []TraceEventInput`; `DroppedEventsCount Optional[uint32]`; `Links []TraceLinkInput`; `DroppedLinksCount Optional[uint32]` |
+| Span | `Envelope FamilyEnvelopeInput`; `Outcome Outcome`; `Kind string`; `StartTimeUnixNano uint64`; `EndTimeUnixNano uint64`; `ParentSpanID Optional[string]`; `TraceState Optional[string]`; `Flags uint32`; `Status TraceStatusInput`; `Resource TraceResourceInput`; `Scope TraceScopeInput`; `DroppedAttributesCount Optional[uint32]`; `Events []TraceEventInput`; `DroppedEventsCount Optional[uint32]`; `Links []TraceLinkInput`; `DroppedLinksCount Optional[uint32]` |
 | Metric | `Envelope FamilyEnvelopeInput`; `Value int64|float64` |
 | Span event | `TimeUnixNano uint64`; `DroppedAttributesCount Optional[uint32]` |
 | Span link | `TraceID string`; `SpanID string`; `TraceState Optional[string]`; `DroppedAttributesCount Optional[uint32]` |
@@ -1279,7 +1279,11 @@ signature is a reviewed public-API epoch change, not renderer discretion.
 
 `TraceResourceInput` remains the common structural input with
 `SchemaURL string` and `DroppedAttributesCount Optional[uint32]`; its registered
-values stay package-private. Each generated span-family input then owns the
+values stay package-private. It additionally accepts only the generated sealed
+`resource.core` custom-member value plus the generation's compatibility-alias
+decision through a copy-returning generated attach function. No raw map, slice,
+`any`, per-span custom field, or destination-owned parser is part of the API. Each
+generated span-family input then owns the
 thirteen `resource.core` attributes whose value source is `input`, using selectors
 `Resource<FullAttributeSelector>` so the fields are emitted and versioned with the
 family API. The derived `service.version` has no public selector. Required resource
@@ -1287,8 +1291,12 @@ attributes use plain types and recommended attributes use `Optional[T]`.
 `TraceScopeInput` owns only `DroppedAttributesCount Optional[uint32]`; scope name,
 version, schema URL, profile attributes, and its private values are derived.
 Generated wrappers copy family-local resource fields into a local
-`TraceResourceInput.values` before calling the kernel. No generated public field
-is added manually to a handwritten common type.
+`TraceResourceInput.values`, merge the sealed bytewise-sorted custom members, and
+derive enabled aliases from their canonical fixed values before calling the
+kernel. The generated dynamic descriptor assigns every custom pointer its exact
+`metadata`/`internal` classification and rejects duplicates, collisions, invalid
+types, secret/path/process-owned names or values, and aggregate overflow.
+No generated public field is added manually to a handwritten common type.
 
 A condition fact lives with the smallest generated component whose presence
 activates it: family/metric/resource/scope conditions on the family input, event
@@ -1500,24 +1508,18 @@ The static API gate changes from the pre-generation placeholder "no exported
 still rejects a generic `Build`, map/`any` input, caller-controlled catalog state,
 or direct schema-derived-constructor call outside `family_builder.go`.
 
-##### Current implementation blockers
+##### Current implementation state
 
-Candidate generation MUST remain incomplete until all of these are resolved:
-
-1. The five non-overlay derived-value bindings and constant scope schema URL
-   specified above are not yet authored/compiled; scope/resource/link values still
-   exist only in handwritten kernel tests. Scope name is already the authored and
-   compiler-validated P-069 constant `defenseclaw.telemetry`; only its schema URL
-   is missing from source authority.
-2. `CandidateRenderIndex` exists but does not yet materialize the promised
-   enriched field/container/family/trace/metric descriptors, parsed span names,
-   resolved mandatory programs, expanded producer rows, or independent digest.
-3. `GoAPIPlanIR` does not yet exist, so a renderer would have to invent scoped
-   field selectors, public layouts/signatures, structured conversion operations,
-   private descriptor bindings, and output-file ownership.
-4. The private kernel does not yet carry component-scoped condition facts or a
-   generated private resolved mandatory result; its test descriptor remains the
-   only complete trace descriptor witness.
+The former candidate-generation blockers are resolved: derived bindings, constant
+scope identity, enriched descriptors, the independent candidate digest,
+`GoAPIPlanIR`, generated component-scoped condition facts, resolved mandatory
+programs, transactional publication, and live public-schema adoption are checked-in
+authority. The active additive epoch extends that same pipeline with canonical
+trace state/full flags and the sealed `resource.core` custom-member/alias contract.
+Production activation still depends on the generated two-span canary,
+runtime-generation lease E2E, complete producer migration, and destination
+projection gates tracked by `spec.md`; renderers MUST NOT substitute handwritten
+state for any of those remaining inputs.
 5. The exact seven generated Go outputs do not yet exist. The transaction now
    rejects desired or prior strict subsets, but the future renderer coordinator
    must still validate their common candidate/view/symbol digests and complete

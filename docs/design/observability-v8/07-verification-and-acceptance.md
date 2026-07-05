@@ -715,6 +715,21 @@ Required cases:
   reload, migrates the PR #403 root/subagent/model/tool producers and Galileo
   projection, preserves the PR #412 Tempo/resource compatibility aliases, and
   proves diagnostic canaries enter Tempo but not Agent360 spanmetrics.
+- Resource coverage proves 0/1/64 custom entries, exact key/value/aggregate
+  boundaries, bytewise deterministic output, accessor mutation isolation, and
+  content-free collision/secret/path/process-key failures. Every generated span
+  family receives the same immutable resource set and exact field classes.
+- `compatibility_aliases` true/false coverage proves the three documented aliases
+  equal their canonical source or are absent across canonical records, SDK traces,
+  OTLP logs/traces/metrics, Galileo, and reload generations. Handoff rejects any
+  missing, changed, non-string, or extra physical resource member by exact-set
+  equality and never falls back to a legacy arm.
+- HTTP and gRPC protobuf tests prove custom resources survive general OTLP and
+  Galileo projection without shared mutation; Galileo preserves resource-level
+  dropped counts. OTLP log queues retain the resource snapshot of their owning
+  generation across reload. Native Prometheus exposes no arbitrary custom labels;
+  local Collector promotion rejects normalized-key collisions and does not make a
+  custom key an Agent360/dashboard-required dimension.
 
 ### 9.2 Sampling
 

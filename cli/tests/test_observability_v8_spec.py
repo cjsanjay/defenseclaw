@@ -386,7 +386,7 @@ def test_observability_v8_generated_builder_source_contract_is_normative() -> No
     assert "an interruption can expose mixed generations only to unsupported concurrent" in verification
     assert "Manifest-last installation is a logical crash-recoverable transaction" in decisions
     assert "`legacy.audit.*`" in schemas
-    assert "Candidate generation MUST remain incomplete" in schemas
+    assert "The former candidate-generation blockers are resolved" in schemas
     assert "Generated-builder source authority" in verification
     assert "exactly version 1 and its eleven" in verification
     assert "Expanded producer-row tests" in verification

@@ -285,7 +285,13 @@ resolved `resource.core` use requires `service.name`, `service.version`,
 `service.namespace`, `service.instance.id`, `deployment.environment.name`, and
 `defenseclaw.instance.id` for a DefenseClaw-authored exported trace. Host, OS,
 tenant, workspace, deployment-mode, claw-mode, and device-fingerprint fields are
-emitted only when known and allowed. `scope` is exactly `{name, version,
+emitted only when known and allowed. The fixed fields are merged with the one
+generated immutable custom-resource value. Its bytewise-sorted keys are bounded
+and classified `metadata`/`internal`; collision, secret/path/process-owned input,
+or a value outside its validated string contract fails before record construction.
+Documented legacy aliases are derived only when the generation's
+`compatibility_aliases` policy is true and inherit the canonical value/class; they
+are never custom entries. `scope` is exactly `{name, version,
 schema_url, attributes, dropped_attributes_count?}` and requires the canonical
 `defenseclaw.trace.schema_version` and `defenseclaw.semantic_profile` values bound
 by the selected semantic profile. `defenseclaw.galileo.compatibility_profile` is
@@ -417,6 +423,15 @@ vendor preset as a process-wide resource when several destinations coexist.
 Resource-to-span mirroring is allowed only for a reviewed set of join keys needed by
 backends that flatten spans without resource context. The schema lists those keys;
 adapters cannot mirror arbitrary resource data.
+
+The SDK resource and canonical `body.resource` are views of the same immutable
+generation snapshot. Handoff parity is exact-set equality, not subset equality.
+General OTLP logs, traces, and metrics retain the same snapshot. Galileo may adapt
+wrappers but preserves every validated custom resource entry and enabled alias;
+another destination's projection cannot mutate it. Native Prometheus continues to
+omit arbitrary resource labels. The local Collector may promote process-stable
+OTLP metric resources downstream, but those promoted keys are not Agent360-required
+labels and normalized-key collisions fail closed.
 
 ## 7. Span Family Catalog
 

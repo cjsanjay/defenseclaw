@@ -756,8 +756,13 @@ redaction boundary with the `none` transform.
   `^[A-Za-z][A-Za-z0-9_.-]{0,127}$`; values are nonblank, control-free strings of
   1-1,024 UTF-8 bytes; and the aggregate encoded key-plus-value budget is 16 KiB.
   The compiler stores registered core values separately from a bytewise-key-sorted
-  typed custom projection and rejects invalid input without rendering the value in
-  diagnostics.
+  generated immutable custom-resource value and rejects invalid input without
+  rendering the value in diagnostics. The value owns at most 64 detached string
+  entries, exposes only copy-returning accessors, and is the sole runtime form of
+  custom resource data; providers, builders, and destinations do not re-parse the
+  YAML map or accept an unvalidated map/slice substitute. Custom entries are
+  classified `metadata`/`internal`, remain process-stable, and cannot collide with
+  fixed core, process-owned, or compatibility-alias keys.
 - Other registered identity, process-owned keys, preset markers, and
   compatibility-alias spellings are invalid in source. DefenseClaw derives those
   canonical values and documented legacy aliases from trusted runtime identity;
@@ -779,7 +784,21 @@ redaction boundary with the `none` transform.
 - `trace_policy.compatibility_aliases` controls only documented legacy aliases. It
   never bypasses redaction. Migrated v7 configurations default it to true for the
   declared compatibility window; new configurations use the release default shown
-  by the effective view.
+  by the effective view. When true, exactly these aliases are derived from the same
+  canonical value: `deployment.environment <- deployment.environment.name`,
+  `deployment.mode <- defenseclaw.deployment.mode`, and
+  `defenseclaw.device.id <- defenseclaw.device.public_key_fingerprint`. When false,
+  all three are absent. An alias is never independently configurable or allowed to
+  disagree with its canonical source. Legacy `discovery.source` is not a v8 process
+  resource; discovery provenance belongs on its registered operation/log family.
+- One generation-owned resource snapshot supplies SDK traces and metrics,
+  generated canonical trace records, OTLP logs, general OTLP projection, and
+  Galileo projection. Every enabled OTLP signal therefore carries the same
+  registered core, custom entries, and enabled aliases. Exact canonical/physical
+  trace handoff compares the complete schema URL, key set, string types, and
+  values; no physical-only extra is accepted. Native Prometheus remains governed
+  by its generated label catalog and does not automatically expose arbitrary
+  resource labels.
 - `trace_policy.limits` accepts positive bounded values for attributes, events,
   links, event attributes, attribute bytes, total projected span bytes, stack-trace
   bytes, and message/document items. Values above hard safety ceilings are invalid;

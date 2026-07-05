@@ -471,6 +471,14 @@ metrics -> resource + delta-to-cumulative + batch -> Prometheus remote write
 logs    -> bounded/body-safe processing -> Loki
 ```
 
+The resource processor preserves an explicit `deployment.environment`; otherwise
+it derives that legacy alias from `deployment.environment.name`, and uses
+`local-dev` only when neither spelling exists. It MUST NOT pair a canonical
+production environment with a contradictory local alias. Validated custom resource
+attributes survive the OTLP resource path, but are not added to the exact
+Agent360 spanmetrics dimensions or dashboard-required label/attribute inventory.
+Prometheus normalization collisions among promoted custom keys fail activation.
+
 The stable Grafana datasource UIDs are:
 
 ```text
