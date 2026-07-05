@@ -34,7 +34,7 @@ endif
         security-suite-test security-suite-eval \
         connector-matrix-test go-connector-matrix-test py-connector-matrix-test \
         test-verbose test-file lint py-lint go-lint ts-test rego-test clean \
-        check check-audit-actions check-error-codes check-schemas check-grafana-dashboards check-observability-v8-inventory check-observability-v8-spec check-v7 check-provider-coverage check-llm-catalog check-version-sync check-upgrade-manifest \
+        check check-audit-actions check-error-codes check-schemas check-telemetry-public-schema-parity check-grafana-dashboards check-observability-v8-inventory check-observability-v8-spec check-v7 check-provider-coverage check-llm-catalog check-version-sync check-upgrade-manifest \
         upgrade-smoke upgrade-smoke-matrix \
         set-version \
         _bundle-data \
@@ -558,7 +558,7 @@ test-file:
 
 check: check-v7 check-observability-v8-inventory check-observability-v8-spec check-grafana-dashboards check-provider-coverage check-llm-catalog check-upgrade-manifest
 
-check-v7: check-audit-actions check-audit-no-raw-literals check-error-codes check-schemas
+check-v7: check-audit-actions check-audit-no-raw-literals check-error-codes check-schemas check-telemetry-public-schema-parity
 	@echo "check-v7: all parity gates passed."
 
 check-audit-actions:
@@ -572,6 +572,9 @@ check-error-codes:
 
 check-schemas:
 	@$(VENV)/bin/python scripts/check_schemas.py
+
+check-telemetry-public-schema-parity:
+	@$(VENV)/bin/python scripts/check_telemetry_public_schema_parity.py --root .
 
 check-observability-v8-inventory:
 	@$(VENV)/bin/python scripts/check_observability_v8_inventory.py \

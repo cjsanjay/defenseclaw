@@ -1,0 +1,33 @@
+{
+  "authority": "compatibility-witness-only",
+  "baseline_id": "public-schemas-v7",
+  "baseline_sha256": "d44ea610e9e82b142788babce9c8853713aa004a037c6bd2684502c80a1ca2b3",
+  "boundary_strategies": [
+    "const",
+    "enum",
+    "maximum",
+    "maxItems",
+    "maxLength",
+    "maxProperties",
+    "minimum",
+    "minLength",
+    "pattern",
+    "type"
+  ],
+  "candidate_root": "schemas/telemetry/generated/public-views",
+  "coverage_strategy": "derived-exhaustive-public-view-v1",
+  "expected": {
+    "dynamic_scopes": 94,
+    "fields": 756,
+    "number_lexemes": 162,
+    "outputs": 26,
+    "references": 39,
+    "views": 21
+  },
+  "format_version": 1,
+  "id": "legacy-public-schema-parity-v1",
+  "invalid_witness_strategy": "derived-root-wrong-type-v1",
+  "public_views_sha256": "55ebe26601281cd37cb4fe9c40ba38490705e70c599e8d48cc35316fb6381c61",
+  "valid_witness_strategy": "derived-minimal-valid-v1",
+  "view_selection": "exact-public-views-source-v1"
+}
