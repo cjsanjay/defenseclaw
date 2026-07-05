@@ -23,6 +23,10 @@ import (
 	"github.com/defenseclaw/defenseclaw/internal/observability"
 	"github.com/defenseclaw/defenseclaw/internal/observability/delivery"
 	collectortracepb "go.opentelemetry.io/proto/otlp/collector/trace/v1"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
+	grpcstatus "google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -59,16 +63,17 @@ type ProjectedTraceAdapter struct {
 	builder       ProjectedTraceRequestBuilder
 	httpClient    *http.Client
 	httpTransport *http.Transport
+	connection    *grpc.ClientConn
+	grpcClient    collectortracepb.TraceServiceClient
 	maxBytes      int
 	counters      mutableCounters
 	gate          chan struct{}
 	closed        bool
 }
 
-// NewProjectedTraceAdapter claims one HTTP/protobuf trace transport. Galileo is
-// currently the only caller; gRPC is intentionally rejected because its preset
-// contract is HTTP/protobuf and accepting a second transport would be untested
-// policy broadening.
+// NewProjectedTraceAdapter claims one protobuf trace transport. The caller
+// supplies the only accepted projected builder; canonical records and SDK spans
+// never cross this boundary.
 func (factory *Factory) NewProjectedTraceAdapter(
 	ctx context.Context,
 	builder ProjectedTraceRequestBuilder,
@@ -80,17 +85,29 @@ func (factory *Factory) NewProjectedTraceAdapter(
 	if err != nil {
 		return nil, err
 	}
-	if config.protocol != ProtocolHTTP {
-		return nil, newError(ErrorInvalidConfig, nil)
-	}
-	client, transport := newHTTPClient(config)
 	adapter := &ProjectedTraceAdapter{
 		config: config, destination: factory.config.Destination,
-		builder: builder, httpClient: client, httpTransport: transport,
+		builder:  builder,
 		maxBytes: factory.config.Batch.MaxExportBatchBytes, gate: make(chan struct{}, 1),
+	}
+	if config.protocol == ProtocolHTTP {
+		adapter.httpClient, adapter.httpTransport = newHTTPClient(config)
+	} else {
+		connection, connectionErr := newGRPCConnection(config)
+		if connectionErr != nil {
+			return nil, connectionErr
+		}
+		adapter.connection = connection
+		adapter.grpcClient = collectortracepb.NewTraceServiceClient(connection)
 	}
 	adapter.gate <- struct{}{}
 	return adapter, nil
+}
+
+// NewCanonicalTraceAdapter claims the general OTLP direct-span transport for
+// destination-routed and redacted canonical trace projections.
+func (factory *Factory) NewCanonicalTraceAdapter(ctx context.Context) (*ProjectedTraceAdapter, error) {
+	return factory.NewProjectedTraceAdapter(ctx, canonicalTraceProjectedBuilder{})
 }
 
 // EncodedSize conservatively accounts for the complete protobuf request. The
@@ -131,7 +148,10 @@ func (adapter *ProjectedTraceAdapter) Deliver(ctx context.Context, batch deliver
 	adapter.counters.accepted.Add(uint64(batch.Len()))
 	attemptContext, cancel := context.WithTimeout(ctx, adapter.config.timeout)
 	defer cancel()
-	return adapter.deliverHTTP(attemptContext, projected, batch.Len())
+	if adapter.config.protocol == ProtocolHTTP {
+		return adapter.deliverHTTP(attemptContext, projected, batch.Len())
+	}
+	return adapter.deliverGRPC(attemptContext, projected, batch.Len())
 }
 
 func buildProjectedTraceRequestSafely(
@@ -214,6 +234,58 @@ func (adapter *ProjectedTraceAdapter) deliverHTTP(
 			return deliveryResult(delivery.OutcomeAmbiguous)
 		}
 	}
+	return adapter.classifyTraceResponse(&result, spanCount, projected.CanaryTraceIDs)
+}
+
+func (adapter *ProjectedTraceAdapter) deliverGRPC(
+	ctx context.Context,
+	projected ProjectedTraceRequest,
+	spanCount int,
+) delivery.DeliveryResult {
+	if adapter.grpcClient == nil {
+		return deliveryResult(delivery.OutcomePermanentPayload)
+	}
+	if len(adapter.config.headers) > 0 {
+		pairs := make([]string, 0, len(adapter.config.headers)*2)
+		for key, value := range adapter.config.headers {
+			pairs = append(pairs, key, value)
+		}
+		ctx = metadata.NewOutgoingContext(ctx, metadata.Pairs(pairs...))
+	}
+	dialSequence := adapter.config.tracker.snapshot()
+	response, err := adapter.grpcClient.Export(ctx, projected.Request, grpc.WaitForReady(false))
+	if err != nil {
+		if adapter.config.tracker.unsafeSince(dialSequence) ||
+			errors.Is(err, netguard.ErrV8AddressProhibited) || errors.Is(err, netguard.ErrV8EndpointInvalid) {
+			return deliveryResult(delivery.OutcomeUnsafeEndpoint)
+		}
+		switch grpcstatus.Code(err) {
+		case codes.Unauthenticated, codes.PermissionDenied:
+			return deliveryResult(delivery.OutcomeAuthentication)
+		case codes.InvalidArgument, codes.NotFound, codes.AlreadyExists, codes.FailedPrecondition,
+			codes.OutOfRange, codes.Unimplemented:
+			adapter.recordTraceFailure(spanCount)
+			return deliveryResult(delivery.OutcomePermanentPayload)
+		case codes.Canceled, codes.DeadlineExceeded, codes.ResourceExhausted, codes.Aborted, codes.Unavailable:
+			return deliveryResult(delivery.OutcomeAmbiguous)
+		default:
+			return deliveryResult(delivery.OutcomeAmbiguous)
+		}
+	}
+	if response == nil {
+		return deliveryResult(delivery.OutcomeAmbiguous)
+	}
+	return adapter.classifyTraceResponse(response, spanCount, projected.CanaryTraceIDs)
+}
+
+func (adapter *ProjectedTraceAdapter) classifyTraceResponse(
+	result *collectortracepb.ExportTraceServiceResponse,
+	spanCount int,
+	canaryTraceIDs []string,
+) delivery.DeliveryResult {
+	if result == nil {
+		return deliveryResult(delivery.OutcomeAmbiguous)
+	}
 	if result.PartialSuccess != nil && result.PartialSuccess.RejectedSpans < 0 {
 		adapter.recordTraceFailure(spanCount)
 		return deliveryResult(delivery.OutcomePermanentPayload)
@@ -228,7 +300,7 @@ func (adapter *ProjectedTraceAdapter) deliverHTTP(
 		return deliveryResult(delivery.OutcomePermanentPayload)
 	}
 	adapter.recordTraceSuccess(spanCount, 0)
-	for _, traceID := range projected.CanaryTraceIDs {
+	for _, traceID := range canaryTraceIDs {
 		observeCanaryAcknowledgement(adapter.config.canary, CanaryAcknowledgement{
 			Destination: adapter.destination, TraceID: traceID,
 		})
@@ -287,6 +359,11 @@ func (adapter *ProjectedTraceAdapter) Close(ctx context.Context) error {
 		return nil
 	}
 	closeHTTPTransport(adapter.httpTransport)
+	if adapter.connection != nil {
+		if err := adapter.connection.Close(); err != nil {
+			return newError(ErrorShutdown, err)
+		}
+	}
 	adapter.closed = true
 	return nil
 }

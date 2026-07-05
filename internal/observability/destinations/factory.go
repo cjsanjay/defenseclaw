@@ -32,6 +32,7 @@ import (
 	"github.com/defenseclaw/defenseclaw/internal/observability/delivery"
 	"github.com/defenseclaw/defenseclaw/internal/observability/destinations/galileo"
 	"github.com/defenseclaw/defenseclaw/internal/observability/destinations/local"
+	"github.com/defenseclaw/defenseclaw/internal/observability/destinations/localobservability"
 	"github.com/defenseclaw/defenseclaw/internal/observability/destinations/otlp"
 	"github.com/defenseclaw/defenseclaw/internal/observability/destinations/push"
 	"github.com/defenseclaw/defenseclaw/internal/observability/redaction"
@@ -124,13 +125,15 @@ type Options struct {
 	Resolver      netguard.V8Resolver
 	Dialer        netguard.V8Dialer
 	Warnings      push.WarningObserver
-	// RedactionEngine and the two observers are required only when a compiled
-	// generation enables the Galileo canonical trace preset. Keeping them on
-	// the process-stable factory guarantees every generation uses the same
-	// central redaction key and bounded health reporting seams as log delivery.
-	RedactionEngine  *redaction.Engine
-	DeliveryObserver delivery.Observer
-	GalileoObserver  galileo.CanonicalObserver
+	// Canonical trace projection dependencies are process-stable so every
+	// generation uses the same central redaction key and bounded health seams.
+	// The OTLP observer is required by general trace destinations; the Galileo
+	// observer is required only by that compatibility preset.
+	RedactionEngine       *redaction.Engine
+	DeliveryObserver      delivery.Observer
+	OTLPCanonicalObserver otlp.CanonicalObserver
+	GalileoObserver       galileo.CanonicalObserver
+	LocalObserver         localobservability.Observer
 }
 
 // Factory owns no generation resource. Every successful preparation returns a
@@ -144,7 +147,9 @@ type Factory struct {
 	warnings         push.WarningObserver
 	redaction        *redaction.Engine
 	deliveryObserver delivery.Observer
+	otlpObserver     otlp.CanonicalObserver
 	galileoObserver  galileo.CanonicalObserver
+	localObserver    localobservability.Observer
 	canaryMu         sync.RWMutex
 	canary           map[uint64]*otlpGenerationCanaryRegistry
 }
@@ -169,7 +174,8 @@ func NewFactory(options Options) (*Factory, error) {
 		console: console, secrets: options.Secrets, caLoader: options.CALoader,
 		resolver: options.Resolver, dialer: options.Dialer, warnings: options.Warnings,
 		redaction: options.RedactionEngine, deliveryObserver: options.DeliveryObserver,
-		galileoObserver: options.GalileoObserver,
+		otlpObserver: options.OTLPCanonicalObserver, galileoObserver: options.GalileoObserver,
+		localObserver: options.LocalObserver,
 	}, nil
 }
 

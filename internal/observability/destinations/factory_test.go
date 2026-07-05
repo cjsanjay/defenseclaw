@@ -31,9 +31,12 @@ import (
 	"github.com/defenseclaw/defenseclaw/internal/config"
 	"github.com/defenseclaw/defenseclaw/internal/observability"
 	"github.com/defenseclaw/defenseclaw/internal/observability/delivery"
+	"github.com/defenseclaw/defenseclaw/internal/observability/destinations/galileo"
 	"github.com/defenseclaw/defenseclaw/internal/observability/destinations/local"
+	"github.com/defenseclaw/defenseclaw/internal/observability/destinations/localobservability"
 	"github.com/defenseclaw/defenseclaw/internal/observability/destinations/otlp"
 	"github.com/defenseclaw/defenseclaw/internal/observability/destinations/push"
+	"github.com/defenseclaw/defenseclaw/internal/observability/redaction"
 	observabilityruntime "github.com/defenseclaw/defenseclaw/internal/observability/runtime"
 	"github.com/defenseclaw/defenseclaw/internal/telemetry"
 	collectorlogpb "go.opentelemetry.io/proto/otlp/collector/logs/v1"
@@ -185,10 +188,19 @@ func newTestFactory(
 	if warnings == nil {
 		warnings = &warningCollector{}
 	}
+	engine, err := redaction.NewEngine(bytes.Repeat([]byte{0x51}, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
 	factory, err := NewFactory(Options{
 		ConsoleStream: ConsoleStderr, Stdout: io.Discard, Stderr: console,
 		Secrets: secrets, CALoader: loader, Resolver: net.DefaultResolver,
 		Dialer: &dialer, Warnings: warnings,
+		RedactionEngine:       engine,
+		DeliveryObserver:      delivery.ObserverFunc(func(delivery.HealthTransition) {}),
+		OTLPCanonicalObserver: otlp.CanonicalObserverFunc(func(otlp.CanonicalFailure) {}),
+		GalileoObserver:       galileo.CanonicalObserverFunc(func(galileo.CanonicalFailure) {}),
+		LocalObserver:         localobservability.ObserverFunc(func(localobservability.Failure) {}),
 	})
 	if err != nil {
 		t.Fatal(err)

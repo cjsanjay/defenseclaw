@@ -17,6 +17,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -26,19 +27,16 @@ import (
 	"github.com/defenseclaw/defenseclaw/internal/observability"
 	"github.com/defenseclaw/defenseclaw/internal/observability/delivery"
 	"github.com/defenseclaw/defenseclaw/internal/observability/destinations/galileo"
+	"github.com/defenseclaw/defenseclaw/internal/observability/destinations/localobservability"
 	"github.com/defenseclaw/defenseclaw/internal/observability/redaction"
+	"github.com/defenseclaw/defenseclaw/internal/observability/runtimegraph"
 	"github.com/defenseclaw/defenseclaw/internal/telemetry"
-	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/codes"
-	"go.opentelemetry.io/otel/sdk/instrumentation"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
-	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
-	"go.opentelemetry.io/otel/sdk/trace/tracetest"
-	"go.opentelemetry.io/otel/trace"
 	collectormetricpb "go.opentelemetry.io/proto/otlp/collector/metrics/v1"
 	collectortracepb "go.opentelemetry.io/proto/otlp/collector/trace/v1"
+	tracepb "go.opentelemetry.io/proto/otlp/trace/v1"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -109,6 +107,25 @@ func compileGenerationPlan(t *testing.T, destinations ...config.ObservabilityV8D
 	return plan
 }
 
+func compileGenerationRuntimePlan(
+	t *testing.T,
+	directory string,
+	destinations ...config.ObservabilityV8DestinationSource,
+) *config.ObservabilityV8Plan {
+	t.Helper()
+	plan, err := config.CompileObservabilityV8(&config.ObservabilityV8Source{
+		Local: config.ObservabilityV8LocalSource{
+			Path:            filepath.Join(directory, "audit.db"),
+			JudgeBodiesPath: filepath.Join(directory, "judge-bodies.db"),
+		},
+		Destinations: destinations,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return plan
+}
+
 func traceSend(name, endpoint string, buckets []observability.Bucket) config.ObservabilityV8DestinationSource {
 	return config.ObservabilityV8DestinationSource{
 		Name: name, Kind: config.ObservabilityV8DestinationOTLP,
@@ -119,7 +136,10 @@ func traceSend(name, endpoint string, buckets []observability.Bucket) config.Obs
 		},
 		TLS:           config.ObservabilityV8TLSSource{Insecure: true},
 		NetworkSafety: config.ObservabilityV8NetworkSafetySource{AllowPrivateNetworks: true},
-		Batch:         config.ObservabilityV8BatchSource{ScheduledDelayMS: 1},
+		// Keep the generated root/child release canary in one batch under the
+		// race detector. Tests that exercise split acknowledgement set the
+		// maximum batch size to one explicitly.
+		Batch: config.ObservabilityV8BatchSource{ScheduledDelayMS: 100},
 	}
 }
 
@@ -164,19 +184,8 @@ func TestOTLPGenerationAssemblerUsesUnmaskedRuntimeTransportAndDefaultAllSignals
 		t.Fatalf("pipelines=%d/%d secret=%d CA=%d", len(pipelines.SpanPipelines), len(pipelines.MetricReaders), secrets.callCount("OTLP_AUTH"), loader.callCount(caPath))
 	}
 	if pipelines.SpanPipelines[0].Destination != "all-signals" ||
-		pipelines.SpanPipelines[0].Legacy == nil || pipelines.SpanPipelines[0].Canonical != nil {
-		t.Fatalf("OTLP trace pipeline is not a named legacy XOR: %+v", pipelines.SpanPipelines[0])
-	}
-
-	tracerProvider := sdktrace.NewTracerProvider(
-		sdktrace.WithSampler(sdktrace.AlwaysSample()), sdktrace.WithSpanProcessor(pipelines.SpanPipelines[0].Legacy),
-	)
-	_, span := tracerProvider.Tracer("test").Start(context.Background(), "generation.trace",
-		trace.WithAttributes(attribute.String("defenseclaw.bucket", string(observability.BucketAgentLifecycle))),
-	)
-	span.End()
-	if err := tracerProvider.ForceFlush(context.Background()); err != nil {
-		t.Fatal(err)
+		pipelines.SpanPipelines[0].Canonical == nil || pipelines.SpanPipelines[0].Legacy != nil {
+		t.Fatalf("OTLP trace pipeline is not a named canonical XOR: %+v", pipelines.SpanPipelines[0])
 	}
 
 	meterProvider := sdkmetric.NewMeterProvider(sdkmetric.WithReader(pipelines.MetricReaders[0]))
@@ -191,7 +200,7 @@ func TestOTLPGenerationAssemblerUsesUnmaskedRuntimeTransportAndDefaultAllSignals
 	}
 
 	traces, metrics, headers := capture.snapshot()
-	if len(traces) != 1 || len(metrics) != 1 {
+	if len(traces) != 0 || len(metrics) != 1 {
 		t.Fatalf("requests traces=%d metrics=%d", len(traces), len(metrics))
 	}
 	for _, header := range headers {
@@ -199,7 +208,7 @@ func TestOTLPGenerationAssemblerUsesUnmaskedRuntimeTransportAndDefaultAllSignals
 			t.Fatalf("masked or unresolved runtime headers: %+v", header)
 		}
 	}
-	if err := tracerProvider.Shutdown(context.Background()); err != nil {
+	if err := pipelines.SpanPipelines[0].Canonical.Shutdown(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if err := meterProvider.Shutdown(context.Background()); err != nil {
@@ -232,20 +241,10 @@ func TestOTLPGenerationAssemblerAppliesBucketRoutesAcrossMultipleDestinations(t 
 		pipelines.SpanPipelines[1].Destination != "tool-traces" {
 		t.Fatalf("named OTLP pipeline order = %q/%q", pipelines.SpanPipelines[0].Destination, pipelines.SpanPipelines[1].Destination)
 	}
-	tracerOptions := []sdktrace.TracerProviderOption{sdktrace.WithSampler(sdktrace.AlwaysSample())}
 	for _, pipeline := range pipelines.SpanPipelines {
-		tracerOptions = append(tracerOptions, sdktrace.WithSpanProcessor(pipeline.Legacy))
-	}
-	tracerProvider := sdktrace.NewTracerProvider(tracerOptions...)
-	tracer := tracerProvider.Tracer("test")
-	for _, bucket := range []observability.Bucket{observability.BucketAgentLifecycle, observability.BucketToolActivity} {
-		_, span := tracer.Start(context.Background(), "route."+string(bucket),
-			trace.WithAttributes(attribute.String("defenseclaw.bucket", string(bucket))),
-		)
-		span.End()
-	}
-	if err := tracerProvider.ForceFlush(context.Background()); err != nil {
-		t.Fatal(err)
+		if pipeline.Canonical == nil || pipeline.Legacy != nil {
+			t.Fatalf("destination %s is not canonical XOR: %+v", pipeline.Destination, pipeline)
+		}
 	}
 
 	meterProvider := sdkmetric.NewMeterProvider(sdkmetric.WithReader(pipelines.MetricReaders[0]))
@@ -264,13 +263,15 @@ func TestOTLPGenerationAssemblerAppliesBucketRoutesAcrossMultipleDestinations(t 
 	agentTraces, _, _ := agentCapture.snapshot()
 	toolTraces, _, _ := toolCapture.snapshot()
 	_, metricRequests, _ := metricCapture.snapshot()
-	if traceNames(agentTraces) != "route.agent.lifecycle" || traceNames(toolTraces) != "route.tool.activity" {
-		t.Fatalf("trace routes agent=%q tool=%q", traceNames(agentTraces), traceNames(toolTraces))
+	if len(agentTraces) != 0 || len(toolTraces) != 0 {
+		t.Fatalf("unproduced trace routes agent=%d tool=%d", len(agentTraces), len(toolTraces))
 	}
 	if names := metricNames(metricRequests); len(names) != 1 || names[0] != "defenseclaw.scan.count" {
 		t.Fatalf("metric route names=%v", names)
 	}
-	_ = tracerProvider.Shutdown(context.Background())
+	for _, pipeline := range pipelines.SpanPipelines {
+		_ = pipeline.Canonical.Shutdown(context.Background())
+	}
 	_ = meterProvider.Shutdown(context.Background())
 }
 
@@ -336,9 +337,8 @@ func TestOTLPGenerationAssemblerAppliesMetricEventNameFirstMatchRoutes(t *testin
 	}
 }
 
-func TestOTLPGenerationAssemblerRejectsTransformedAndUnsupportedTracePoliciesBeforeResolution(t *testing.T) {
+func TestOTLPGenerationAssemblerAcceptsCentralRedactionAndAdvancedTraceRoutes(t *testing.T) {
 	secrets := &secretResolver{values: map[string]string{"SECRET": "value"}, calls: map[string]int{}}
-	factory := newTestFactory(t, io.Discard, secrets, nil, net.Dialer{}, nil)
 	tests := []struct {
 		name        string
 		destination config.ObservabilityV8DestinationSource
@@ -346,6 +346,7 @@ func TestOTLPGenerationAssemblerRejectsTransformedAndUnsupportedTracePoliciesBef
 		{name: "redacted", destination: func() config.ObservabilityV8DestinationSource {
 			value := traceSend("redacted", "https://8.8.8.8:4318", []observability.Bucket{observability.BucketAgentLifecycle})
 			value.Send.RedactionProfile = "sensitive"
+			value.TLS = config.ObservabilityV8TLSSource{}
 			return value
 		}()},
 		{name: "advanced source selector", destination: config.ObservabilityV8DestinationSource{
@@ -358,20 +359,23 @@ func TestOTLPGenerationAssemblerRejectsTransformedAndUnsupportedTracePoliciesBef
 			}},
 		}},
 	}
-	for _, test := range tests {
+	for index, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
+			factory := newTestFactory(t, io.Discard, secrets, nil, net.Dialer{}, nil)
 			test.destination.Headers = map[string]config.ObservabilityV8HeaderValue{
 				"Authorization": config.ObservabilityV8EnvironmentHeader("SECRET"),
 			}
 			plan := compileGenerationPlan(t, test.destination)
-			pipelines, err := factory.PrepareOTLPGenerationPipelines(context.Background(), plan, 20, generationMetricSpec())
-			if len(pipelines.SpanPipelines) != 0 || len(pipelines.MetricReaders) != 0 || !IsError(err, ErrorUnsupportedPolicy) {
+			pipelines, err := factory.PrepareOTLPGenerationPipelines(context.Background(), plan, uint64(20+index), generationMetricSpec())
+			if err != nil || len(pipelines.SpanPipelines) != 1 || len(pipelines.MetricReaders) != 0 ||
+				pipelines.SpanPipelines[0].Canonical == nil || pipelines.SpanPipelines[0].Legacy != nil {
 				t.Fatalf("pipelines=%+v error=%v", pipelines, err)
 			}
+			cleanupOTLPGenerationPipelines(pipelines)
 		})
 	}
-	if secrets.callCount("SECRET") != 0 {
-		t.Fatalf("unsupported policies resolved secret %d times", secrets.callCount("SECRET"))
+	if secrets.callCount("SECRET") != len(tests) {
+		t.Fatalf("supported policies resolved secret %d times", secrets.callCount("SECRET"))
 	}
 }
 
@@ -412,11 +416,68 @@ func TestOTLPGenerationAssemblerPreparesCanonicalGalileoAndNeverRawLegacy(t *tes
 	}
 }
 
+func TestOTLPGenerationAssemblerUsesLocalCompatibilityProjectionInsteadOfGenericOTLP(t *testing.T) {
+	capture := &otlpGenerationCapture{}
+	server := httptest.NewServer(http.HandlerFunc(capture.handler))
+	defer server.Close()
+	factory := newTestFactory(t, io.Discard, nil, nil, net.Dialer{}, nil)
+	destination := traceSend(localobservability.DestinationName, server.URL, generationCanaryBuckets())
+	destination.Batch.MaxExportBatchSize = 2
+	plan := compileGenerationRuntimePlan(t, t.TempDir(), destination)
+	manager := generationOTLPManager(t, factory, plan)
+	provider, lease := compositeProviderFromManager(t, manager)
+	result, err := provider.EmitV8GeneratedCanary(t.Context(), lease, localobservability.DestinationName)
+	lease.Release()
+	if err != nil || !result.Acknowledged {
+		t.Fatalf("local canary=%+v error=%v", result, err)
+	}
+
+	requests, _, _ := capture.snapshot()
+	if len(requests) != 1 {
+		t.Fatalf("local trace requests=%d want=1", len(requests))
+	}
+	spans := traceRequestSpans(requests[0])
+	if len(spans) != 2 {
+		t.Fatalf("local projected spans=%d want=2", len(spans))
+	}
+	foundAgentAlias := false
+	for _, span := range spans {
+		if protoAttribute(span.Attributes, "defenseclaw.span.family") != observability.TelemetryFamilyAgentInvoke {
+			continue
+		}
+		foundAgentAlias = protoAttribute(span.Attributes, "defenseclaw.agent.type") == "diagnostic" &&
+			protoAttribute(span.Attributes, "gen_ai.agent.type") == "diagnostic"
+	}
+	if !foundAgentAlias {
+		t.Fatal("local compatibility projection omitted the Agent360 agent-type alias")
+	}
+}
+
+func traceRequestSpans(request *collectortracepb.ExportTraceServiceRequest) []*tracepb.Span {
+	result := make([]*tracepb.Span, 0)
+	if request == nil {
+		return result
+	}
+	for _, resource := range request.ResourceSpans {
+		if resource == nil {
+			continue
+		}
+		for _, scope := range resource.ScopeSpans {
+			if scope != nil {
+				result = append(result, scope.Spans...)
+			}
+		}
+	}
+	return result
+}
+
 func TestOTLPGenerationAssemblerRejectsGalileoWithoutCentralDependenciesBeforeSecrets(t *testing.T) {
 	secrets := &secretResolver{values: map[string]string{"SECRET": "value"}, calls: map[string]int{}}
 	factory := newTestFactory(t, io.Discard, secrets, nil, net.Dialer{}, nil)
+	factory.redaction = nil
 	destination := traceSend("galileo", "https://8.8.8.8:4318", []observability.Bucket{"*"})
 	destination.Preset = "galileo"
+	destination.TLS = config.ObservabilityV8TLSSource{}
 	destination.Headers = map[string]config.ObservabilityV8HeaderValue{
 		"Authorization": config.ObservabilityV8EnvironmentHeader("SECRET"),
 	}
@@ -441,6 +502,31 @@ func enableGalileoGeneration(t *testing.T, factory *Factory) {
 	factory.galileoObserver = galileo.CanonicalObserverFunc(func(galileo.CanonicalFailure) {})
 }
 
+func generationOTLPManager(
+	t *testing.T,
+	factory *Factory,
+	plan *config.ObservabilityV8Plan,
+) *runtimegraph.Manager {
+	t.Helper()
+	providerFactory := telemetry.NewV8ProviderFactory(telemetry.V8ProviderOptions{
+		Version:             "generation-test",
+		Environment:         "test",
+		ServiceInstanceID:   "generation-test-instance",
+		GenerationPipelines: factory.OTLPGenerationPipelineFactory(),
+	})
+	manager, err := runtimegraph.New(
+		t.Context(),
+		runtimegraph.ConfigFromPlan(plan, false),
+		[]runtimegraph.ComponentFactory{providerFactory},
+		runtimegraph.DefaultOptions(compositePipelineReporter{}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = manager.Close(context.Background()) })
+	return manager
+}
+
 func TestOTLPGenerationCanaryTargetIsolationAcknowledgementAndSplitBatch(t *testing.T) {
 	for _, test := range []struct {
 		name      string
@@ -455,44 +541,52 @@ func TestOTLPGenerationCanaryTargetIsolationAcknowledgementAndSplitBatch(t *test
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			targetCapture, otherCapture := &otlpGenerationCapture{partial: test.partial}, &otlpGenerationCapture{}
+			localCapture, galileoCapture := &otlpGenerationCapture{}, &otlpGenerationCapture{}
 			targetServer := httptest.NewServer(http.HandlerFunc(targetCapture.handler))
 			otherServer := httptest.NewServer(http.HandlerFunc(otherCapture.handler))
+			localServer := httptest.NewServer(http.HandlerFunc(localCapture.handler))
+			galileoServer := httptest.NewServer(http.HandlerFunc(galileoCapture.handler))
 			defer targetServer.Close()
 			defer otherServer.Close()
+			defer localServer.Close()
+			defer galileoServer.Close()
 			target := traceSend("target", targetServer.URL, generationCanaryBuckets())
 			other := traceSend("other", otherServer.URL, generationCanaryBuckets())
+			local := traceSend(localobservability.DestinationName, localServer.URL, generationCanaryBuckets())
+			galileo := traceSend("galileo", galileoServer.URL, generationCanaryBuckets())
+			galileo.Preset = "galileo"
 			target.Batch.MaxExportBatchSize = test.batchSize
 			other.Batch.MaxExportBatchSize = test.batchSize
-			plan := compileGenerationPlan(t, target, other)
+			local.Batch.MaxExportBatchSize = test.batchSize
+			galileo.Batch.MaxExportBatchSize = test.batchSize
+			plan := compileGenerationRuntimePlan(t, t.TempDir(), target, other, local, galileo)
 			factory := newTestFactory(t, io.Discard, nil, nil, net.Dialer{}, nil)
-			pipelines, err := factory.PrepareOTLPGenerationPipelines(context.Background(), plan, 31, generationMetricSpec())
-			if err != nil {
-				t.Fatal(err)
+			manager := generationOTLPManager(t, factory, plan)
+			provider, lease := compositeProviderFromManager(t, manager)
+			result, emitErr := provider.EmitV8GeneratedCanary(t.Context(), lease, "target")
+			lease.Release()
+			if test.wantAck && emitErr != nil {
+				t.Fatal(emitErr)
 			}
-			traceID := trace.TraceID{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16}
-			for _, operation := range []string{"chat", "invoke_agent"} {
-				span := generationCanarySpan(traceID, operation, "target")
-				for _, pipeline := range pipelines.SpanPipelines {
-					pipeline.Legacy.OnEnd(span)
-				}
-			}
-			for _, pipeline := range pipelines.SpanPipelines {
-				if err := pipeline.Legacy.ForceFlush(context.Background()); err != nil {
-					t.Fatal(err)
-				}
+			if !test.wantAck && emitErr == nil {
+				t.Fatal("unacknowledged canary unexpectedly succeeded")
 			}
 			targetTraces, _, _ := targetCapture.snapshot()
 			otherTraces, _, _ := otherCapture.snapshot()
-			if len(targetTraces) != test.wantCalls || len(otherTraces) != 0 {
-				t.Fatalf("target/other calls=%d/%d", len(targetTraces), len(otherTraces))
+			localTraces, _, _ := localCapture.snapshot()
+			galileoTraces, _, _ := galileoCapture.snapshot()
+			if len(targetTraces) != test.wantCalls || len(otherTraces) != 0 ||
+				len(localTraces) != 0 || len(galileoTraces) != 0 {
+				t.Fatalf("target/other/local/galileo calls=%d/%d/%d/%d",
+					len(targetTraces), len(otherTraces), len(localTraces), len(galileoTraces))
 			}
-			if got := factory.OTLPGenerationAcknowledgedCanaryTrace(31, "target", traceID.String()); got != test.wantAck {
+			if got := result.Acknowledged; got != test.wantAck {
 				t.Fatalf("acknowledged=%t want=%t", got, test.wantAck)
 			}
-			for _, pipeline := range pipelines.SpanPipelines {
-				_ = pipeline.Legacy.Shutdown(context.Background())
+			if err := manager.Close(context.Background()); err != nil {
+				t.Fatal(err)
 			}
-			if factory.OTLPGenerationAcknowledgedCanaryTrace(31, "target", traceID.String()) {
+			if factory.OTLPGenerationAcknowledgedCanaryTrace(result.Generation, "target", result.TraceID) {
 				t.Fatal("acknowledgement outlived generation processors")
 			}
 		})
@@ -504,45 +598,42 @@ func TestOTLPGenerationAssemblerKeepsReloadGenerationsIsolated(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(capture.handler))
 	defer server.Close()
 	factory := newTestFactory(t, io.Discard, nil, nil, net.Dialer{}, nil)
-	plan := compileGenerationPlan(t,
-		traceSend("reload-traces", server.URL, generationCanaryBuckets()),
-	)
-	oldPipelines, err := factory.PrepareOTLPGenerationPipelines(context.Background(), plan, 41, generationMetricSpec())
-	if err != nil {
-		t.Fatal(err)
-	}
-	newPipelines, err := factory.PrepareOTLPGenerationPipelines(context.Background(), plan, 42, generationMetricSpec())
-	if err != nil {
-		cleanupOTLPGenerationPipelines(oldPipelines)
-		t.Fatal(err)
-	}
-	if len(oldPipelines.SpanPipelines) != 1 || len(newPipelines.SpanPipelines) != 1 {
-		t.Fatalf("old/new processors=%d/%d", len(oldPipelines.SpanPipelines), len(newPipelines.SpanPipelines))
+	firstDestination := traceSend("reload-traces", server.URL, generationCanaryBuckets())
+	directory := t.TempDir()
+	firstPlan := compileGenerationRuntimePlan(t, directory, firstDestination)
+	manager := generationOTLPManager(t, factory, firstPlan)
+	firstProvider, firstLease := compositeProviderFromManager(t, manager)
+	firstCanary, err := firstProvider.EmitV8GeneratedCanary(t.Context(), firstLease, "reload-traces")
+	firstLease.Release()
+	if err != nil || !firstCanary.Acknowledged || firstCanary.Generation != 1 {
+		t.Fatalf("first canary=%+v error=%v", firstCanary, err)
 	}
 
-	oldTraceID := trace.TraceID{1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1}
-	newTraceID := trace.TraceID{2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2}
-	emitGenerationCanary(t, oldPipelines.SpanPipelines, oldTraceID, "reload-traces")
-	emitGenerationCanary(t, newPipelines.SpanPipelines, newTraceID, "reload-traces")
-	if oldPipelines.CanaryAcknowledged == nil || newPipelines.CanaryAcknowledged == nil ||
-		!oldPipelines.CanaryAcknowledged("reload-traces", oldTraceID.String()) ||
-		!newPipelines.CanaryAcknowledged("reload-traces", newTraceID.String()) {
-		t.Fatal("reload generations did not retain independent acknowledgements")
+	secondDestination := traceSend("reload-traces", server.URL, generationCanaryBuckets())
+	secondDestination.Batch.ScheduledDelayMS = 200
+	secondPlan := compileGenerationRuntimePlan(t, directory, secondDestination)
+	result, reloadErr := manager.Reload(t.Context(), runtimegraph.ConfigFromPlan(secondPlan, false))
+	if reloadErr != nil || result.Status() != runtimegraph.ReloadApplied {
+		t.Fatalf("reload=%s error=%v", result.Status(), reloadErr)
 	}
-	if oldPipelines.CanaryAcknowledged("reload-traces", newTraceID.String()) ||
-		newPipelines.CanaryAcknowledged("reload-traces", oldTraceID.String()) {
-		t.Fatal("acknowledgement leaked across generation boundary")
-	}
-
-	cleanupOTLPGenerationPipelines(oldPipelines)
-	if oldPipelines.CanaryAcknowledged("reload-traces", oldTraceID.String()) {
+	if firstProvider.DestinationAcknowledgedCanaryTrace("reload-traces", firstCanary.TraceID) {
 		t.Fatal("retired generation remained queryable")
 	}
-	if !newPipelines.CanaryAcknowledged("reload-traces", newTraceID.String()) {
-		t.Fatal("retiring the old generation removed the active generation")
+
+	secondProvider, secondLease := compositeProviderFromManager(t, manager)
+	secondCanary, err := secondProvider.EmitV8GeneratedCanary(t.Context(), secondLease, "reload-traces")
+	secondLease.Release()
+	if err != nil || !secondCanary.Acknowledged || secondCanary.Generation != 2 {
+		t.Fatalf("second canary=%+v error=%v", secondCanary, err)
 	}
-	cleanupOTLPGenerationPipelines(newPipelines)
-	if newPipelines.CanaryAcknowledged("reload-traces", newTraceID.String()) {
+	if secondProvider.DestinationAcknowledgedCanaryTrace("reload-traces", firstCanary.TraceID) ||
+		!secondProvider.DestinationAcknowledgedCanaryTrace("reload-traces", secondCanary.TraceID) {
+		t.Fatal("acknowledgement leaked across generation boundary")
+	}
+	if err := manager.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if secondProvider.DestinationAcknowledgedCanaryTrace("reload-traces", secondCanary.TraceID) {
 		t.Fatal("active generation remained queryable after shutdown")
 	}
 
@@ -564,13 +655,10 @@ func TestOTLPGenerationAssemblerCleansPartialFailureWithoutAffectingActiveGenera
 		errors:  map[string]error{}, calls: map[string]int{},
 	}
 	factory := newTestFactory(t, io.Discard, nil, loader, net.Dialer{}, nil)
-	activePlan := compileGenerationPlan(t, secureTraceSend(
+	activePlan := compileGenerationRuntimePlan(t, t.TempDir(), secureTraceSend(
 		"active-traces", server.URL, validCA, generationCanaryBuckets(),
 	))
-	active, err := factory.PrepareOTLPGenerationPipelines(context.Background(), activePlan, 51, generationMetricSpec())
-	if err != nil {
-		t.Fatal(err)
-	}
+	manager := generationOTLPManager(t, factory, activePlan)
 
 	failingPlan := compileGenerationPlan(t,
 		secureTraceSend("a-prepared", server.URL, validCA, generationCanaryBuckets()),
@@ -582,7 +670,7 @@ func TestOTLPGenerationAssemblerCleansPartialFailureWithoutAffectingActiveGenera
 	}
 	factory.canaryMu.RLock()
 	_, failedGenerationPresent := factory.canary[52]
-	_, activeGenerationPresent := factory.canary[51]
+	_, activeGenerationPresent := factory.canary[1]
 	factory.canaryMu.RUnlock()
 	if failedGenerationPresent || !activeGenerationPresent {
 		t.Fatalf("canary registries failed=%t active=%t", failedGenerationPresent, activeGenerationPresent)
@@ -591,12 +679,12 @@ func TestOTLPGenerationAssemblerCleansPartialFailureWithoutAffectingActiveGenera
 		t.Fatalf("invalid CA resolutions=%d want=1", loader.callCount(invalidCA))
 	}
 
-	traceID := trace.TraceID{5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5}
-	emitGenerationCanary(t, active.SpanPipelines, traceID, "active-traces")
-	if !factory.OTLPGenerationAcknowledgedCanaryTrace(51, "active-traces", traceID.String()) {
-		t.Fatal("later assembly failure disrupted the active generation")
+	provider, lease := compositeProviderFromManager(t, manager)
+	canary, emitErr := provider.EmitV8GeneratedCanary(t.Context(), lease, "active-traces")
+	lease.Release()
+	if emitErr != nil || !canary.Acknowledged || canary.Generation != 1 {
+		t.Fatalf("later assembly failure disrupted active generation: canary=%+v error=%v", canary, emitErr)
 	}
-	cleanupOTLPGenerationPipelines(active)
 }
 
 func TestOTLPGenerationCanaryRegistryReleasesAfterProcessorShutdownError(t *testing.T) {
@@ -733,90 +821,11 @@ func secureTraceSend(name, endpoint, caPath string, buckets []observability.Buck
 	return destination
 }
 
-func emitGenerationCanary(
-	t *testing.T,
-	pipelines []telemetry.V8GenerationSpanPipeline,
-	traceID trace.TraceID,
-	destination string,
-) {
-	t.Helper()
-	for _, operation := range []string{"chat", "invoke_agent"} {
-		span := generationCanarySpan(traceID, operation, destination)
-		for _, pipeline := range pipelines {
-			pipeline.Legacy.OnEnd(span)
-		}
-	}
-	for _, pipeline := range pipelines {
-		if err := pipeline.Legacy.ForceFlush(context.Background()); err != nil {
-			t.Fatal(err)
-		}
-	}
-}
-
 func generationCanaryBuckets() []observability.Bucket {
 	return []observability.Bucket{
 		observability.BucketAgentLifecycle,
 		observability.BucketModelIO,
 	}
-}
-
-func generationCanarySpan(traceID trace.TraceID, operation, destination string) sdktrace.ReadOnlySpan {
-	rootID := trace.SpanID{1, 2, 3, 4, 5, 6, 7, 8}
-	childID := trace.SpanID{8, 7, 6, 5, 4, 3, 2, 1}
-	rootContext := trace.NewSpanContext(trace.SpanContextConfig{
-		TraceID: traceID, SpanID: rootID, TraceFlags: trace.FlagsSampled,
-	})
-	spanID := childID
-	parent := rootContext
-	name := "chat gpt-4o-mini"
-	kind := trace.SpanKindClient
-	bucket := observability.BucketModelIO
-	family := observability.TelemetryFamilyModelChat
-	if operation == "invoke_agent" {
-		name = "invoke_agent diagnostic"
-		kind = trace.SpanKindInternal
-		bucket = observability.BucketAgentLifecycle
-		family = observability.TelemetryFamilyAgentInvoke
-		spanID = rootID
-		parent = trace.SpanContext{}
-	}
-	canaryResource := resource.NewWithAttributes(
-		"https://opentelemetry.io/schemas/1.42.0",
-		attribute.String("service.name", "defenseclaw"),
-		attribute.String("service.version", "v8-test"),
-		attribute.String("service.namespace", "cisco.ai-defense"),
-		attribute.String("service.instance.id", "instance-1"),
-		attribute.String("deployment.environment.name", "test"),
-		attribute.String("defenseclaw.instance.id", "instance-1"),
-	)
-	canaryScope := instrumentation.Scope{
-		Name: "defenseclaw.telemetry", Version: "v8-test",
-		SchemaURL: "https://defenseclaw.io/schemas/telemetry/v8",
-		Attributes: attribute.NewSet(
-			attribute.String("defenseclaw.trace.schema_version", observability.RuntimeTraceSchemaVersion),
-			attribute.String("defenseclaw.semantic_profile", observability.RuntimeSemanticProfileID),
-		),
-	}
-	return tracetest.SpanStub{
-		Name: name, Parent: parent, SpanKind: kind, Status: sdktrace.Status{Code: codes.Ok},
-		SpanContext: trace.NewSpanContext(trace.SpanContextConfig{
-			TraceID: traceID, SpanID: spanID, TraceFlags: trace.FlagsSampled,
-		}),
-		Attributes: []attribute.KeyValue{
-			attribute.String("defenseclaw.bucket", string(bucket)),
-			attribute.String("defenseclaw.span.family", family),
-			attribute.Int64("defenseclaw.span.family_schema_version", 1),
-			attribute.Int64("defenseclaw.config.generation", 8),
-			attribute.String("defenseclaw.source", string(observability.SourceSystem)),
-			attribute.String("defenseclaw.outcome", string(observability.OutcomeCompleted)),
-			attribute.Bool("defenseclaw.telemetry.canary", true),
-			attribute.String("defenseclaw.telemetry.canary.operation", "runtime-pipeline-test"),
-			attribute.String("defenseclaw.telemetry.canary.destination", destination),
-			attribute.String("gen_ai.operation.name", operation),
-		},
-		StartTime: time.Now().Add(-time.Millisecond), EndTime: time.Now(),
-		Resource: canaryResource, InstrumentationScope: canaryScope,
-	}.Snapshot()
 }
 
 func traceNames(requests []*collectortracepb.ExportTraceServiceRequest) string {

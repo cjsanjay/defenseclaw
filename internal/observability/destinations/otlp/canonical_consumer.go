@@ -1,14 +1,7 @@
 // Copyright 2026 Cisco Systems, Inc. and its affiliates
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
 // SPDX-License-Identifier: Apache-2.0
 
-package galileo
+package otlp
 
 import (
 	"context"
@@ -20,16 +13,11 @@ import (
 
 	"github.com/defenseclaw/defenseclaw/internal/config"
 	"github.com/defenseclaw/defenseclaw/internal/observability"
-	compatibility "github.com/defenseclaw/defenseclaw/internal/observability/compatibility/galileo"
 	"github.com/defenseclaw/defenseclaw/internal/observability/delivery"
 	"github.com/defenseclaw/defenseclaw/internal/observability/pipeline"
-	"github.com/defenseclaw/defenseclaw/internal/observability/redaction"
 	"github.com/defenseclaw/defenseclaw/internal/telemetry"
 )
 
-// CanonicalConsumerErrorCode is a bounded preparation/lifecycle failure. It
-// never contains a destination endpoint, projected value, record, or backend
-// response.
 type CanonicalConsumerErrorCode string
 
 const (
@@ -39,14 +27,13 @@ const (
 	CanonicalConsumerErrorInvalidContext      CanonicalConsumerErrorCode = "invalid_context"
 )
 
-// CanonicalConsumerError is safe for mandatory platform-health reporting.
 type CanonicalConsumerError struct{ code CanonicalConsumerErrorCode }
 
 func (err *CanonicalConsumerError) Error() string {
 	if err == nil {
-		return "Galileo canonical trace consumer rejected"
+		return "OTLP canonical trace consumer rejected"
 	}
-	return "Galileo canonical trace consumer rejected: " + string(err.code)
+	return "OTLP canonical trace consumer rejected: " + string(err.code)
 }
 
 func (err *CanonicalConsumerError) Code() CanonicalConsumerErrorCode {
@@ -56,15 +43,11 @@ func (err *CanonicalConsumerError) Code() CanonicalConsumerErrorCode {
 	return err.code
 }
 
-// IsCanonicalConsumerError reports whether err has the requested bounded code.
 func IsCanonicalConsumerError(err error, code CanonicalConsumerErrorCode) bool {
 	var target *CanonicalConsumerError
 	return errors.As(err, &target) && target.code == code
 }
 
-// CanonicalFailureCode is the complete content-free failure vocabulary for
-// the canonical-to-Galileo handoff. Configured route drops are not failures and
-// therefore do not emit an event.
 type CanonicalFailureCode string
 
 const (
@@ -72,46 +55,39 @@ const (
 	CanonicalFailurePipeline           CanonicalFailureCode = "pipeline_failed"
 	CanonicalFailureProjection         CanonicalFailureCode = "projection_failed"
 	CanonicalFailureRouteIdentity      CanonicalFailureCode = "route_identity_mismatch"
-	CanonicalFailureUnsupportedShape   CanonicalFailureCode = "unsupported_shape"
 	CanonicalFailurePayload            CanonicalFailureCode = "payload_failed"
 	CanonicalFailureQueueFull          CanonicalFailureCode = "queue_full"
 	CanonicalFailureQueueRejected      CanonicalFailureCode = "queue_rejected"
 	CanonicalFailurePanic              CanonicalFailureCode = "panic_isolated"
 )
 
-// CanonicalFailure is the bounded observer payload. It deliberately excludes
-// record IDs, trace IDs, span IDs, route names, projection bytes, and errors.
+// CanonicalFailure deliberately excludes record, trace, span, endpoint,
+// projected-value, and backend identities.
 type CanonicalFailure struct {
 	Destination string
 	Generation  uint64
 	Code        CanonicalFailureCode
 }
 
-type CanonicalObserver interface{ ObserveGalileoCanonicalFailure(CanonicalFailure) }
+type CanonicalObserver interface{ ObserveOTLPCanonicalFailure(CanonicalFailure) }
 
 type CanonicalObserverFunc func(CanonicalFailure)
 
-func (function CanonicalObserverFunc) ObserveGalileoCanonicalFailure(failure CanonicalFailure) {
+func (function CanonicalObserverFunc) ObserveOTLPCanonicalFailure(failure CanonicalFailure) {
 	function(failure)
 }
 
-// CanonicalTraceAdapter is the prepared, generation-owned Galileo transport.
-// Adapter satisfies this interface. Its narrow surface also permits transport-
-// free queue/lifecycle tests without exposing any alternate payload boundary.
 type CanonicalTraceAdapter interface {
 	delivery.Adapter
 	Close(context.Context) error
 }
 
-// CanonicalTraceConsumerOptions are detached during construction. Destination
-// must be the exact effective Galileo destination for Pipeline's generation.
 type CanonicalTraceConsumerOptions struct {
 	Destination config.ObservabilityV8EffectiveDestination
 	Generation  uint64
 	Pipeline    *pipeline.TraceProjectionPipeline
 	Adapter     CanonicalTraceAdapter
 	Dispatcher  delivery.Config
-	Limits      compatibility.Limits
 	Observer    CanonicalObserver
 }
 
@@ -124,22 +100,19 @@ const (
 	canonicalConsumerClosed
 )
 
-// CanonicalTraceConsumer owns exactly one Galileo destination in exactly one
-// configuration generation. NewCanonicalTraceConsumer performs no network I/O
-// and starts no worker. Activate must be called only after the containing
-// candidate generation has prepared successfully.
+// CanonicalTraceConsumer owns one general OTLP destination in one immutable
+// runtime generation. It accepts only generated canonical handoffs; it has no
+// SDK ReadOnlySpan, raw-record, or pre-redaction enqueue surface.
 type CanonicalTraceConsumer struct {
 	destination string
 	generation  uint64
 	pipeline    *pipeline.TraceProjectionPipeline
 	adapter     CanonicalTraceAdapter
 	dispatcher  *delivery.Dispatcher
-	limits      compatibility.Limits
 	observer    CanonicalObserver
 
 	process func(observability.Record) (pipeline.TraceProjectionOutcome, error)
-	project func(redaction.Projection, compatibility.Limits) compatibility.Result
-	payload func(compatibility.Result, string) (delivery.Payload, error)
+	payload func(pipeline.ProjectedDelivery) (delivery.Payload, error)
 
 	state        atomic.Uint32
 	lifecycleMu  sync.Mutex
@@ -157,19 +130,16 @@ type CanonicalTraceConsumer struct {
 
 var _ telemetry.V8CanonicalSpanConsumer = (*CanonicalTraceConsumer)(nil)
 
-// NewCanonicalTraceConsumer validates and snapshots one prepared generation.
-// It does not activate the dispatcher and cannot perform destination I/O.
 func NewCanonicalTraceConsumer(options CanonicalTraceConsumerOptions) (*CanonicalTraceConsumer, error) {
 	if options.Generation == 0 || options.Generation > math.MaxInt64 || options.Pipeline == nil ||
 		options.Pipeline.PlanDigest() == "" || nilCanonicalInterface(options.Adapter) ||
 		nilCanonicalInterface(options.Observer) {
 		return nil, &CanonicalConsumerError{code: CanonicalConsumerErrorInvalidDependencies}
 	}
-	destination := options.Destination
-	if !validGalileoCanonicalDestination(destination) {
+	if !validGeneralCanonicalDestination(options.Destination) {
 		return nil, &CanonicalConsumerError{code: CanonicalConsumerErrorInvalidDestination}
 	}
-	if options.Dispatcher.Destination != destination.Name || !options.Dispatcher.Enabled {
+	if options.Dispatcher.Destination != options.Destination.Name || !options.Dispatcher.Enabled {
 		return nil, &CanonicalConsumerError{code: CanonicalConsumerErrorInvalidDispatcher}
 	}
 	dispatcher, err := delivery.NewDispatcher(options.Dispatcher, options.Adapter)
@@ -177,64 +147,52 @@ func NewCanonicalTraceConsumer(options CanonicalTraceConsumerOptions) (*Canonica
 		return nil, &CanonicalConsumerError{code: CanonicalConsumerErrorInvalidDispatcher}
 	}
 	consumer := &CanonicalTraceConsumer{
-		destination: destination.Name,
-		generation:  options.Generation,
-		pipeline:    options.Pipeline,
-		adapter:     options.Adapter,
-		dispatcher:  dispatcher,
-		limits:      options.Limits,
-		observer:    options.Observer,
-		shutdown:    make(chan struct{}, 1),
+		destination: options.Destination.Name, generation: options.Generation,
+		pipeline: options.Pipeline, adapter: options.Adapter, dispatcher: dispatcher,
+		observer: options.Observer, shutdown: make(chan struct{}, 1),
 	}
 	consumer.shutdown <- struct{}{}
 	consumer.process = options.Pipeline.Process
-	consumer.project = compatibility.Project
-	consumer.payload = NewPayload
+	consumer.payload = func(work pipeline.ProjectedDelivery) (delivery.Payload, error) {
+		identity := work.Identity()
+		return newCanonicalTracePayload(work.Projection(), delivery.RoutingIdentity{
+			RecordID: identity.RecordID(), Bucket: string(identity.Bucket()), Signal: string(identity.Signal()),
+			EventName: string(identity.EventName()), OriginDestination: identity.OriginDestination(),
+		})
+	}
 	consumer.state.Store(uint32(canonicalConsumerPrepared))
 	return consumer, nil
 }
 
-func validGalileoCanonicalDestination(destination config.ObservabilityV8EffectiveDestination) bool {
+func validGeneralCanonicalDestination(destination config.ObservabilityV8EffectiveDestination) bool {
 	if !destination.Enabled || !observability.IsStableToken(destination.Name) ||
-		destination.Kind != config.ObservabilityV8DestinationOTLP ||
-		destination.Preset != "galileo" || destination.PresetProfile != compatibility.ProfileID ||
-		!destination.FirstMatchPerSignal {
+		destination.Kind != config.ObservabilityV8DestinationOTLP || destination.Preset != "" ||
+		destination.PresetProfile != "" || !destination.FirstMatchPerSignal ||
+		!destination.Capabilities.Supports(observability.SignalTraces) {
 		return false
 	}
-	selected := false
 	for _, signal := range destination.SelectedSignals {
-		if signal != observability.SignalTraces {
-			return false
+		if signal == observability.SignalTraces {
+			return true
 		}
-		selected = true
 	}
-	return selected
+	return false
 }
 
-// Activate publishes intake and starts the common dispatcher. It is
-// nonblocking and idempotent. A consumer that has begun shutdown cannot be
-// reactivated.
 func (consumer *CanonicalTraceConsumer) Activate() {
 	if consumer == nil {
 		return
 	}
 	consumer.lifecycleMu.Lock()
 	defer consumer.lifecycleMu.Unlock()
-	if canonicalConsumerState(consumer.state.Load()) != canonicalConsumerPrepared ||
-		consumer.dispatcher == nil {
+	if canonicalConsumerState(consumer.state.Load()) != canonicalConsumerPrepared || consumer.dispatcher == nil {
 		return
 	}
 	consumer.dispatcher.Activate()
 	consumer.state.Store(uint32(canonicalConsumerActive))
 }
 
-// TryEnqueue snapshots the canonical record, routes/redacts it once, selects
-// only this exact Galileo route, applies the compatibility projection, and
-// hands immutable bytes to the nonblocking common queue. It performs no
-// destination I/O.
-func (consumer *CanonicalTraceConsumer) TryEnqueue(
-	span telemetry.V8CanonicalEndedSpan,
-) telemetry.V8CanonicalSpanEnqueueResult {
+func (consumer *CanonicalTraceConsumer) TryEnqueue(span telemetry.V8CanonicalEndedSpan) telemetry.V8CanonicalSpanEnqueueResult {
 	if consumer == nil || canonicalConsumerState(consumer.state.Load()) != canonicalConsumerActive {
 		if consumer != nil {
 			consumer.closed.Add(1)
@@ -244,9 +202,7 @@ func (consumer *CanonicalTraceConsumer) TryEnqueue(
 	return consumer.tryEnqueueRecord(span.Record())
 }
 
-func (consumer *CanonicalTraceConsumer) tryEnqueueRecord(
-	record observability.Record,
-) (result telemetry.V8CanonicalSpanEnqueueResult) {
+func (consumer *CanonicalTraceConsumer) tryEnqueueRecord(record observability.Record) (result telemetry.V8CanonicalSpanEnqueueResult) {
 	result = telemetry.V8CanonicalSpanEnqueueFailed
 	defer func() {
 		if recover() != nil {
@@ -307,13 +263,7 @@ func (consumer *CanonicalTraceConsumer) tryEnqueueRecord(
 		consumer.routeDropped.Add(1)
 		return telemetry.V8CanonicalSpanEnqueueDropped
 	}
-	projected := consumer.project(selected.Projection(), consumer.limits)
-	if !projected.Eligible() {
-		consumer.routeDropped.Add(1)
-		consumer.observe(CanonicalFailureUnsupportedShape)
-		return telemetry.V8CanonicalSpanEnqueueDropped
-	}
-	payload, err := consumer.payload(projected, selected.Identity().OriginDestination())
+	payload, err := consumer.payload(*selected)
 	if err != nil {
 		consumer.failed.Add(1)
 		consumer.observe(CanonicalFailurePayload)
@@ -343,8 +293,6 @@ func (consumer *CanonicalTraceConsumer) tryEnqueueRecord(
 	}
 }
 
-// ForceFlush waits only for the dispatcher fence. It never calls Drain and
-// therefore leaves intake open for later spans in the same generation.
 func (consumer *CanonicalTraceConsumer) ForceFlush(ctx context.Context) error {
 	if consumer == nil {
 		return nil
@@ -355,10 +303,6 @@ func (consumer *CanonicalTraceConsumer) ForceFlush(ctx context.Context) error {
 	return consumer.dispatcher.Flush(ctx)
 }
 
-// Shutdown is bounded, idempotent, and retryable. A timed-out invocation may
-// be retried: completed stages are not repeated, while an incomplete adapter
-// or dispatcher close is attempted again. Adapter close occurs only after the
-// queue has drained, so no worker can race a closed transport.
 func (consumer *CanonicalTraceConsumer) Shutdown(ctx context.Context) error {
 	if consumer == nil {
 		return nil
@@ -407,8 +351,6 @@ func (consumer *CanonicalTraceConsumer) Shutdown(ctx context.Context) error {
 	return nil
 }
 
-// CanonicalTraceConsumerCounters is a content-free monotonic snapshot. Remote
-// delivery/retry counters remain available from the adapter and dispatcher.
 type CanonicalTraceConsumerCounters struct {
 	Accepted     uint64
 	RouteDropped uint64
@@ -423,8 +365,7 @@ func (consumer *CanonicalTraceConsumer) Counters() CanonicalTraceConsumerCounter
 	}
 	return CanonicalTraceConsumerCounters{
 		Accepted: consumer.accepted.Load(), RouteDropped: consumer.routeDropped.Load(),
-		QueueDropped: consumer.queueDropped.Load(), Failed: consumer.failed.Load(),
-		Closed: consumer.closed.Load(),
+		QueueDropped: consumer.queueDropped.Load(), Failed: consumer.failed.Load(), Closed: consumer.closed.Load(),
 	}
 }
 
@@ -432,11 +373,9 @@ func (consumer *CanonicalTraceConsumer) observe(code CanonicalFailureCode) {
 	if consumer == nil || consumer.observer == nil {
 		return
 	}
-	failure := CanonicalFailure{
-		Destination: consumer.destination, Generation: consumer.generation, Code: code,
-	}
+	failure := CanonicalFailure{Destination: consumer.destination, Generation: consumer.generation, Code: code}
 	defer func() { _ = recover() }()
-	consumer.observer.ObserveGalileoCanonicalFailure(failure)
+	consumer.observer.ObserveOTLPCanonicalFailure(failure)
 }
 
 func nilCanonicalInterface(value any) bool {
@@ -445,8 +384,7 @@ func nilCanonicalInterface(value any) bool {
 	}
 	reflected := reflect.ValueOf(value)
 	switch reflected.Kind() {
-	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map,
-		reflect.Pointer, reflect.Slice:
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
 		return reflected.IsNil()
 	default:
 		return false

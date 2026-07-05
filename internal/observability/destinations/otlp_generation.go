@@ -20,6 +20,7 @@ import (
 	"github.com/defenseclaw/defenseclaw/internal/observability"
 	compatibility "github.com/defenseclaw/defenseclaw/internal/observability/compatibility/galileo"
 	galileodestination "github.com/defenseclaw/defenseclaw/internal/observability/destinations/galileo"
+	"github.com/defenseclaw/defenseclaw/internal/observability/destinations/localobservability"
 	"github.com/defenseclaw/defenseclaw/internal/observability/destinations/otlp"
 	"github.com/defenseclaw/defenseclaw/internal/observability/pipeline"
 	"github.com/defenseclaw/defenseclaw/internal/observability/router"
@@ -40,8 +41,9 @@ const (
 type otlpGenerationCandidate struct {
 	destination config.ObservabilityV8EffectiveDestination
 	signals     []observability.Signal
-	traceFilter otlp.SpanFilter
+	canonical   bool
 	galileo     bool
+	local       bool
 	metrics     map[string]struct{}
 }
 
@@ -56,10 +58,10 @@ func (factory *Factory) OTLPGenerationPipelineFactory() telemetry.V8GenerationPi
 }
 
 // PrepareOTLPGenerationPipelines assembles general OTLP trace/metric pipelines
-// and the generated canonical Galileo trace projection. Logs remain owned by
-// DestinationAdapterFactory. General OTLP trace routes requiring content
-// transformation continue to fail closed until their canonical consumer is
-// available; they never fall back to raw SDK span export.
+// and generated canonical general/Galileo trace projections. Logs remain owned
+// by DestinationAdapterFactory. Every generated trace route passes through the
+// central router and redaction engine; no v8 destination falls back to raw SDK
+// span export.
 func (factory *Factory) PrepareOTLPGenerationPipelines(
 	ctx context.Context,
 	plan *config.ObservabilityV8Plan,
@@ -106,12 +108,10 @@ func (factory *Factory) PrepareOTLPGenerationPipelines(
 		if containsSignal(signals, observability.SignalTraces) {
 			if destination.Preset == "galileo" && destination.PresetProfile == compatibility.ProfileID {
 				candidate.galileo = true
+			} else if destination.Name == localobservability.DestinationName {
+				candidate.local = true
 			} else {
-				filter, err := compileOTLPTraceFilter(destination)
-				if err != nil {
-					return telemetry.V8GenerationPipelines{}, err
-				}
-				candidate.traceFilter = filter
+				candidate.canonical = true
 			}
 			traceCandidates++
 		}
@@ -125,8 +125,17 @@ func (factory *Factory) PrepareOTLPGenerationPipelines(
 		candidates = append(candidates, candidate)
 	}
 	for _, candidate := range candidates {
-		if candidate.galileo && (factory.redaction == nil || nilInterface(factory.redaction) ||
-			nilInterface(factory.deliveryObserver) || nilInterface(factory.galileoObserver)) {
+		if (candidate.galileo || candidate.local || candidate.canonical) &&
+			(factory.redaction == nil || nilInterface(factory.redaction) || nilInterface(factory.deliveryObserver)) {
+			return telemetry.V8GenerationPipelines{}, newError(ErrorInvalidDependencies)
+		}
+		if candidate.galileo && nilInterface(factory.galileoObserver) {
+			return telemetry.V8GenerationPipelines{}, newError(ErrorInvalidDependencies)
+		}
+		if candidate.local && nilInterface(factory.localObserver) {
+			return telemetry.V8GenerationPipelines{}, newError(ErrorInvalidDependencies)
+		}
+		if candidate.canonical && nilInterface(factory.otlpObserver) {
 			return telemetry.V8GenerationPipelines{}, newError(ErrorInvalidDependencies)
 		}
 	}
@@ -154,6 +163,8 @@ func (factory *Factory) PrepareOTLPGenerationPipelines(
 	preparedWarnings := make([]config.ObservabilityV8EffectiveDestination, 0, len(candidates))
 	var traceProjection *pipeline.TraceProjectionPipeline
 	canonicalConsumers := make([]*galileodestination.CanonicalTraceConsumer, 0)
+	localConsumers := make([]*localobservability.Consumer, 0)
+	generalCanonicalConsumers := make([]*otlp.CanonicalTraceConsumer, 0)
 	for _, candidate := range candidates {
 		prepared, err := factory.prepareOTLPTelemetryFactory(
 			ctx, candidate.destination, candidate.signals, metricSpec, canaryRegistry,
@@ -203,20 +214,85 @@ func (factory *Factory) PrepareOTLPGenerationPipelines(
 				Destination: candidate.destination.Name, Canonical: registered,
 			})
 			canonicalConsumers = append(canonicalConsumers, consumer)
-		} else if candidate.traceFilter != nil {
-			processor, err := prepared.NewFilteredBatchSpanProcessor(ctx, candidate.traceFilter)
-			if err != nil {
+		} else if candidate.local {
+			if traceProjection == nil {
+				evaluator, evaluatorErr := router.New(plan)
+				if evaluatorErr != nil {
+					return fail(newError(ErrorAdapterPrepare))
+				}
+				traceProjection, err = pipeline.NewTraceProjectionPipeline(plan, evaluator, factory.redaction)
+				if err != nil {
+					return fail(newError(ErrorAdapterPrepare))
+				}
+			}
+			adapter, adapterErr := prepared.NewProjectedTraceAdapter(ctx, localobservability.RequestBuilder{})
+			if adapterErr != nil {
+				return fail(newError(ErrorAdapterPrepare))
+			}
+			dispatcher, valid := observabilityruntime.CompiledDispatcherConfig(
+				candidate.destination, factory.deliveryObserver,
+			)
+			if !valid {
+				_ = closeOTLPCanonicalAdapter(adapter)
+				return fail(newError(ErrorInvalidDestination))
+			}
+			consumer, consumerErr := localobservability.NewConsumer(localobservability.ConsumerOptions{
+				Destination: candidate.destination, Generation: generation,
+				Profile: localobservability.ProfileID, Pipeline: traceProjection,
+				Adapter: adapter, Dispatcher: dispatcher, Observer: factory.localObserver,
+			})
+			if consumerErr != nil {
+				_ = closeOTLPCanonicalAdapter(adapter)
 				return fail(newError(ErrorAdapterPrepare))
 			}
 			canaryRegistry.addProcessor()
-			processor = &canaryRegisteredSpanProcessor{
-				SpanProcessor: processor,
-				release:       func() { factory.releaseOTLPCanaryProcessor(generation, canaryRegistry) },
+			registered := &canaryRegisteredCanonicalConsumer{
+				V8CanonicalSpanConsumer: consumer,
+				release:                 func() { factory.releaseOTLPCanaryProcessor(generation, canaryRegistry) },
 			}
 			pipelines.SpanPipelines = append(pipelines.SpanPipelines, telemetry.V8GenerationSpanPipeline{
-				Destination: candidate.destination.Name,
-				Legacy:      processor,
+				Destination: candidate.destination.Name, Canonical: registered,
 			})
+			localConsumers = append(localConsumers, consumer)
+		} else if candidate.canonical {
+			if traceProjection == nil {
+				evaluator, evaluatorErr := router.New(plan)
+				if evaluatorErr != nil {
+					return fail(newError(ErrorAdapterPrepare))
+				}
+				traceProjection, err = pipeline.NewTraceProjectionPipeline(plan, evaluator, factory.redaction)
+				if err != nil {
+					return fail(newError(ErrorAdapterPrepare))
+				}
+			}
+			adapter, adapterErr := prepared.NewCanonicalTraceAdapter(ctx)
+			if adapterErr != nil {
+				return fail(newError(ErrorAdapterPrepare))
+			}
+			dispatcher, valid := observabilityruntime.CompiledDispatcherConfig(
+				candidate.destination, factory.deliveryObserver,
+			)
+			if !valid {
+				_ = closeOTLPCanonicalAdapter(adapter)
+				return fail(newError(ErrorInvalidDestination))
+			}
+			consumer, consumerErr := otlp.NewCanonicalTraceConsumer(otlp.CanonicalTraceConsumerOptions{
+				Destination: candidate.destination, Generation: generation, Pipeline: traceProjection,
+				Adapter: adapter, Dispatcher: dispatcher, Observer: factory.otlpObserver,
+			})
+			if consumerErr != nil {
+				_ = closeOTLPCanonicalAdapter(adapter)
+				return fail(newError(ErrorAdapterPrepare))
+			}
+			canaryRegistry.addProcessor()
+			registered := &canaryRegisteredCanonicalConsumer{
+				V8CanonicalSpanConsumer: consumer,
+				release:                 func() { factory.releaseOTLPCanaryProcessor(generation, canaryRegistry) },
+			}
+			pipelines.SpanPipelines = append(pipelines.SpanPipelines, telemetry.V8GenerationSpanPipeline{
+				Destination: candidate.destination.Name, Canonical: registered,
+			})
+			generalCanonicalConsumers = append(generalCanonicalConsumers, consumer)
 		}
 		if candidate.metrics != nil {
 			reader, err := prepared.NewFilteredPeriodicMetricReader(ctx, candidate.metrics)
@@ -249,6 +325,12 @@ func (factory *Factory) PrepareOTLPGenerationPipelines(
 	// Activation is deliberately the final side effect. No rejected candidate
 	// can publish intake or start a canonical delivery worker.
 	for _, consumer := range canonicalConsumers {
+		consumer.Activate()
+	}
+	for _, consumer := range localConsumers {
+		consumer.Activate()
+	}
+	for _, consumer := range generalCanonicalConsumers {
 		consumer.Activate()
 	}
 	return pipelines, nil
@@ -511,6 +593,12 @@ func galileoLimits(policy config.ObservabilityV8EffectiveTracePolicy) compatibil
 }
 
 func closeGalileoAdapter(adapter *galileodestination.Adapter) error {
+	ctx, cancel := context.WithTimeout(context.Background(), generationPipelineCleanupTimeout)
+	defer cancel()
+	return adapter.Close(ctx)
+}
+
+func closeOTLPCanonicalAdapter(adapter *otlp.ProjectedTraceAdapter) error {
 	ctx, cancel := context.WithTimeout(context.Background(), generationPipelineCleanupTimeout)
 	defer cancel()
 	return adapter.Close(ctx)
