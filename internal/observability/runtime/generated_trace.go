@@ -1,0 +1,904 @@
+// Copyright 2026 Cisco Systems, Inc. and its affiliates
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// SPDX-License-Identifier: Apache-2.0
+
+package runtime
+
+import (
+	"context"
+	"math"
+	"sync"
+	"time"
+
+	"github.com/google/uuid"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
+
+	"github.com/defenseclaw/defenseclaw/internal/observability"
+	"github.com/defenseclaw/defenseclaw/internal/observability/runtimegraph"
+	"github.com/defenseclaw/defenseclaw/internal/telemetry"
+)
+
+const generatedTraceFamilySchemaVersion int64 = 1
+
+// GeneratedTraceErrorCode is a fixed, content-free failure identity. The
+// generated tracing API deliberately does not retain or return prompts, model
+// output, tool arguments, configured endpoints, or builder diagnostics.
+type GeneratedTraceErrorCode string
+
+const (
+	GeneratedTraceInvalidInput       GeneratedTraceErrorCode = "invalid_input"
+	GeneratedTraceUnavailable        GeneratedTraceErrorCode = "unavailable"
+	GeneratedTraceClosed             GeneratedTraceErrorCode = "closed"
+	GeneratedTraceChildrenActive     GeneratedTraceErrorCode = "children_active"
+	GeneratedTraceBuildRejected      GeneratedTraceErrorCode = "build_rejected"
+	GeneratedTraceRegistrationFailed GeneratedTraceErrorCode = "registration_failed"
+)
+
+// GeneratedTraceError is safe to expose at an API or health boundary.
+type GeneratedTraceError struct{ code GeneratedTraceErrorCode }
+
+func (err *GeneratedTraceError) Error() string {
+	if err == nil {
+		return "generated trace operation failed"
+	}
+	return "generated trace operation failed: " + string(err.code)
+}
+
+func (err *GeneratedTraceError) Code() GeneratedTraceErrorCode {
+	if err == nil {
+		return ""
+	}
+	return err.code
+}
+
+// AgentTrace is one generated span.agent.invoke. A request-bounded root owns
+// the generation lease for the complete hierarchy; descendants share that
+// lease and therefore cannot cross a reload generation. It MUST NOT be retained
+// as process-wide or cross-delivery OpenClaw/hook session state. The type
+// intentionally does not expose the mutable SDK span.
+type AgentTrace struct {
+	session *generatedTraceSession
+	node    *generatedTraceNode
+}
+
+// ModelTrace is one generated span.model.chat nested under an AgentTrace.
+type ModelTrace struct {
+	session *generatedTraceSession
+	node    *generatedTraceNode
+}
+
+// ToolTrace is one generated span.tool.execute nested under an AgentTrace or
+// ModelTrace.
+type ToolTrace struct {
+	session *generatedTraceSession
+	node    *generatedTraceNode
+}
+
+type generatedTraceSession struct {
+	mu         sync.Mutex
+	lease      *runtimegraph.Lease
+	provider   *telemetry.Provider
+	builder    *observability.FamilyBuilder
+	resource   telemetry.V8TraceResourceFields
+	digest     string
+	generation uint64
+	version    string
+	root       *generatedTraceNode
+	nodes      []*generatedTraceNode
+	closed     bool
+}
+
+type generatedTraceNode struct {
+	family      string
+	bucket      observability.Bucket
+	kind        string
+	nameKey     string
+	start       time.Time
+	parent      trace.SpanContext
+	spanContext trace.SpanContext
+	ctx         context.Context
+	span        trace.Span
+	parentNode  *generatedTraceNode
+	ended       bool
+}
+
+// StartAgentTrace acquires exactly one active runtime-graph lease before any
+// trace construction. A nil handle with a nil error is normal admission: the
+// bucket is not collected or sampling declined the root. In either case no
+// generated canonical record is built and the lease is released immediately.
+//
+// The input is the generated span.agent.invoke vocabulary. Start-time,
+// provider/generation/resource identity, trace identity, parent identity,
+// flags, and scope are runtime-owned and are sealed by this API. All semantic
+// fields remain producer supplied; in particular the API never invents
+// lifecycle, execution, phase, sequence, operation, cost, or content values.
+// Source and provenance Producer are also required producer facts; omitting
+// either causes generated-builder rejection rather than a synthetic default.
+// The caller must End or Abort before its bounded request/delivery operation
+// returns. Cross-delivery session correlation belongs in canonical IDs/links,
+// not in a lease retained for the lifetime of an external agent session.
+// Callers should immediately defer Abort after a non-nil handle; Abort is a
+// no-op after successful End and guarantees release during caller panics.
+func (runtime *Runtime) StartAgentTrace(
+	ctx context.Context,
+	input observability.SpanAgentInvokeInput,
+) (context.Context, *AgentTrace, error) {
+	if input.DefenseClawAgentType == "" {
+		return ctx, nil, generatedTraceError(GeneratedTraceInvalidInput)
+	}
+	startedContext, session, node, err := runtime.startGeneratedTrace(
+		ctx, observability.BucketAgentLifecycle, observability.TelemetryFamilyAgentInvoke,
+		input.Kind, input.DefenseClawAgentType, input.StartTimeUnixNano,
+	)
+	if err != nil || node == nil {
+		return startedContext, nil, err
+	}
+	return startedContext, &AgentTrace{session: session, node: node}, nil
+}
+
+// StartModelTrace starts a request-bounded root span.model.chat when the
+// producer observed a real model operation but no real agent invocation. This
+// avoids fabricating an agent root solely to satisfy trace shape.
+func (runtime *Runtime) StartModelTrace(
+	ctx context.Context,
+	input observability.SpanModelChatInput,
+) (context.Context, *ModelTrace, error) {
+	if input.GenAIRequestModel == "" {
+		return ctx, nil, generatedTraceError(GeneratedTraceInvalidInput)
+	}
+	startedContext, session, node, err := runtime.startGeneratedTrace(
+		ctx, observability.BucketModelIO, observability.TelemetryFamilyModelChat,
+		input.Kind, input.GenAIRequestModel, input.StartTimeUnixNano,
+	)
+	if err != nil || node == nil {
+		return startedContext, nil, err
+	}
+	return startedContext, &ModelTrace{session: session, node: node}, nil
+}
+
+// StartToolTrace starts a request-bounded root span.tool.execute when a real
+// tool operation has no observed agent/model parent. It does not synthesize an
+// agent identity or parent.
+func (runtime *Runtime) StartToolTrace(
+	ctx context.Context,
+	input observability.SpanToolExecuteInput,
+) (context.Context, *ToolTrace, error) {
+	if input.GenAIToolName == "" {
+		return ctx, nil, generatedTraceError(GeneratedTraceInvalidInput)
+	}
+	startedContext, session, node, err := runtime.startGeneratedTrace(
+		ctx, observability.BucketToolActivity, observability.TelemetryFamilyToolExecute,
+		input.Kind, input.GenAIToolName, input.StartTimeUnixNano,
+	)
+	if err != nil || node == nil {
+		return startedContext, nil, err
+	}
+	return startedContext, &ToolTrace{session: session, node: node}, nil
+}
+
+func (runtime *Runtime) startGeneratedTrace(
+	ctx context.Context,
+	bucket observability.Bucket,
+	family, kind, nameKey string,
+	startNanos uint64,
+) (context.Context, *generatedTraceSession, *generatedTraceNode, error) {
+	if runtime == nil || runtime.manager == nil || ctx == nil || nameKey == "" ||
+		!generatedTraceFamilyKind(family, kind) {
+		return ctx, nil, nil, generatedTraceError(GeneratedTraceInvalidInput)
+	}
+	lease, err := runtime.manager.Acquire(ctx)
+	if err != nil {
+		return ctx, nil, nil, err
+	}
+	release := true
+	var started trace.Span
+	defer func() {
+		if release {
+			safeEndGeneratedSpan(started)
+			lease.Release()
+		}
+	}()
+	graph := lease.Graph()
+	provider, ok := telemetry.V8ProviderFromLease(lease)
+	if graph == nil || !ok {
+		return ctx, nil, nil, generatedTraceError(GeneratedTraceUnavailable)
+	}
+	digest, generation, bound := provider.V8PlanBinding()
+	if !bound || digest == "" || digest != graph.Digest() || generation != graph.Generation() {
+		return ctx, nil, nil, generatedTraceError(GeneratedTraceUnavailable)
+	}
+	// Collection is checked before span name, resource, builder, or canonical
+	// payload construction. Routes can only narrow this decision later.
+	if !provider.TraceBucketEnabled(bucket) {
+		return ctx, nil, nil, nil
+	}
+	start, valid := generatedTraceStartTime(startNanos)
+	if !valid {
+		return ctx, nil, nil, generatedTraceError(GeneratedTraceInvalidInput)
+	}
+	namePrefix := generatedTraceNamePrefix(family)
+	if namePrefix == "" {
+		return ctx, nil, nil, generatedTraceError(GeneratedTraceInvalidInput)
+	}
+	startedContext, span := startGeneratedPhysicalSpan(
+		provider, ctx, bucket, family, namePrefix+nameKey, kind, start, generation,
+	)
+	started = span
+	spanContext := span.SpanContext()
+	if !span.IsRecording() || !provider.TraceExportEligible(bucket, spanContext) {
+		return startedContext, nil, nil, nil
+	}
+	resourceContext, resourceOK := provider.V8ResourceContext()
+	if !resourceOK {
+		return ctx, nil, nil, generatedTraceError(GeneratedTraceUnavailable)
+	}
+	resourceValues := resourceContext.Values()
+	version := resourceValues["service.version"]
+	if version == "" {
+		return ctx, nil, nil, generatedTraceError(GeneratedTraceUnavailable)
+	}
+	builder, builderErr := observability.NewFamilyBuilder(
+		observability.ClockFunc(func() time.Time { return time.Now().UTC() }),
+		observability.OccurrenceIDGeneratorFunc(func() (string, error) { return uuid.NewString(), nil }),
+	)
+	if builderErr != nil {
+		return ctx, nil, nil, generatedTraceError(GeneratedTraceUnavailable)
+	}
+	node := &generatedTraceNode{
+		family: family, bucket: bucket, kind: kind, nameKey: nameKey, start: start,
+		parent: trace.SpanContextFromContext(ctx), spanContext: spanContext,
+		ctx: startedContext, span: span,
+	}
+	session := &generatedTraceSession{
+		lease: lease, provider: provider, builder: builder,
+		resource: resourceContext.TraceResourceFields(), digest: digest,
+		generation: generation, version: version, root: node,
+		nodes: []*generatedTraceNode{node},
+	}
+	release = false
+	started = nil
+	return startedContext, session, node, nil
+}
+
+// StartAgent starts a child span.agent.invoke (for example a delegated
+// sub-agent) under this exact agent span without acquiring another lease.
+func (span *AgentTrace) StartAgent(input observability.SpanAgentInvokeInput) (*AgentTrace, error) {
+	if span == nil || span.session == nil || span.node == nil || input.DefenseClawAgentType == "" {
+		return nil, generatedTraceError(GeneratedTraceInvalidInput)
+	}
+	node, err := span.session.startChild(
+		span.node, observability.BucketAgentLifecycle, observability.TelemetryFamilyAgentInvoke,
+		input.Kind, input.DefenseClawAgentType, input.StartTimeUnixNano,
+	)
+	if err != nil || node == nil {
+		return nil, err
+	}
+	return &AgentTrace{session: span.session, node: node}, nil
+}
+
+// StartModel starts a generated span.model.chat child under this agent.
+func (span *AgentTrace) StartModel(input observability.SpanModelChatInput) (*ModelTrace, error) {
+	if span == nil || span.session == nil || span.node == nil || input.GenAIRequestModel == "" {
+		return nil, generatedTraceError(GeneratedTraceInvalidInput)
+	}
+	node, err := span.session.startChild(
+		span.node, observability.BucketModelIO, observability.TelemetryFamilyModelChat,
+		input.Kind, input.GenAIRequestModel, input.StartTimeUnixNano,
+	)
+	if err != nil || node == nil {
+		return nil, err
+	}
+	return &ModelTrace{session: span.session, node: node}, nil
+}
+
+// StartTool starts a generated span.tool.execute child under this agent.
+func (span *AgentTrace) StartTool(input observability.SpanToolExecuteInput) (*ToolTrace, error) {
+	if span == nil || span.session == nil || span.node == nil || input.GenAIToolName == "" {
+		return nil, generatedTraceError(GeneratedTraceInvalidInput)
+	}
+	node, err := span.session.startChild(
+		span.node, observability.BucketToolActivity, observability.TelemetryFamilyToolExecute,
+		input.Kind, input.GenAIToolName, input.StartTimeUnixNano,
+	)
+	if err != nil || node == nil {
+		return nil, err
+	}
+	return &ToolTrace{session: span.session, node: node}, nil
+}
+
+// StartTool starts a generated span.tool.execute child under this model call.
+func (span *ModelTrace) StartTool(input observability.SpanToolExecuteInput) (*ToolTrace, error) {
+	if span == nil || span.session == nil || span.node == nil || input.GenAIToolName == "" {
+		return nil, generatedTraceError(GeneratedTraceInvalidInput)
+	}
+	node, err := span.session.startChild(
+		span.node, observability.BucketToolActivity, observability.TelemetryFamilyToolExecute,
+		input.Kind, input.GenAIToolName, input.StartTimeUnixNano,
+	)
+	if err != nil || node == nil {
+		return nil, err
+	}
+	return &ToolTrace{session: span.session, node: node}, nil
+}
+
+// Context returns the immutable OTel context for parenting work which has not
+// yet migrated. It returns nil after the handle is invalid; callers cannot use
+// it to mutate the generated span.
+func (span *AgentTrace) Context() context.Context {
+	return generatedNodeContext(span.session, span.node)
+}
+func (span *ModelTrace) Context() context.Context {
+	return generatedNodeContext(span.session, span.node)
+}
+func (span *ToolTrace) Context() context.Context {
+	return generatedNodeContext(span.session, span.node)
+}
+
+func (span *AgentTrace) Generation() uint64 { return generatedNodeGeneration(span.session, span.node) }
+func (span *ModelTrace) Generation() uint64 { return generatedNodeGeneration(span.session, span.node) }
+func (span *ToolTrace) Generation() uint64  { return generatedNodeGeneration(span.session, span.node) }
+
+func (span *AgentTrace) TraceID() string { return generatedNodeTraceID(span.session, span.node) }
+func (span *ModelTrace) TraceID() string { return generatedNodeTraceID(span.session, span.node) }
+func (span *ToolTrace) TraceID() string  { return generatedNodeTraceID(span.session, span.node) }
+
+func (span *AgentTrace) SpanID() string { return generatedNodeSpanID(span.session, span.node) }
+func (span *ModelTrace) SpanID() string { return generatedNodeSpanID(span.session, span.node) }
+func (span *ToolTrace) SpanID() string  { return generatedNodeSpanID(span.session, span.node) }
+
+// End builds and registers the exact generated agent record. Ending the root
+// releases the sole graph lease. Any rejection is terminal and aborts the
+// complete hierarchy so a partially canonical trace cannot continue.
+func (span *AgentTrace) End(input observability.SpanAgentInvokeInput) error {
+	if span == nil || span.session == nil || span.node == nil {
+		return generatedTraceError(GeneratedTraceInvalidInput)
+	}
+	return span.session.endAgent(span.node, input)
+}
+
+func (span *ModelTrace) End(input observability.SpanModelChatInput) error {
+	if span == nil || span.session == nil || span.node == nil {
+		return generatedTraceError(GeneratedTraceInvalidInput)
+	}
+	return span.session.endModel(span.node, input)
+}
+
+func (span *ToolTrace) End(input observability.SpanToolExecuteInput) error {
+	if span == nil || span.session == nil || span.node == nil {
+		return generatedTraceError(GeneratedTraceInvalidInput)
+	}
+	return span.session.endTool(span.node, input)
+}
+
+// Abort ends every still-recording physical span without canonical handoff and
+// releases the root lease. It is safe to call from every caller cleanup path;
+// a repeated call is a no-op.
+func (span *AgentTrace) Abort() {
+	if span != nil && span.session != nil {
+		span.session.abort()
+	}
+}
+
+func (span *ModelTrace) Abort() {
+	if span != nil && span.session != nil {
+		span.session.abort()
+	}
+}
+
+func (span *ToolTrace) Abort() {
+	if span != nil && span.session != nil {
+		span.session.abort()
+	}
+}
+
+func (session *generatedTraceSession) startChild(
+	parent *generatedTraceNode,
+	bucket observability.Bucket,
+	family, kind, nameKey string,
+	startNanos uint64,
+) (result *generatedTraceNode, err error) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			session.abort()
+			panic(recovered)
+		}
+	}()
+	if session == nil || parent == nil || nameKey == "" {
+		return nil, generatedTraceError(GeneratedTraceInvalidInput)
+	}
+	session.mu.Lock()
+	defer session.mu.Unlock()
+	if session.closed || session.lease == nil || session.lease.Graph() == nil {
+		return nil, generatedTraceError(GeneratedTraceClosed)
+	}
+	if parent.ended || !session.containsNodeLocked(parent) {
+		session.abortLocked()
+		return nil, generatedTraceError(GeneratedTraceClosed)
+	}
+	// Child collection is checked before timestamp, name, or SDK signal
+	// construction. A disabled bucket is a normal no-op and leaves the parent
+	// hierarchy live.
+	if !session.provider.TraceBucketEnabled(bucket) {
+		return nil, nil
+	}
+	if !generatedTraceFamilyKind(family, kind) {
+		session.abortLocked()
+		return nil, generatedTraceError(GeneratedTraceInvalidInput)
+	}
+	start, valid := generatedTraceStartTime(startNanos)
+	if !valid {
+		session.abortLocked()
+		return nil, generatedTraceError(GeneratedTraceInvalidInput)
+	}
+	namePrefix := generatedTraceNamePrefix(family)
+	if namePrefix == "" {
+		session.abortLocked()
+		return nil, generatedTraceError(GeneratedTraceInvalidInput)
+	}
+	ctx, physical := startGeneratedPhysicalSpan(
+		session.provider, parent.ctx, bucket, family, namePrefix+nameKey, kind, start, session.generation,
+	)
+	spanContext := physical.SpanContext()
+	if !physical.IsRecording() || !session.provider.TraceExportEligible(bucket, spanContext) {
+		safeEndGeneratedSpan(physical)
+		return nil, nil
+	}
+	node := &generatedTraceNode{
+		family: family, bucket: bucket, kind: kind, nameKey: nameKey, start: start,
+		parent: parent.spanContext, spanContext: spanContext, ctx: ctx, span: physical,
+		parentNode: parent,
+	}
+	session.nodes = append(session.nodes, node)
+	return node, nil
+}
+
+func (session *generatedTraceSession) endAgent(
+	node *generatedTraceNode,
+	input observability.SpanAgentInvokeInput,
+) (err error) {
+	defer session.abortOnPanic()
+	session.mu.Lock()
+	defer session.mu.Unlock()
+	if err := session.preflightEndLocked(node); err != nil {
+		return err
+	}
+	end, ok := generatedTraceEndTime(input.EndTimeUnixNano, node.start)
+	if !ok {
+		session.abortLocked()
+		return generatedTraceError(GeneratedTraceInvalidInput)
+	}
+	input = session.sealAgentInput(input, node, end)
+	record, buildErr := session.builder.BuildSpanAgentInvoke(input)
+	if buildErr != nil {
+		session.abortLocked()
+		return generatedTraceError(GeneratedTraceBuildRejected)
+	}
+	return session.registerEndLocked(node, input.Status, record)
+}
+
+func (session *generatedTraceSession) endModel(
+	node *generatedTraceNode,
+	input observability.SpanModelChatInput,
+) (err error) {
+	defer session.abortOnPanic()
+	session.mu.Lock()
+	defer session.mu.Unlock()
+	if err := session.preflightEndLocked(node); err != nil {
+		return err
+	}
+	end, ok := generatedTraceEndTime(input.EndTimeUnixNano, node.start)
+	if !ok {
+		session.abortLocked()
+		return generatedTraceError(GeneratedTraceInvalidInput)
+	}
+	input = session.sealModelInput(input, node, end)
+	record, buildErr := session.builder.BuildSpanModelChat(input)
+	if buildErr != nil {
+		session.abortLocked()
+		return generatedTraceError(GeneratedTraceBuildRejected)
+	}
+	return session.registerEndLocked(node, input.Status, record)
+}
+
+func (session *generatedTraceSession) endTool(
+	node *generatedTraceNode,
+	input observability.SpanToolExecuteInput,
+) (err error) {
+	defer session.abortOnPanic()
+	session.mu.Lock()
+	defer session.mu.Unlock()
+	if err := session.preflightEndLocked(node); err != nil {
+		return err
+	}
+	end, ok := generatedTraceEndTime(input.EndTimeUnixNano, node.start)
+	if !ok {
+		session.abortLocked()
+		return generatedTraceError(GeneratedTraceInvalidInput)
+	}
+	input = session.sealToolInput(input, node, end)
+	record, buildErr := session.builder.BuildSpanToolExecute(input)
+	if buildErr != nil {
+		session.abortLocked()
+		return generatedTraceError(GeneratedTraceBuildRejected)
+	}
+	return session.registerEndLocked(node, input.Status, record)
+}
+
+func (session *generatedTraceSession) preflightEndLocked(node *generatedTraceNode) error {
+	if session == nil || session.closed || session.lease == nil || session.lease.Graph() == nil {
+		return generatedTraceError(GeneratedTraceClosed)
+	}
+	if node == nil || node.ended || !session.containsNodeLocked(node) {
+		session.abortLocked()
+		return generatedTraceError(GeneratedTraceClosed)
+	}
+	for _, candidate := range session.nodes {
+		if candidate != nil && !candidate.ended && candidate.parentNode == node {
+			session.abortLocked()
+			return generatedTraceError(GeneratedTraceChildrenActive)
+		}
+	}
+	digest, generation, bound := session.provider.V8PlanBinding()
+	if !bound || digest != session.digest || generation != session.generation {
+		session.abortLocked()
+		return generatedTraceError(GeneratedTraceUnavailable)
+	}
+	return nil
+}
+
+func (session *generatedTraceSession) registerEndLocked(
+	node *generatedTraceNode,
+	status observability.TraceStatusInput,
+	record observability.Record,
+) error {
+	if !setGeneratedPhysicalStatus(node.span, status) {
+		session.abortLocked()
+		return generatedTraceError(GeneratedTraceInvalidInput)
+	}
+	registration := session.provider.EndV8CanonicalSpan(node.span, record)
+	// EndV8CanonicalSpan ends the physical span on every registration result.
+	node.ended = true
+	if registration != telemetry.V8CanonicalSpanRegistered {
+		session.abortLocked()
+		return generatedTraceError(GeneratedTraceRegistrationFailed)
+	}
+	if node == session.root {
+		session.releaseLocked()
+	}
+	return nil
+}
+
+func (session *generatedTraceSession) sealAgentInput(
+	input observability.SpanAgentInvokeInput,
+	node *generatedTraceNode,
+	end time.Time,
+) observability.SpanAgentInvokeInput {
+	input.Envelope = session.sealEnvelope(input.Envelope, node)
+	input.Kind, input.StartTimeUnixNano, input.EndTimeUnixNano = node.kind, uint64(node.start.UnixNano()), uint64(end.UnixNano())
+	input.ParentSpanID, input.TraceState, input.Flags = generatedTraceParent(node), generatedTraceState(node.spanContext), generatedTraceFlags(node)
+	input.Resource, input.Scope = session.resource.Resource, observability.TraceScopeInput{}
+	input.ResourceServiceName = session.resource.ServiceName
+	input.ResourceServiceNamespace = session.resource.ServiceNamespace
+	input.ResourceServiceInstanceID = session.resource.ServiceInstanceID
+	input.ResourceDeploymentEnvironmentName = session.resource.DeploymentEnvironmentName
+	input.ResourceHostName, input.ResourceHostArch, input.ResourceOsType = session.resource.HostName, session.resource.HostArch, session.resource.OSType
+	input.ResourceTenantID, input.ResourceWorkspaceID = session.resource.TenantID, session.resource.WorkspaceID
+	input.ResourceDefenseClawDeploymentMode = session.resource.DefenseClawDeploymentMode
+	input.ResourceDefenseClawClawMode = session.resource.DefenseClawClawMode
+	input.ResourceDefenseClawInstanceID = session.resource.DefenseClawInstanceID
+	input.ResourceDefenseClawDevicePublicKeyFingerprint = session.resource.DefenseClawDevicePublicKeyFingerprint
+	// The span name was established at Start and is part of physical/canonical
+	// parity. Do not allow a mutable end snapshot to rename it.
+	input.DefenseClawAgentType = node.nameKey
+	return input
+}
+
+func (session *generatedTraceSession) sealModelInput(
+	input observability.SpanModelChatInput,
+	node *generatedTraceNode,
+	end time.Time,
+) observability.SpanModelChatInput {
+	input.Envelope = session.sealEnvelope(input.Envelope, node)
+	input.Kind, input.StartTimeUnixNano, input.EndTimeUnixNano = node.kind, uint64(node.start.UnixNano()), uint64(end.UnixNano())
+	input.ParentSpanID, input.TraceState, input.Flags = generatedTraceParent(node), generatedTraceState(node.spanContext), generatedTraceFlags(node)
+	input.Resource, input.Scope = session.resource.Resource, observability.TraceScopeInput{}
+	input.ResourceServiceName = session.resource.ServiceName
+	input.ResourceServiceNamespace = session.resource.ServiceNamespace
+	input.ResourceServiceInstanceID = session.resource.ServiceInstanceID
+	input.ResourceDeploymentEnvironmentName = session.resource.DeploymentEnvironmentName
+	input.ResourceHostName, input.ResourceHostArch, input.ResourceOsType = session.resource.HostName, session.resource.HostArch, session.resource.OSType
+	input.ResourceTenantID, input.ResourceWorkspaceID = session.resource.TenantID, session.resource.WorkspaceID
+	input.ResourceDefenseClawDeploymentMode = session.resource.DefenseClawDeploymentMode
+	input.ResourceDefenseClawClawMode = session.resource.DefenseClawClawMode
+	input.ResourceDefenseClawInstanceID = session.resource.DefenseClawInstanceID
+	input.ResourceDefenseClawDevicePublicKeyFingerprint = session.resource.DefenseClawDevicePublicKeyFingerprint
+	input.GenAIRequestModel = node.nameKey
+	return input
+}
+
+func (session *generatedTraceSession) sealToolInput(
+	input observability.SpanToolExecuteInput,
+	node *generatedTraceNode,
+	end time.Time,
+) observability.SpanToolExecuteInput {
+	input.Envelope = session.sealEnvelope(input.Envelope, node)
+	input.Kind, input.StartTimeUnixNano, input.EndTimeUnixNano = node.kind, uint64(node.start.UnixNano()), uint64(end.UnixNano())
+	input.ParentSpanID, input.TraceState, input.Flags = generatedTraceParent(node), generatedTraceState(node.spanContext), generatedTraceFlags(node)
+	input.Resource, input.Scope = session.resource.Resource, observability.TraceScopeInput{}
+	input.ResourceServiceName = session.resource.ServiceName
+	input.ResourceServiceNamespace = session.resource.ServiceNamespace
+	input.ResourceServiceInstanceID = session.resource.ServiceInstanceID
+	input.ResourceDeploymentEnvironmentName = session.resource.DeploymentEnvironmentName
+	input.ResourceHostName, input.ResourceHostArch, input.ResourceOsType = session.resource.HostName, session.resource.HostArch, session.resource.OSType
+	input.ResourceTenantID, input.ResourceWorkspaceID = session.resource.TenantID, session.resource.WorkspaceID
+	input.ResourceDefenseClawDeploymentMode = session.resource.DefenseClawDeploymentMode
+	input.ResourceDefenseClawClawMode = session.resource.DefenseClawClawMode
+	input.ResourceDefenseClawInstanceID = session.resource.DefenseClawInstanceID
+	input.ResourceDefenseClawDevicePublicKeyFingerprint = session.resource.DefenseClawDevicePublicKeyFingerprint
+	input.GenAIToolName = node.nameKey
+	return input
+}
+
+func (session *generatedTraceSession) sealEnvelope(
+	envelope observability.FamilyEnvelopeInput,
+	node *generatedTraceNode,
+) observability.FamilyEnvelopeInput {
+	envelope.Correlation.TraceID = node.spanContext.TraceID().String()
+	envelope.Correlation.SpanID = node.spanContext.SpanID().String()
+	envelope.Provenance.BinaryVersion = session.version
+	envelope.Provenance.ConfigGeneration = int64(session.generation)
+	envelope.Provenance.ConfigDigest = session.digest
+	return envelope
+}
+
+func (session *generatedTraceSession) abortOnPanic() {
+	if recovered := recover(); recovered != nil {
+		session.abort()
+		panic(recovered)
+	}
+}
+
+func (session *generatedTraceSession) abort() {
+	if session == nil {
+		return
+	}
+	session.mu.Lock()
+	defer session.mu.Unlock()
+	session.abortLocked()
+}
+
+func (session *generatedTraceSession) abortLocked() {
+	if session == nil || session.closed {
+		return
+	}
+	for index := len(session.nodes) - 1; index >= 0; index-- {
+		node := session.nodes[index]
+		if node != nil && !node.ended {
+			safeEndGeneratedSpan(node.span)
+			node.ended = true
+		}
+	}
+	session.releaseLocked()
+}
+
+func (session *generatedTraceSession) releaseLocked() {
+	if session == nil || session.closed {
+		return
+	}
+	session.closed = true
+	if session.lease != nil {
+		session.lease.Release()
+		session.lease = nil
+	}
+}
+
+func (session *generatedTraceSession) containsNodeLocked(node *generatedTraceNode) bool {
+	for _, candidate := range session.nodes {
+		if candidate == node {
+			return true
+		}
+	}
+	return false
+}
+
+func startGeneratedPhysicalSpan(
+	provider *telemetry.Provider,
+	ctx context.Context,
+	bucket observability.Bucket,
+	family, name, kind string,
+	start time.Time,
+	generation uint64,
+) (context.Context, trace.Span) {
+	spanKind, valid := generatedTraceSpanKind(kind)
+	if !valid {
+		return trace.NewNoopTracerProvider().Tracer("defenseclaw/generated-trace").Start(ctx, name)
+	}
+	return provider.TracerForBucket(bucket).Start(
+		ctx, name,
+		trace.WithSpanKind(spanKind),
+		trace.WithTimestamp(start),
+		trace.WithAttributes(
+			attribute.String("defenseclaw.bucket", string(bucket)),
+			attribute.Int64("defenseclaw.config.generation", int64(generation)),
+			attribute.String("defenseclaw.span.family", family),
+			attribute.Int64("defenseclaw.span.family_schema_version", generatedTraceFamilySchemaVersion),
+		),
+	)
+}
+
+func generatedTraceSpanKind(value string) (trace.SpanKind, bool) {
+	switch value {
+	case "INTERNAL":
+		return trace.SpanKindInternal, true
+	case "CLIENT":
+		return trace.SpanKindClient, true
+	case "SERVER":
+		return trace.SpanKindServer, true
+	case "PRODUCER":
+		return trace.SpanKindProducer, true
+	case "CONSUMER":
+		return trace.SpanKindConsumer, true
+	default:
+		return trace.SpanKindUnspecified, false
+	}
+}
+
+func generatedTraceFamilyKind(family, kind string) bool {
+	switch family {
+	case observability.TelemetryFamilyAgentInvoke, observability.TelemetryFamilyToolExecute:
+		return kind == "INTERNAL" || kind == "CLIENT"
+	case observability.TelemetryFamilyModelChat:
+		return kind == "CLIENT"
+	default:
+		return false
+	}
+}
+
+func generatedTraceNamePrefix(family string) string {
+	switch family {
+	case observability.TelemetryFamilyAgentInvoke:
+		return "invoke_agent "
+	case observability.TelemetryFamilyModelChat:
+		return "chat "
+	case observability.TelemetryFamilyToolExecute:
+		return "execute_tool "
+	default:
+		return ""
+	}
+}
+
+func generatedTraceStartTime(nanos uint64) (time.Time, bool) {
+	if nanos == 0 {
+		return time.Now().UTC(), true
+	}
+	if nanos > math.MaxInt64 {
+		return time.Time{}, false
+	}
+	value := time.Unix(0, int64(nanos)).UTC()
+	return value, !value.IsZero() && value.UnixNano() > 0
+}
+
+func generatedTraceEndTime(nanos uint64, start time.Time) (time.Time, bool) {
+	if nanos > math.MaxInt64 {
+		return time.Time{}, false
+	}
+	end := time.Now().UTC()
+	if nanos != 0 {
+		end = time.Unix(0, int64(nanos)).UTC()
+	}
+	return end, !end.IsZero() && end.UnixNano() > 0 && !end.Before(start)
+}
+
+func generatedTraceParent(node *generatedTraceNode) observability.Optional[string] {
+	if node == nil || !node.parent.IsValid() {
+		return observability.Absent[string]()
+	}
+	return observability.Present(node.parent.SpanID().String())
+}
+
+func generatedTraceState(spanContext trace.SpanContext) observability.Optional[string] {
+	if value := spanContext.TraceState().String(); value != "" {
+		return observability.Present(value)
+	}
+	return observability.Absent[string]()
+}
+
+func generatedTraceFlags(node *generatedTraceNode) uint32 {
+	if node == nil {
+		return 0
+	}
+	flags := uint32(node.spanContext.TraceFlags()) | 0x100
+	if node.parent.IsValid() && node.parent.IsRemote() {
+		flags |= 0x200
+	}
+	return flags
+}
+
+func setGeneratedPhysicalStatus(span trace.Span, status observability.TraceStatusInput) bool {
+	if span == nil {
+		return false
+	}
+	switch status.Code() {
+	case observability.TraceStatusUnset:
+		return true
+	case observability.TraceStatusOK:
+		span.SetStatus(codes.Ok, "")
+		return true
+	case observability.TraceStatusError:
+		description, _ := status.Description()
+		span.SetStatus(codes.Error, description)
+		return true
+	default:
+		return false
+	}
+}
+
+func safeEndGeneratedSpan(span trace.Span) {
+	if span == nil {
+		return
+	}
+	defer func() { _ = recover() }()
+	span.End()
+}
+
+func generatedNodeContext(session *generatedTraceSession, node *generatedTraceNode) context.Context {
+	if session == nil || node == nil {
+		return nil
+	}
+	session.mu.Lock()
+	defer session.mu.Unlock()
+	if session.closed || node.ended || !session.containsNodeLocked(node) {
+		return nil
+	}
+	return node.ctx
+}
+
+func generatedNodeGeneration(session *generatedTraceSession, node *generatedTraceNode) uint64 {
+	if session == nil || node == nil {
+		return 0
+	}
+	session.mu.Lock()
+	defer session.mu.Unlock()
+	if !session.containsNodeLocked(node) {
+		return 0
+	}
+	return session.generation
+}
+
+func generatedNodeTraceID(session *generatedTraceSession, node *generatedTraceNode) string {
+	if session == nil || node == nil {
+		return ""
+	}
+	session.mu.Lock()
+	defer session.mu.Unlock()
+	if !session.containsNodeLocked(node) || !node.spanContext.IsValid() {
+		return ""
+	}
+	return node.spanContext.TraceID().String()
+}
+
+func generatedNodeSpanID(session *generatedTraceSession, node *generatedTraceNode) string {
+	if session == nil || node == nil {
+		return ""
+	}
+	session.mu.Lock()
+	defer session.mu.Unlock()
+	if !session.containsNodeLocked(node) || !node.spanContext.IsValid() {
+		return ""
+	}
+	return node.spanContext.SpanID().String()
+}
+
+func generatedTraceError(code GeneratedTraceErrorCode) error {
+	return &GeneratedTraceError{code: code}
+}
+
+var _ error = (*GeneratedTraceError)(nil)
