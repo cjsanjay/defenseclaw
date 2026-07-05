@@ -26,6 +26,7 @@ from typing import Any
 
 import pytest
 import yaml
+from jsonschema import Draft202012Validator
 
 ROOT = Path(__file__).resolve().parents[2]
 GENERATOR = ROOT / "scripts/generate_telemetry_registry.py"
@@ -180,6 +181,61 @@ def _install_manifest_schema_baseline(root: Path, schema_bytes: bytes) -> Path:
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_bytes(schema_bytes)
     return target
+
+
+@functools.lru_cache(maxsize=1)
+def _public_view_adoption_paths() -> tuple[str, ...]:
+    module = _load_generator_module("telemetry_registry_fixture_paths")
+    return tuple(sorted(module.generated_transaction.EXACT_BASELINE_ADOPTION_PATHS))
+
+
+def _seed_synthetic_public_view_predecessors(
+    module: ModuleType,
+    root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> dict[str, bytes]:
+    """Build a current-tree-only first-adoption fixture from baseline IR bytes."""
+
+    real_loader = module._load_sibling_module
+    baseline_module = real_loader("telemetry_public_schema_baseline")
+    baseline_raw = (root / module.PUBLIC_VIEWS_BASELINE_PATH).read_bytes()
+    baseline = baseline_module.load_public_schema_baseline_bytes(
+        baseline_raw,
+        module.PUBLIC_VIEWS_BASELINE_PATH.as_posix(),
+    )
+    predecessors: dict[str, bytes] = {}
+    synthetic_resources: list[Any] = []
+    for resource in baseline.resources:
+        payload = module._public_subschema_bytes(baseline_module, resource.document)
+        assert module.PUBLIC_VIEW_OWNERSHIP_MARKER not in payload[:4096]
+        predecessors[resource.path] = payload
+        synthetic_resources.append(SimpleNamespace(path=resource.path, source_sha256=_sha256(payload)))
+    for primary, targets in module.PUBLIC_VIEW_MIRROR_TARGETS.items():
+        for target in targets:
+            predecessors[target] = predecessors[primary]
+    assert tuple(sorted(predecessors)) == _public_view_adoption_paths()
+
+    def load_sibling(name: str) -> Any:
+        if name != "telemetry_public_schema_baseline":
+            return real_loader(name)
+
+        def load_synthetic(raw: bytes, source: str) -> Any:
+            loaded = baseline_module.load_public_schema_baseline_bytes(raw, source)
+            return SimpleNamespace(
+                baseline_sha256=loaded.baseline_sha256,
+                resources=tuple(synthetic_resources),
+            )
+
+        return SimpleNamespace(load_public_schema_baseline_bytes=load_synthetic)
+
+    monkeypatch.setattr(module, "_load_sibling_module", load_sibling)
+    (root / "schemas/telemetry/generated").mkdir(parents=True, exist_ok=True)
+    for relative, payload in predecessors.items():
+        target = root / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(payload)
+        target.chmod(0o644)
+    return predecessors
 
 
 def _grouped_outcome_contract_matrix(
@@ -786,11 +842,9 @@ def _fixture_root(tmp_path: Path) -> Path:
     schema_source = ROOT / "schemas/telemetry/v8/output-manifest.schema.json"
     schema_bytes = schema_source.read_bytes()
     (telemetry / "output-manifest.schema.json").write_bytes(schema_bytes)
-    schema_baseline_source = (
-        ROOT / "schemas/telemetry/v8/baselines/output-manifest" / f"{_sha256(schema_bytes)}.schema.json"
-    )
-    schema_baseline_target = _install_manifest_schema_baseline(root, schema_baseline_source.read_bytes())
-    assert schema_baseline_target.name == schema_baseline_source.name
+    for schema_baseline_source in (ROOT / "schemas/telemetry/v8/baselines/output-manifest").glob("*.schema.json"):
+        schema_baseline_target = _install_manifest_schema_baseline(root, schema_baseline_source.read_bytes())
+        assert schema_baseline_target.name == schema_baseline_source.name
     public_views_source = ROOT / "schemas/telemetry/v8/public-views.yaml"
     public_views_target = telemetry / "public-views.yaml"
     public_views_target.write_bytes(public_views_source.read_bytes())
@@ -1362,13 +1416,10 @@ def _install_synthetic_candidate_renderers(
             raise build_error
         return index
 
-    staged_paths = tuple(
-        f"{module.PUBLIC_VIEW_CANDIDATE_PREFIX}/{path}"
-        for path in sorted(module.generated_transaction.EXACT_BASELINE_ADOPTION_PATHS)
-    )
+    public_view_paths = tuple(sorted(module.generated_transaction.EXACT_BASELINE_ADOPTION_PATHS))
     portable_paths = {
         *module.PORTABLE_STATIC_OUTPUT_PATHS,
-        *staged_paths,
+        *public_view_paths,
         *(
             f"schemas/telemetry/generated/examples/{'valid' if example.valid else 'invalid'}/{example.id}.json"
             for example in ir.examples
@@ -1388,27 +1439,27 @@ def _install_synthetic_candidate_renderers(
         calls.append(("portable", observed))
         rendered = {path: portable_artifact(path) for path in portable_paths}
         if portable_mutation == "partial":
-            rendered.pop(staged_paths[0])
+            rendered.pop(public_view_paths[0])
         elif portable_mutation == "substituted":
-            rendered.pop(staged_paths[0])
-            replacement = f"{module.PUBLIC_VIEW_CANDIDATE_PREFIX}/schemas/substituted.json"
+            rendered.pop(public_view_paths[0])
+            replacement = "schemas/substituted.json"
             rendered[replacement] = portable_artifact(replacement)
-        elif portable_mutation == "live":
-            live = sorted(module.generated_transaction.EXACT_BASELINE_ADOPTION_PATHS)[0]
-            rendered[live] = portable_artifact(live)
+        elif portable_mutation == "staged":
+            staged = f"{module.PUBLIC_VIEW_STAGED_PREFIX}schemas/activity-event.json"
+            rendered[staged] = portable_artifact(staged)
         elif portable_mutation == "contract-substituted":
             pass
         elif portable_mutation is not None:
             raise AssertionError(f"unsupported portable mutation {portable_mutation}")
         return rendered
 
-    staged_contract = staged_paths
+    public_view_contract = public_view_paths
     if portable_mutation == "contract-substituted":
-        staged_contract = (*staged_paths[:-1], f"{module.PUBLIC_VIEW_CANDIDATE_PREFIX}/schemas/substituted.json")
+        public_view_contract = (*public_view_paths[:-1], "schemas/substituted.json")
     portable = SimpleNamespace(
         CANDIDATE_AUTHORITY=module.GO_CANDIDATE_AUTHORITY,
-        PUBLIC_VIEW_CANDIDATE_PREFIX=module.PUBLIC_VIEW_CANDIDATE_PREFIX,
-        PUBLIC_VIEW_CANDIDATE_OUTPUT_PATHS=staged_contract,
+        PUBLIC_VIEW_GENERATED_AUTHORITY=module.PUBLIC_VIEW_GENERATED_AUTHORITY,
+        PUBLIC_VIEW_OUTPUT_PATHS=public_view_contract,
         CandidateRenderError=CandidateRenderError,
         build_candidate_render_index=build,
         render_candidate_artifacts_from_index=render_portable,
@@ -1476,11 +1527,8 @@ def test_render_outputs_builds_one_index_and_fans_out_the_same_identity(
     assert [name for name, _ in calls] == ["build", "portable", "go", "preflight"]
     assert calls[1][1] is index
     assert calls[2][1] is index
-    staged_paths = tuple(
-        f"{module.PUBLIC_VIEW_CANDIDATE_PREFIX}/{path}"
-        for path in sorted(module.generated_transaction.EXACT_BASELINE_ADOPTION_PATHS)
-    )
-    expected_portable = module._expected_portable_output_paths(ir, staged_paths)
+    public_view_paths = tuple(sorted(module.generated_transaction.EXACT_BASELINE_ADOPTION_PATHS))
+    expected_portable = module._expected_portable_output_paths(ir, public_view_paths)
     assert set(outputs) == {
         module.OUTPUT_MANIFEST,
         *(Path(path) for path in expected_portable),
@@ -1490,21 +1538,21 @@ def test_render_outputs_builds_one_index_and_fans_out_the_same_identity(
     assert manifest["ownership_inventory"]["go_candidate"]["paths"] == list(module.GO_CANDIDATE_OUTPUT_PATHS)
 
 
-@pytest.mark.parametrize("mutation", ["partial", "substituted", "contract-substituted", "live"])
-def test_render_outputs_rejects_inexact_or_live_staged_public_view_inventory(
+@pytest.mark.parametrize("mutation", ["partial", "substituted", "contract-substituted", "staged"])
+def test_render_outputs_rejects_inexact_or_staged_public_view_inventory(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     mutation: str,
 ) -> None:
     root = _fixture_root(tmp_path)
-    module = _load_generator_module(f"telemetry_registry_staged_public_views_{mutation}")
+    module = _load_generator_module(f"telemetry_registry_live_public_views_{mutation}")
     ir = module.compile_registry(root)
     _install_synthetic_candidate_renderers(module, ir, monkeypatch, portable_mutation=mutation)
 
-    if mutation == "live":
-        expected = "live public-view paths"
+    if mutation == "staged":
+        expected = "retain staged public-view paths"
     elif mutation == "contract-substituted":
-        expected = "staging inventory is not exact"
+        expected = "live public-view contract is not exact"
     else:
         expected = "partial or substituted"
     with pytest.raises(module.RegistryError, match=expected):
@@ -1515,14 +1563,14 @@ def test_render_outputs_rejects_inexact_or_live_staged_public_view_inventory(
     ("field", "value"),
     [("sha256", "0" * 64), ("mode", 0o600), ("marker", '"foreign-generated-marker"')],
 )
-def test_render_outputs_rejects_stale_staged_public_view_ownership_record(
+def test_render_outputs_rejects_stale_live_public_view_ownership_record(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     field: str,
     value: Any,
 ) -> None:
     root = _fixture_root(tmp_path)
-    module = _load_generator_module(f"telemetry_registry_staged_public_view_record_{field}")
+    module = _load_generator_module(f"telemetry_registry_live_public_view_record_{field}")
     ir = module.compile_registry(root)
     _install_synthetic_candidate_renderers(module, ir, monkeypatch)
     manifest_document = module._manifest_document
@@ -1532,13 +1580,13 @@ def test_render_outputs_rejects_stale_staged_public_view_ownership_record(
         target = next(
             record
             for record in manifest["ownership_inventory"]["artifacts"]
-            if record["path"].startswith(f"{module.PUBLIC_VIEW_CANDIDATE_PREFIX}/")
+            if record["path"] in module.generated_transaction.EXACT_BASELINE_ADOPTION_PATHS
         )
         target[field] = value
         return manifest
 
     monkeypatch.setattr(module, "_manifest_document", stale_manifest)
-    with pytest.raises(module.RegistryError, match="staged public-view ownership record disagrees"):
+    with pytest.raises(module.RegistryError, match="live public-view ownership record disagrees"):
         module.render_outputs(ir)
 
 
@@ -1589,19 +1637,17 @@ def test_real_candidate_outputs_validate_as_one_complete_manifest_inventory(
     assert set(module.GO_CANDIDATE_OUTPUT_PATHS) <= set(desired)
     assert "schemas/telemetry/generated/telemetry.schema.json" in desired
     expected_live = frozenset(module.generated_transaction.EXACT_BASELINE_ADOPTION_PATHS)
-    staged_prefix = f"{module.PUBLIC_VIEW_CANDIDATE_PREFIX}/"
-    expected_staged = tuple(f"{staged_prefix}{path}" for path in sorted(expected_live))
-    staged_outputs = tuple(path for path in manifest["outputs"] if path.startswith(staged_prefix))
+    live_outputs = tuple(path for path in manifest["outputs"] if path in expected_live)
     records = manifest["ownership_inventory"]["artifacts"]
     record_by_path = {record["path"]: record for record in records}
 
     assert len(outputs) - len(module.GO_CANDIDATE_OUTPUT_PATHS) - 1 == 55
     assert len(records) == 62
     assert len(desired) == len(manifest["outputs"]) == 63
-    assert staged_outputs == expected_staged
-    assert expected_live.isdisjoint(manifest["outputs"])
-    assert expected_live.isdisjoint(record_by_path)
-    for path in expected_staged:
+    assert live_outputs == tuple(sorted(expected_live))
+    assert not any(path.startswith(module.PUBLIC_VIEW_STAGED_PREFIX) for path in manifest["outputs"])
+    assert expected_live <= set(record_by_path)
+    for path in sorted(expected_live):
         payload = outputs[Path(path)]
         assert record_by_path[path] == {
             "path": path,
@@ -1611,21 +1657,24 @@ def test_real_candidate_outputs_validate_as_one_complete_manifest_inventory(
         }
 
 
-def test_staged_publication_is_deterministic_and_preserves_every_live_predecessor_byte(
+def test_first_and_repeat_publication_adopt_exact_live_views_deterministically(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
     real_candidate_outputs: tuple[ModuleType, dict[Path, bytes]],
 ) -> None:
     module, outputs = real_candidate_outputs
     root = _fixture_root(tmp_path)
+    _seed_synthetic_public_view_predecessors(module, root, monkeypatch)
     live_paths = tuple(sorted(module.generated_transaction.EXACT_BASELINE_ADOPTION_PATHS))
     before: dict[str, tuple[bytes, int]] = {}
     for path in live_paths:
-        source = ROOT / path
         target = root / path
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_bytes(source.read_bytes())
-        target.chmod(0o644)
         before[path] = (target.read_bytes(), stat.S_IMODE(target.stat().st_mode))
+
+    with pytest.raises(module.RegistryError, match="generated output drift"):
+        module.check_outputs(root, outputs)
+    assert not (root / module.OUTPUT_MANIFEST).exists()
+    assert all((root / path).read_bytes() == expected[0] for path, expected in before.items())
 
     module.write_outputs(root, outputs)
     manifest_path = root / module.OUTPUT_MANIFEST
@@ -1636,10 +1685,173 @@ def test_staged_publication_is_deterministic_and_preserves_every_live_predecesso
     assert manifest_path.read_bytes() == first_manifest
     for path, expected in before.items():
         target = root / path
-        assert (target.read_bytes(), stat.S_IMODE(target.stat().st_mode)) == expected
+        assert target.read_bytes() != expected[0]
+        assert module.PUBLIC_VIEW_OWNERSHIP_MARKER in target.read_bytes()[:4096]
+        assert stat.S_IMODE(target.stat().st_mode) == expected[1]
     manifest = json.loads(first_manifest)
-    assert set(live_paths).isdisjoint(manifest["outputs"])
-    assert set(live_paths).isdisjoint(record["path"] for record in manifest["ownership_inventory"]["artifacts"])
+    assert set(live_paths) <= set(manifest["outputs"])
+    assert set(live_paths) <= {record["path"] for record in manifest["ownership_inventory"]["artifacts"]}
+    assert not any(path.startswith(module.PUBLIC_VIEW_STAGED_PREFIX) for path in manifest["outputs"])
+
+
+def test_repeat_adoption_uses_manifest_authority_without_legacy_baseline_reads(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    real_candidate_outputs: tuple[ModuleType, dict[Path, bytes]],
+) -> None:
+    module, outputs = real_candidate_outputs
+    root = _fixture_root(tmp_path)
+    _seed_synthetic_public_view_predecessors(module, root, monkeypatch)
+    module.write_outputs(root, outputs)
+
+    def unexpected_baseline_read(*_args: Any, **_kwargs: Any) -> None:
+        raise AssertionError("continued adoption attempted to read legacy baseline bytes")
+
+    monkeypatch.setattr(module, "_baseline_public_view_adoption", unexpected_baseline_read)
+    module.check_outputs(root, outputs)
+    module.write_outputs(root, outputs)
+
+
+def test_partial_prior_manifest_public_view_ownership_fails_closed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    real_candidate_outputs: tuple[ModuleType, dict[Path, bytes]],
+) -> None:
+    module, outputs = real_candidate_outputs
+    root = _fixture_root(tmp_path)
+    _seed_synthetic_public_view_predecessors(module, root, monkeypatch)
+    module.write_outputs(root, outputs)
+    manifest_path = root / module.OUTPUT_MANIFEST
+    manifest = json.loads(manifest_path.read_bytes())
+    omitted = sorted(module.generated_transaction.EXACT_BASELINE_ADOPTION_PATHS)[0]
+    manifest["outputs"].remove(omitted)
+    manifest["ownership_inventory"]["artifacts"] = [
+        record for record in manifest["ownership_inventory"]["artifacts"] if record["path"] != omitted
+    ]
+    manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+    with pytest.raises(module.RegistryError, match="partial public-view adoption set"):
+        module.write_outputs(root, outputs)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ["missing", "tampered", "mode", "marker", "symlink", "hardlink", "mirror"],
+)
+def test_first_adoption_rejects_unsafe_or_changed_predecessors(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    real_candidate_outputs: tuple[ModuleType, dict[Path, bytes]],
+    mutation: str,
+) -> None:
+    module, outputs = real_candidate_outputs
+    root = _fixture_root(tmp_path)
+    predecessors = _seed_synthetic_public_view_predecessors(module, root, monkeypatch)
+    primary = root / "schemas/activity-event.json"
+    mirror = root / "internal/gatewaylog/schemas/activity-event.json"
+    if mutation == "missing":
+        primary.unlink()
+    elif mutation == "tampered":
+        primary.write_bytes(primary.read_bytes() + b" ")
+    elif mutation == "mode":
+        primary.chmod(0o600)
+    elif mutation == "marker":
+        primary.write_bytes(module.PUBLIC_VIEW_OWNERSHIP_MARKER + primary.read_bytes())
+    elif mutation == "symlink":
+        outside = tmp_path / "symlink-predecessor.json"
+        outside.write_bytes(predecessors["schemas/activity-event.json"])
+        primary.unlink()
+        primary.symlink_to(outside)
+    elif mutation == "hardlink":
+        outside = tmp_path / "hardlink-predecessor.json"
+        outside.write_bytes(predecessors["schemas/activity-event.json"])
+        primary.unlink()
+        os.link(outside, primary)
+    else:
+        mirror.write_bytes(mirror.read_bytes() + b" ")
+
+    with pytest.raises(module.RegistryError, match="baseline adoption"):
+        module.write_outputs(root, outputs)
+    assert not (root / module.OUTPUT_MANIFEST).exists()
+
+
+def test_first_adoption_transaction_failure_rolls_back_every_predecessor(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    real_candidate_outputs: tuple[ModuleType, dict[Path, bytes]],
+) -> None:
+    module, outputs = real_candidate_outputs
+    root = _fixture_root(tmp_path)
+    before = dict(_seed_synthetic_public_view_predecessors(module, root, monkeypatch))
+
+    def fail_after_first_live_apply(point: str, path: str | None = None) -> None:
+        if point == "after_output_apply" and path in before:
+            raise RuntimeError("test fault")
+
+    with pytest.raises(module.RegistryError, match="rolled back"):
+        module.write_outputs(root, outputs, fault_injector=fail_after_first_live_apply)
+    assert all((root / path).read_bytes() == payload for path, payload in before.items())
+    assert not (root / module.OUTPUT_MANIFEST).exists()
+
+
+def test_interrupted_first_adoption_is_recovered_before_authority_reselection(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    real_candidate_outputs: tuple[ModuleType, dict[Path, bytes]],
+) -> None:
+    module, outputs = real_candidate_outputs
+    root = _fixture_root(tmp_path)
+    predecessors = _seed_synthetic_public_view_predecessors(module, root, monkeypatch)
+
+    class SimulatedInterruption(BaseException):
+        pass
+
+    def interrupt_after_first_live_apply(point: str, path: str | None = None) -> None:
+        if point == "after_output_apply" and path in predecessors:
+            raise SimulatedInterruption
+
+    with pytest.raises(SimulatedInterruption):
+        module.write_outputs(root, outputs, fault_injector=interrupt_after_first_live_apply)
+    interrupted = {path: (root / path).read_bytes() for path in predecessors}
+    with pytest.raises(module.RegistryError, match="recovery is required before check mode.*--write"):
+        module.check_outputs(root, outputs)
+    assert {path: (root / path).read_bytes() for path in predecessors} == interrupted
+    module.write_outputs(root, outputs)
+    module.check_outputs(root, outputs)
+
+
+def test_prior_manifest_using_retained_old_schema_baseline_is_accepted(tmp_path: Path) -> None:
+    root = _fixture_root(tmp_path)
+    module = _load_generator_module("telemetry_registry_old_prior_manifest_schema")
+    manifest = module._manifest_document(module.compile_registry(root), {})
+    old_schema_sha256 = "7c98ed065a8fc5436229e1dfd952022d2d5147c91e1809af377c955dbc14d083"
+    schema_input = next(item for item in manifest["inputs"] if item["path"] == module.OUTPUT_MANIFEST_SCHEMA.as_posix())
+    schema_input["sha256"] = old_schema_sha256
+    manifest_path = root / module.OUTPUT_MANIFEST
+    manifest_path.parent.mkdir(parents=True)
+    manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+    prior = module._prior_output_ownership(root)
+
+    assert set(prior) == {module.OUTPUT_MANIFEST.as_posix()}
+
+
+def test_manifest_output_path_schema_has_only_exact_live_and_go_exceptions() -> None:
+    schema = json.loads((ROOT / "schemas/telemetry/v8/output-manifest.schema.json").read_bytes())
+    validator = Draft202012Validator(schema["$defs"]["output_path"])
+    module = _load_generator_module("telemetry_registry_manifest_path_allowlist")
+    accepted = {
+        "schemas/telemetry/generated/anything.json",
+        *module.GO_CANDIDATE_OUTPUT_PATHS,
+        *module.generated_transaction.EXACT_BASELINE_ADOPTION_PATHS,
+    }
+    rejected = {
+        "schemas/not-generated/arbitrary.json",
+        "internal/observability/zz_generated_telemetry_arbitrary.go",
+        "internal/gatewaylog/schemas/arbitrary.json",
+    }
+    assert all(not list(validator.iter_errors(path)) for path in accepted)
+    assert all(list(validator.iter_errors(path)) for path in rejected)
 
 
 @pytest.mark.parametrize(
@@ -1727,19 +1939,20 @@ def test_unmanifested_internal_generated_go_is_rejected_by_check_and_write_prefl
 ) -> None:
     module, outputs = real_candidate_outputs
     root = _fixture_root(tmp_path)
+    _seed_synthetic_public_view_predecessors(module, root, monkeypatch)
     extra = root / "internal/observability/zz_generated_telemetry_unowned.go"
     extra.write_text(
         "// Code generated by DefenseClaw telemetry registry; DO NOT EDIT.\npackage observability\n",
         encoding="utf-8",
     )
-    monkeypatch.setattr(module.generated_transaction, "check_outputs", lambda *_: None)
+    monkeypatch.setattr(module.generated_transaction, "check_outputs", lambda *_args, **_kwargs: None)
 
     with pytest.raises(module.RegistryError, match="zz_generated_telemetry_unowned.go"):
         module.check_outputs(root, outputs)
 
     write_called = False
 
-    def unexpected_write(*_args: Any) -> None:
+    def unexpected_write(*_args: Any, **_kwargs: Any) -> None:
         nonlocal write_called
         write_called = True
 
@@ -1756,12 +1969,13 @@ def test_unmanifested_portable_artifact_is_rejected_by_write_preflight(
 ) -> None:
     module, outputs = real_candidate_outputs
     root = _fixture_root(tmp_path)
+    _seed_synthetic_public_view_predecessors(module, root, monkeypatch)
     extra = root / "schemas/telemetry/generated/stale-portable.json"
-    extra.parent.mkdir(parents=True)
+    extra.parent.mkdir(parents=True, exist_ok=True)
     extra.write_text('{"x-defenseclaw-generated":true}\n', encoding="utf-8")
     write_called = False
 
-    def unexpected_write(*_args: Any) -> None:
+    def unexpected_write(*_args: Any, **_kwargs: Any) -> None:
         nonlocal write_called
         write_called = True
 
@@ -1883,7 +2097,7 @@ def test_write_check_is_deterministic_and_offline(tmp_path: Path) -> None:
     assert manifest.read_bytes() == first_bytes
     parsed = json.loads(first_bytes)
     assert parsed["format_version"] == 2
-    assert parsed["generator_version"] == 2
+    assert parsed["generator_version"] == 3
     assert parsed["outputs"] == ["schemas/telemetry/generated/output-manifest.json"]
     assert parsed["ownership_inventory"] == {
         "format_version": 1,
@@ -7713,7 +7927,7 @@ def test_checked_in_public_views_are_exact_immutable_materialized_authority() ->
     assert ir.public_views.baseline.sha256 == "d44ea610e9e82b142788babce9c8853713aa004a037c6bd2684502c80a1ca2b3"
     assert ir.public_views.marker.keyword == "x-defenseclaw-generated"
     assert ir.public_views.marker.registry_version == ir.registry_version
-    assert ir.public_views.authority_sha256 == "8b617e6145719eef96625b41c6ca961dd0c16c060ef7d453b2f35888b489f171"
+    assert ir.public_views.authority_sha256 == "67d9feb8e5d7afe7f6a4157cf68570f27802e01d4bd89e00a64f1f9d869fb4fd"
     assert len(ir.public_views.views) == 21
     assert sum(len(view.field_dispositions) for view in ir.public_views.views) == 756
     assert sum(len(view.dynamic_scopes) for view in ir.public_views.views) == 94
@@ -7782,7 +7996,7 @@ def test_checked_in_public_views_are_exact_immutable_materialized_authority() ->
         and view.layout.additional_properties_default == "allow"
         for view in ir.public_views.views
     )
-    assert all(view.authority == "candidate-not-public-authority" for view in ir.public_views.views)
+    assert all(view.authority == "generated" for view in ir.public_views.views)
     baseline_module = module._load_sibling_module("telemetry_public_schema_baseline")
     baseline_path = ROOT / ir.public_views.baseline.path
     baseline = baseline_module.load_public_schema_baseline_bytes(

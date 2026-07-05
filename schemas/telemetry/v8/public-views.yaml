@@ -19,7 +19,7 @@ views:
   output_path: schemas/activity-event.json
   dialect: https://json-schema.org/draft/2020-12/schema
   schema_id: https://defenseclaw.io/schemas/activity-event.json
-  authority: candidate-not-public-authority
+  authority: generated
   lifecycle:
     stability: stable
     introduced_in: telemetry-registry-v1
@@ -373,7 +373,7 @@ views:
   output_path: schemas/audit-event.json
   dialect: https://json-schema.org/draft/2020-12/schema
   schema_id: https://defenseclaw.io/schemas/audit-event.json
-  authority: candidate-not-public-authority
+  authority: generated
   lifecycle:
     stability: stable
     introduced_in: telemetry-registry-v1
@@ -935,7 +935,7 @@ views:
   output_path: schemas/gateway-event-envelope.json
   dialect: https://json-schema.org/draft/2020-12/schema
   schema_id: https://defenseclaw.io/schemas/gateway-event-envelope.json
-  authority: candidate-not-public-authority
+  authority: generated
   lifecycle:
     stability: stable
     introduced_in: telemetry-registry-v1
@@ -4725,7 +4725,7 @@ views:
   output_path: schemas/hook-audit-envelope.json
   dialect: https://json-schema.org/draft/2020-12/schema
   schema_id: https://defenseclaw.io/schemas/hook-audit-envelope.json
-  authority: candidate-not-public-authority
+  authority: generated
   lifecycle:
     stability: stable
     introduced_in: telemetry-registry-v1
@@ -5137,7 +5137,7 @@ views:
   output_path: schemas/network-egress-event.json
   dialect: http://json-schema.org/draft-07/schema#
   schema_id: https://github.com/cisco-ai-defense/defenseclaw/schemas/network-egress-event.json
-  authority: candidate-not-public-authority
+  authority: generated
   lifecycle:
     stability: stable
     introduced_in: telemetry-registry-v1
@@ -5517,7 +5517,7 @@ views:
   output_path: schemas/otel/agent-lifecycle-event.schema.json
   dialect: https://json-schema.org/draft/2020-12/schema
   schema_id: https://defenseclaw.dev/schemas/otel/agent-lifecycle-event.schema.json
-  authority: candidate-not-public-authority
+  authority: generated
   lifecycle:
     stability: stable
     introduced_in: telemetry-registry-v1
@@ -5953,7 +5953,7 @@ views:
   output_path: schemas/otel/asset-lifecycle-event.schema.json
   dialect: https://json-schema.org/draft/2020-12/schema
   schema_id: https://defenseclaw.dev/schemas/otel/asset-lifecycle-event.schema.json
-  authority: candidate-not-public-authority
+  authority: generated
   lifecycle:
     stability: stable
     introduced_in: telemetry-registry-v1
@@ -6464,7 +6464,7 @@ views:
   output_path: schemas/otel/connector-telemetry-event.schema.json
   dialect: https://json-schema.org/draft/2020-12/schema
   schema_id: https://defenseclaw.dev/schemas/otel/connector-telemetry-event.schema.json
-  authority: candidate-not-public-authority
+  authority: generated
   lifecycle:
     stability: stable
     introduced_in: telemetry-registry-v1
@@ -7063,7 +7063,7 @@ views:
   output_path: schemas/otel/galileo-export-profile.schema.json
   dialect: https://json-schema.org/draft/2020-12/schema
   schema_id: https://defenseclaw.dev/schemas/otel/galileo-export-profile.schema.json
-  authority: candidate-not-public-authority
+  authority: generated
   lifecycle:
     stability: stable
     introduced_in: telemetry-registry-v1
@@ -7169,7 +7169,7 @@ views:
   output_path: schemas/otel/metrics.schema.json
   dialect: https://json-schema.org/draft/2020-12/schema
   schema_id: https://defenseclaw.dev/schemas/otel/metrics.schema.json
-  authority: candidate-not-public-authority
+  authority: generated
   lifecycle:
     stability: stable
     introduced_in: telemetry-registry-v1
@@ -7523,7 +7523,7 @@ views:
   output_path: schemas/otel/resource.schema.json
   dialect: https://json-schema.org/draft/2020-12/schema
   schema_id: https://defenseclaw.dev/schemas/otel/resource.schema.json
-  authority: candidate-not-public-authority
+  authority: generated
   lifecycle:
     stability: stable
     introduced_in: telemetry-registry-v1
@@ -7868,7 +7868,7 @@ views:
   output_path: schemas/otel/runtime-agent-span.schema.json
   dialect: https://json-schema.org/draft/2020-12/schema
   schema_id: https://defenseclaw.dev/schemas/otel/runtime-agent-span.schema.json
-  authority: candidate-not-public-authority
+  authority: generated
   lifecycle:
     stability: stable
     introduced_in: telemetry-registry-v1
@@ -8967,7 +8967,7 @@ views:
   output_path: schemas/otel/runtime-alert-event.schema.json
   dialect: https://json-schema.org/draft/2020-12/schema
   schema_id: https://defenseclaw.dev/schemas/otel/runtime-alert-event.schema.json
-  authority: candidate-not-public-authority
+  authority: generated
   lifecycle:
     stability: stable
     introduced_in: telemetry-registry-v1
@@ -9515,7 +9515,7 @@ views:
   output_path: schemas/otel/runtime-approval-span.schema.json
   dialect: https://json-schema.org/draft/2020-12/schema
   schema_id: https://defenseclaw.dev/schemas/otel/runtime-approval-span.schema.json
-  authority: candidate-not-public-authority
+  authority: generated
   lifecycle:
     stability: stable
     introduced_in: telemetry-registry-v1
@@ -10265,7 +10265,7 @@ views:
   output_path: schemas/otel/runtime-llm-span.schema.json
   dialect: https://json-schema.org/draft/2020-12/schema
   schema_id: https://defenseclaw.dev/schemas/otel/runtime-llm-span.schema.json
-  authority: candidate-not-public-authority
+  authority: generated
   lifecycle:
     stability: stable
     introduced_in: telemetry-registry-v1
@@ -11569,7 +11569,7 @@ views:
   output_path: schemas/otel/runtime-tool-span.schema.json
   dialect: https://json-schema.org/draft/2020-12/schema
   schema_id: https://defenseclaw.dev/schemas/otel/runtime-tool-span.schema.json
-  authority: candidate-not-public-authority
+  authority: generated
   lifecycle:
     stability: stable
     introduced_in: telemetry-registry-v1
@@ -12986,7 +12986,7 @@ views:
   output_path: schemas/otel/scan-finding-event.schema.json
   dialect: https://json-schema.org/draft/2020-12/schema
   schema_id: https://defenseclaw.dev/schemas/otel/scan-finding-event.schema.json
-  authority: candidate-not-public-authority
+  authority: generated
   lifecycle:
     stability: stable
     introduced_in: telemetry-registry-v1
@@ -13426,7 +13426,7 @@ views:
   output_path: schemas/otel/scan-result-event.schema.json
   dialect: https://json-schema.org/draft/2020-12/schema
   schema_id: https://defenseclaw.dev/schemas/otel/scan-result-event.schema.json
-  authority: candidate-not-public-authority
+  authority: generated
   lifecycle:
     stability: stable
     introduced_in: telemetry-registry-v1
@@ -14295,7 +14295,7 @@ views:
   output_path: schemas/scan-event.json
   dialect: https://json-schema.org/draft/2020-12/schema
   schema_id: https://defenseclaw.io/schemas/scan-event.json
-  authority: candidate-not-public-authority
+  authority: generated
   lifecycle:
     stability: stable
     introduced_in: telemetry-registry-v1
@@ -14588,7 +14588,7 @@ views:
   output_path: schemas/scan-finding-event.json
   dialect: https://json-schema.org/draft/2020-12/schema
   schema_id: https://defenseclaw.io/schemas/scan-finding-event.json
-  authority: candidate-not-public-authority
+  authority: generated
   lifecycle:
     stability: stable
     introduced_in: telemetry-registry-v1
@@ -14914,7 +14914,7 @@ views:
   output_path: schemas/scan-result.json
   dialect: https://json-schema.org/draft/2020-12/schema
   schema_id: https://defenseclaw.io/schemas/scan-result.json
-  authority: candidate-not-public-authority
+  authority: generated
   lifecycle:
     stability: stable
     introduced_in: telemetry-registry-v1

@@ -1,11 +1,11 @@
 {
   "format_version": 2,
   "generated_by": "scripts/generate_telemetry_registry.py",
-  "generator_version": 2,
+  "generator_version": 3,
   "registry_schema_version": 1,
   "registry_version": 1,
   "bucket_catalog_version": 1,
-  "materialized_view_sha256": "4d9981ce5e74371eff03b1672b2f33bfdcd40b24f258c5621fa6524cfe5be87f",
+  "materialized_view_sha256": "e96de75fdf61649b727a9b242b659543bdd48e417256e1d8557cd9d16982577b",
   "canonical_import_order": [
     "genai.yaml",
     "security.yaml",
@@ -18,11 +18,11 @@
     },
     {
       "path": "schemas/telemetry/v8/output-manifest.schema.json",
-      "sha256": "7c98ed065a8fc5436229e1dfd952022d2d5147c91e1809af377c955dbc14d083"
+      "sha256": "9d2819a8c81af7af7e4bb056065bc8f5e0c61da117aa9054f4664b2b81e70501"
     },
     {
       "path": "schemas/telemetry/v8/public-views.yaml",
-      "sha256": "55ebe26601281cd37cb4fe9c40ba38490705e70c599e8d48cc35316fb6381c61"
+      "sha256": "f633fbbd6708c26b1e44fb4324eca7cae16ebbd5e49530aa493eb150d8ee583a"
     },
     {
       "path": "schemas/telemetry/v8/baselines/public-schemas-v7.normalized.json",
@@ -125,6 +125,11 @@
     "gen_ai.usage.prompt_tokens"
   ],
   "outputs": [
+    "internal/cli/embed/scan-result.json",
+    "internal/gatewaylog/schemas/activity-event.json",
+    "internal/gatewaylog/schemas/gateway-event-envelope.json",
+    "internal/gatewaylog/schemas/scan-event.json",
+    "internal/gatewaylog/schemas/scan-finding-event.json",
     "internal/observability/zz_generated_telemetry_builder_fixtures_test.go",
     "internal/observability/zz_generated_telemetry_builders_genai.go",
     "internal/observability/zz_generated_telemetry_builders_operations.go",
@@ -132,6 +137,27 @@
     "internal/observability/zz_generated_telemetry_catalog.go",
     "internal/observability/zz_generated_telemetry_ids.go",
     "internal/observability/zz_generated_telemetry_producers.go",
+    "schemas/activity-event.json",
+    "schemas/audit-event.json",
+    "schemas/gateway-event-envelope.json",
+    "schemas/hook-audit-envelope.json",
+    "schemas/network-egress-event.json",
+    "schemas/otel/agent-lifecycle-event.schema.json",
+    "schemas/otel/asset-lifecycle-event.schema.json",
+    "schemas/otel/connector-telemetry-event.schema.json",
+    "schemas/otel/galileo-export-profile.schema.json",
+    "schemas/otel/metrics.schema.json",
+    "schemas/otel/resource.schema.json",
+    "schemas/otel/runtime-agent-span.schema.json",
+    "schemas/otel/runtime-alert-event.schema.json",
+    "schemas/otel/runtime-approval-span.schema.json",
+    "schemas/otel/runtime-llm-span.schema.json",
+    "schemas/otel/runtime-tool-span.schema.json",
+    "schemas/otel/scan-finding-event.schema.json",
+    "schemas/otel/scan-result-event.schema.json",
+    "schemas/scan-event.json",
+    "schemas/scan-finding-event.json",
+    "schemas/scan-result.json",
     "schemas/telemetry/generated/catalog.json",
     "schemas/telemetry/generated/catalog.md",
     "schemas/telemetry/generated/examples/invalid/invalid-finding-whole-raw-evidence.json",
@@ -161,32 +187,6 @@
     "schemas/telemetry/generated/otlp-fixtures/cases/valid-telemetry-rejection-without-raw-payload.json",
     "schemas/telemetry/generated/otlp-fixtures/manifest.json",
     "schemas/telemetry/generated/output-manifest.json",
-    "schemas/telemetry/generated/public-views/internal/cli/embed/scan-result.json",
-    "schemas/telemetry/generated/public-views/internal/gatewaylog/schemas/activity-event.json",
-    "schemas/telemetry/generated/public-views/internal/gatewaylog/schemas/gateway-event-envelope.json",
-    "schemas/telemetry/generated/public-views/internal/gatewaylog/schemas/scan-event.json",
-    "schemas/telemetry/generated/public-views/internal/gatewaylog/schemas/scan-finding-event.json",
-    "schemas/telemetry/generated/public-views/schemas/activity-event.json",
-    "schemas/telemetry/generated/public-views/schemas/audit-event.json",
-    "schemas/telemetry/generated/public-views/schemas/gateway-event-envelope.json",
-    "schemas/telemetry/generated/public-views/schemas/hook-audit-envelope.json",
-    "schemas/telemetry/generated/public-views/schemas/network-egress-event.json",
-    "schemas/telemetry/generated/public-views/schemas/otel/agent-lifecycle-event.schema.json",
-    "schemas/telemetry/generated/public-views/schemas/otel/asset-lifecycle-event.schema.json",
-    "schemas/telemetry/generated/public-views/schemas/otel/connector-telemetry-event.schema.json",
-    "schemas/telemetry/generated/public-views/schemas/otel/galileo-export-profile.schema.json",
-    "schemas/telemetry/generated/public-views/schemas/otel/metrics.schema.json",
-    "schemas/telemetry/generated/public-views/schemas/otel/resource.schema.json",
-    "schemas/telemetry/generated/public-views/schemas/otel/runtime-agent-span.schema.json",
-    "schemas/telemetry/generated/public-views/schemas/otel/runtime-alert-event.schema.json",
-    "schemas/telemetry/generated/public-views/schemas/otel/runtime-approval-span.schema.json",
-    "schemas/telemetry/generated/public-views/schemas/otel/runtime-llm-span.schema.json",
-    "schemas/telemetry/generated/public-views/schemas/otel/runtime-tool-span.schema.json",
-    "schemas/telemetry/generated/public-views/schemas/otel/scan-finding-event.schema.json",
-    "schemas/telemetry/generated/public-views/schemas/otel/scan-result-event.schema.json",
-    "schemas/telemetry/generated/public-views/schemas/scan-event.json",
-    "schemas/telemetry/generated/public-views/schemas/scan-finding-event.json",
-    "schemas/telemetry/generated/public-views/schemas/scan-result.json",
     "schemas/telemetry/generated/telemetry.schema.json"
   ],
   "ownership_inventory": {
@@ -198,374 +198,374 @@
     },
     "artifacts": [
       {
+        "path": "internal/cli/embed/scan-result.json",
+        "sha256": "88f8f7478835e6b46ba2ded4c5282569b93964181014ddabe935d9a4a259cb49",
+        "mode": 420,
+        "marker": "\"x-defenseclaw-generated\""
+      },
+      {
+        "path": "internal/gatewaylog/schemas/activity-event.json",
+        "sha256": "0fdc6fbec98f3772889df6fc314ef215958ef366069e0fe6ea1cf9e624b74f34",
+        "mode": 420,
+        "marker": "\"x-defenseclaw-generated\""
+      },
+      {
+        "path": "internal/gatewaylog/schemas/gateway-event-envelope.json",
+        "sha256": "08bfeef85c95a30b3c91827a151665ed3bc7a4d6a8ea10591f9cfb417fe4117a",
+        "mode": 420,
+        "marker": "\"x-defenseclaw-generated\""
+      },
+      {
+        "path": "internal/gatewaylog/schemas/scan-event.json",
+        "sha256": "376d0e42c2e938bb5e35feb74879beead2d6a22b5851a7453fdb82350e099d04",
+        "mode": 420,
+        "marker": "\"x-defenseclaw-generated\""
+      },
+      {
+        "path": "internal/gatewaylog/schemas/scan-finding-event.json",
+        "sha256": "aff4933558d04b8d59aaf2e0b3b026017f638dc478138ee64e975171b6869efd",
+        "mode": 420,
+        "marker": "\"x-defenseclaw-generated\""
+      },
+      {
         "path": "internal/observability/zz_generated_telemetry_builder_fixtures_test.go",
-        "sha256": "22bdc11d6cecb1698986a27df5cdae424bb803b26a6a28af9004d2fae5eed3d1",
+        "sha256": "8a3ba039d0049e9c8d8a12ac41fe7bcb8bafbfd8b315d36135d43679008a7226",
         "mode": 420,
         "marker": "// Code generated by DefenseClaw telemetry registry; DO NOT EDIT."
       },
       {
         "path": "internal/observability/zz_generated_telemetry_builders_genai.go",
-        "sha256": "45a3503de47624a30436a0a364ff7010da950d50310e807c4c909cbb5a137198",
+        "sha256": "657b053dd5703316abf46ec18ffa2db4302ade179279d211b15c058c494f42f0",
         "mode": 420,
         "marker": "// Code generated by DefenseClaw telemetry registry; DO NOT EDIT."
       },
       {
         "path": "internal/observability/zz_generated_telemetry_builders_operations.go",
-        "sha256": "28cf4070744e5c616f08ae842bef695de93372a99409f7d4248ea24bcc085f67",
+        "sha256": "0292cdf609f6f59a051946948f22402cf1c97e01197e48f25e99a6a73ef39cc4",
         "mode": 420,
         "marker": "// Code generated by DefenseClaw telemetry registry; DO NOT EDIT."
       },
       {
         "path": "internal/observability/zz_generated_telemetry_builders_security.go",
-        "sha256": "a73079c16edaf1aa1ceff85dc18499582c3c0bf5a2917a727ab74219d796e357",
+        "sha256": "2a5363402a113264ca9c4499736ee3500accb75f351c65057f196746c8e98d42",
         "mode": 420,
         "marker": "// Code generated by DefenseClaw telemetry registry; DO NOT EDIT."
       },
       {
         "path": "internal/observability/zz_generated_telemetry_catalog.go",
-        "sha256": "61b45be86a5c7ef0c6693a021e5b056034ddbd9994f5cdbde466a81726c8d4d9",
+        "sha256": "9d375cd61377f0c3bc549889a4ae8aa54d2aef71a54077c901b1f89e2f0be1c2",
         "mode": 420,
         "marker": "// Code generated by DefenseClaw telemetry registry; DO NOT EDIT."
       },
       {
         "path": "internal/observability/zz_generated_telemetry_ids.go",
-        "sha256": "e2ba4ab0668ba3df8495393f0b4bac446c9965b67540cefef909ca2259853d94",
+        "sha256": "745f8b9a3ef8d55585cc0ae8bb732def403d3917ae775384b499aab94082884f",
         "mode": 420,
         "marker": "// Code generated by DefenseClaw telemetry registry; DO NOT EDIT."
       },
       {
         "path": "internal/observability/zz_generated_telemetry_producers.go",
-        "sha256": "95d34fd665d4c42b79130fd43215869b9dffb2e7e9d85c266ff8f1c282c08768",
+        "sha256": "dd3662abdcec21e04b3d62b668882bfdc7679519a40947dff73d7f94d00b0106",
         "mode": 420,
         "marker": "// Code generated by DefenseClaw telemetry registry; DO NOT EDIT."
       },
       {
-        "path": "schemas/telemetry/generated/catalog.json",
-        "sha256": "1b1b782b52d8fbc419b0927d5710b66879b140bec58ae94dedd58a39c577f8ef",
-        "mode": 420,
-        "marker": "\"x-defenseclaw-generated\""
-      },
-      {
-        "path": "schemas/telemetry/generated/catalog.md",
-        "sha256": "c276c7883e88e59ab3adc9ef1e2146a1bedcad21da443dcca44d024afe947c00",
-        "mode": 420,
-        "marker": "<!-- Code generated by DefenseClaw telemetry candidate renderer; DO NOT EDIT."
-      },
-      {
-        "path": "schemas/telemetry/generated/examples/invalid/invalid-finding-whole-raw-evidence.json",
-        "sha256": "51d6fdfb825ad5cd805d187bcbccf0bef7b981f9ae6ff248f1249e0a76e49aeb",
-        "mode": 420,
-        "marker": "\"x-defenseclaw-generated\""
-      },
-      {
-        "path": "schemas/telemetry/generated/examples/invalid/invalid-legacy-audit-as-canonical-family.json",
-        "sha256": "ba575a027374ac32c1c88fda1aebf2816bce938bdcb6e76f430814599a2fb88a",
-        "mode": 420,
-        "marker": "\"x-defenseclaw-generated\""
-      },
-      {
-        "path": "schemas/telemetry/generated/examples/invalid/invalid-lifecycle-phase-code-mismatch.json",
-        "sha256": "95566462f87589f4227c980d39b74a73f81a287b737cf7299e273ebb79f0e676",
-        "mode": 420,
-        "marker": "\"x-defenseclaw-generated\""
-      },
-      {
-        "path": "schemas/telemetry/generated/examples/invalid/invalid-metric-high-cardinality-label.json",
-        "sha256": "b34d774ccfc1b54aba52df8d44a2677bece2c84bb5b0021a2fe9982b064a65f5",
-        "mode": 420,
-        "marker": "\"x-defenseclaw-generated\""
-      },
-      {
-        "path": "schemas/telemetry/generated/examples/invalid/invalid-span-family-bucket-mismatch.json",
-        "sha256": "e5a8bd1b561fd96087874742a5e8affe3942ed3dc8fa9d91fc63282324e36e96",
-        "mode": 420,
-        "marker": "\"x-defenseclaw-generated\""
-      },
-      {
-        "path": "schemas/telemetry/generated/examples/manifest.json",
-        "sha256": "b32fd0dd9d52ad0217a33996f0eba30ae0f5aa9ef0bf2e72719da77b5ab7190b",
-        "mode": 420,
-        "marker": "\"x-defenseclaw-generated\""
-      },
-      {
-        "path": "schemas/telemetry/generated/examples/valid/valid-asset-scan-started.json",
-        "sha256": "28fd837da04f27bfb64fde16459466068fa157dd7d82f3c84ec8c9461b823a7e",
-        "mode": 420,
-        "marker": "\"x-defenseclaw-generated\""
-      },
-      {
-        "path": "schemas/telemetry/generated/examples/valid/valid-guardrail-judge-payload-log.json",
-        "sha256": "c39afb2d3621348e334760bb2b60b7363b4f12c850c3c6af9c875af3a40ecf3e",
-        "mode": 420,
-        "marker": "\"x-defenseclaw-generated\""
-      },
-      {
-        "path": "schemas/telemetry/generated/examples/valid/valid-hook-latency-metric.json",
-        "sha256": "1bcfdfb89510dd3f6630523d327cd9690d07009ab03e88aeaa973c53e03040ec",
-        "mode": 420,
-        "marker": "\"x-defenseclaw-generated\""
-      },
-      {
-        "path": "schemas/telemetry/generated/examples/valid/valid-model-chat-with-honest-missing-content-and-usage.json",
-        "sha256": "75f45c009de888567b31f7917589c2555d84a4d3d5b94a2d467cecff7e80147c",
-        "mode": 420,
-        "marker": "\"x-defenseclaw-generated\""
-      },
-      {
-        "path": "schemas/telemetry/generated/examples/valid/valid-root-agent-lifecycle-transition.json",
-        "sha256": "22b58025792405d27314b73524d76e1b57c2d2a0fdd04bd95fa6cca8552570b9",
-        "mode": 420,
-        "marker": "\"x-defenseclaw-generated\""
-      },
-      {
-        "path": "schemas/telemetry/generated/examples/valid/valid-security-finding-with-derived-evidence.json",
-        "sha256": "61fc7e9f32f804b5d9c7a4e9132900863a6f7334e2629875b36c564fc2dd9402",
-        "mode": 420,
-        "marker": "\"x-defenseclaw-generated\""
-      },
-      {
-        "path": "schemas/telemetry/generated/examples/valid/valid-telemetry-rejection-without-raw-payload.json",
-        "sha256": "a0b1ee01fb03e64e954b51a35ed0008548d896669cbe10133279d09556ac848b",
-        "mode": 420,
-        "marker": "\"x-defenseclaw-generated\""
-      },
-      {
-        "path": "schemas/telemetry/generated/otlp-fixtures/cases/invalid-finding-whole-raw-evidence.json",
-        "sha256": "68f324c01c8fd2508d5c7cd1ec46d74afba03acf772a035ab4511b3078932b56",
-        "mode": 420,
-        "marker": "\"x-defenseclaw-generated\""
-      },
-      {
-        "path": "schemas/telemetry/generated/otlp-fixtures/cases/invalid-legacy-audit-as-canonical-family.json",
-        "sha256": "2665a607bc8c880a3c96b0a1539b6168e722d75fb05d60e99ea368a24afa2dd2",
-        "mode": 420,
-        "marker": "\"x-defenseclaw-generated\""
-      },
-      {
-        "path": "schemas/telemetry/generated/otlp-fixtures/cases/invalid-lifecycle-phase-code-mismatch.json",
-        "sha256": "44e571afaedd142e8c9c9a26446f1b0dfcaa3464a6556a4638e3c7368c1ccd83",
-        "mode": 420,
-        "marker": "\"x-defenseclaw-generated\""
-      },
-      {
-        "path": "schemas/telemetry/generated/otlp-fixtures/cases/invalid-metric-high-cardinality-label.json",
-        "sha256": "a44d540e4a2d506133dda73973db4126e22501f871e32530e920e68c0a4699e3",
-        "mode": 420,
-        "marker": "\"x-defenseclaw-generated\""
-      },
-      {
-        "path": "schemas/telemetry/generated/otlp-fixtures/cases/invalid-span-family-bucket-mismatch.json",
-        "sha256": "cb1ce1965f95ef3c5cf76544c89235edaff496fc7ec5eddaa8b15d3e686bfb8f",
-        "mode": 420,
-        "marker": "\"x-defenseclaw-generated\""
-      },
-      {
-        "path": "schemas/telemetry/generated/otlp-fixtures/cases/valid-asset-scan-started.json",
-        "sha256": "90978cd91ffcf98dcb1601449e0594df3f519d4902c3500d04de0f9d684f7972",
-        "mode": 420,
-        "marker": "\"x-defenseclaw-generated\""
-      },
-      {
-        "path": "schemas/telemetry/generated/otlp-fixtures/cases/valid-guardrail-judge-payload-log.json",
-        "sha256": "f0351fded8d6b95a8ae806f3a6525d0b18459a8b78c952e8b47b0e7a8fc7d9f3",
-        "mode": 420,
-        "marker": "\"x-defenseclaw-generated\""
-      },
-      {
-        "path": "schemas/telemetry/generated/otlp-fixtures/cases/valid-hook-latency-metric.json",
-        "sha256": "8d29c76cdbe6a6d0462125f8a5916b22b5723f63c484ac665b9ac7e301bd878e",
-        "mode": 420,
-        "marker": "\"x-defenseclaw-generated\""
-      },
-      {
-        "path": "schemas/telemetry/generated/otlp-fixtures/cases/valid-model-chat-with-honest-missing-content-and-usage.json",
-        "sha256": "ccefb5a0ef72a25480423b3b5b2f650d50debb2716e2f1b6f81ad1dd37ff6eef",
-        "mode": 420,
-        "marker": "\"x-defenseclaw-generated\""
-      },
-      {
-        "path": "schemas/telemetry/generated/otlp-fixtures/cases/valid-root-agent-lifecycle-transition.json",
-        "sha256": "15a4fb0246fd4444a12b4f173d595d8e319c7f54dfa846717c10c7ab9c7786d3",
-        "mode": 420,
-        "marker": "\"x-defenseclaw-generated\""
-      },
-      {
-        "path": "schemas/telemetry/generated/otlp-fixtures/cases/valid-security-finding-with-derived-evidence.json",
-        "sha256": "bd17a8c2b4aec4da0655a63d015379779c1afba1b18d3b416c23c03056399769",
-        "mode": 420,
-        "marker": "\"x-defenseclaw-generated\""
-      },
-      {
-        "path": "schemas/telemetry/generated/otlp-fixtures/cases/valid-telemetry-rejection-without-raw-payload.json",
-        "sha256": "a6a0b78868539253e25583ab501969315e5e4862c79d9d471111cf8c103d8cdc",
-        "mode": 420,
-        "marker": "\"x-defenseclaw-generated\""
-      },
-      {
-        "path": "schemas/telemetry/generated/otlp-fixtures/manifest.json",
-        "sha256": "faa4c002f3bc6c675a7b355c46660b4acb1dd2656e3ed076a301f48ffe9e468d",
-        "mode": 420,
-        "marker": "\"x-defenseclaw-generated\""
-      },
-      {
-        "path": "schemas/telemetry/generated/public-views/internal/cli/embed/scan-result.json",
-        "sha256": "88f8f7478835e6b46ba2ded4c5282569b93964181014ddabe935d9a4a259cb49",
-        "mode": 420,
-        "marker": "\"x-defenseclaw-generated\""
-      },
-      {
-        "path": "schemas/telemetry/generated/public-views/internal/gatewaylog/schemas/activity-event.json",
+        "path": "schemas/activity-event.json",
         "sha256": "0fdc6fbec98f3772889df6fc314ef215958ef366069e0fe6ea1cf9e624b74f34",
         "mode": 420,
         "marker": "\"x-defenseclaw-generated\""
       },
       {
-        "path": "schemas/telemetry/generated/public-views/internal/gatewaylog/schemas/gateway-event-envelope.json",
-        "sha256": "08bfeef85c95a30b3c91827a151665ed3bc7a4d6a8ea10591f9cfb417fe4117a",
-        "mode": 420,
-        "marker": "\"x-defenseclaw-generated\""
-      },
-      {
-        "path": "schemas/telemetry/generated/public-views/internal/gatewaylog/schemas/scan-event.json",
-        "sha256": "376d0e42c2e938bb5e35feb74879beead2d6a22b5851a7453fdb82350e099d04",
-        "mode": 420,
-        "marker": "\"x-defenseclaw-generated\""
-      },
-      {
-        "path": "schemas/telemetry/generated/public-views/internal/gatewaylog/schemas/scan-finding-event.json",
-        "sha256": "aff4933558d04b8d59aaf2e0b3b026017f638dc478138ee64e975171b6869efd",
-        "mode": 420,
-        "marker": "\"x-defenseclaw-generated\""
-      },
-      {
-        "path": "schemas/telemetry/generated/public-views/schemas/activity-event.json",
-        "sha256": "0fdc6fbec98f3772889df6fc314ef215958ef366069e0fe6ea1cf9e624b74f34",
-        "mode": 420,
-        "marker": "\"x-defenseclaw-generated\""
-      },
-      {
-        "path": "schemas/telemetry/generated/public-views/schemas/audit-event.json",
+        "path": "schemas/audit-event.json",
         "sha256": "f5569f50b939d0d1b9e75f7ec307c4f69906d07c5230fea902d0f90f818e01b0",
         "mode": 420,
         "marker": "\"x-defenseclaw-generated\""
       },
       {
-        "path": "schemas/telemetry/generated/public-views/schemas/gateway-event-envelope.json",
+        "path": "schemas/gateway-event-envelope.json",
         "sha256": "08bfeef85c95a30b3c91827a151665ed3bc7a4d6a8ea10591f9cfb417fe4117a",
         "mode": 420,
         "marker": "\"x-defenseclaw-generated\""
       },
       {
-        "path": "schemas/telemetry/generated/public-views/schemas/hook-audit-envelope.json",
+        "path": "schemas/hook-audit-envelope.json",
         "sha256": "5efeb2e6f950338a394623073500152bc15115bebe1e4e05343310a9374a275b",
         "mode": 420,
         "marker": "\"x-defenseclaw-generated\""
       },
       {
-        "path": "schemas/telemetry/generated/public-views/schemas/network-egress-event.json",
+        "path": "schemas/network-egress-event.json",
         "sha256": "97b9325a2c1e61213d5a419d35fa9cb9c2286a55a3e17c377bfe2fcd6e3a5124",
         "mode": 420,
         "marker": "\"x-defenseclaw-generated\""
       },
       {
-        "path": "schemas/telemetry/generated/public-views/schemas/otel/agent-lifecycle-event.schema.json",
+        "path": "schemas/otel/agent-lifecycle-event.schema.json",
         "sha256": "265270e00e90a2452b571033ccd9591b22278c913563c342c425c1ef875114e9",
         "mode": 420,
         "marker": "\"x-defenseclaw-generated\""
       },
       {
-        "path": "schemas/telemetry/generated/public-views/schemas/otel/asset-lifecycle-event.schema.json",
+        "path": "schemas/otel/asset-lifecycle-event.schema.json",
         "sha256": "7e820523135e7370a7b3bbb2be7dc3d494999c1b01aec10f8e76b786e6d23dd1",
         "mode": 420,
         "marker": "\"x-defenseclaw-generated\""
       },
       {
-        "path": "schemas/telemetry/generated/public-views/schemas/otel/connector-telemetry-event.schema.json",
+        "path": "schemas/otel/connector-telemetry-event.schema.json",
         "sha256": "ec61a9d7ec0f9d12682d59575e1f32c58f2380924e7c7da001cb89f1451700a1",
         "mode": 420,
         "marker": "\"x-defenseclaw-generated\""
       },
       {
-        "path": "schemas/telemetry/generated/public-views/schemas/otel/galileo-export-profile.schema.json",
+        "path": "schemas/otel/galileo-export-profile.schema.json",
         "sha256": "e90bb4aa24f6325556198c4463f8d7b176123c1da099855deeafef01e273519e",
         "mode": 420,
         "marker": "\"x-defenseclaw-generated\""
       },
       {
-        "path": "schemas/telemetry/generated/public-views/schemas/otel/metrics.schema.json",
+        "path": "schemas/otel/metrics.schema.json",
         "sha256": "f78130ba1183cda82a60e5f2182dfa4dac87814fb820ee7964c32f38dfd98f98",
         "mode": 420,
         "marker": "\"x-defenseclaw-generated\""
       },
       {
-        "path": "schemas/telemetry/generated/public-views/schemas/otel/resource.schema.json",
+        "path": "schemas/otel/resource.schema.json",
         "sha256": "8641bb31bc1eae2c871f83e4194f30b5fc5cb85c8a4c671806eb198bee17cd13",
         "mode": 420,
         "marker": "\"x-defenseclaw-generated\""
       },
       {
-        "path": "schemas/telemetry/generated/public-views/schemas/otel/runtime-agent-span.schema.json",
+        "path": "schemas/otel/runtime-agent-span.schema.json",
         "sha256": "b7d0bf7f3e6e9c39059ac97fe7d251f5fbb6e222527927b884fa8ba6075b81f7",
         "mode": 420,
         "marker": "\"x-defenseclaw-generated\""
       },
       {
-        "path": "schemas/telemetry/generated/public-views/schemas/otel/runtime-alert-event.schema.json",
+        "path": "schemas/otel/runtime-alert-event.schema.json",
         "sha256": "8487c58b2ec17804b7f8df6177689003b1d717bfbbc7b5dbaae95760a99d1bbb",
         "mode": 420,
         "marker": "\"x-defenseclaw-generated\""
       },
       {
-        "path": "schemas/telemetry/generated/public-views/schemas/otel/runtime-approval-span.schema.json",
+        "path": "schemas/otel/runtime-approval-span.schema.json",
         "sha256": "f7c2ef2fc5aa27f7ac83bb689db1b3d64297d13dc618b496b2e991d7e455be6d",
         "mode": 420,
         "marker": "\"x-defenseclaw-generated\""
       },
       {
-        "path": "schemas/telemetry/generated/public-views/schemas/otel/runtime-llm-span.schema.json",
+        "path": "schemas/otel/runtime-llm-span.schema.json",
         "sha256": "968f2f2ac7f4ab594b7aedf6bc80309dd2b67206ee05b2d95b8a8b132450703c",
         "mode": 420,
         "marker": "\"x-defenseclaw-generated\""
       },
       {
-        "path": "schemas/telemetry/generated/public-views/schemas/otel/runtime-tool-span.schema.json",
+        "path": "schemas/otel/runtime-tool-span.schema.json",
         "sha256": "32f121387776b15c3065bd61d7b4e939dd451cadfd647b420c570fd3debc62c7",
         "mode": 420,
         "marker": "\"x-defenseclaw-generated\""
       },
       {
-        "path": "schemas/telemetry/generated/public-views/schemas/otel/scan-finding-event.schema.json",
+        "path": "schemas/otel/scan-finding-event.schema.json",
         "sha256": "7bc597bd640b69e5d09684ff693169d08bff0c40668e63e0218844b0ada84ee3",
         "mode": 420,
         "marker": "\"x-defenseclaw-generated\""
       },
       {
-        "path": "schemas/telemetry/generated/public-views/schemas/otel/scan-result-event.schema.json",
+        "path": "schemas/otel/scan-result-event.schema.json",
         "sha256": "9cc9039451f883f36243e52a81a26b46807904d5052522be16397e352990308c",
         "mode": 420,
         "marker": "\"x-defenseclaw-generated\""
       },
       {
-        "path": "schemas/telemetry/generated/public-views/schemas/scan-event.json",
+        "path": "schemas/scan-event.json",
         "sha256": "376d0e42c2e938bb5e35feb74879beead2d6a22b5851a7453fdb82350e099d04",
         "mode": 420,
         "marker": "\"x-defenseclaw-generated\""
       },
       {
-        "path": "schemas/telemetry/generated/public-views/schemas/scan-finding-event.json",
+        "path": "schemas/scan-finding-event.json",
         "sha256": "aff4933558d04b8d59aaf2e0b3b026017f638dc478138ee64e975171b6869efd",
         "mode": 420,
         "marker": "\"x-defenseclaw-generated\""
       },
       {
-        "path": "schemas/telemetry/generated/public-views/schemas/scan-result.json",
+        "path": "schemas/scan-result.json",
         "sha256": "88f8f7478835e6b46ba2ded4c5282569b93964181014ddabe935d9a4a259cb49",
         "mode": 420,
         "marker": "\"x-defenseclaw-generated\""
       },
       {
+        "path": "schemas/telemetry/generated/catalog.json",
+        "sha256": "0dec0f111de038516ad65cd0a6cf243710fd4d067d6d5ec19594ee0c4cbe06a0",
+        "mode": 420,
+        "marker": "\"x-defenseclaw-generated\""
+      },
+      {
+        "path": "schemas/telemetry/generated/catalog.md",
+        "sha256": "f4e1e50f8d6f2c373caebedc4d4fe440fffebaee0a6c1ee0efc52db0359e07ca",
+        "mode": 420,
+        "marker": "<!-- Code generated by DefenseClaw telemetry candidate renderer; DO NOT EDIT."
+      },
+      {
+        "path": "schemas/telemetry/generated/examples/invalid/invalid-finding-whole-raw-evidence.json",
+        "sha256": "e58b1a55a32551f831b45cb94f37e4caad2b3de1b0e24a6995b1222d33c36315",
+        "mode": 420,
+        "marker": "\"x-defenseclaw-generated\""
+      },
+      {
+        "path": "schemas/telemetry/generated/examples/invalid/invalid-legacy-audit-as-canonical-family.json",
+        "sha256": "37829b8b9fbe6cd0f66230f91fb0ea94afd34c069092460066c0c835f88258fc",
+        "mode": 420,
+        "marker": "\"x-defenseclaw-generated\""
+      },
+      {
+        "path": "schemas/telemetry/generated/examples/invalid/invalid-lifecycle-phase-code-mismatch.json",
+        "sha256": "476e54cd585ae03794f8daca5fe4752aa25b129e354351c9fb590b0d1f470719",
+        "mode": 420,
+        "marker": "\"x-defenseclaw-generated\""
+      },
+      {
+        "path": "schemas/telemetry/generated/examples/invalid/invalid-metric-high-cardinality-label.json",
+        "sha256": "70f5d6fe85229bb1b07b5a6a38d584092b9253c810f9efd26b5512484749430c",
+        "mode": 420,
+        "marker": "\"x-defenseclaw-generated\""
+      },
+      {
+        "path": "schemas/telemetry/generated/examples/invalid/invalid-span-family-bucket-mismatch.json",
+        "sha256": "add09597ec496f5f8c42e7f0b765af7938edd72a8587f8013ceb44d6822522e5",
+        "mode": 420,
+        "marker": "\"x-defenseclaw-generated\""
+      },
+      {
+        "path": "schemas/telemetry/generated/examples/manifest.json",
+        "sha256": "7bafa53332916746b227ad8263008e627f7a098a4cacd2eb41c2ee3924b46714",
+        "mode": 420,
+        "marker": "\"x-defenseclaw-generated\""
+      },
+      {
+        "path": "schemas/telemetry/generated/examples/valid/valid-asset-scan-started.json",
+        "sha256": "84cfa5bf69c5d3e501228d599e301d780baf1140a49abdae0d07886dbee44ec7",
+        "mode": 420,
+        "marker": "\"x-defenseclaw-generated\""
+      },
+      {
+        "path": "schemas/telemetry/generated/examples/valid/valid-guardrail-judge-payload-log.json",
+        "sha256": "c1eb3f05f2ea8a3320b266c1b510c59ac3a56cd244bf160af184cabe3cb567c5",
+        "mode": 420,
+        "marker": "\"x-defenseclaw-generated\""
+      },
+      {
+        "path": "schemas/telemetry/generated/examples/valid/valid-hook-latency-metric.json",
+        "sha256": "01f1c78da8e8d22ad31b4cbb5475f7af5e655d47d0fc8806ba7017369ddfff82",
+        "mode": 420,
+        "marker": "\"x-defenseclaw-generated\""
+      },
+      {
+        "path": "schemas/telemetry/generated/examples/valid/valid-model-chat-with-honest-missing-content-and-usage.json",
+        "sha256": "473312c67ac3da2cd26aa4df1a26b799794e1b5191cc0cecffd7b133371f924b",
+        "mode": 420,
+        "marker": "\"x-defenseclaw-generated\""
+      },
+      {
+        "path": "schemas/telemetry/generated/examples/valid/valid-root-agent-lifecycle-transition.json",
+        "sha256": "f335783edb6488b74de55d3f630ecbd17990f4a33f61950b2a8235bcc2027318",
+        "mode": 420,
+        "marker": "\"x-defenseclaw-generated\""
+      },
+      {
+        "path": "schemas/telemetry/generated/examples/valid/valid-security-finding-with-derived-evidence.json",
+        "sha256": "04430d94937eb3277dacf1b74e406109977fd308c5606f2efe242d3066e551f2",
+        "mode": 420,
+        "marker": "\"x-defenseclaw-generated\""
+      },
+      {
+        "path": "schemas/telemetry/generated/examples/valid/valid-telemetry-rejection-without-raw-payload.json",
+        "sha256": "ec27a999911c610b847656f11392ab43ede0634499bc28abe995e591dfe7b3f9",
+        "mode": 420,
+        "marker": "\"x-defenseclaw-generated\""
+      },
+      {
+        "path": "schemas/telemetry/generated/otlp-fixtures/cases/invalid-finding-whole-raw-evidence.json",
+        "sha256": "4dc189a48dfd78e367507cf173b9bd531d4fd9dca4314a4257aaeee68c729c5c",
+        "mode": 420,
+        "marker": "\"x-defenseclaw-generated\""
+      },
+      {
+        "path": "schemas/telemetry/generated/otlp-fixtures/cases/invalid-legacy-audit-as-canonical-family.json",
+        "sha256": "1eb46626f18ce45f025e4c4e200fa0451d0b31e2cb47b8156eec12646c36c5c6",
+        "mode": 420,
+        "marker": "\"x-defenseclaw-generated\""
+      },
+      {
+        "path": "schemas/telemetry/generated/otlp-fixtures/cases/invalid-lifecycle-phase-code-mismatch.json",
+        "sha256": "335f6a7c2d2c3ae5697652e21b6c36133d73861a1e520fe6cbc6fe39b5a5af42",
+        "mode": 420,
+        "marker": "\"x-defenseclaw-generated\""
+      },
+      {
+        "path": "schemas/telemetry/generated/otlp-fixtures/cases/invalid-metric-high-cardinality-label.json",
+        "sha256": "b7533a7eb4a56383f787d1458ca4afe2960d2f614d7b02e906ad808e99dfd14e",
+        "mode": 420,
+        "marker": "\"x-defenseclaw-generated\""
+      },
+      {
+        "path": "schemas/telemetry/generated/otlp-fixtures/cases/invalid-span-family-bucket-mismatch.json",
+        "sha256": "39f67ed8685949be05f0163b4dbcfaf26ec98c095368524a9e8e5e962615ac2a",
+        "mode": 420,
+        "marker": "\"x-defenseclaw-generated\""
+      },
+      {
+        "path": "schemas/telemetry/generated/otlp-fixtures/cases/valid-asset-scan-started.json",
+        "sha256": "f8b72aed708a7a3dfbdd8a3be2ce573822f01c2decec53ce397e180d885a5a3a",
+        "mode": 420,
+        "marker": "\"x-defenseclaw-generated\""
+      },
+      {
+        "path": "schemas/telemetry/generated/otlp-fixtures/cases/valid-guardrail-judge-payload-log.json",
+        "sha256": "1c2aced0b391e3478e0db0fdf6443bffa8c310e1ba21ca8bba1c482974f9d352",
+        "mode": 420,
+        "marker": "\"x-defenseclaw-generated\""
+      },
+      {
+        "path": "schemas/telemetry/generated/otlp-fixtures/cases/valid-hook-latency-metric.json",
+        "sha256": "194a0fb0d149778471152fd922810781b32559f5747e4881a9c8ad0bc3a1c4ee",
+        "mode": 420,
+        "marker": "\"x-defenseclaw-generated\""
+      },
+      {
+        "path": "schemas/telemetry/generated/otlp-fixtures/cases/valid-model-chat-with-honest-missing-content-and-usage.json",
+        "sha256": "3b17397ce3482ee3c776e694124158dba7ea0aebac61034c8af8afd388eae2f6",
+        "mode": 420,
+        "marker": "\"x-defenseclaw-generated\""
+      },
+      {
+        "path": "schemas/telemetry/generated/otlp-fixtures/cases/valid-root-agent-lifecycle-transition.json",
+        "sha256": "ee5452e23babff4ab4166654d9061e51cd3cd410006635ead41b219ea15fdc8d",
+        "mode": 420,
+        "marker": "\"x-defenseclaw-generated\""
+      },
+      {
+        "path": "schemas/telemetry/generated/otlp-fixtures/cases/valid-security-finding-with-derived-evidence.json",
+        "sha256": "2d2eed5fa4c48910d57ff438c38bcafa18f3d3c2e2f70956a7a5bc0c7494de06",
+        "mode": 420,
+        "marker": "\"x-defenseclaw-generated\""
+      },
+      {
+        "path": "schemas/telemetry/generated/otlp-fixtures/cases/valid-telemetry-rejection-without-raw-payload.json",
+        "sha256": "aa63468a07e651e67307a57d0ed301a48cdeff79bc54c3bf360e8618e785e343",
+        "mode": 420,
+        "marker": "\"x-defenseclaw-generated\""
+      },
+      {
+        "path": "schemas/telemetry/generated/otlp-fixtures/manifest.json",
+        "sha256": "fcdfef32d93e7131acd830b2478b113a961f0bcfeb360e21bba58f938b08969b",
+        "mode": 420,
+        "marker": "\"x-defenseclaw-generated\""
+      },
+      {
         "path": "schemas/telemetry/generated/telemetry.schema.json",
-        "sha256": "f3fbf901d645d39efc27054f58f314c405080440cf9787f6dabaea253de207d1",
+        "sha256": "53b5f41d86741c4b631ed074f20affc5449f54ff9e7222adc5a65fd9106257ab",
         "mode": 420,
         "marker": "\"x-defenseclaw-generated\""
       }
@@ -582,12 +582,12 @@
         "internal/observability/zz_generated_telemetry_builders_operations.go",
         "internal/observability/zz_generated_telemetry_builder_fixtures_test.go"
       ],
-      "materialized_view_sha256": "4d9981ce5e74371eff03b1672b2f33bfdcd40b24f258c5621fa6524cfe5be87f",
-      "candidate_render_index_sha256": "ba87a77edc2505e121bf46aa85c081634535e4346035cba6422f3b9ebd88305e",
+      "materialized_view_sha256": "e96de75fdf61649b727a9b242b659543bdd48e417256e1d8557cd9d16982577b",
+      "candidate_render_index_sha256": "c572ad0194f546c688f27b980f4860d6604582c8f289d74859e81bd38f99fdaf",
       "go_symbol_table_sha256": "d897fab03a91351740e122682f96cc821a66f522250ba881e3a47b65afcc5fd7",
       "declaration_inventory_sha256": "e8f695e6335bb66538b5822a78b5af46a0fdda9d7a992b2062c5f99beffcda9b",
-      "output_inventory_sha256": "495901a9d21f5e868780ade7f60d88ec237ff541c2ca683fc739ab3ed05edbd0",
-      "coordinator_sha256": "34aa8f9f255645a6d753efad880931d7823d2a28874991de496ce97c43e0648c"
+      "output_inventory_sha256": "54ec1295a9d9d0bca19dfa6b35efb48ddaa534d505ac8dad96bfc1eebb251f66",
+      "coordinator_sha256": "4c286194581fb914bf95753b8c5342436cb7c911b44c26be3a00e763890a5c63"
     }
   }
 }

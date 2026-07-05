@@ -878,6 +878,7 @@ def test_check_mode_is_read_only_for_clean_drift_and_pending_recovery(
     transaction.write_outputs(repository, first, {})
     prior = _ownership(transaction, first)
     before = _worktree_snapshot(repository)
+    transaction.preflight_check_state(repository)
     transaction.check_outputs(repository, first, prior)
     assert _worktree_snapshot(repository) == before
 
@@ -900,6 +901,9 @@ def test_check_mode_is_read_only_for_clean_drift_and_pending_recovery(
     with pytest.raises(Crash):
         transaction.write_outputs(repository, _outputs(transaction, 2), prior, fault_injector=crash_after_apply)
     interrupted = _worktree_snapshot(repository)
+    with pytest.raises(transaction.RecoveryRequiredError, match="recovery is required before check mode"):
+        transaction.preflight_check_state(repository)
+    assert _worktree_snapshot(repository) == interrupted
     with pytest.raises(transaction.RecoveryRequiredError):
         transaction.check_outputs(repository, first, prior)
     assert _worktree_snapshot(repository) == interrupted

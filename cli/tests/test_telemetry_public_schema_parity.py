@@ -113,17 +113,32 @@ def _public_views_and_manifest(value: Mapping[str, Any]) -> tuple[bytes, bytes]:
     return raw, _manifest(public_views_sha256=hashlib.sha256(raw).hexdigest())
 
 
-def _candidate_aliases(output_path: str, raw: bytes) -> dict[str, bytes]:
+def _live_candidates() -> dict[str, bytes]:
+    public_views = _public_views()
+    candidates: dict[str, bytes] = {}
+    for view in public_views["views"]:
+        paths = {
+            view["output_path"],
+            *view["targets"]["mirrors"],
+            *view["targets"]["embeds"],
+        }
+        for path in paths:
+            candidates[path] = (ROOT / path).read_bytes()
+    assert len(candidates) == 26
+    return candidates
+
+
+def _mutated_live_candidates(output_path: str, raw: bytes) -> dict[str, bytes]:
     public_views = _public_views()
     view = next(item for item in public_views["views"] if item["output_path"] == output_path)
-    relative_paths = {output_path, *view["targets"]["mirrors"], *view["targets"]["embeds"]}
-    root = "schemas/telemetry/generated/public-views"
-    return {f"{root}/{path}": raw for path in relative_paths}
+    candidates = _live_candidates()
+    for path in {output_path, *view["targets"]["mirrors"], *view["targets"]["embeds"]}:
+        candidates[path] = raw
+    return candidates
 
 
 def _candidate_document(output_path: str) -> dict[str, Any]:
-    path = ROOT / "schemas/telemetry/generated/public-views" / output_path
-    value = json.loads(path.read_bytes())
+    value = json.loads(_live_candidates()[output_path])
     assert isinstance(value, dict)
     return value
 
@@ -169,7 +184,7 @@ def test_marker_mutation_is_rejected() -> None:
     with pytest.raises(parity.ParityError, match="marker drift"):
         parity.check_repository(
             ROOT,
-            candidate_overrides=_candidate_aliases(output_path, _canonical_json(candidate)),
+            candidate_overrides=_mutated_live_candidates(output_path, _canonical_json(candidate)),
         )
 
 
@@ -195,7 +210,7 @@ def test_reference_mutation_is_rejected_by_reference_inventory() -> None:
     with pytest.raises(parity.ParityError, match="reference inventory drift"):
         parity.check_repository(
             ROOT,
-            candidate_overrides=_candidate_aliases(output_path, _canonical_json(candidate)),
+            candidate_overrides=_mutated_live_candidates(output_path, _canonical_json(candidate)),
         )
 
 
@@ -207,7 +222,7 @@ def test_number_token_mutation_is_rejected_losslessly() -> None:
     with pytest.raises(parity.ParityError, match="number-lexeme drift"):
         parity.check_repository(
             ROOT,
-            candidate_overrides=_candidate_aliases(output_path, _canonical_json(candidate)),
+            candidate_overrides=_mutated_live_candidates(output_path, _canonical_json(candidate)),
         )
 
 
@@ -230,3 +245,27 @@ def test_field_coverage_mutation_is_rejected() -> None:
             manifest_bytes=manifest_raw,
             public_views_bytes=public_raw,
         )
+
+
+def test_live_mirror_mutation_is_rejected() -> None:
+    candidates = _live_candidates()
+    public_views = _public_views()
+    view = next(item for item in public_views["views"] if item["targets"]["mirrors"])
+    candidates[view["targets"]["mirrors"][0]] = b"{}\n"
+
+    with pytest.raises(parity.ParityError, match="live mirror/embed byte drift"):
+        parity.check_repository(ROOT, candidate_overrides=candidates)
+
+
+def test_live_candidate_path_rejects_symlink(tmp_path: Path) -> None:
+    target = tmp_path / "target.json"
+    target.write_text("{}\n", encoding="utf-8")
+    candidate = tmp_path / "schemas" / "candidate.json"
+    candidate.parent.mkdir()
+    try:
+        candidate.symlink_to(target)
+    except OSError:
+        pytest.skip("platform does not permit test symlinks")
+
+    with pytest.raises(parity.ParityError, match="contains a symlink"):
+        parity._validated_live_candidate_path(tmp_path, "schemas/candidate.json")

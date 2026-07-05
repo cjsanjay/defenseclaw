@@ -1585,6 +1585,26 @@ def _check_one(path: Path, output: RenderedOutput) -> tuple[str, ...]:
     return tuple(problems)
 
 
+def _require_clean_check_state(root: Path) -> None:
+    state_root = _state_root(root, create=False)
+    if state_root.exists() and (_read_journal(state_root) is not None or _has_orphan_state(state_root)):
+        raise RecoveryRequiredError("generated-output transaction recovery is required before check mode")
+
+
+def preflight_check_state(root: Path) -> None:
+    """Fail read-only check mode before callers inspect potentially applied outputs.
+
+    This narrow preflight validates only repository roots and durable transaction
+    state. It does not inspect generated payloads or classify ordinary drift as
+    recoverable. Callers that construct adoption evidence from current files use
+    it first so an interrupted transaction cannot be mistaken for tampering.
+    """
+
+    safe_root = _safe_root(root)
+    _validate_required_roots(safe_root)
+    _require_clean_check_state(safe_root)
+
+
 def check_outputs(
     root: Path,
     outputs: Mapping[str | Path, RenderedOutput],
@@ -1601,10 +1621,8 @@ def check_outputs(
 
     root = _safe_root(root)
     _validate_required_roots(root)
+    _require_clean_check_state(root)
     normalized_outputs, normalized_prior, normalized_adoption = _normalize_inputs(outputs, prior, adoption)
-    state_root = _state_root(root, create=False)
-    if state_root.exists() and (_read_journal(state_root) is not None or _has_orphan_state(state_root)):
-        raise RecoveryRequiredError("generated-output transaction recovery is required before check mode")
 
     problems: list[str] = []
     for path, output in sorted(normalized_outputs.items()):
@@ -2431,6 +2449,7 @@ __all__ = [
     "TransactionBusyError",
     "TransactionError",
     "check_outputs",
+    "preflight_check_state",
     "recover_outputs",
     "write_outputs",
 ]

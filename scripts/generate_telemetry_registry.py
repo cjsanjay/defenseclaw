@@ -153,7 +153,7 @@ def _load_candidate_renderers():  # type: ignore[no-untyped-def]
     return portable, go_renderer, coordinator
 
 
-GENERATOR_VERSION: Final = 2
+GENERATOR_VERSION: Final = 3
 NORMALIZED_SNAPSHOT_FORMAT: Final = "defenseclaw-normalized-semconv-v1"
 MAX_AUTHORED_JSON_NESTING: Final = 256
 EXPECTED_IMPORTS: Final = ("genai.yaml", "security.yaml", "operations.yaml")
@@ -168,7 +168,7 @@ PUBLIC_VIEWS_BASELINE_CANONICALIZATION: Final = "defenseclaw-lossless-json-v1"
 PUBLIC_VIEWS_BASELINE_SOURCE_COMMIT: Final = "e309dffc369d8f0c722d74ace848cec74ff40e3c"
 PUBLIC_VIEWS_BASELINE_SOURCE_TREE: Final = "e63356679501ae178fd3f3411ed909a231eb54fd"
 PUBLIC_VIEWS_COMPATIBILITY_EPOCH: Final = "public-schemas-v7-marker-only-v1"
-PUBLIC_VIEW_CANDIDATE_AUTHORITY: Final = "candidate-not-public-authority"
+PUBLIC_VIEW_GENERATED_AUTHORITY: Final = "generated"
 PUBLIC_VIEW_MARKER_KEY: Final = "x-defenseclaw-generated"
 PUBLIC_VIEW_MARKER_GENERATOR: Final = "scripts/generate_telemetry_registry.py"
 PUBLIC_VIEW_DISPOSITIONS: Final = frozenset({"preserved", "renamed", "removed", "corrected"})
@@ -201,7 +201,7 @@ PUBLIC_VIEW_DYNAMIC_POLICIES: Final = frozenset(
 )
 PUBLIC_VIEW_SUBSCHEMA_DIGEST_DOMAIN: Final = b"DefenseClaw PublicView Subschema v1\x00"
 PUBLIC_VIEW_AUTHORITY_DIGEST_DOMAIN: Final = b"DefenseClaw PublicView Render Authority v1\x00"
-PUBLIC_VIEW_AUTHORITY_SHA256: Final = "8b617e6145719eef96625b41c6ca961dd0c16c060ef7d453b2f35888b489f171"
+PUBLIC_VIEW_AUTHORITY_SHA256: Final = "67d9feb8e5d7afe7f6a4157cf68570f27802e01d4bd89e00a64f1f9d869fb4fd"
 PUBLIC_VIEW_MIRROR_TARGETS: Final = MappingProxyType(
     {
         "schemas/activity-event.json": ("internal/gatewaylog/schemas/activity-event.json",),
@@ -698,6 +698,9 @@ OUTPUT_MANIFEST_MARKER: Final = b'"generated_by": "scripts/generate_telemetry_re
 OUTPUT_MANIFEST_MODE: Final = 0o644
 OUTPUT_MANIFEST_MAX_BYTES: Final = 8 * 1024 * 1024
 OUTPUT_MANIFEST_SCHEMA_MAX_BYTES: Final = 64 * 1024
+PUBLIC_VIEW_BASELINE_MAX_BYTES: Final = 8 * 1024 * 1024
+PUBLIC_VIEW_PREDECESSOR_MAX_BYTES: Final = 8 * 1024 * 1024
+PUBLIC_VIEW_OWNERSHIP_MARKER: Final = b'"x-defenseclaw-generated"'
 GO_CANDIDATE_AUTHORITY: Final = "candidate-not-public-authority"
 GO_CANDIDATE_OUTPUT_PATHS: Final = (
     "internal/observability/zz_generated_telemetry_ids.go",
@@ -715,7 +718,7 @@ PORTABLE_STATIC_OUTPUT_PATHS: Final = (
     "schemas/telemetry/generated/examples/manifest.json",
     "schemas/telemetry/generated/otlp-fixtures/manifest.json",
 )
-PUBLIC_VIEW_CANDIDATE_PREFIX: Final = "schemas/telemetry/generated/public-views"
+PUBLIC_VIEW_STAGED_PREFIX: Final = "schemas/telemetry/generated/public-views/"
 
 EXPECTED_STRUCTURAL_CONTRACT_ID: Final = "defenseclaw.canonical-record"
 EXPECTED_OTLP_REPRESENTATION_ID: Final = "defenseclaw-otlp-v1"
@@ -3965,8 +3968,8 @@ def _parse_public_views(
             raise RegistryError(f"{view_path}.dialect: baseline dialect mismatch")
         if schema_id != resource.schema_id:
             raise RegistryError(f"{view_path}.schema_id: baseline schema identity mismatch")
-        if authority != PUBLIC_VIEW_CANDIDATE_AUTHORITY:
-            raise RegistryError(f"{view_path}.authority: public views remain candidate-only")
+        if authority != PUBLIC_VIEW_GENERATED_AUTHORITY:
+            raise RegistryError(f"{view_path}.authority: public views require generated authority")
 
         lifecycle = raw_view["lifecycle"]
         if not isinstance(lifecycle, dict):
@@ -10127,23 +10130,23 @@ def _validate_portable_candidate_inventory(
     portable_renderer: Any,
     portable_outputs: Mapping[str, Any],
 ) -> tuple[str, ...]:
-    """Bind the staged public-view set to the transaction's exact live allowlist."""
+    """Bind the renderer's live public-view set to the exact adoption allowlist."""
 
-    prefix = getattr(portable_renderer, "PUBLIC_VIEW_CANDIDATE_PREFIX", None)
-    staged = getattr(portable_renderer, "PUBLIC_VIEW_CANDIDATE_OUTPUT_PATHS", None)
-    if prefix != PUBLIC_VIEW_CANDIDATE_PREFIX or type(staged) is not tuple:
-        raise RegistryError("candidate renderer public-view staging contract is invalid")
-    expected_suffixes = tuple(sorted(generated_transaction.EXACT_BASELINE_ADOPTION_PATHS))
-    expected_staged = tuple(f"{PUBLIC_VIEW_CANDIDATE_PREFIX}/{path}" for path in expected_suffixes)
-    if staged != expected_staged:
-        raise RegistryError("candidate renderer public-view staging inventory is not exact")
+    public_view_paths = getattr(portable_renderer, "PUBLIC_VIEW_OUTPUT_PATHS", None)
+    generated_authority = getattr(portable_renderer, "PUBLIC_VIEW_GENERATED_AUTHORITY", None)
+    expected_public_views = tuple(sorted(generated_transaction.EXACT_BASELINE_ADOPTION_PATHS))
+    if (
+        type(public_view_paths) is not tuple
+        or public_view_paths != expected_public_views
+        or generated_authority != PUBLIC_VIEW_GENERATED_AUTHORITY
+    ):
+        raise RegistryError("candidate renderer live public-view contract is not exact")
     if not isinstance(portable_outputs, Mapping) or any(type(path) is not str for path in portable_outputs):
         raise RegistryError("candidate renderer output inventory is invalid")
     actual = tuple(sorted(portable_outputs))
-    live_paths = frozenset(actual) & generated_transaction.EXACT_BASELINE_ADOPTION_PATHS
-    if live_paths:
-        raise RegistryError("candidate renderer attempted to publish live public-view paths")
-    expected = _expected_portable_output_paths(ir, expected_staged)
+    if any(path.startswith(PUBLIC_VIEW_STAGED_PREFIX) for path in actual):
+        raise RegistryError("candidate renderer attempted to retain staged public-view paths")
+    expected = _expected_portable_output_paths(ir, expected_public_views)
     if actual != expected:
         raise RegistryError("candidate renderer output inventory is partial or substituted")
     if any(getattr(portable_outputs[path], "path", None) != path for path in actual):
@@ -10156,7 +10159,7 @@ def _validate_rendered_manifest_inventory(
     artifacts: Mapping[Path, Any],
     expected_portable_paths: tuple[str, ...],
 ) -> None:
-    """Cross-check staged ownership records before encoding the commit marker."""
+    """Cross-check exact live ownership records before encoding the commit marker."""
 
     expected_artifacts = tuple(sorted((*expected_portable_paths, *GO_CANDIDATE_OUTPUT_PATHS)))
     actual_artifacts = tuple(sorted(path.as_posix() for path in artifacts))
@@ -10172,23 +10175,22 @@ def _validate_rendered_manifest_inventory(
     record_paths = tuple(record.get("path") for record in records if isinstance(record, Mapping))
     if record_paths != expected_artifacts or len(record_paths) != len(records):
         raise RegistryError("generated manifest ownership records are partial or substituted")
-    if frozenset(expected_outputs) & generated_transaction.EXACT_BASELINE_ADOPTION_PATHS:
-        raise RegistryError("generated manifest attempted to claim live public-view ownership")
-    staged_prefix = f"{PUBLIC_VIEW_CANDIDATE_PREFIX}/"
-    staged_records = [record for record in records if record["path"].startswith(staged_prefix)]
-    expected_staged = tuple(
-        f"{staged_prefix}{path}" for path in sorted(generated_transaction.EXACT_BASELINE_ADOPTION_PATHS)
-    )
-    if tuple(record["path"] for record in staged_records) != expected_staged:
-        raise RegistryError("generated manifest staged public-view ownership is not exact")
-    for record in staged_records:
+    if any(path.startswith(PUBLIC_VIEW_STAGED_PREFIX) for path in expected_outputs):
+        raise RegistryError("generated manifest retained staged public-view ownership")
+    live_records = [
+        record for record in records if record["path"] in generated_transaction.EXACT_BASELINE_ADOPTION_PATHS
+    ]
+    expected_live = tuple(sorted(generated_transaction.EXACT_BASELINE_ADOPTION_PATHS))
+    if tuple(record["path"] for record in live_records) != expected_live:
+        raise RegistryError("generated manifest live public-view ownership is not exact")
+    for record in live_records:
         output = artifacts[Path(record["path"])]
         if (
             record.get("sha256") != _sha256(output.payload)
             or record.get("mode") != output.mode
             or record.get("marker") != output.marker.decode("ascii")
         ):
-            raise RegistryError("generated manifest staged public-view ownership record disagrees")
+            raise RegistryError("generated manifest live public-view ownership record disagrees")
 
 
 def render_outputs(ir: RegistryIR) -> dict[Path, bytes]:
@@ -10214,6 +10216,8 @@ def render_outputs(ir: RegistryIR) -> dict[Path, bytes]:
             raise RegistryError("generated Go preflight did not return the exact ordered output set")
         if portable_renderer.CANDIDATE_AUTHORITY != GO_CANDIDATE_AUTHORITY:
             raise RegistryError("portable and Go candidate authority markers disagree")
+        if portable_renderer.PUBLIC_VIEW_GENERATED_AUTHORITY != PUBLIC_VIEW_GENERATED_AUTHORITY:
+            raise RegistryError("portable public-view generated authority marker disagrees")
     except RegistryError:
         raise
     except Exception as exc:
@@ -10311,17 +10315,21 @@ def _read_output_manifest_schema_bytes(root: Path) -> bytes:
 
 
 def _manifest_schema_input_digest(manifest: dict[str, Any]) -> str:
+    return _manifest_input_digest(manifest, OUTPUT_MANIFEST_SCHEMA, role="output-manifest schema")
+
+
+def _manifest_input_digest(manifest: Mapping[str, Any], path: Path, *, role: str) -> str:
     inputs = manifest.get("inputs")
     matches = (
-        [item for item in inputs if isinstance(item, dict) and item.get("path") == OUTPUT_MANIFEST_SCHEMA.as_posix()]
+        [item for item in inputs if isinstance(item, dict) and item.get("path") == path.as_posix()]
         if isinstance(inputs, list)
         else []
     )
     if len(matches) != 1:
-        raise RegistryError("generated output manifest must contain exactly one output-manifest schema input")
+        raise RegistryError(f"generated output manifest must contain exactly one {role} input")
     digest = matches[0].get("sha256")
     if not isinstance(digest, str) or _SHA256.fullmatch(digest) is None:
-        raise RegistryError("generated output manifest schema input digest is invalid")
+        raise RegistryError(f"generated output manifest {role} input digest is invalid")
     return digest
 
 
@@ -10486,6 +10494,135 @@ def _prior_output_ownership(root: Path) -> dict[str, Any]:
     return prior
 
 
+def _read_public_view_predecessor(root: Path, path: str) -> tuple[bytes, int]:
+    """Read one pre-cutover file without following links or accepting aliases."""
+
+    try:
+        opened = generated_transaction._read_regular_file_bounded(  # noqa: SLF001
+            root / path,
+            maximum=PUBLIC_VIEW_PREDECESSOR_MAX_BYTES,
+            missing_ok=False,
+        )
+    except generated_transaction.TransactionError as exc:
+        raise RegistryError(f"baseline adoption predecessor is missing or unsafe: {path}") from exc
+    assert opened is not None
+    payload, metadata = opened
+    mode = stat.S_IMODE(metadata.st_mode)
+    if mode != 0o644:
+        raise RegistryError(f"baseline adoption predecessor mode is not 0644: {path}")
+    return payload, mode
+
+
+def _baseline_public_view_adoption(
+    root: Path,
+    manifest: Mapping[str, Any],
+    desired: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Authenticate all exact pre-cutover bytes against the compiled baseline."""
+
+    claimed_baseline = _manifest_input_digest(
+        manifest,
+        PUBLIC_VIEWS_BASELINE_PATH,
+        role="compiled public-view baseline",
+    )
+    if claimed_baseline != PUBLIC_VIEWS_BASELINE_SHA256:
+        raise RegistryError("compiled public-view baseline input digest is not the reviewed source")
+    try:
+        baseline_raw = generated_transaction.read_repository_file_bounded(
+            root,
+            PUBLIC_VIEWS_BASELINE_PATH,
+            maximum=PUBLIC_VIEW_BASELINE_MAX_BYTES,
+        )
+    except generated_transaction.TransactionError as exc:
+        raise RegistryError("compiled public-view baseline source is missing or unsafe") from exc
+    if _sha256(baseline_raw) != claimed_baseline:
+        raise RegistryError("compiled public-view baseline source digest changed after compilation")
+    baseline_module = _load_sibling_module("telemetry_public_schema_baseline")
+    try:
+        baseline = baseline_module.load_public_schema_baseline_bytes(
+            baseline_raw,
+            PUBLIC_VIEWS_BASELINE_PATH.as_posix(),
+        )
+    except Exception as exc:
+        if exc.__class__.__name__ != "BaselineError":
+            raise
+        raise RegistryError("compiled public-view baseline source is invalid") from exc
+
+    expected_paths = frozenset(generated_transaction.EXACT_BASELINE_ADOPTION_PATHS)
+    primary_paths = frozenset(resource.path for resource in baseline.resources)
+    mirror_paths = frozenset(target for targets in PUBLIC_VIEW_MIRROR_TARGETS.values() for target in targets)
+    if baseline.baseline_sha256 != claimed_baseline:
+        raise RegistryError("compiled public-view baseline digest is invalid")
+    if (
+        primary_paths | mirror_paths != expected_paths
+        or primary_paths & mirror_paths
+        or not frozenset(PUBLIC_VIEW_MIRROR_TARGETS).issubset(primary_paths)
+    ):
+        raise RegistryError("compiled public-view baseline inventory is not the exact adoption set")
+
+    predecessor_by_path: dict[str, bytes] = {}
+    adoption: dict[str, Any] = {}
+    for resource in baseline.resources:
+        path = resource.path
+        output = desired.get(path)
+        if output is None or output.mode != 0o644 or output.marker != PUBLIC_VIEW_OWNERSHIP_MARKER:
+            raise RegistryError(f"generated public-view ownership contract is invalid: {path}")
+        payload, mode = _read_public_view_predecessor(root, path)
+        digest = _sha256(payload)
+        if digest != resource.source_sha256:
+            raise RegistryError(f"baseline adoption predecessor digest changed: {path}")
+        if output.marker in payload[: generated_transaction.MARKER_SCAN_BYTES]:
+            raise RegistryError(f"baseline adoption predecessor already carries generated authority: {path}")
+        predecessor_by_path[path] = payload
+        adoption[path] = generated_transaction.BaselineAdoption(payload, digest, output.marker, mode)
+
+    for primary, targets in PUBLIC_VIEW_MIRROR_TARGETS.items():
+        primary_payload = predecessor_by_path.get(primary)
+        if primary_payload is None:
+            raise RegistryError("compiled public-view mirror source is absent from the baseline")
+        for path in targets:
+            output = desired.get(path)
+            if output is None or output.mode != 0o644 or output.marker != PUBLIC_VIEW_OWNERSHIP_MARKER:
+                raise RegistryError(f"generated public-view ownership contract is invalid: {path}")
+            payload, mode = _read_public_view_predecessor(root, path)
+            if payload != primary_payload:
+                raise RegistryError(f"baseline adoption mirror disagrees with its public schema: {path}")
+            if output.marker in payload[: generated_transaction.MARKER_SCAN_BYTES]:
+                raise RegistryError(f"baseline adoption predecessor already carries generated authority: {path}")
+            digest = _sha256(payload)
+            adoption[path] = generated_transaction.BaselineAdoption(payload, digest, output.marker, mode)
+
+    if frozenset(adoption) != expected_paths:
+        raise RegistryError("baseline adoption authority is not the exact public-view set")
+    return adoption
+
+
+def _public_view_adoption_authority(
+    root: Path,
+    outputs: Mapping[Path, bytes],
+    desired: Mapping[str, Any],
+    prior: Mapping[str, Any],
+) -> dict[str, Any] | None:
+    """Choose first or continued adoption solely from prior manifest ownership."""
+
+    exact_paths = frozenset(generated_transaction.EXACT_BASELINE_ADOPTION_PATHS)
+    desired_live = frozenset(desired) & exact_paths
+    if not desired_live:
+        # The reduced manifest-only test driver intentionally has no public views.
+        return None
+    if desired_live != exact_paths:
+        raise RegistryError("generated public-view output inventory is a partial adoption set")
+    prior_live = frozenset(prior) & exact_paths
+    if prior_live == exact_paths:
+        return {path: generated_transaction.ContinuedAdoptionAuthority() for path in sorted(exact_paths)}
+    if prior_live:
+        raise RegistryError("prior output manifest owns a partial public-view adoption set")
+    manifest_raw = outputs.get(OUTPUT_MANIFEST)
+    if manifest_raw is None:
+        raise RegistryError("generated outputs omit the output manifest commit marker")
+    return _baseline_public_view_adoption(root, _decode_output_manifest(manifest_raw), desired)
+
+
 def _validate_go_candidate_payload_binding(
     manifest: Mapping[str, Any],
     outputs: Mapping[Path, bytes],
@@ -10621,9 +10758,14 @@ def _unmanifested_generated_paths(root: Path, declared: set[str]) -> list[str]:
 
 def check_outputs(root: Path, outputs: dict[Path, bytes]) -> None:
     desired = _transaction_outputs(root, outputs)
-    prior = _prior_output_ownership(root)
     try:
-        generated_transaction.check_outputs(root, desired, prior)
+        generated_transaction.preflight_check_state(root)
+    except generated_transaction.TransactionError as exc:
+        raise RegistryError(f"{exc}; run scripts/generate_telemetry_registry.py --write") from exc
+    prior = _prior_output_ownership(root)
+    adoption = _public_view_adoption_authority(root, outputs, desired, prior)
+    try:
+        generated_transaction.check_outputs(root, desired, prior, adoption=adoption)
     except generated_transaction.TransactionError as exc:
         raise RegistryError(f"{exc}; run scripts/generate_telemetry_registry.py --write") from exc
     extras = _unmanifested_generated_paths(root, set(desired))
@@ -10634,16 +10776,33 @@ def check_outputs(root: Path, outputs: dict[Path, bytes]) -> None:
         )
 
 
-def write_outputs(root: Path, outputs: dict[Path, bytes]) -> None:
+def write_outputs(
+    root: Path,
+    outputs: dict[Path, bytes],
+    *,
+    fault_injector: Any | None = None,
+) -> None:
     try:
         desired = _transaction_outputs(root, outputs)
+        # Recovery must precede prior-manifest selection: an interrupted first
+        # adoption can temporarily leave generated bytes at live paths while
+        # the durable journal still authenticates their legacy predecessors.
+        if generated_transaction.generated_root_exists(root):
+            generated_transaction.recover_outputs(root)
         prior = _prior_output_ownership(root)
+        adoption = _public_view_adoption_authority(root, outputs, desired, prior)
         extras = _unmanifested_generated_paths(root, set(desired) | set(prior))
         if extras:
             raise RegistryError(
                 f"generated output drift: unowned={extras}; remove unmanifested generated files before publication"
             )
-        generated_transaction.write_outputs(root, desired, prior)
+        generated_transaction.write_outputs(
+            root,
+            desired,
+            prior,
+            adoption=adoption,
+            fault_injector=fault_injector,
+        )
     except generated_transaction.TransactionError as exc:
         raise RegistryError(str(exc)) from exc
 

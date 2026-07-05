@@ -758,7 +758,7 @@ def test_candidate_renderer_is_deterministic_complete_and_in_memory(
         assert artifact.path == path
         assert artifact.mode == 0o644
         assert artifact.payload
-        assert path.startswith(f"{PREFIX}/")
+        assert path.startswith(f"{PREFIX}/") or path in renderer.PUBLIC_VIEW_OUTPUT_PATHS
         assert renderer._normalized_candidate_path(path) == path
         assert not PurePosixPath(path).is_absolute()
 
@@ -990,6 +990,23 @@ def test_candidate_index_rejects_platform_reserved_example_ids(
 
 @pytest.mark.parametrize(
     "path",
+    (
+        "schemas/activity-event-copy.json",
+        "internal/gatewaylog/schemas/activity-event-copy.json",
+        "internal/cli/embed/scan-result-copy.json",
+    ),
+)
+def test_candidate_path_allows_only_exact_live_public_view_paths(
+    renderer: ModuleType,
+    path: str,
+) -> None:
+    assert all(renderer._normalized_candidate_path(item) == item for item in renderer.PUBLIC_VIEW_OUTPUT_PATHS)
+    with pytest.raises(renderer.CandidateRenderError, match="public-view allowlist"):
+        renderer._normalized_candidate_path(path)
+
+
+@pytest.mark.parametrize(
+    "path",
     [
         pytest.param(f"{PREFIX}/cases/con.json", id="device-with-extension"),
         pytest.param(f"{PREFIX}/cases/NUL.txt", id="case-insensitive-device"),
@@ -1140,30 +1157,26 @@ def test_real_registry_compile_and_candidate_render_smoke(
     assert f"{PREFIX}/catalog.json" in artifacts
 
 
-def test_public_view_candidates_have_exact_staged_portable_inventory_and_no_live_paths(
+def test_public_views_have_exact_live_portable_inventory_and_no_staged_paths(
     renderer: ModuleType,
     render_index: Any,
     artifacts: Mapping[str, Any],
 ) -> None:
     plan = _public_view_plan(renderer, render_index)
-    public_paths = tuple(renderer.PUBLIC_VIEW_CANDIDATE_OUTPUT_PATHS)
-    logical_paths = {entry.output_path for entry in plan.views}
-    logical_paths.update(
-        target.removeprefix(f"{renderer.PUBLIC_VIEW_CANDIDATE_PREFIX}/")
-        for entry in plan.views
-        for target in entry.target_paths
-    )
+    public_paths = tuple(renderer.PUBLIC_VIEW_OUTPUT_PATHS)
+    planned_paths = tuple(path for entry in plan.views for path in entry.target_paths)
+    staged_paths = {f"{PREFIX}/public-views/{path}" for path in public_paths}
 
     assert len(artifacts) == 55
     assert len(plan.views) == 21
+    assert renderer.PUBLIC_VIEW_GENERATED_AUTHORITY == "generated"
     assert len(public_paths) == 26
     assert len(set(public_paths)) == 26
     assert len({renderer._candidate_path_identity(path) for path in public_paths}) == 26
     assert tuple(sorted(public_paths, key=str.encode)) == public_paths
-    assert {path for path in artifacts if path.startswith(f"{renderer.PUBLIC_VIEW_CANDIDATE_PREFIX}/")} == set(
-        public_paths
-    )
-    assert not logical_paths.intersection(artifacts)
+    assert set(planned_paths) == set(public_paths)
+    assert set(public_paths).issubset(artifacts)
+    assert not staged_paths.intersection(artifacts)
     assert all("/wheel/" not in path and "/site-packages/" not in path for path in public_paths)
     assert all(
         artifact.media_type == "application/schema+json" for path, artifact in artifacts.items() if path in public_paths
@@ -1203,6 +1216,8 @@ def test_public_view_candidates_preserve_exact_baseline_bytes_numbers_identities
             "baseline_epoch": plan.baseline_epoch,
         }
         primary = artifacts[entry.target_paths[0]].payload
+        marker_member = renderer.JSON_OWNERSHIP_MARKER + b":" + renderer._canonical_json_bytes(marker)
+        assert primary.startswith(b"{" + marker_member + b",")
         restored = _remove_public_view_marker(renderer, primary, marker)
         assert restored == entry.baseline_document_canonical_json
 
@@ -1286,7 +1301,7 @@ def test_public_view_payload_rejects_non_closed_or_malformed_markers(
     if mutation == "missing-key":
         del marker["baseline_epoch"]
     elif mutation == "extra-key":
-        marker["authority"] = "candidate-not-public-authority"
+        marker["authority"] = "generated"
     elif mutation == "bad-generator":
         marker["generator"] = "other.py"
     elif mutation == "bad-version":
@@ -1325,7 +1340,7 @@ def test_public_view_renderer_rejects_forged_render_plans(
             expected = "already carries generated authority"
         forged = dataclasses.replace(plan, views=(first, *plan.views[1:]))
     with pytest.raises(renderer.CandidateRenderError, match=expected):
-        renderer._render_public_view_candidate_artifacts(forged)
+        renderer._render_public_view_artifacts(forged)
 
 
 def test_public_view_authority_is_revalidated_at_render_sink(
@@ -1355,11 +1370,11 @@ def test_public_view_candidate_render_is_deterministic_and_performs_no_filesyste
     monkeypatch.setattr(Path, "open", unexpected_io)
     repeated = renderer.render_candidate_artifacts_from_index(render_index)
 
-    public_paths = renderer.PUBLIC_VIEW_CANDIDATE_OUTPUT_PATHS
+    public_paths = renderer.PUBLIC_VIEW_OUTPUT_PATHS
     assert {path: repeated[path].payload for path in public_paths} == {
         path: artifacts[path].payload for path in public_paths
     }
-    assert not any(path.removeprefix(f"{renderer.PUBLIC_VIEW_CANDIDATE_PREFIX}/") in repeated for path in public_paths)
+    assert not any(f"{PREFIX}/public-views/{path}" in repeated for path in public_paths)
 
 
 def test_every_artifact_carries_candidate_authority_and_view_digest(

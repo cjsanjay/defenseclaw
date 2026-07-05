@@ -14,7 +14,8 @@
     "pattern",
     "type"
   ],
-  "candidate_root": "schemas/telemetry/generated/public-views",
+  "candidate_mode": "exact-live-paths-v1",
+  "candidate_root": ".",
   "coverage_strategy": "derived-exhaustive-public-view-v1",
   "expected": {
     "dynamic_scopes": 94,
@@ -27,7 +28,7 @@
   "format_version": 1,
   "id": "legacy-public-schema-parity-v1",
   "invalid_witness_strategy": "derived-root-wrong-type-v1",
-  "public_views_sha256": "55ebe26601281cd37cb4fe9c40ba38490705e70c599e8d48cc35316fb6381c61",
+  "public_views_sha256": "f633fbbd6708c26b1e44fb4324eca7cae16ebbd5e49530aa493eb150d8ee583a",
   "valid_witness_strategy": "derived-minimal-valid-v1",
   "view_selection": "exact-public-views-source-v1"
 }

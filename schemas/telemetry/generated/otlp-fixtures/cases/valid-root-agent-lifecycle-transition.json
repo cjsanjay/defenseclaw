@@ -3,7 +3,7 @@
     "artifact": "otlp-fixtures/cases/valid-root-agent-lifecycle-transition.json",
     "authority": "candidate-not-public-authority",
     "generator": "defenseclaw-telemetry-candidate-renderer-v1",
-    "materialized_view_sha256": "4d9981ce5e74371eff03b1672b2f33bfdcd40b24f258c5621fa6524cfe5be87f",
+    "materialized_view_sha256": "e96de75fdf61649b727a9b242b659543bdd48e417256e1d8557cd9d16982577b",
     "registry_version": 1
   },
   "canonical_record": {
@@ -336,6 +336,6 @@
   "family": "span.agent.transition",
   "fixture_format": "defenseclaw-otlp-fixture-v1",
   "id": "valid-root-agent-lifecycle-transition",
-  "materialized_view_sha256": "4d9981ce5e74371eff03b1672b2f33bfdcd40b24f258c5621fa6524cfe5be87f",
+  "materialized_view_sha256": "e96de75fdf61649b727a9b242b659543bdd48e417256e1d8557cd9d16982577b",
   "signal": "traces"
 }

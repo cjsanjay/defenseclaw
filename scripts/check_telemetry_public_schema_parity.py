@@ -18,8 +18,8 @@
 """Execute the legacy-public-schema-parity-v1 compatibility corpus.
 
 The immutable pre-cutover baseline is the legacy authority. Candidate input is
-read only from the checked-in ``schemas/telemetry/generated/public-views``
-staging tree. Current live schemas are deliberately never read.
+read only from the exact live paths declared by the digest-pinned public-view
+plan. The checker never scans the repository for additional candidates.
 """
 
 from __future__ import annotations
@@ -114,6 +114,7 @@ EXPECTED_MANIFEST_KEYS: Final = {
     "baseline_id",
     "baseline_sha256",
     "boundary_strategies",
+    "candidate_mode",
     "candidate_root",
     "coverage_strategy",
     "expected",
@@ -199,7 +200,8 @@ def _load_manifest(raw: bytes) -> dict[str, Any]:
         or value["id"] != "legacy-public-schema-parity-v1"
         or value["authority"] != "compatibility-witness-only"
         or value["baseline_id"] != "public-schemas-v7"
-        or value["candidate_root"] != "schemas/telemetry/generated/public-views"
+        or value["candidate_mode"] != "exact-live-paths-v1"
+        or value["candidate_root"] != "."
         or value["view_selection"] != "exact-public-views-source-v1"
         or value["valid_witness_strategy"] != "derived-minimal-valid-v1"
         or value["invalid_witness_strategy"] != "derived-root-wrong-type-v1"
@@ -223,6 +225,32 @@ def _load_yaml_mapping(raw: bytes, context: str) -> dict[str, Any]:
     if not isinstance(value, dict):
         _fail(f"{context} root must be a mapping")
     return value
+
+
+def _validated_live_candidate_path(root: Path, relative_path: str) -> Path:
+    pure = PurePosixPath(relative_path)
+    if (
+        not relative_path
+        or pure.is_absolute()
+        or pure.as_posix() != relative_path
+        or any(part in {"", ".", ".."} for part in pure.parts)
+    ):
+        _fail("live public-view path is not a normalized repository-relative path")
+    current = root
+    for index, part in enumerate(pure.parts):
+        current /= part
+        try:
+            mode = current.lstat().st_mode
+        except OSError as exc:
+            raise ParityError("declared live public-view path is missing") from exc
+        if stat.S_ISLNK(mode):
+            _fail("declared live public-view path contains a symlink")
+        if index == len(pure.parts) - 1:
+            if not stat.S_ISREG(mode):
+                _fail("declared live public-view path is not a regular file")
+        elif not stat.S_ISDIR(mode):
+            _fail("declared live public-view parent is not a directory")
+    return current
 
 
 def _escape(value: str) -> str:
@@ -844,11 +872,11 @@ def check_repository(
         _fail("public view path inventory differs from baseline")
 
     candidate_root = PurePosixPath(manifest["candidate_root"])
-    expected_staged: dict[str, str] = {}
+    expected_live: dict[str, str] = {}
     for view in views:
         output_path = view["output_path"]
-        staged_primary = (candidate_root / output_path).as_posix()
-        expected_staged[staged_primary] = staged_primary
+        live_primary = (candidate_root / output_path).as_posix()
+        expected_live[live_primary] = live_primary
         targets = view.get("targets")
         if not isinstance(targets, dict) or targets.get("wheels") != []:
             _fail("public view target inventory drift")
@@ -857,33 +885,25 @@ def check_repository(
         if not isinstance(mirrors, list) or not isinstance(embeds, list):
             _fail("public view mirror/embed inventory drift")
         for target in {*mirrors, *embeds}:
-            staged_target = (candidate_root / target).as_posix()
-            prior = expected_staged.setdefault(staged_target, staged_primary)
-            if prior != staged_primary:
-                _fail("multiple public views claim one staged target")
-    if len(expected_staged) != EXPECTED_COUNTS["outputs"]:
-        _fail("staged public-view inventory count drift")
+            live_target = (candidate_root / target).as_posix()
+            prior = expected_live.setdefault(live_target, live_primary)
+            if prior != live_primary:
+                _fail("multiple public views claim one live target")
+    if len(expected_live) != EXPECTED_COUNTS["outputs"]:
+        _fail("live public-view inventory count drift")
 
-    staged_directory = root / candidate_root
-    actual_staged: set[str] = set()
-    for path in staged_directory.rglob("*"):
-        if path.is_symlink():
-            _fail("staged public-view tree contains a symlink")
-        if path.is_file():
-            actual_staged.add(path.relative_to(root).as_posix())
-    if actual_staged != set(expected_staged):
-        _fail("staged public-view path inventory drift")
+    live_files = {path: _validated_live_candidate_path(root, path) for path in expected_live}
 
     overrides = dict(candidate_overrides or {})
-    unknown_overrides = set(overrides) - set(expected_staged)
+    unknown_overrides = set(overrides) - set(expected_live)
     if unknown_overrides:
         _fail("candidate override path inventory drift")
     candidate_raw: dict[str, bytes] = {
-        path: overrides.get(path, (root / path).read_bytes()) for path in expected_staged
+        path: overrides.get(path, live_files[path].read_bytes()) for path in expected_live
     }
-    for target, primary in expected_staged.items():
+    for target, primary in expected_live.items():
         if candidate_raw[target] != candidate_raw[primary]:
-            _fail("staged mirror/embed byte drift")
+            _fail("live mirror/embed byte drift")
 
     baseline_documents: dict[str, Mapping[str, Any]] = {}
     candidate_documents: dict[str, Mapping[str, Any]] = {}
@@ -1002,7 +1022,7 @@ def check_repository(
 
     return ParityReport(
         views=len(views),
-        outputs=len(expected_staged),
+        outputs=len(expected_live),
         fields=fields,
         dynamic_scopes=dynamic_scopes,
         references=reference_count,
