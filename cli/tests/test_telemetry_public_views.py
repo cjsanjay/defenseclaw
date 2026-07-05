@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 import subprocess
@@ -154,6 +155,143 @@ def _read_baseline(path: Path) -> dict:
 
 def _write_baseline(path: Path, value: dict) -> None:
     path.write_bytes(public_views.render_lossless_json(value, pretty=True))
+
+
+def test_updater_reuses_shared_baseline_reader_authority() -> None:
+    reader = public_views.baseline_reader
+
+    assert public_views.BaselineError is reader.BaselineError
+    assert public_views.RawNumber is reader.RawNumber
+    assert public_views.parse_lossless_json is reader.parse_lossless_json
+    assert public_views.render_lossless_json is reader.render_lossless_json
+    assert public_views._load_baseline is reader.load_baseline_document
+    assert public_views._validate_baseline_shape is reader.validate_baseline_shape
+    assert public_views._resource_digest is reader.resource_digest
+
+
+@pytest.mark.parametrize("preload", ["foreign-module", "same-path-object-spoof"])
+def test_updater_rejects_noncanonical_preloaded_baseline_reader(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    preload: str,
+) -> None:
+    name = "telemetry_public_schema_baseline"
+    if preload == "foreign-module":
+        foreign = tmp_path / f"{name}.py"
+        foreign.write_text("# foreign reader\n", encoding="utf-8")
+        spec = importlib.util.spec_from_file_location(name, foreign)
+        assert spec is not None and spec.loader is not None
+        existing = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(existing)
+        diagnostic = "foreign provenance"
+    else:
+        existing = object()
+        diagnostic = "unsafe"
+    monkeypatch.setitem(sys.modules, name, existing)
+
+    with pytest.raises(RuntimeError, match=diagnostic):
+        public_views._load_baseline_reader()
+
+
+def test_shared_reader_returns_lossless_deeply_immutable_typed_view() -> None:
+    reader = public_views.baseline_reader
+    baseline_path = ROOT / "schemas/telemetry/v8/baselines/public-schemas-v7.normalized.json"
+
+    baseline = reader.load_public_schema_baseline(baseline_path)
+    baseline_from_bytes = reader.load_public_schema_baseline_bytes(baseline_path.read_bytes(), "in-memory-baseline")
+    audit = baseline.resource("schemas/audit-event.json")
+    minimum = audit.document["properties"]["generation"]["minimum"]
+
+    assert isinstance(baseline, reader.PublicSchemaBaseline)
+    assert baseline.baseline_sha256 == hashlib.sha256(baseline_path.read_bytes()).hexdigest()
+    assert baseline_from_bytes.baseline_sha256 == baseline.baseline_sha256
+    assert baseline_from_bytes.resources == baseline.resources
+    assert baseline.format_version == 1
+    assert len(baseline.resources) == len(reader.PUBLIC_SCHEMA_IDENTITIES) == 21
+    assert isinstance(audit, reader.PublicSchemaResource)
+    assert isinstance(minimum, reader.RawNumber)
+    assert minimum.token == "0"
+    assert audit.number_lexemes["/properties/generation/minimum"] == "0"
+    with pytest.raises(TypeError):
+        baseline.canonicalization["id"] = "mutated"
+    with pytest.raises(TypeError):
+        audit.number_lexemes["/invented"] = "1"
+    with pytest.raises(TypeError):
+        audit.document["title"] = "mutated"
+    with pytest.raises(TypeError):
+        audit.document["properties"]["generation"]["minimum"] = 1
+    with pytest.raises(KeyError):
+        baseline.resource("schemas/not-pinned.json")
+
+
+@pytest.mark.parametrize(
+    ("mutation", "diagnostic"),
+    [
+        ("generated-marker", "generated public-view sources"),
+        ("number-lexeme", "number-lexeme index drift"),
+        ("canonical-digest", "canonical resource digest drift"),
+        ("source-provenance", "baseline source commit is invalid"),
+    ],
+)
+def test_shared_and_updater_resource_validation_fail_identically(
+    tmp_path: Path,
+    mutation: str,
+    diagnostic: str,
+) -> None:
+    reader = public_views.baseline_reader
+    source = ROOT / "schemas/telemetry/v8/baselines/public-schemas-v7.normalized.json"
+    document = reader.load_baseline_document(source)
+    if mutation == "generated-marker":
+        document["resources"][0]["document"][reader.GENERATED_SCHEMA_MARKER_KEY] = None
+    elif mutation == "number-lexeme":
+        document["resources"][1]["number_lexemes"]["/invented"] = "1"
+    elif mutation == "canonical-digest":
+        document["resources"][0]["canonical_sha256"] = "0" * 64
+    else:
+        document["source"]["commit"] = "not-a-commit"
+    candidate = tmp_path / f"{mutation}.json"
+    candidate.write_bytes(reader.render_lossless_json(document, pretty=True))
+
+    with pytest.raises(reader.BaselineError) as shared_error:
+        reader.load_public_schema_baseline(candidate)
+    mutable = public_views._load_baseline(candidate)
+    with pytest.raises(public_views.BaselineError) as updater_error:
+        public_views._validate_baseline_shape(mutable)
+
+    assert str(shared_error.value) == str(updater_error.value)
+    assert diagnostic in str(shared_error.value)
+
+
+@pytest.mark.parametrize(
+    ("mutation", "diagnostic"),
+    [
+        ("duplicate", "duplicate JSON object keys"),
+        ("noncanonical", "not in canonical lossless JSON form"),
+    ],
+)
+def test_shared_and_updater_baseline_byte_rejections_are_equivalent(
+    tmp_path: Path,
+    mutation: str,
+    diagnostic: str,
+) -> None:
+    reader = public_views.baseline_reader
+    source = ROOT / "schemas/telemetry/v8/baselines/public-schemas-v7.normalized.json"
+    raw = source.read_bytes()
+    if mutation == "duplicate":
+        raw = raw.replace(b"{\n", b'{\n  "authority": "pre_cutover",\n', 1)
+    else:
+        raw = b" \n" + raw
+    candidate = tmp_path / f"{mutation}.json"
+    candidate.write_bytes(raw)
+
+    messages = []
+    for load in (reader.load_baseline_document, public_views._load_baseline):
+        with pytest.raises(reader.BaselineError) as raised:
+            load(candidate)
+        messages.append(str(raised.value))
+
+    assert messages[0] == messages[1]
+    assert diagnostic in messages[0]
 
 
 def test_bootstrap_records_exact_inventory_git_provenance_and_checks(
