@@ -2142,8 +2142,8 @@ def render_go_candidate(index: Any, plan: Any | None = None) -> GoRenderCandidat
     )
     files = _validate_file_plans(plan, declarations)
     _validate_private_declaration_coverage(plan, files)
-    if len(declarations) != 1773:
-        raise GoRenderError("GoAPIPlanIR.declarations: exact 1,773-declaration inventory is required")
+    if len(declarations) != 1778:
+        raise GoRenderError("GoAPIPlanIR.declarations: exact 1,778-declaration inventory is required")
     if len(_sequence(_read(plan, "private_declarations", "GoAPIPlanIR"), "private declarations", maximum=4096)) != 741:
         raise GoRenderError("GoAPIPlanIR.private_declarations: exact 741-declaration inventory is required")
     producer = compile_go_producer_plan(index)

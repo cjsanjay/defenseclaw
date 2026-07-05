@@ -3,7 +3,7 @@
     "artifact": "otlp-fixtures/cases/valid-root-agent-lifecycle-transition.json",
     "authority": "candidate-not-public-authority",
     "generator": "defenseclaw-telemetry-candidate-renderer-v1",
-    "materialized_view_sha256": "e96de75fdf61649b727a9b242b659543bdd48e417256e1d8557cd9d16982577b",
+    "materialized_view_sha256": "26121f75397999a4fd1818e84dde325ca55d673b090238cbc61e60f1b6f47380",
     "registry_version": 1
   },
   "canonical_record": {
@@ -16,6 +16,8 @@
         "defenseclaw.agent.lifecycle.state": "active",
         "defenseclaw.agent.phase": "planning",
         "defenseclaw.agent.phase.code": 2,
+        "defenseclaw.agent.reported_cost.present": true,
+        "defenseclaw.agent.reported_cost.usd": 0.0,
         "defenseclaw.agent.root.id": "agent-root",
         "defenseclaw.agent.sequence": 4,
         "defenseclaw.bucket": "agent.lifecycle",
@@ -72,6 +74,8 @@
       "/attributes/defenseclaw.agent.lifecycle.state": "metadata",
       "/attributes/defenseclaw.agent.phase": "metadata",
       "/attributes/defenseclaw.agent.phase.code": "metadata",
+      "/attributes/defenseclaw.agent.reported_cost.present": "metadata",
+      "/attributes/defenseclaw.agent.reported_cost.usd": "metadata",
       "/attributes/defenseclaw.agent.root.id": "identifier",
       "/attributes/defenseclaw.agent.sequence": "metadata",
       "/attributes/defenseclaw.bucket": "metadata",
@@ -255,6 +259,18 @@
                         }
                       },
                       {
+                        "key": "defenseclaw.agent.reported_cost.present",
+                        "value": {
+                          "boolValue": true
+                        }
+                      },
+                      {
+                        "key": "defenseclaw.agent.reported_cost.usd",
+                        "value": {
+                          "doubleValue": 0.0
+                        }
+                      },
+                      {
                         "key": "defenseclaw.agent.root.id",
                         "value": {
                           "stringValue": "agent-root"
@@ -336,6 +352,6 @@
   "family": "span.agent.transition",
   "fixture_format": "defenseclaw-otlp-fixture-v1",
   "id": "valid-root-agent-lifecycle-transition",
-  "materialized_view_sha256": "e96de75fdf61649b727a9b242b659543bdd48e417256e1d8557cd9d16982577b",
+  "materialized_view_sha256": "26121f75397999a4fd1818e84dde325ca55d673b090238cbc61e60f1b6f47380",
   "signal": "traces"
 }

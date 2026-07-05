@@ -1055,8 +1055,9 @@ ordered-member inputs, and 17 ordered-member constructors. The 38 type/arm rows
 are declarations rather than ID constants; that classification does not add rows
 or change their stable source identities. Combined with the frozen v1 registry,
 family, event/link-pair, condition, phase, and semantic-profile inventories, the
-complete symbol table contains 1,773 rows. A count change requires a source change
-and a new reviewed baseline; a renderer cannot reinterpret these row scopes.
+complete symbol table contains 1,773 rows in the initial reviewed baseline. A
+count change requires a source change and a new reviewed baseline; a renderer
+cannot reinterpret these row scopes.
 
 The table order is the exact 22-kind order above, followed by bytewise ASCII
 `source_id` order within each kind. The version-1 declaration-form totals are 893
@@ -1068,7 +1069,7 @@ domain prefix `DefenseClaw GoSymbolTableIR v1` followed by one NUL byte and then
 that JSON payload. Registry v1's reviewed table digest is
 `d897fab03a91351740e122682f96cc821a66f522250ba881e3a47b65afcc5fd7`.
 
-The review artifact is
+The initial review artifact is
 `schemas/telemetry/v8/baselines/go-symbol-table/ee63f1aed1d6940f7315bc309db828095511f6d977d8137c3406e477e3803232.json`;
 the filename is the SHA-256 of its exact bytes. It records the format/package,
 table digest, row count, kind order/counts, declaration-form counts, and every row.
@@ -1079,6 +1080,39 @@ content-addressed bytes, while candidate rendering separately validates the
 materialized v1 counts and table digest before emission. Partial synthetic registry
 fixtures may compile their own collision-free tables without claiming this reviewed
 v1 baseline.
+
+The additive rich-trace successor retains that initial artifact unchanged and
+adds four attribute declarations plus one condition declaration: the current
+kind inventory is 329 `attribute`, eight `condition`, and seven
+`condition_fact` rows, while every other kind count remains unchanged. The
+current table therefore contains 1,778 rows with declaration-form totals
+898 `exported_const`, 459 `exported_type`, 178 `exported_function`, and 243
+`family_builder_method`. Its domain-separated table digest is
+`8488349afc135212c436225a154bd834afe9a2751d2b76e13e12d895405a8b32`, and its
+independent content-addressed review artifact is
+`schemas/telemetry/v8/baselines/go-symbol-table/eb90d5b5056aa28293f8235d65dab0429faab03e7a0dc32247797a16f52a210a.json`.
+The prior and successor artifacts are immutable history; current-ROOT acceptance
+selects the successor without deleting or mutating the prior epoch.
+
+The five successor declarations are exactly attributes `user.id`,
+`defenseclaw.tool.id`, `defenseclaw.agent.reported_cost.present`, and
+`defenseclaw.agent.reported_cost.usd`, plus condition
+`agent-reported-cost-available-v1`; no prior declaration is removed or renamed.
+Families `span.agent.transition`, `span.agent.invoke`, `span.workflow.run`,
+`span.model.chat`, and `span.tool.execute` all gain the source-reported interaction
+context and reported-cost group. Transition, invoke, and workflow spans additionally
+accept optional model and tool identity context. Every one of the five builders
+requires the availability Boolean: `false` forbids the USD value, while `true`
+requires a finite nonnegative value and treats reported zero as present. The value
+is cumulative agent/session cost reported by the connector, never an estimate.
+`llm.cost.total` is not a default alias because its operation scope need not equal
+the agent/session scope.
+
+`span.agent.transition` remains a native lifecycle span and advertises only
+`local-observability-v1`. Its registry binding is explicitly Galileo-ineligible
+because it cannot honestly supply Galileo's invoke-agent operation, provider,
+input-message, and output-message semantics. A projector must omit it from that
+profile rather than fabricate any of those values.
 
 For family declarations, `<Name>` omits the leading signal token from the stable
 family ID; for example, `span.model.chat` produces `SpanModelChatInput` and
@@ -1134,7 +1168,7 @@ the tokenization algorithm.
 
 ##### Derived-value and compiler-owned Go API plan
 
-The 1,773-row symbol table is the package-declaration ABI; it deliberately does
+The current 1,778-row symbol table is the package-declaration ABI; it deliberately does
 not contain owner-scoped struct fields. A second immutable `GoAPIPlanIR` is
 compiler output, never authored YAML and never renderer policy. It closes the
 shape of every generated declaration while keeping the reviewed declaration table
@@ -1296,13 +1330,13 @@ collisions, tags, finite doubles, null exclusion, recursion and aggregate bounds
 then returns canonical private values; it never exposes a map, `any`, interface
 escape hatch, or raw `Value`.
 
-Output ownership is exact. All 893 `exported_const` rows go to
+Output ownership is exact. All 898 `exported_const` rows go to
 `zz_generated_telemetry_ids.go`. Structured declarations and all GenAI family
 declarations go to the GenAI builder file; security families to the security file;
 operations families to the operations file. The reviewed row partition is
-893/282/212/386 respectively. Catalog, producer, and fixture files contain only
+898/282/212/386 respectively. Catalog, producer, and fixture files contain only
 private generated plans/tests and own no additional symbol-table row. Every one of
-the 1,773 declaration keys appears in exactly one `GoFilePlanIR`.
+the 1,778 declaration keys appears in exactly one `GoFilePlanIR`.
 Every key also has exactly one `GoDeclarationPlanIR`; an exported constant's
 literal is resolved by the compiler from its semantic source (including numeric
 phase codes and wire/member identities), so the IDs renderer never joins a symbol
@@ -1422,8 +1456,12 @@ transaction repeats containment and collision checks as defense in depth.
 ##### Generated kernel and seven-file acceptance
 
 Generated public family inputs expose only typed producer data. Required fields
-are plain values; recommended/optional fields use `Optional[T]`; conditional
-fields use an optional typed value plus the exact builder fact. Resource, scope,
+are plain values; recommended/optional fields use `Optional[T]`. A conditional
+field governed by `builder_fact` uses an optional typed value plus the exact
+builder fact. A conditional field governed by `boolean_attribute` instead exposes
+the source Boolean as a required typed field and the governed value as optional;
+the generated wrapper derives the private condition directly from that Boolean
+and exposes no independent condition selector that could disagree. Resource, scope,
 event, and link helpers bind private catalog contracts. Bucket, signal, event or
 family identity, family/registry version, span name, instrument metadata,
 field-class maps, mandatory/floor state, and derivation values remain private.

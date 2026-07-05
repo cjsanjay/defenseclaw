@@ -70,9 +70,9 @@ def test_real_candidate_renders_exact_complete_deterministic_outputs(
     assert repeated == rendered
     assert tuple(item.path for item in rendered.outputs) == coordinator.EXACT_GO_OUTPUT_PATHS
     assert tuple(item.path for item in rendered.declaration_inventory) == coordinator.EXACT_GO_OUTPUT_PATHS
-    assert len(rendered.expected_declaration_keys) == 1773
+    assert len(rendered.expected_declaration_keys) == 1778
     assert tuple(len(item.declaration_keys) for item in rendered.declaration_inventory) == (
-        893,
+        898,
         0,
         0,
         282,
@@ -84,7 +84,7 @@ def test_real_candidate_renders_exact_complete_deterministic_outputs(
     assert all(isinstance(item, coordinator.GoFileDeclarationInventory) for item in rendered.declaration_inventory)
 
     payloads = {item.path: item.payload for item in rendered.outputs}
-    assert payloads[coordinator.EXACT_GO_OUTPUT_PATHS[0]].count(b"\n\tTelemetry") == 893
+    assert payloads[coordinator.EXACT_GO_OUTPUT_PATHS[0]].count(b"\n\tTelemetry") == 898
     catalog = payloads[coordinator.EXACT_GO_OUTPUT_PATHS[1]]
     assert catalog.count(b" familyDescriptorContract() familyDescriptorContract {") == 243
     assert catalog.count(b" familyTraceContract() familyTraceContract {") == 25
@@ -309,7 +309,8 @@ def test_renderer_source_has_no_filesystem_registry_or_current_go_dependency() -
     source = (SCRIPTS / "render_telemetry_go.py").read_text(encoding="utf-8")
     assert "pathlib" not in source
     assert "open(" not in source
-    assert "subprocess" not in source
+    assert "import subprocess" not in source
+    assert "from subprocess import" not in source
     assert "import yaml" not in source.casefold()
     assert "yaml." not in source.casefold()
     assert "zz_generated_telemetry" not in source

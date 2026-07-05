@@ -286,7 +286,7 @@ def test_public_candidate_render_index_is_identity_bound_deterministic_and_recur
     assert first.registry_version == 1
     assert first.bucket_catalog_version == 1
     assert len(first.families) == 243
-    assert len(first.attributes) == 325
+    assert len(first.attributes) == 329
     assert len(first.domains) == 3
     assert sum(len(domain.producer_mappings) for domain in first.domains) == 202
     assert first.family_domains["span.model.chat"] == "genai"
@@ -375,10 +375,10 @@ def test_candidate_enrichment_is_complete_typed_and_recursively_immutable(
     assert index.materialized_view_sha256 == index.digest == view.typed_canonical_json_sha256
     assert index.candidate_render_index_sha256 != index.materialized_view_sha256
     assert len(index.candidate_render_index_sha256) == 64
-    assert len(index.enriched_fields) == 2728
+    assert len(index.enriched_fields) == 2807
     assert Counter(item.context for item in index.enriched_fields.values()) == {
-        "log": 1420,
-        "span": 850,
+        "log": 1427,
+        "span": 922,
         "metric": 346,
         "resource": 14,
         "scope": 2,
@@ -445,13 +445,13 @@ def test_candidate_enrichment_is_complete_typed_and_recursively_immutable(
     )
     assert all(row.family_id is not None or row.compatibility_only for row in index.expanded_producer_mappings)
 
-    assert len(index.go_declaration_values) == 893
+    assert len(index.go_declaration_values) == 898
     const_rows = tuple(row for row in index.go_symbol_table.rows if row.declaration_form == "exported_const")
     assert tuple((item.kind, item.source_id, item.symbol) for item in index.go_declaration_values) == tuple(
         (row.kind, row.source_id, row.symbol) for row in const_rows
     )
-    assert Counter(item.literal_kind for item in index.go_declaration_values) == {"string": 881, "integer": 12}
-    assert Counter(item.go_type for item in index.go_declaration_values) == {"string": 881, "int": 12}
+    assert Counter(item.literal_kind for item in index.go_declaration_values) == {"string": 886, "integer": 12}
+    assert Counter(item.go_type for item in index.go_declaration_values) == {"string": 886, "int": 12}
     assert (
         next(
             item for item in index.go_declaration_values if item.kind == "phase_code" and item.source_id == "session"
@@ -783,11 +783,11 @@ def test_candidate_index_consumes_reviewed_go_symbol_contract_immutably_and_pres
         "otel": "OTel",
     }
     assert index.go_symbol_overrides == ()
-    assert len(table.rows) == 1773
-    assert table.table_sha256 == "d897fab03a91351740e122682f96cc821a66f522250ba881e3a47b65afcc5fd7"
+    assert len(table.rows) == 1778
+    assert table.table_sha256 == "8488349afc135212c436225a154bd834afe9a2751d2b76e13e12d895405a8b32"
     assert table.kind_counts == renderer._GO_SYMBOL_KIND_COUNTS
     assert table.declaration_form_counts == {
-        "exported_const": 893,
+        "exported_const": 898,
         "exported_type": 459,
         "exported_function": 178,
         "family_builder_method": 243,
@@ -877,7 +877,7 @@ def test_candidate_index_rejects_forged_go_symbol_policy_rows_and_counts(
     elif mutation == "kind_count_float":
         table["kind_counts"]["semantic_profile"] = 1.0
     elif mutation == "declaration_count_float":
-        table["declaration_form_counts"]["exported_const"] = 893.0
+        table["declaration_form_counts"]["exported_const"] = 898.0
     elif mutation == "override":
         facts["fields"]["go_symbol_overrides"] = (
             {
@@ -2459,7 +2459,7 @@ def test_catalog_contains_portable_family_privacy_condition_lifecycle_and_compat
     catalog = _json(artifacts, "catalog.json")
     assert catalog["format"] == "defenseclaw-telemetry-catalog-v1"
     assert len(catalog["families"]) == 243
-    assert len(catalog["attributes"]) == 325
+    assert len(catalog["attributes"]) == 329
     assert {item["signal"] for item in catalog["families"]} == {"logs", "traces", "metrics"}
     assert {item["id"] for item in catalog["compatibility_manifests"]} == {
         "galileo-rich-v2",

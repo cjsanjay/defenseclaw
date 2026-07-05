@@ -56,6 +56,7 @@ examples:
         defenseclaw.telemetry.input.reported: false
         defenseclaw.telemetry.output.reported: false
         defenseclaw.telemetry.tokens.reported: false
+        defenseclaw.agent.reported_cost.present: false
         defenseclaw.content.input.state: not_reported
         defenseclaw.content.output.state: not_reported
       status:
@@ -98,6 +99,7 @@ examples:
       /attributes/defenseclaw.telemetry.input.reported: metadata
       /attributes/defenseclaw.telemetry.output.reported: metadata
       /attributes/defenseclaw.telemetry.tokens.reported: metadata
+      /attributes/defenseclaw.agent.reported_cost.present: metadata
       /attributes/defenseclaw.content.input.state: metadata
       /attributes/defenseclaw.content.output.state: metadata
       /status/code: metadata
@@ -167,6 +169,8 @@ examples:
         defenseclaw.agent.phase: planning
         defenseclaw.agent.phase.code: 2
         defenseclaw.agent.sequence: 4
+        defenseclaw.agent.reported_cost.present: true
+        defenseclaw.agent.reported_cost.usd: 0.0
       status:
         code: UNSET
       resource:
@@ -206,6 +210,8 @@ examples:
       /attributes/defenseclaw.agent.phase: metadata
       /attributes/defenseclaw.agent.phase.code: metadata
       /attributes/defenseclaw.agent.sequence: metadata
+      /attributes/defenseclaw.agent.reported_cost.present: metadata
+      /attributes/defenseclaw.agent.reported_cost.usd: metadata
       /status/code: metadata
       /resource/schema_url: metadata
       /resource/attributes/service.name: metadata
@@ -478,6 +484,7 @@ examples:
         defenseclaw.telemetry.input.reported: false
         defenseclaw.telemetry.output.reported: false
         defenseclaw.telemetry.tokens.reported: false
+        defenseclaw.agent.reported_cost.present: false
         defenseclaw.content.input.state: not_reported
         defenseclaw.content.output.state: not_reported
       status:
@@ -520,6 +527,7 @@ examples:
       /attributes/defenseclaw.telemetry.input.reported: metadata
       /attributes/defenseclaw.telemetry.output.reported: metadata
       /attributes/defenseclaw.telemetry.tokens.reported: metadata
+      /attributes/defenseclaw.agent.reported_cost.present: metadata
       /attributes/defenseclaw.content.input.state: metadata
       /attributes/defenseclaw.content.output.state: metadata
       /status/code: metadata
@@ -591,6 +599,8 @@ examples:
         defenseclaw.agent.phase: planning
         defenseclaw.agent.phase.code: 4
         defenseclaw.agent.sequence: 4
+        defenseclaw.agent.reported_cost.present: true
+        defenseclaw.agent.reported_cost.usd: 0.0
       status:
         code: UNSET
       resource:
@@ -630,6 +640,8 @@ examples:
       /attributes/defenseclaw.agent.phase: metadata
       /attributes/defenseclaw.agent.phase.code: metadata
       /attributes/defenseclaw.agent.sequence: metadata
+      /attributes/defenseclaw.agent.reported_cost.present: metadata
+      /attributes/defenseclaw.agent.reported_cost.usd: metadata
       /status/code: metadata
       /resource/schema_url: metadata
       /resource/attributes/service.name: metadata

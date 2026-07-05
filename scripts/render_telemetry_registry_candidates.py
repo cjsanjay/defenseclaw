@@ -376,13 +376,13 @@ _GO_SYMBOL_KIND_ORDER: Final = (
     "span_link_constructor",
 )
 _GO_SYMBOL_KIND_COUNTS: Final = {
-    "attribute": 325,
+    "attribute": 329,
     "family": 243,
     "log_event": 87,
     "span_event": 15,
     "link_relation": 4,
     "metric_instrument": 131,
-    "condition": 7,
+    "condition": 8,
     "condition_fact": 7,
     "phase": 12,
     "phase_code": 12,
@@ -400,12 +400,12 @@ _GO_SYMBOL_KIND_COUNTS: Final = {
     "span_link_constructor": 100,
 }
 _GO_SYMBOL_DECLARATION_COUNTS: Final = {
-    "exported_const": 893,
+    "exported_const": 898,
     "exported_type": 459,
     "exported_function": 178,
     "family_builder_method": 243,
 }
-_GO_SYMBOL_DOMAIN_COUNTS: Final = {"ids": 893, "genai": 282, "security": 212, "operations": 386}
+_GO_SYMBOL_DOMAIN_COUNTS: Final = {"ids": 898, "genai": 282, "security": 212, "operations": 386}
 _GO_SYMBOL_DECLARATION_BY_KIND: Final = {
     "attribute": "exported_const",
     "family": "exported_const",
@@ -430,9 +430,9 @@ _GO_SYMBOL_DECLARATION_BY_KIND: Final = {
     "span_link_input": "exported_type",
     "span_link_constructor": "exported_function",
 }
-_GO_SYMBOL_ROW_COUNT: Final = 1773
+_GO_SYMBOL_ROW_COUNT: Final = 1778
 _GO_SYMBOL_TABLE_DIGEST_DOMAIN: Final = b"DefenseClaw GoSymbolTableIR v1\x00"
-_GO_SYMBOL_TABLE_SHA256: Final = "d897fab03a91351740e122682f96cc821a66f522250ba881e3a47b65afcc5fd7"
+_GO_SYMBOL_TABLE_SHA256: Final = "8488349afc135212c436225a154bd834afe9a2751d2b76e13e12d895405a8b32"
 
 
 def _normalized_candidate_path(raw: str) -> str:
@@ -975,7 +975,7 @@ _CANONICAL_OTLP_FIELDS: Final = frozenset(
     }
 )
 _CONDITION_FIELDS: Final = frozenset({"id", "description", "enforcement", "false_requirement"})
-_CONDITION_ENFORCEMENT_FIELDS: Final = frozenset({"kind", "fact"})
+_CONDITION_ENFORCEMENT_FIELDS: Final = frozenset({"kind", "fact", "attribute"})
 _MANDATORY_RULE_CATALOG_FIELDS: Final = frozenset({"version", "rules"})
 _MANDATORY_RULE_FIELDS: Final = frozenset({"id", "enforcement"})
 _MANDATORY_RULE_ENFORCEMENT_FIELDS: Final = frozenset({"kind", "value", "fact"})
@@ -2810,7 +2810,10 @@ def _validate_go_symbol_sources(
             "ConditionEnforcementIR",
             _CONDITION_ENFORCEMENT_FIELDS,
         )
-        expected["condition_fact"].add(_string(enforcement["fact"], "Go symbol condition fact source"))
+        if enforcement["kind"] == "builder_fact":
+            expected["condition_fact"].add(_string(enforcement["fact"], "Go symbol condition fact source"))
+        elif enforcement["kind"] != "boolean_attribute" or enforcement["attribute"] is None:
+            raise CandidateRenderError("materialized Go symbol condition enforcement is invalid")
 
     raw_catalogs = fields["value_catalogs"]
     if not isinstance(raw_catalogs, tuple):
@@ -3387,7 +3390,7 @@ def _go_declaration_values(
             continue
         value = row.source_id.split("#", 1)[1] if row.kind == "structured_member" else row.source_id
         declarations.append(GoDeclarationValue(row.kind, row.source_id, row.symbol, "string", "string", value))
-    if len(declarations) != 893 or Counter(item.kind for item in declarations) != {
+    if len(declarations) != 898 or Counter(item.kind for item in declarations) != {
         kind: count
         for kind, count in _GO_SYMBOL_KIND_COUNTS.items()
         if _GO_SYMBOL_DECLARATION_BY_KIND[kind] == "exported_const"
@@ -3441,15 +3444,21 @@ def _condition_contracts(fields: Mapping[str, FrozenJSON]) -> Mapping[str, tuple
             "ConditionEnforcementIR",
             _CONDITION_ENFORCEMENT_FIELDS,
         )
-        fact = _string(enforcement["fact"], "condition fact")
+        kind = _string(enforcement["kind"], "condition enforcement kind")
+        if kind == "builder_fact":
+            binding = _string(enforcement["fact"], "condition fact")
+            if enforcement["attribute"] is not None:
+                raise CandidateRenderError("materialized builder-fact condition has an attribute source")
+        elif kind == "boolean_attribute":
+            binding = "attribute:" + _string(enforcement["attribute"], "condition Boolean attribute")
+            if enforcement["fact"] is not None:
+                raise CandidateRenderError("materialized Boolean-attribute condition has a builder fact")
+        else:
+            raise CandidateRenderError("materialized condition enforcement kind is invalid")
         false_requirement = _string(condition["false_requirement"], "condition false requirement")
-        if (
-            enforcement["kind"] != "builder_fact"
-            or false_requirement not in {"optional", "forbidden"}
-            or condition_id in conditions
-        ):
+        if false_requirement not in {"optional", "forbidden"} or condition_id in conditions:
             raise CandidateRenderError("materialized condition contract is invalid")
-        conditions[condition_id] = (fact, false_requirement)
+        conditions[condition_id] = (binding, false_requirement)
     return MappingProxyType(conditions)
 
 
@@ -3951,8 +3960,10 @@ def _enriched_field_descriptors(
                     origin=f"structured_types.{type_id}.canonical_json.{arm_id}",
                 )
                 order += 1
-    if len(descriptors) != 2728:
-        raise CandidateRenderError("enriched field descriptor inventory is incomplete")
+    if len(descriptors) != 2807:
+        raise CandidateRenderError(
+            f"enriched field descriptor inventory is incomplete: expected 2807, got {len(descriptors)}"
+        )
     return MappingProxyType({key: descriptors[key] for key in sorted(descriptors)})
 
 
@@ -5574,8 +5585,8 @@ def build_candidate_render_index(view: object) -> CandidateRenderIndex:
     )
     try:
         go_api_plan = compile_go_api_plan(provisional)
-    except GoAPIPlanError:
-        raise CandidateRenderError("candidate Go API plan is invalid") from None
+    except GoAPIPlanError as exc:
+        raise CandidateRenderError(f"candidate Go API plan is invalid: {exc}") from None
     candidate_digest = _candidate_render_index_digest(
         digest,
         enriched_fields=enriched_fields,

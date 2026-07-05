@@ -43,6 +43,10 @@ conditions:
     description: The authenticated administrative principal is known.
     enforcement: {kind: builder_fact, fact: admin_principal_known}
     false_requirement: forbidden
+  - id: agent-reported-cost-available-v1
+    description: The connector explicitly supplied a cumulative agent/session cost in USD; reported zero is available, while an absent value is not.
+    enforcement: {kind: boolean_attribute, attribute: defenseclaw.agent.reported_cost.present}
+    false_requirement: forbidden
 mandatory_rule_catalog:
   version: 1
   rules:

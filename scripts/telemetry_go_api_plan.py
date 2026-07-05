@@ -556,7 +556,7 @@ class GoAPIPlanIR:
 
 _GO_API_PLAN_DIGEST_DOMAIN: Final = b"DefenseClaw GoAPIPlanIR v1\x00"
 _GO_SYMBOL_TABLE_DIGEST_DOMAIN: Final = b"DefenseClaw GoSymbolTableIR v1\x00"
-_CANONICAL_SYMBOL_TABLE_SHA256: Final = "d897fab03a91351740e122682f96cc821a66f522250ba881e3a47b65afcc5fd7"
+_CANONICAL_SYMBOL_TABLE_SHA256: Final = "8488349afc135212c436225a154bd834afe9a2751d2b76e13e12d895405a8b32"
 _SHA256: Final = re.compile(r"^[0-9a-f]{64}$")
 _GO_IDENTIFIER: Final = re.compile(r"^[A-Za-z][A-Za-z0-9]*$")
 
@@ -644,14 +644,14 @@ GO_OUTPUT_FILES: Final = (
     _FIXTURES_FILE,
 )
 _EXPECTED_REVIEWED_PARTITION: Final = {
-    _IDS_FILE: 893,
+    _IDS_FILE: 898,
     _DOMAIN_FILES["genai"]: 282,
     _DOMAIN_FILES["security"]: 212,
     _DOMAIN_FILES["operations"]: 386,
 }
 _EXPECTED_CANONICAL_PUBLIC_VALUES: Final = {
-    "log": 1420,
-    "span": 700,
+    "log": 1427,
+    "span": 772,
     "resource": 325,
     "metric": 346,
 }
@@ -1496,6 +1496,11 @@ def _condition_fields(
             continue
         if condition_id is None:
             raise GoAPIPlanError(f"{owner}: conditional field has no condition ID")
+        if fact.startswith("attribute:"):
+            source_ref = fact.removeprefix("attribute:")
+            if not source_ref:
+                raise GoAPIPlanError(f"{owner}: Boolean-attribute condition has no source")
+            continue
         prior = seen.get(fact)
         if prior is not None:
             if prior != condition_id:
@@ -1616,6 +1621,11 @@ def _condition_bindings(
     selector_by_fact = {
         field.condition_binding: field.selector for field in owner_fields if field.conversion_op == "condition_fact"
     }
+    selector_by_attribute = {
+        field.semantic_source_id: field.selector
+        for field in owner_fields
+        if field.value_source == "input" and field.conversion_op != "condition_fact"
+    }
     condition_by_fact: dict[str, str] = {}
     for descriptor_id in descriptor_ids:
         field = fields[descriptor_id]
@@ -1625,10 +1635,20 @@ def _condition_bindings(
         if prior != field.condition_id:
             raise GoAPIPlanError("condition fact maps to multiple condition IDs")
     if set(selector_by_fact) != set(condition_by_fact):
-        raise GoAPIPlanError("condition selector coverage disagrees with enriched fields")
-    return tuple(
-        GoConditionBindingPlanIR(condition_by_fact[fact], fact, selector_by_fact[fact]) for fact in selector_by_fact
-    )
+        ordinary_facts = {fact for fact in condition_by_fact if not fact.startswith("attribute:")}
+        if set(selector_by_fact) != ordinary_facts:
+            raise GoAPIPlanError("condition selector coverage disagrees with enriched fields")
+    bindings: list[GoConditionBindingPlanIR] = []
+    for fact, condition_id in condition_by_fact.items():
+        if fact.startswith("attribute:"):
+            source_ref = fact.removeprefix("attribute:")
+            selector = selector_by_attribute.get(source_ref)
+            if selector is None:
+                raise GoAPIPlanError("Boolean-attribute condition source is absent from the public input")
+        else:
+            selector = selector_by_fact[fact]
+        bindings.append(GoConditionBindingPlanIR(condition_id, fact, selector))
+    return tuple(bindings)
 
 
 def _field_ids(raw: Any, name: str, path: str, fields: Mapping[str, _Field]) -> tuple[str, ...]:
@@ -3129,10 +3149,10 @@ def _file_assignments(
     expected = [(row.kind, row.source_id) for row in rows]
     if len(flattened) != len(set(flattened)) or set(flattened) != set(expected):
         raise GoAPIPlanError("Go declaration file assignment is incomplete or duplicated")
-    if len(rows) == 1773:
+    if len(rows) == 1778:
         counts = {path: len(assigned[path]) for path in _EXPECTED_REVIEWED_PARTITION}
         if counts != _EXPECTED_REVIEWED_PARTITION:
-            raise GoAPIPlanError("reviewed Go declaration partition is not 893/282/212/386")
+            raise GoAPIPlanError("reviewed Go declaration partition is not 898/282/212/386")
     return {path: tuple(assigned[path]) for path in GO_OUTPUT_FILES}
 
 
@@ -3442,7 +3462,9 @@ def _validate_condition_closure(
             if field.conversion_op == "condition_fact"
         )
         expected_input = tuple(
-            (fact_id, fact_id, f"condition:{input_plan.declaration_source_id}:{fact_id}") for _, fact_id in expected
+            (fact_id, fact_id, f"condition:{input_plan.declaration_source_id}:{fact_id}")
+            for _, fact_id in expected
+            if not fact_id.startswith("attribute:")
         )
         body = callable_by_key[callable_key].body
         if isinstance(body, (GoFamilyCallableBodyPlanIR, GoEventCallableBodyPlanIR, GoLinkCallableBodyPlanIR)):
@@ -3526,7 +3548,10 @@ def _validate_canonical_counts(
             observed["resource"] += len(resource)
             observed["span"] += len(value_fields) - len(resource)
     if observed != _EXPECTED_CANONICAL_PUBLIC_VALUES:
-        raise GoAPIPlanError("canonical public value occurrence counts disagree")
+        raise GoAPIPlanError(
+            "canonical public value occurrence counts disagree: "
+            f"expected {_EXPECTED_CANONICAL_PUBLIC_VALUES}, got {observed}"
+        )
     if len(producer_ids) != 8038:
         raise GoAPIPlanError("canonical expanded producer row count is not 8038")
 

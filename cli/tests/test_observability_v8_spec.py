@@ -253,13 +253,32 @@ def test_observability_v8_generated_builder_source_contract_is_normative() -> No
     assert "all forty-nine version-1 member identities" in schemas
     assert "apply only to those seventeen ordered" in schemas
     assert "exactly 121" in schemas
-    assert "complete symbol table contains 1,773 rows" in schemas
+    assert "complete symbol table contains 1,773 rows in the initial reviewed baseline" in schemas
     assert "The table order is the exact 22-kind order" in schemas
     assert "893\n`exported_const`, 459 `exported_type`, 178 `exported_function`, and 243" in schemas
     assert "`[[kind,source_id,symbol,declaration_form], ...]`" in schemas
     assert "`DefenseClaw GoSymbolTableIR v1` followed by one NUL byte" in schemas
     assert "`d897fab03a91351740e122682f96cc821a66f522250ba881e3a47b65afcc5fd7`" in schemas
     assert "ee63f1aed1d6940f7315bc309db828095511f6d977d8137c3406e477e3803232.json" in schemas
+    assert "current table therefore contains 1,778 rows" in schemas
+    assert "329 `attribute`, eight `condition`, and seven\n`condition_fact` rows" in schemas
+    assert "898 `exported_const`, 459 `exported_type`, 178 `exported_function`, and 243" in schemas
+    assert "`8488349afc135212c436225a154bd834afe9a2751d2b76e13e12d895405a8b32`" in schemas
+    assert "eb90d5b5056aa28293f8235d65dab0429faab03e7a0dc32247797a16f52a210a.json" in schemas
+    assert "prior and successor artifacts are immutable history" in schemas
+    for successor_id in (
+        "user.id",
+        "defenseclaw.tool.id",
+        "defenseclaw.agent.reported_cost.present",
+        "defenseclaw.agent.reported_cost.usd",
+        "agent-reported-cost-available-v1",
+    ):
+        assert f"`{successor_id}`" in schemas
+    assert "Every one of the five builders\nrequires the availability Boolean" in schemas
+    assert "`false` forbids the USD value, while `true`\nrequires a finite nonnegative value" in schemas
+    assert "`llm.cost.total` is not a default alias" in schemas
+    assert "explicitly Galileo-ineligible" in schemas
+    assert "rather than fabricate any of those values" in schemas
     assert "an acceptance oracle, not registry source or renderer authority" in schemas
     assert "`compile_registry` does not read it" in schemas
     assert "compiler-owned `declaration_form`" in schemas
@@ -281,6 +300,16 @@ def test_observability_v8_generated_builder_source_contract_is_normative() -> No
     assert "Override fixtures cover all 22 closed `kind` tokens" in verification
     assert "a prose reason never authorizes a rename" in verification
     assert "exact 1,773 rows and 893/459/178/243 declaration-form totals" in verification
+    assert "exactly 1,778 rows" in verification
+    assert "898/459/178/243 declaration-form totals" in verification
+    assert "329 attribute rows, eight condition\n  rows, seven condition-fact rows" in verification
+    assert "8488349afc135212c436225a154bd834afe9a2751d2b76e13e12d895405a8b32" in verification
+    assert "eb90d5b5056aa28293f8235d65dab0429faab03e7a0dc32247797a16f52a210a.json" in verification
+    assert "false-plus-value is `forbidden_field`" in verification
+    assert "true-without-value is `missing_required`" in verification
+    assert "reported zero succeeds" in verification
+    assert "no default `llm.cost.total`" in verification
+    assert "Galileo-ineligible without fabricated" in verification
     assert "test-only and is never read by `compile_registry` or a renderer" in verification
     for namespace in (
         "TelemetryAttribute<Name>",
@@ -321,7 +350,9 @@ def test_observability_v8_generated_builder_source_contract_is_normative() -> No
     assert "`EnrichedContainerDescriptor`" in schemas
     assert "`GoAPIPlanIR`" in schemas
     assert "`GoDeclarationPlanIR`" in schemas
-    assert "The 1,773-row symbol table is the package-declaration ABI" in schemas
+    assert "The current 1,778-row symbol table is the package-declaration ABI" in schemas
+    assert "governed by `boolean_attribute`" in schemas
+    assert "exposes no independent condition selector" in schemas
     assert "`service.version <- provenance.binary_version`" in schemas
     assert "`trace_scope.version <- provenance.binary_version`" in schemas
     assert "selected canonical family is the sole floor authority" in schemas

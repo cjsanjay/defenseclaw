@@ -3,7 +3,7 @@
     "artifact": "examples/manifest.json",
     "authority": "candidate-not-public-authority",
     "generator": "defenseclaw-telemetry-candidate-renderer-v1",
-    "materialized_view_sha256": "e96de75fdf61649b727a9b242b659543bdd48e417256e1d8557cd9d16982577b",
+    "materialized_view_sha256": "26121f75397999a4fd1818e84dde325ca55d673b090238cbc61e60f1b6f47380",
     "registry_version": 1
   },
   "cases": [
@@ -132,5 +132,5 @@
     "scope": "canonical-schema-comparison-only"
   },
   "format": "defenseclaw-normalized-examples-v1",
-  "materialized_view_sha256": "e96de75fdf61649b727a9b242b659543bdd48e417256e1d8557cd9d16982577b"
+  "materialized_view_sha256": "26121f75397999a4fd1818e84dde325ca55d673b090238cbc61e60f1b6f47380"
 }

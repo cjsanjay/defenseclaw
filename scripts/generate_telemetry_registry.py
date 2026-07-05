@@ -333,13 +333,13 @@ GO_SYMBOL_KIND_ORDER: Final = (
     "span_link_constructor",
 )
 EXPECTED_GO_SYMBOL_KIND_COUNTS: Final = {
-    "attribute": 325,
+    "attribute": 329,
     "family": 243,
     "log_event": 87,
     "span_event": 15,
     "link_relation": 4,
     "metric_instrument": 131,
-    "condition": 7,
+    "condition": 8,
     "condition_fact": 7,
     "phase": 12,
     "phase_code": 12,
@@ -357,16 +357,16 @@ EXPECTED_GO_SYMBOL_KIND_COUNTS: Final = {
     "span_link_constructor": 100,
 }
 EXPECTED_GO_SYMBOL_DECLARATION_COUNTS: Final = {
-    "exported_const": 893,
+    "exported_const": 898,
     "exported_type": 459,
     "exported_function": 178,
     "family_builder_method": 243,
 }
-EXPECTED_GO_SYMBOL_COUNT: Final = 1773
-EXPECTED_GO_SYMBOL_TABLE_SHA256: Final = "d897fab03a91351740e122682f96cc821a66f522250ba881e3a47b65afcc5fd7"
+EXPECTED_GO_SYMBOL_COUNT: Final = 1778
+EXPECTED_GO_SYMBOL_TABLE_SHA256: Final = "8488349afc135212c436225a154bd834afe9a2751d2b76e13e12d895405a8b32"
 GO_SYMBOL_TABLE_BASELINES: Final = Path("schemas/telemetry/v8/baselines/go-symbol-table")
 GO_SYMBOL_TABLE_BASELINE_FORMAT: Final = "defenseclaw-go-symbol-table-baseline-v1"
-EXPECTED_GO_SYMBOL_TABLE_BASELINE_SHA256: Final = "ee63f1aed1d6940f7315bc309db828095511f6d977d8137c3406e477e3803232"
+EXPECTED_GO_SYMBOL_TABLE_BASELINE_SHA256: Final = "eb90d5b5056aa28293f8235d65dab0429faab03e7a0dc32247797a16f52a210a"
 _GO_IDENTIFIER = re.compile(r"^[A-Za-z][A-Za-z0-9]*$")
 _GO_SOURCE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:/#-]{0,511}$")
 _GO_SOURCE_ID_PART = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,255}$")
@@ -1605,7 +1605,8 @@ class ResolvedAttributeUseIR:
 @dataclass(frozen=True, slots=True)
 class ConditionEnforcementIR:
     kind: str
-    fact: str
+    fact: str | None
+    attribute: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -4935,13 +4936,23 @@ def _parse_conditions(value: Any, path: str) -> tuple[ConditionIR, ...]:
         enforcement = item["enforcement"]
         if not isinstance(enforcement, dict):
             raise RegistryError(f"{item_path}.enforcement: expected mapping")
-        _exact_keys(enforcement, {"kind", "fact"}, set(), f"{item_path}.enforcement")
+        _exact_keys(enforcement, {"kind"}, {"fact", "attribute"}, f"{item_path}.enforcement")
         kind = _string(enforcement["kind"], f"{item_path}.enforcement.kind", pattern=_ID)
-        if kind != "builder_fact":
+        fact: str | None = None
+        attribute: str | None = None
+        if kind == "builder_fact":
+            if set(enforcement) != {"kind", "fact"}:
+                raise RegistryError(f"{item_path}.enforcement: builder_fact requires only fact")
+            fact = _string(enforcement["fact"], f"{item_path}.enforcement.fact", pattern=_ID)
+            if fact in seen_facts:
+                raise RegistryError(f"{path}: duplicate builder fact")
+            seen_facts.add(fact)
+        elif kind == "boolean_attribute":
+            if set(enforcement) != {"kind", "attribute"}:
+                raise RegistryError(f"{item_path}.enforcement: boolean_attribute requires only attribute")
+            attribute = _string(enforcement["attribute"], f"{item_path}.enforcement.attribute", pattern=_ID)
+        else:
             raise RegistryError(f"{item_path}.enforcement.kind: unsupported value")
-        fact = _string(enforcement["fact"], f"{item_path}.enforcement.fact", pattern=_ID)
-        if fact in seen_facts:
-            raise RegistryError(f"{path}: duplicate builder fact")
         false_requirement = _string(
             item["false_requirement"],
             f"{item_path}.false_requirement",
@@ -4953,12 +4964,11 @@ def _parse_conditions(value: Any, path: str) -> tuple[ConditionIR, ...]:
             ConditionIR(
                 condition_id,
                 description,
-                ConditionEnforcementIR(kind, fact),
+                ConditionEnforcementIR(kind, fact, attribute),
                 false_requirement,
             )
         )
         seen_ids.add(condition_id)
-        seen_facts.add(fact)
     return tuple(result)
 
 
@@ -7606,7 +7616,13 @@ def _parse_explicit_builder_context(
     condition_values = _builder_fact_values(condition_facts)
     use_contexts = _example_condition_use_contexts(signal, family, record, groups)
     referenced_conditions = {use.conditional for use, _ in use_contexts if use.conditional is not None}
-    expected_condition_facts = {conditions[condition_id].enforcement.fact for condition_id in referenced_conditions}
+    expected_condition_facts = {
+        conditions[condition_id].enforcement.fact
+        for condition_id in referenced_conditions
+        if conditions[condition_id].enforcement.kind == "builder_fact"
+    }
+    if None in expected_condition_facts:
+        raise RegistryError(f"{path}.condition_facts: builder-fact condition has no fact")
     if set(condition_values) != expected_condition_facts:
         missing = sorted(expected_condition_facts - set(condition_values))
         extra = sorted(set(condition_values) - expected_condition_facts)
@@ -7614,12 +7630,25 @@ def _parse_explicit_builder_context(
     for use, attributes in use_contexts:
         assert use.conditional is not None
         condition = conditions[use.conditional]
-        fact_value = condition_values[condition.enforcement.fact]
+        if condition.enforcement.kind == "builder_fact":
+            fact = condition.enforcement.fact
+            if fact is None:
+                raise RegistryError(f"{path}.condition_facts: builder-fact condition has no fact")
+            fact_value = condition_values[fact]
+            source_path = f"{path}.condition_facts.{fact}"
+        elif condition.enforcement.kind == "boolean_attribute":
+            source_ref = condition.enforcement.attribute
+            fact_value = attributes.get(source_ref) if source_ref is not None else None
+            if type(fact_value) is not bool:
+                raise RegistryError(f"{path}: condition {condition.id} requires boolean source attribute {source_ref}")
+            source_path = f"{path}.attributes.{source_ref}"
+        else:
+            raise RegistryError(f"{path}: condition {condition.id} has unsupported enforcement")
         present = use.ref in attributes
         if fact_value and not present:
-            raise RegistryError(f"{path}.condition_facts.{condition.enforcement.fact}: true requires {use.ref}")
+            raise RegistryError(f"{source_path}: true requires {use.ref}")
         if not fact_value and condition.false_requirement == "forbidden" and present:
-            raise RegistryError(f"{path}.condition_facts.{condition.enforcement.fact}: false forbids {use.ref}")
+            raise RegistryError(f"{source_path}: false forbids {use.ref}")
 
     mandatory_facts = _parse_builder_fact_map(value["mandatory_facts"], f"{path}.mandatory_facts")
     mandatory_values = _builder_fact_values(mandatory_facts)
@@ -8006,12 +8035,34 @@ def _parse_metric_settings(
 def _validate_condition_references(
     groups: Mapping[str, GroupIR],
     conditions: tuple[ConditionIR, ...],
+    local_attributes: Mapping[str, AttributeIR],
+    upstream_attributes: Mapping[str, tuple[str, SnapshotAttribute]],
 ) -> None:
-    known = {condition.id for condition in conditions}
+    known = {condition.id: condition for condition in conditions}
     for group in groups.values():
-        for use in group.attribute_uses:
-            if use.requirement_level == "conditional" and use.conditional not in known:
+        resolved = {use.ref: use for use in group.resolved_uses}
+        for use in group.resolved_uses:
+            if use.requirement_level != "conditional":
+                continue
+            condition = known.get(use.conditional or "")
+            if condition is None:
                 raise RegistryError(f"group {group.id}: unknown condition ID {use.conditional!r} for {use.ref}")
+            if condition.enforcement.kind != "boolean_attribute":
+                continue
+            source_ref = condition.enforcement.attribute
+            if source_ref is None:
+                raise RegistryError(f"condition {condition.id}: boolean attribute source is missing")
+            source_use = resolved.get(source_ref)
+            if source_use is None or source_use.requirement_level != "required" or source_use.conditional is not None:
+                raise RegistryError(
+                    f"group {group.id}: condition {condition.id} requires unconditional boolean source {source_ref}"
+                )
+            local = local_attributes.get(source_ref)
+            upstream = upstream_attributes.get(source_ref)
+            if (local is None or local.field_type != "boolean") and (
+                upstream is None or upstream[1].allowed_types != ("boolean",)
+            ):
+                raise RegistryError(f"condition {condition.id}: source {source_ref} must be a boolean attribute")
 
 
 def _validate_value_catalog_attributes(
@@ -8665,7 +8716,14 @@ def _build_go_symbol_table(
             "TelemetryCondition" + _go_public_name(policy, condition.id, f"Go condition {condition.id}"),
             "exported_const",
         )
-    condition_facts = sorted({condition.enforcement.fact for condition in conditions}, key=str.encode)
+    condition_facts = sorted(
+        {
+            condition.enforcement.fact
+            for condition in conditions
+            if condition.enforcement.kind == "builder_fact" and condition.enforcement.fact is not None
+        },
+        key=str.encode,
+    )
     for fact in condition_facts:
         add(
             "condition_fact",
@@ -9274,7 +9332,7 @@ def compile_registry(root: Path) -> RegistryIR:
             if group.id in group_owners:
                 raise RegistryError(f"group {group.id}: duplicate ownership")
             group_owners[group.id] = group
-    _validate_condition_references(group_owners, conditions)
+    _validate_condition_references(group_owners, conditions, local_attributes, upstream_attributes)
     _validate_structural_contract_bindings(
         structural_contract,
         schema_version,

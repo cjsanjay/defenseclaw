@@ -2272,7 +2272,11 @@ groups:
   introduced_in: telemetry-registry-v1
   extends:
   - span.core
+  - correlation.interaction
   - correlation.agent
+  - correlation.model.identity
+  - correlation.tool.identity
+  - cost.agent.reported
   - lifecycle.agent
   - error.core
   attributes: []
@@ -2308,6 +2312,16 @@ groups:
       disposition: preserved
       details:
         missing_data: never fabricate absent values
+    - source: galileo-rich-v2
+      disposition: explicitly_ineligible
+      details:
+        reason: Native lifecycle transitions do not honestly satisfy Galileo's Agent shape.
+        missing_required_semantics:
+        - gen_ai.operation.name=invoke_agent
+        - gen_ai.provider.name
+        - gen_ai.input.messages
+        - gen_ai.output.messages
+        fabrication: forbidden
 - id: span.asset.scan
   type: span
   brief: Canonical span.asset.scan bounded operation.

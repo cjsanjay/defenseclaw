@@ -3,7 +3,7 @@
     "artifact": "catalog.json",
     "authority": "candidate-not-public-authority",
     "generator": "defenseclaw-telemetry-candidate-renderer-v1",
-    "materialized_view_sha256": "e96de75fdf61649b727a9b242b659543bdd48e417256e1d8557cd9d16982577b",
+    "materialized_view_sha256": "26121f75397999a4fd1818e84dde325ca55d673b090238cbc61e60f1b6f47380",
     "registry_version": 1
   },
   "attributes": [
@@ -864,6 +864,62 @@
       "sensitivity": "safe",
       "stability": "stable",
       "type": "string"
+    },
+    {
+      "alias_of": null,
+      "brief": "Whether the connector explicitly supplied a cumulative agent/session cost in USD; false means unavailable and true includes a reported zero.",
+      "cardinality": "low",
+      "deprecated_in": null,
+      "examples": [
+        false,
+        true
+      ],
+      "field_class": "metadata",
+      "id": "defenseclaw.agent.reported_cost.present",
+      "introduced_in": "telemetry-registry-v1",
+      "normalization": {
+        "effective_constraints": {},
+        "id": "identity-v1",
+        "notes": "Exact availability state from the source payload; never inferred from model pricing or a default numeric value.",
+        "overrides": {}
+      },
+      "owner": "defenseclaw",
+      "projection_only": false,
+      "removed_in": null,
+      "sensitivity": "safe",
+      "stability": "stable",
+      "type": "boolean"
+    },
+    {
+      "alias_of": null,
+      "brief": "Latest connector-reported cumulative cost in USD for the current agent/session observation.",
+      "cardinality": "bounded",
+      "deprecated_in": null,
+      "examples": [
+        0.0,
+        1.25
+      ],
+      "field_class": "metadata",
+      "id": "defenseclaw.agent.reported_cost.usd",
+      "introduced_in": "telemetry-registry-v1",
+      "normalization": {
+        "effective_constraints": {
+          "max": 1.7976931348623157e+308,
+          "min": 0.0
+        },
+        "id": "numeric-range-v1",
+        "notes": "Finite nonnegative cumulative USD reported by the connector; DefenseClaw never estimates it.",
+        "overrides": {
+          "max": 1.7976931348623157e+308,
+          "min": 0.0
+        }
+      },
+      "owner": "defenseclaw",
+      "projection_only": false,
+      "removed_in": null,
+      "sensitivity": "internal",
+      "stability": "stable",
+      "type": "double"
     },
     {
       "alias_of": null,
@@ -7449,6 +7505,33 @@
     },
     {
       "alias_of": null,
+      "brief": "Stable connector-reported tool identity distinct from an individual tool call ID.",
+      "cardinality": "high",
+      "deprecated_in": null,
+      "examples": [
+        "tool-shell"
+      ],
+      "field_class": "identifier",
+      "id": "defenseclaw.tool.id",
+      "introduced_in": "telemetry-registry-v1",
+      "normalization": {
+        "effective_constraints": {
+          "max_utf8_bytes": 256,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$"
+        },
+        "id": "identifier-v1",
+        "notes": "Preserve only an explicitly reported bounded tool identity; never derive it from tool name or call ID.",
+        "overrides": {}
+      },
+      "owner": "defenseclaw",
+      "projection_only": false,
+      "removed_in": null,
+      "sensitivity": "internal",
+      "stability": "stable",
+      "type": "string"
+    },
+    {
+      "alias_of": null,
       "brief": "Result bytes",
       "cardinality": "bounded",
       "deprecated_in": null,
@@ -9714,6 +9797,33 @@
     },
     {
       "alias_of": null,
+      "brief": "Pinned upstream semantic-convention attribute.",
+      "cardinality": "high",
+      "deprecated_in": null,
+      "examples": [],
+      "field_class": "identifier",
+      "id": "user.id",
+      "introduced_in": null,
+      "normalization": {
+        "effective_constraints": {
+          "max_utf8_bytes": 256,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$"
+        },
+        "id": "identifier-v1",
+        "notes": "preserve only an explicitly reported bounded user-principal identifier; never derive it from a display name or administrative principal",
+        "overrides": {}
+      },
+      "owner": "otel",
+      "projection_only": false,
+      "removed_in": null,
+      "sensitivity": "sensitive",
+      "stability": "development",
+      "type": "string",
+      "upstream_shape": "attribute",
+      "upstream_source": "model/user/registry.yaml#/groups/0/attributes/3"
+    },
+    {
+      "alias_of": null,
       "brief": "Bounded compatibility metric label verdict.",
       "cardinality": "low",
       "deprecated_in": null,
@@ -9815,6 +9925,7 @@
     {
       "description": "The producer or adapter has a canonical connector identity.",
       "enforcement": {
+        "attribute": null,
         "fact": "connector_known",
         "kind": "builder_fact"
       },
@@ -9824,6 +9935,7 @@
     {
       "description": "The bounded operation has reached a terminal state.",
       "enforcement": {
+        "attribute": null,
         "fact": "operation_terminal",
         "kind": "builder_fact"
       },
@@ -9833,6 +9945,7 @@
     {
       "description": "The operation ended because of a technical failure.",
       "enforcement": {
+        "attribute": null,
         "fact": "technical_failure",
         "kind": "builder_fact"
       },
@@ -9842,6 +9955,7 @@
     {
       "description": "The guardrail producer supplied a terminal domain decision.",
       "enforcement": {
+        "attribute": null,
         "fact": "guardrail_terminal_decision_available",
         "kind": "builder_fact"
       },
@@ -9851,6 +9965,7 @@
     {
       "description": "The producer supplied or the adapter canonically normalized security severity.",
       "enforcement": {
+        "attribute": null,
         "fact": "security_severity_available",
         "kind": "builder_fact"
       },
@@ -9860,6 +9975,7 @@
     {
       "description": "The judge output could not be parsed into the registered result shape.",
       "enforcement": {
+        "attribute": null,
         "fact": "judge_output_parse_failed",
         "kind": "builder_fact"
       },
@@ -9869,11 +9985,22 @@
     {
       "description": "The authenticated administrative principal is known.",
       "enforcement": {
+        "attribute": null,
         "fact": "admin_principal_known",
         "kind": "builder_fact"
       },
       "false_requirement": "forbidden",
       "id": "admin-principal-known-v1"
+    },
+    {
+      "description": "The connector explicitly supplied a cumulative agent/session cost in USD; reported zero is available, while an absent value is not.",
+      "enforcement": {
+        "attribute": "defenseclaw.agent.reported_cost.present",
+        "fact": null,
+        "kind": "boolean_attribute"
+      },
+      "false_requirement": "forbidden",
+      "id": "agent-reported-cost-available-v1"
     }
   ],
   "conformance": {
@@ -16549,6 +16676,19 @@
           "type": "int64"
         },
         {
+          "cardinality": "high",
+          "condition": null,
+          "constraints": {},
+          "field_class": "identifier",
+          "owner": "defenseclaw",
+          "ref": "defenseclaw.tool.id",
+          "requirement_level": "recommended",
+          "role": "body_fields",
+          "sensitivity": "internal",
+          "stability": "stable",
+          "type": "string"
+        },
+        {
           "cardinality": "bounded",
           "condition": null,
           "constraints": {},
@@ -16765,6 +16905,7 @@
         "defenseclaw.tool.args_length",
         "defenseclaw.tool.dangerous",
         "defenseclaw.tool.exit_code",
+        "defenseclaw.tool.id",
         "defenseclaw.tool.output_length",
         "defenseclaw.tool.provider",
         "defenseclaw.tool.skill_key",
@@ -17158,6 +17299,19 @@
           "type": "int64"
         },
         {
+          "cardinality": "high",
+          "condition": null,
+          "constraints": {},
+          "field_class": "identifier",
+          "owner": "defenseclaw",
+          "ref": "defenseclaw.tool.id",
+          "requirement_level": "recommended",
+          "role": "body_fields",
+          "sensitivity": "internal",
+          "stability": "stable",
+          "type": "string"
+        },
+        {
           "cardinality": "bounded",
           "condition": null,
           "constraints": {},
@@ -17374,6 +17528,7 @@
         "defenseclaw.tool.args_length",
         "defenseclaw.tool.dangerous",
         "defenseclaw.tool.exit_code",
+        "defenseclaw.tool.id",
         "defenseclaw.tool.output_length",
         "defenseclaw.tool.provider",
         "defenseclaw.tool.skill_key",
@@ -30852,6 +31007,19 @@
           "type": "int64"
         },
         {
+          "cardinality": "high",
+          "condition": null,
+          "constraints": {},
+          "field_class": "identifier",
+          "owner": "defenseclaw",
+          "ref": "defenseclaw.tool.id",
+          "requirement_level": "recommended",
+          "role": "body_fields",
+          "sensitivity": "internal",
+          "stability": "stable",
+          "type": "string"
+        },
+        {
           "cardinality": "bounded",
           "condition": null,
           "constraints": {},
@@ -31068,6 +31236,7 @@
         "defenseclaw.tool.args_length",
         "defenseclaw.tool.dangerous",
         "defenseclaw.tool.exit_code",
+        "defenseclaw.tool.id",
         "defenseclaw.tool.output_length",
         "defenseclaw.tool.provider",
         "defenseclaw.tool.skill_key",
@@ -31453,6 +31622,19 @@
           "type": "int64"
         },
         {
+          "cardinality": "high",
+          "condition": null,
+          "constraints": {},
+          "field_class": "identifier",
+          "owner": "defenseclaw",
+          "ref": "defenseclaw.tool.id",
+          "requirement_level": "recommended",
+          "role": "body_fields",
+          "sensitivity": "internal",
+          "stability": "stable",
+          "type": "string"
+        },
+        {
           "cardinality": "bounded",
           "condition": null,
           "constraints": {},
@@ -31669,6 +31851,7 @@
         "defenseclaw.tool.args_length",
         "defenseclaw.tool.dangerous",
         "defenseclaw.tool.exit_code",
+        "defenseclaw.tool.id",
         "defenseclaw.tool.output_length",
         "defenseclaw.tool.provider",
         "defenseclaw.tool.skill_key",
@@ -32054,6 +32237,19 @@
           "type": "int64"
         },
         {
+          "cardinality": "high",
+          "condition": null,
+          "constraints": {},
+          "field_class": "identifier",
+          "owner": "defenseclaw",
+          "ref": "defenseclaw.tool.id",
+          "requirement_level": "recommended",
+          "role": "body_fields",
+          "sensitivity": "internal",
+          "stability": "stable",
+          "type": "string"
+        },
+        {
           "cardinality": "bounded",
           "condition": null,
           "constraints": {},
@@ -32270,6 +32466,7 @@
         "defenseclaw.tool.args_length",
         "defenseclaw.tool.dangerous",
         "defenseclaw.tool.exit_code",
+        "defenseclaw.tool.id",
         "defenseclaw.tool.output_length",
         "defenseclaw.tool.provider",
         "defenseclaw.tool.skill_key",
@@ -32658,6 +32855,19 @@
           "type": "int64"
         },
         {
+          "cardinality": "high",
+          "condition": null,
+          "constraints": {},
+          "field_class": "identifier",
+          "owner": "defenseclaw",
+          "ref": "defenseclaw.tool.id",
+          "requirement_level": "recommended",
+          "role": "body_fields",
+          "sensitivity": "internal",
+          "stability": "stable",
+          "type": "string"
+        },
+        {
           "cardinality": "bounded",
           "condition": null,
           "constraints": {},
@@ -32874,6 +33084,7 @@
         "defenseclaw.tool.args_length",
         "defenseclaw.tool.dangerous",
         "defenseclaw.tool.exit_code",
+        "defenseclaw.tool.id",
         "defenseclaw.tool.output_length",
         "defenseclaw.tool.provider",
         "defenseclaw.tool.skill_key",
@@ -33259,6 +33470,19 @@
           "type": "int64"
         },
         {
+          "cardinality": "high",
+          "condition": null,
+          "constraints": {},
+          "field_class": "identifier",
+          "owner": "defenseclaw",
+          "ref": "defenseclaw.tool.id",
+          "requirement_level": "recommended",
+          "role": "body_fields",
+          "sensitivity": "internal",
+          "stability": "stable",
+          "type": "string"
+        },
+        {
           "cardinality": "bounded",
           "condition": null,
           "constraints": {},
@@ -33475,6 +33699,7 @@
         "defenseclaw.tool.args_length",
         "defenseclaw.tool.dangerous",
         "defenseclaw.tool.exit_code",
+        "defenseclaw.tool.id",
         "defenseclaw.tool.output_length",
         "defenseclaw.tool.provider",
         "defenseclaw.tool.skill_key",
@@ -44300,6 +44525,7 @@
         }
       ],
       "conditional_attributes": [
+        "defenseclaw.agent.reported_cost.usd",
         "defenseclaw.connector.source",
         "defenseclaw.outcome",
         "error.type"
@@ -44436,6 +44662,32 @@
           "sensitivity": "safe",
           "stability": "stable",
           "type": "string"
+        },
+        {
+          "cardinality": "low",
+          "condition": null,
+          "constraints": {},
+          "field_class": "metadata",
+          "owner": "defenseclaw",
+          "ref": "defenseclaw.agent.reported_cost.present",
+          "requirement_level": "required",
+          "role": "attributes",
+          "sensitivity": "safe",
+          "stability": "stable",
+          "type": "boolean"
+        },
+        {
+          "cardinality": "bounded",
+          "condition": "agent-reported-cost-available-v1",
+          "constraints": {},
+          "field_class": "metadata",
+          "owner": "defenseclaw",
+          "ref": "defenseclaw.agent.reported_cost.usd",
+          "requirement_level": "conditional",
+          "role": "attributes",
+          "sensitivity": "internal",
+          "stability": "stable",
+          "type": "double"
         },
         {
           "cardinality": "high",
@@ -44620,6 +44872,45 @@
           "type": "string"
         },
         {
+          "cardinality": "low",
+          "condition": null,
+          "constraints": {},
+          "field_class": "identifier",
+          "owner": "defenseclaw",
+          "ref": "defenseclaw.destination.app",
+          "requirement_level": "recommended",
+          "role": "attributes",
+          "sensitivity": "internal",
+          "stability": "stable",
+          "type": "string"
+        },
+        {
+          "cardinality": "high",
+          "condition": null,
+          "constraints": {},
+          "field_class": "identifier",
+          "owner": "defenseclaw",
+          "ref": "defenseclaw.model.request.id",
+          "requirement_level": "recommended",
+          "role": "attributes",
+          "sensitivity": "internal",
+          "stability": "stable",
+          "type": "string"
+        },
+        {
+          "cardinality": "high",
+          "condition": null,
+          "constraints": {},
+          "field_class": "identifier",
+          "owner": "defenseclaw",
+          "ref": "defenseclaw.model.response.id",
+          "requirement_level": "recommended",
+          "role": "attributes",
+          "sensitivity": "internal",
+          "stability": "stable",
+          "type": "string"
+        },
+        {
           "cardinality": "high",
           "condition": null,
           "constraints": {},
@@ -44642,6 +44933,32 @@
           "requirement_level": "conditional",
           "role": "attributes",
           "sensitivity": "safe",
+          "stability": "stable",
+          "type": "string"
+        },
+        {
+          "cardinality": "bounded",
+          "condition": null,
+          "constraints": {},
+          "field_class": "identifier",
+          "owner": "defenseclaw",
+          "ref": "defenseclaw.policy.id",
+          "requirement_level": "recommended",
+          "role": "attributes",
+          "sensitivity": "internal",
+          "stability": "stable",
+          "type": "string"
+        },
+        {
+          "cardinality": "bounded",
+          "condition": null,
+          "constraints": {},
+          "field_class": "identifier",
+          "owner": "defenseclaw",
+          "ref": "defenseclaw.policy.version",
+          "requirement_level": "recommended",
+          "role": "attributes",
+          "sensitivity": "internal",
           "stability": "stable",
           "type": "string"
         },
@@ -44794,10 +45111,62 @@
           "constraints": {},
           "field_class": "identifier",
           "owner": "defenseclaw",
+          "ref": "defenseclaw.tool.id",
+          "requirement_level": "recommended",
+          "role": "attributes",
+          "sensitivity": "internal",
+          "stability": "stable",
+          "type": "string"
+        },
+        {
+          "cardinality": "low",
+          "condition": null,
+          "constraints": {},
+          "field_class": "metadata",
+          "owner": "defenseclaw",
+          "ref": "defenseclaw.tool.provider",
+          "requirement_level": "recommended",
+          "role": "attributes",
+          "sensitivity": "safe",
+          "stability": "stable",
+          "type": "string"
+        },
+        {
+          "cardinality": "bounded",
+          "condition": null,
+          "constraints": {},
+          "field_class": "identifier",
+          "owner": "defenseclaw",
+          "ref": "defenseclaw.tool.skill_key",
+          "requirement_level": "recommended",
+          "role": "attributes",
+          "sensitivity": "internal",
+          "stability": "stable",
+          "type": "string"
+        },
+        {
+          "cardinality": "high",
+          "condition": null,
+          "constraints": {},
+          "field_class": "identifier",
+          "owner": "defenseclaw",
           "ref": "defenseclaw.turn.id",
           "requirement_level": "recommended",
           "role": "attributes",
           "sensitivity": "internal",
+          "stability": "stable",
+          "type": "string"
+        },
+        {
+          "cardinality": "high",
+          "condition": null,
+          "constraints": {},
+          "field_class": "identifier",
+          "owner": "defenseclaw",
+          "ref": "defenseclaw.user.name",
+          "requirement_level": "recommended",
+          "role": "attributes",
+          "sensitivity": "sensitive",
           "stability": "stable",
           "type": "string"
         },
@@ -44904,6 +45273,97 @@
           "sensitivity": "safe",
           "stability": "development",
           "type": "string"
+        },
+        {
+          "cardinality": "bounded",
+          "condition": null,
+          "constraints": {},
+          "field_class": "identifier",
+          "owner": "otel_genai",
+          "ref": "gen_ai.request.model",
+          "requirement_level": "recommended",
+          "role": "attributes",
+          "sensitivity": "internal",
+          "stability": "development",
+          "type": "string"
+        },
+        {
+          "cardinality": "high",
+          "condition": null,
+          "constraints": {},
+          "field_class": "identifier",
+          "owner": "otel_genai",
+          "ref": "gen_ai.response.id",
+          "requirement_level": "recommended",
+          "role": "attributes",
+          "sensitivity": "sensitive",
+          "stability": "development",
+          "type": "string"
+        },
+        {
+          "cardinality": "bounded",
+          "condition": null,
+          "constraints": {},
+          "field_class": "identifier",
+          "owner": "otel_genai",
+          "ref": "gen_ai.response.model",
+          "requirement_level": "recommended",
+          "role": "attributes",
+          "sensitivity": "internal",
+          "stability": "development",
+          "type": "string"
+        },
+        {
+          "cardinality": "high",
+          "condition": null,
+          "constraints": {},
+          "field_class": "identifier",
+          "owner": "otel_genai",
+          "ref": "gen_ai.tool.call.id",
+          "requirement_level": "recommended",
+          "role": "attributes",
+          "sensitivity": "sensitive",
+          "stability": "development",
+          "type": "string"
+        },
+        {
+          "cardinality": "bounded",
+          "condition": null,
+          "constraints": {},
+          "field_class": "identifier",
+          "owner": "otel_genai",
+          "ref": "gen_ai.tool.name",
+          "requirement_level": "recommended",
+          "role": "attributes",
+          "sensitivity": "internal",
+          "stability": "development",
+          "type": "string"
+        },
+        {
+          "cardinality": "low",
+          "condition": null,
+          "constraints": {},
+          "field_class": "metadata",
+          "owner": "otel_genai",
+          "ref": "gen_ai.tool.type",
+          "requirement_level": "recommended",
+          "role": "attributes",
+          "sensitivity": "safe",
+          "stability": "development",
+          "type": "string"
+        },
+        {
+          "cardinality": "high",
+          "condition": null,
+          "constraints": {},
+          "field_class": "identifier",
+          "owner": "otel",
+          "ref": "user.id",
+          "requirement_level": "recommended",
+          "role": "attributes",
+          "sensitivity": "sensitive",
+          "stability": "development",
+          "type": "string"
         }
       ],
       "id": "span.agent.invoke",
@@ -44934,21 +45394,37 @@
         "defenseclaw.content.output.hash",
         "defenseclaw.content.output.mime_type",
         "defenseclaw.content.output.original_bytes",
+        "defenseclaw.destination.app",
+        "defenseclaw.model.request.id",
+        "defenseclaw.model.response.id",
         "defenseclaw.operation.id",
+        "defenseclaw.policy.id",
+        "defenseclaw.policy.version",
         "defenseclaw.request.id",
         "defenseclaw.run.id",
         "defenseclaw.session.parent.id",
         "defenseclaw.session.resumed",
         "defenseclaw.session.root.id",
         "defenseclaw.session.source",
+        "defenseclaw.tool.id",
+        "defenseclaw.tool.provider",
+        "defenseclaw.tool.skill_key",
         "defenseclaw.turn.id",
+        "defenseclaw.user.name",
         "gen_ai.agent.id",
         "gen_ai.agent.name",
         "gen_ai.conversation.id",
         "gen_ai.input.messages",
         "gen_ai.operation.name",
         "gen_ai.output.messages",
-        "gen_ai.provider.name"
+        "gen_ai.provider.name",
+        "gen_ai.request.model",
+        "gen_ai.response.id",
+        "gen_ai.response.model",
+        "gen_ai.tool.call.id",
+        "gen_ai.tool.name",
+        "gen_ai.tool.type",
+        "user.id"
       ],
       "outcome": {
         "allowed": [
@@ -44965,6 +45441,7 @@
         "requirement": "required"
       },
       "required_attributes": [
+        "defenseclaw.agent.reported_cost.present",
         "defenseclaw.agent.type",
         "defenseclaw.bucket",
         "defenseclaw.config.generation",
@@ -45009,6 +45486,7 @@
         }
       ],
       "conditional_attributes": [
+        "defenseclaw.agent.reported_cost.usd",
         "defenseclaw.connector.source",
         "defenseclaw.outcome",
         "error.type"
@@ -45147,6 +45625,32 @@
           "type": "string"
         },
         {
+          "cardinality": "low",
+          "condition": null,
+          "constraints": {},
+          "field_class": "metadata",
+          "owner": "defenseclaw",
+          "ref": "defenseclaw.agent.reported_cost.present",
+          "requirement_level": "required",
+          "role": "attributes",
+          "sensitivity": "safe",
+          "stability": "stable",
+          "type": "boolean"
+        },
+        {
+          "cardinality": "bounded",
+          "condition": "agent-reported-cost-available-v1",
+          "constraints": {},
+          "field_class": "metadata",
+          "owner": "defenseclaw",
+          "ref": "defenseclaw.agent.reported_cost.usd",
+          "requirement_level": "conditional",
+          "role": "attributes",
+          "sensitivity": "internal",
+          "stability": "stable",
+          "type": "double"
+        },
+        {
           "cardinality": "high",
           "condition": null,
           "constraints": {},
@@ -45225,6 +45729,45 @@
           "type": "string"
         },
         {
+          "cardinality": "low",
+          "condition": null,
+          "constraints": {},
+          "field_class": "identifier",
+          "owner": "defenseclaw",
+          "ref": "defenseclaw.destination.app",
+          "requirement_level": "recommended",
+          "role": "attributes",
+          "sensitivity": "internal",
+          "stability": "stable",
+          "type": "string"
+        },
+        {
+          "cardinality": "high",
+          "condition": null,
+          "constraints": {},
+          "field_class": "identifier",
+          "owner": "defenseclaw",
+          "ref": "defenseclaw.model.request.id",
+          "requirement_level": "recommended",
+          "role": "attributes",
+          "sensitivity": "internal",
+          "stability": "stable",
+          "type": "string"
+        },
+        {
+          "cardinality": "high",
+          "condition": null,
+          "constraints": {},
+          "field_class": "identifier",
+          "owner": "defenseclaw",
+          "ref": "defenseclaw.model.response.id",
+          "requirement_level": "recommended",
+          "role": "attributes",
+          "sensitivity": "internal",
+          "stability": "stable",
+          "type": "string"
+        },
+        {
           "cardinality": "high",
           "condition": null,
           "constraints": {},
@@ -45247,6 +45790,45 @@
           "requirement_level": "conditional",
           "role": "attributes",
           "sensitivity": "safe",
+          "stability": "stable",
+          "type": "string"
+        },
+        {
+          "cardinality": "bounded",
+          "condition": null,
+          "constraints": {},
+          "field_class": "identifier",
+          "owner": "defenseclaw",
+          "ref": "defenseclaw.policy.id",
+          "requirement_level": "recommended",
+          "role": "attributes",
+          "sensitivity": "internal",
+          "stability": "stable",
+          "type": "string"
+        },
+        {
+          "cardinality": "bounded",
+          "condition": null,
+          "constraints": {},
+          "field_class": "identifier",
+          "owner": "defenseclaw",
+          "ref": "defenseclaw.policy.version",
+          "requirement_level": "recommended",
+          "role": "attributes",
+          "sensitivity": "internal",
+          "stability": "stable",
+          "type": "string"
+        },
+        {
+          "cardinality": "high",
+          "condition": null,
+          "constraints": {},
+          "field_class": "identifier",
+          "owner": "defenseclaw",
+          "ref": "defenseclaw.request.id",
+          "requirement_level": "recommended",
+          "role": "attributes",
+          "sensitivity": "internal",
           "stability": "stable",
           "type": "string"
         },
@@ -45355,6 +45937,71 @@
           "type": "uint32"
         },
         {
+          "cardinality": "high",
+          "condition": null,
+          "constraints": {},
+          "field_class": "identifier",
+          "owner": "defenseclaw",
+          "ref": "defenseclaw.tool.id",
+          "requirement_level": "recommended",
+          "role": "attributes",
+          "sensitivity": "internal",
+          "stability": "stable",
+          "type": "string"
+        },
+        {
+          "cardinality": "low",
+          "condition": null,
+          "constraints": {},
+          "field_class": "metadata",
+          "owner": "defenseclaw",
+          "ref": "defenseclaw.tool.provider",
+          "requirement_level": "recommended",
+          "role": "attributes",
+          "sensitivity": "safe",
+          "stability": "stable",
+          "type": "string"
+        },
+        {
+          "cardinality": "bounded",
+          "condition": null,
+          "constraints": {},
+          "field_class": "identifier",
+          "owner": "defenseclaw",
+          "ref": "defenseclaw.tool.skill_key",
+          "requirement_level": "recommended",
+          "role": "attributes",
+          "sensitivity": "internal",
+          "stability": "stable",
+          "type": "string"
+        },
+        {
+          "cardinality": "high",
+          "condition": null,
+          "constraints": {},
+          "field_class": "identifier",
+          "owner": "defenseclaw",
+          "ref": "defenseclaw.turn.id",
+          "requirement_level": "recommended",
+          "role": "attributes",
+          "sensitivity": "internal",
+          "stability": "stable",
+          "type": "string"
+        },
+        {
+          "cardinality": "high",
+          "condition": null,
+          "constraints": {},
+          "field_class": "identifier",
+          "owner": "defenseclaw",
+          "ref": "defenseclaw.user.name",
+          "requirement_level": "recommended",
+          "role": "attributes",
+          "sensitivity": "sensitive",
+          "stability": "stable",
+          "type": "string"
+        },
+        {
           "cardinality": "bounded",
           "condition": "technical-failure-v1",
           "constraints": {},
@@ -45405,6 +46052,110 @@
           "sensitivity": "sensitive",
           "stability": "development",
           "type": "string"
+        },
+        {
+          "cardinality": "low",
+          "condition": null,
+          "constraints": {},
+          "field_class": "metadata",
+          "owner": "otel_genai",
+          "ref": "gen_ai.provider.name",
+          "requirement_level": "recommended",
+          "role": "attributes",
+          "sensitivity": "safe",
+          "stability": "development",
+          "type": "string"
+        },
+        {
+          "cardinality": "bounded",
+          "condition": null,
+          "constraints": {},
+          "field_class": "identifier",
+          "owner": "otel_genai",
+          "ref": "gen_ai.request.model",
+          "requirement_level": "recommended",
+          "role": "attributes",
+          "sensitivity": "internal",
+          "stability": "development",
+          "type": "string"
+        },
+        {
+          "cardinality": "high",
+          "condition": null,
+          "constraints": {},
+          "field_class": "identifier",
+          "owner": "otel_genai",
+          "ref": "gen_ai.response.id",
+          "requirement_level": "recommended",
+          "role": "attributes",
+          "sensitivity": "sensitive",
+          "stability": "development",
+          "type": "string"
+        },
+        {
+          "cardinality": "bounded",
+          "condition": null,
+          "constraints": {},
+          "field_class": "identifier",
+          "owner": "otel_genai",
+          "ref": "gen_ai.response.model",
+          "requirement_level": "recommended",
+          "role": "attributes",
+          "sensitivity": "internal",
+          "stability": "development",
+          "type": "string"
+        },
+        {
+          "cardinality": "high",
+          "condition": null,
+          "constraints": {},
+          "field_class": "identifier",
+          "owner": "otel_genai",
+          "ref": "gen_ai.tool.call.id",
+          "requirement_level": "recommended",
+          "role": "attributes",
+          "sensitivity": "sensitive",
+          "stability": "development",
+          "type": "string"
+        },
+        {
+          "cardinality": "bounded",
+          "condition": null,
+          "constraints": {},
+          "field_class": "identifier",
+          "owner": "otel_genai",
+          "ref": "gen_ai.tool.name",
+          "requirement_level": "recommended",
+          "role": "attributes",
+          "sensitivity": "internal",
+          "stability": "development",
+          "type": "string"
+        },
+        {
+          "cardinality": "low",
+          "condition": null,
+          "constraints": {},
+          "field_class": "metadata",
+          "owner": "otel_genai",
+          "ref": "gen_ai.tool.type",
+          "requirement_level": "recommended",
+          "role": "attributes",
+          "sensitivity": "safe",
+          "stability": "development",
+          "type": "string"
+        },
+        {
+          "cardinality": "high",
+          "condition": null,
+          "constraints": {},
+          "field_class": "identifier",
+          "owner": "otel",
+          "ref": "user.id",
+          "requirement_level": "recommended",
+          "role": "attributes",
+          "sensitivity": "sensitive",
+          "stability": "development",
+          "type": "string"
         }
       ],
       "id": "span.agent.transition",
@@ -45424,12 +46175,31 @@
         "defenseclaw.agent.phase.previous",
         "defenseclaw.agent.sequence",
         "defenseclaw.agent.type",
+        "defenseclaw.destination.app",
+        "defenseclaw.model.request.id",
+        "defenseclaw.model.response.id",
         "defenseclaw.operation.id",
+        "defenseclaw.policy.id",
+        "defenseclaw.policy.version",
+        "defenseclaw.request.id",
         "defenseclaw.run.id",
         "defenseclaw.session.parent.id",
         "defenseclaw.session.resumed",
         "defenseclaw.session.source",
-        "gen_ai.agent.name"
+        "defenseclaw.tool.id",
+        "defenseclaw.tool.provider",
+        "defenseclaw.tool.skill_key",
+        "defenseclaw.turn.id",
+        "defenseclaw.user.name",
+        "gen_ai.agent.name",
+        "gen_ai.provider.name",
+        "gen_ai.request.model",
+        "gen_ai.response.id",
+        "gen_ai.response.model",
+        "gen_ai.tool.call.id",
+        "gen_ai.tool.name",
+        "gen_ai.tool.type",
+        "user.id"
       ],
       "outcome": {
         "allowed": [
@@ -45447,6 +46217,7 @@
         "defenseclaw.agent.lifecycle.event",
         "defenseclaw.agent.lifecycle.id",
         "defenseclaw.agent.lifecycle.state",
+        "defenseclaw.agent.reported_cost.present",
         "defenseclaw.agent.root.id",
         "defenseclaw.bucket",
         "defenseclaw.config.generation",
@@ -52123,6 +52894,7 @@
         }
       ],
       "conditional_attributes": [
+        "defenseclaw.agent.reported_cost.usd",
         "defenseclaw.connector.source",
         "defenseclaw.outcome",
         "error.type"
@@ -52259,6 +53031,32 @@
           "sensitivity": "safe",
           "stability": "stable",
           "type": "string"
+        },
+        {
+          "cardinality": "low",
+          "condition": null,
+          "constraints": {},
+          "field_class": "metadata",
+          "owner": "defenseclaw",
+          "ref": "defenseclaw.agent.reported_cost.present",
+          "requirement_level": "required",
+          "role": "attributes",
+          "sensitivity": "safe",
+          "stability": "stable",
+          "type": "boolean"
+        },
+        {
+          "cardinality": "bounded",
+          "condition": "agent-reported-cost-available-v1",
+          "constraints": {},
+          "field_class": "metadata",
+          "owner": "defenseclaw",
+          "ref": "defenseclaw.agent.reported_cost.usd",
+          "requirement_level": "conditional",
+          "role": "attributes",
+          "sensitivity": "internal",
+          "stability": "stable",
+          "type": "double"
         },
         {
           "cardinality": "high",
@@ -52443,6 +53241,19 @@
           "type": "string"
         },
         {
+          "cardinality": "low",
+          "condition": null,
+          "constraints": {},
+          "field_class": "identifier",
+          "owner": "defenseclaw",
+          "ref": "defenseclaw.destination.app",
+          "requirement_level": "recommended",
+          "role": "attributes",
+          "sensitivity": "internal",
+          "stability": "stable",
+          "type": "string"
+        },
+        {
           "cardinality": "bounded",
           "condition": null,
           "constraints": {},
@@ -52612,6 +53423,32 @@
           "type": "string"
         },
         {
+          "cardinality": "bounded",
+          "condition": null,
+          "constraints": {},
+          "field_class": "identifier",
+          "owner": "defenseclaw",
+          "ref": "defenseclaw.policy.id",
+          "requirement_level": "recommended",
+          "role": "attributes",
+          "sensitivity": "internal",
+          "stability": "stable",
+          "type": "string"
+        },
+        {
+          "cardinality": "bounded",
+          "condition": null,
+          "constraints": {},
+          "field_class": "identifier",
+          "owner": "defenseclaw",
+          "ref": "defenseclaw.policy.version",
+          "requirement_level": "recommended",
+          "role": "attributes",
+          "sensitivity": "internal",
+          "stability": "stable",
+          "type": "string"
+        },
+        {
           "cardinality": "high",
           "condition": null,
           "constraints": {},
@@ -52777,6 +53614,19 @@
           "requirement_level": "recommended",
           "role": "attributes",
           "sensitivity": "internal",
+          "stability": "stable",
+          "type": "string"
+        },
+        {
+          "cardinality": "high",
+          "condition": null,
+          "constraints": {},
+          "field_class": "identifier",
+          "owner": "defenseclaw",
+          "ref": "defenseclaw.user.name",
+          "requirement_level": "recommended",
+          "role": "attributes",
+          "sensitivity": "sensitive",
           "stability": "stable",
           "type": "string"
         },
@@ -53000,6 +53850,19 @@
           "sensitivity": "safe",
           "stability": "development",
           "type": "int64"
+        },
+        {
+          "cardinality": "high",
+          "condition": null,
+          "constraints": {},
+          "field_class": "identifier",
+          "owner": "otel",
+          "ref": "user.id",
+          "requirement_level": "recommended",
+          "role": "attributes",
+          "sensitivity": "sensitive",
+          "stability": "development",
+          "type": "string"
         }
       ],
       "id": "span.model.chat",
@@ -53031,6 +53894,7 @@
         "defenseclaw.content.output.hash",
         "defenseclaw.content.output.mime_type",
         "defenseclaw.content.output.original_bytes",
+        "defenseclaw.destination.app",
         "defenseclaw.model.attempt",
         "defenseclaw.model.cancelled",
         "defenseclaw.model.first_token_ms",
@@ -53043,6 +53907,8 @@
         "defenseclaw.model.tool_call_count",
         "defenseclaw.model.upstream_ms",
         "defenseclaw.operation.id",
+        "defenseclaw.policy.id",
+        "defenseclaw.policy.version",
         "defenseclaw.request.id",
         "defenseclaw.run.id",
         "defenseclaw.session.parent.id",
@@ -53051,6 +53917,7 @@
         "defenseclaw.session.source",
         "defenseclaw.telemetry.tokens.reported",
         "defenseclaw.turn.id",
+        "defenseclaw.user.name",
         "gen_ai.agent.id",
         "gen_ai.agent.name",
         "gen_ai.conversation.id",
@@ -53065,7 +53932,8 @@
         "gen_ai.response.id",
         "gen_ai.response.model",
         "gen_ai.usage.input_tokens",
-        "gen_ai.usage.output_tokens"
+        "gen_ai.usage.output_tokens",
+        "user.id"
       ],
       "outcome": {
         "allowed": [
@@ -53081,6 +53949,7 @@
         "requirement": "required"
       },
       "required_attributes": [
+        "defenseclaw.agent.reported_cost.present",
         "defenseclaw.bucket",
         "defenseclaw.config.generation",
         "defenseclaw.content.input.state",
@@ -55988,6 +56857,7 @@
         }
       ],
       "conditional_attributes": [
+        "defenseclaw.agent.reported_cost.usd",
         "defenseclaw.connector.source",
         "defenseclaw.outcome",
         "error.type"
@@ -56124,6 +56994,32 @@
           "sensitivity": "safe",
           "stability": "stable",
           "type": "string"
+        },
+        {
+          "cardinality": "low",
+          "condition": null,
+          "constraints": {},
+          "field_class": "metadata",
+          "owner": "defenseclaw",
+          "ref": "defenseclaw.agent.reported_cost.present",
+          "requirement_level": "required",
+          "role": "attributes",
+          "sensitivity": "safe",
+          "stability": "stable",
+          "type": "boolean"
+        },
+        {
+          "cardinality": "bounded",
+          "condition": "agent-reported-cost-available-v1",
+          "constraints": {},
+          "field_class": "metadata",
+          "owner": "defenseclaw",
+          "ref": "defenseclaw.agent.reported_cost.usd",
+          "requirement_level": "conditional",
+          "role": "attributes",
+          "sensitivity": "internal",
+          "stability": "stable",
+          "type": "double"
         },
         {
           "cardinality": "high",
@@ -56347,6 +57243,32 @@
           "type": "string"
         },
         {
+          "cardinality": "bounded",
+          "condition": null,
+          "constraints": {},
+          "field_class": "identifier",
+          "owner": "defenseclaw",
+          "ref": "defenseclaw.policy.id",
+          "requirement_level": "recommended",
+          "role": "attributes",
+          "sensitivity": "internal",
+          "stability": "stable",
+          "type": "string"
+        },
+        {
+          "cardinality": "bounded",
+          "condition": null,
+          "constraints": {},
+          "field_class": "identifier",
+          "owner": "defenseclaw",
+          "ref": "defenseclaw.policy.version",
+          "requirement_level": "recommended",
+          "role": "attributes",
+          "sensitivity": "internal",
+          "stability": "stable",
+          "type": "string"
+        },
+        {
           "cardinality": "high",
           "condition": null,
           "constraints": {},
@@ -56529,6 +57451,19 @@
           "type": "int64"
         },
         {
+          "cardinality": "high",
+          "condition": null,
+          "constraints": {},
+          "field_class": "identifier",
+          "owner": "defenseclaw",
+          "ref": "defenseclaw.tool.id",
+          "requirement_level": "recommended",
+          "role": "attributes",
+          "sensitivity": "internal",
+          "stability": "stable",
+          "type": "string"
+        },
+        {
           "cardinality": "bounded",
           "condition": null,
           "constraints": {},
@@ -56590,6 +57525,19 @@
           "requirement_level": "recommended",
           "role": "attributes",
           "sensitivity": "internal",
+          "stability": "stable",
+          "type": "string"
+        },
+        {
+          "cardinality": "high",
+          "condition": null,
+          "constraints": {},
+          "field_class": "identifier",
+          "owner": "defenseclaw",
+          "ref": "defenseclaw.user.name",
+          "requirement_level": "recommended",
+          "role": "attributes",
+          "sensitivity": "sensitive",
           "stability": "stable",
           "type": "string"
         },
@@ -56748,6 +57696,19 @@
           "sensitivity": "safe",
           "stability": "development",
           "type": "string"
+        },
+        {
+          "cardinality": "high",
+          "condition": null,
+          "constraints": {},
+          "field_class": "identifier",
+          "owner": "otel",
+          "ref": "user.id",
+          "requirement_level": "recommended",
+          "role": "attributes",
+          "sensitivity": "sensitive",
+          "stability": "development",
+          "type": "string"
         }
       ],
       "id": "span.tool.execute",
@@ -56781,6 +57742,8 @@
         "defenseclaw.content.output.original_bytes",
         "defenseclaw.destination.app",
         "defenseclaw.operation.id",
+        "defenseclaw.policy.id",
+        "defenseclaw.policy.version",
         "defenseclaw.request.id",
         "defenseclaw.run.id",
         "defenseclaw.session.parent.id",
@@ -56790,11 +57753,13 @@
         "defenseclaw.tool.args_length",
         "defenseclaw.tool.dangerous",
         "defenseclaw.tool.exit_code",
+        "defenseclaw.tool.id",
         "defenseclaw.tool.output_length",
         "defenseclaw.tool.provider",
         "defenseclaw.tool.skill_key",
         "defenseclaw.tool.status",
         "defenseclaw.turn.id",
+        "defenseclaw.user.name",
         "gen_ai.agent.id",
         "gen_ai.agent.name",
         "gen_ai.conversation.id",
@@ -56804,7 +57769,8 @@
         "gen_ai.tool.call.arguments",
         "gen_ai.tool.call.id",
         "gen_ai.tool.call.result",
-        "gen_ai.tool.type"
+        "gen_ai.tool.type",
+        "user.id"
       ],
       "outcome": {
         "allowed": [
@@ -56820,6 +57786,7 @@
         "requirement": "required"
       },
       "required_attributes": [
+        "defenseclaw.agent.reported_cost.present",
         "defenseclaw.bucket",
         "defenseclaw.config.generation",
         "defenseclaw.content.input.state",
@@ -56875,6 +57842,7 @@
         }
       ],
       "conditional_attributes": [
+        "defenseclaw.agent.reported_cost.usd",
         "defenseclaw.connector.source",
         "defenseclaw.outcome",
         "error.type"
@@ -57011,6 +57979,32 @@
           "sensitivity": "safe",
           "stability": "stable",
           "type": "string"
+        },
+        {
+          "cardinality": "low",
+          "condition": null,
+          "constraints": {},
+          "field_class": "metadata",
+          "owner": "defenseclaw",
+          "ref": "defenseclaw.agent.reported_cost.present",
+          "requirement_level": "required",
+          "role": "attributes",
+          "sensitivity": "safe",
+          "stability": "stable",
+          "type": "boolean"
+        },
+        {
+          "cardinality": "bounded",
+          "condition": "agent-reported-cost-available-v1",
+          "constraints": {},
+          "field_class": "metadata",
+          "owner": "defenseclaw",
+          "ref": "defenseclaw.agent.reported_cost.usd",
+          "requirement_level": "conditional",
+          "role": "attributes",
+          "sensitivity": "internal",
+          "stability": "stable",
+          "type": "double"
         },
         {
           "cardinality": "high",
@@ -57195,6 +58189,45 @@
           "type": "string"
         },
         {
+          "cardinality": "low",
+          "condition": null,
+          "constraints": {},
+          "field_class": "identifier",
+          "owner": "defenseclaw",
+          "ref": "defenseclaw.destination.app",
+          "requirement_level": "recommended",
+          "role": "attributes",
+          "sensitivity": "internal",
+          "stability": "stable",
+          "type": "string"
+        },
+        {
+          "cardinality": "high",
+          "condition": null,
+          "constraints": {},
+          "field_class": "identifier",
+          "owner": "defenseclaw",
+          "ref": "defenseclaw.model.request.id",
+          "requirement_level": "recommended",
+          "role": "attributes",
+          "sensitivity": "internal",
+          "stability": "stable",
+          "type": "string"
+        },
+        {
+          "cardinality": "high",
+          "condition": null,
+          "constraints": {},
+          "field_class": "identifier",
+          "owner": "defenseclaw",
+          "ref": "defenseclaw.model.response.id",
+          "requirement_level": "recommended",
+          "role": "attributes",
+          "sensitivity": "internal",
+          "stability": "stable",
+          "type": "string"
+        },
+        {
           "cardinality": "high",
           "condition": null,
           "constraints": {},
@@ -57217,6 +58250,32 @@
           "requirement_level": "conditional",
           "role": "attributes",
           "sensitivity": "safe",
+          "stability": "stable",
+          "type": "string"
+        },
+        {
+          "cardinality": "bounded",
+          "condition": null,
+          "constraints": {},
+          "field_class": "identifier",
+          "owner": "defenseclaw",
+          "ref": "defenseclaw.policy.id",
+          "requirement_level": "recommended",
+          "role": "attributes",
+          "sensitivity": "internal",
+          "stability": "stable",
+          "type": "string"
+        },
+        {
+          "cardinality": "bounded",
+          "condition": null,
+          "constraints": {},
+          "field_class": "identifier",
+          "owner": "defenseclaw",
+          "ref": "defenseclaw.policy.version",
+          "requirement_level": "recommended",
+          "role": "attributes",
+          "sensitivity": "internal",
           "stability": "stable",
           "type": "string"
         },
@@ -57369,10 +58428,62 @@
           "constraints": {},
           "field_class": "identifier",
           "owner": "defenseclaw",
+          "ref": "defenseclaw.tool.id",
+          "requirement_level": "recommended",
+          "role": "attributes",
+          "sensitivity": "internal",
+          "stability": "stable",
+          "type": "string"
+        },
+        {
+          "cardinality": "low",
+          "condition": null,
+          "constraints": {},
+          "field_class": "metadata",
+          "owner": "defenseclaw",
+          "ref": "defenseclaw.tool.provider",
+          "requirement_level": "recommended",
+          "role": "attributes",
+          "sensitivity": "safe",
+          "stability": "stable",
+          "type": "string"
+        },
+        {
+          "cardinality": "bounded",
+          "condition": null,
+          "constraints": {},
+          "field_class": "identifier",
+          "owner": "defenseclaw",
+          "ref": "defenseclaw.tool.skill_key",
+          "requirement_level": "recommended",
+          "role": "attributes",
+          "sensitivity": "internal",
+          "stability": "stable",
+          "type": "string"
+        },
+        {
+          "cardinality": "high",
+          "condition": null,
+          "constraints": {},
+          "field_class": "identifier",
+          "owner": "defenseclaw",
           "ref": "defenseclaw.turn.id",
           "requirement_level": "recommended",
           "role": "attributes",
           "sensitivity": "internal",
+          "stability": "stable",
+          "type": "string"
+        },
+        {
+          "cardinality": "high",
+          "condition": null,
+          "constraints": {},
+          "field_class": "identifier",
+          "owner": "defenseclaw",
+          "ref": "defenseclaw.user.name",
+          "requirement_level": "recommended",
+          "role": "attributes",
+          "sensitivity": "sensitive",
           "stability": "stable",
           "type": "string"
         },
@@ -57466,6 +58577,110 @@
           "sensitivity": "sensitive",
           "stability": "development",
           "type": "canonical_json"
+        },
+        {
+          "cardinality": "low",
+          "condition": null,
+          "constraints": {},
+          "field_class": "metadata",
+          "owner": "otel_genai",
+          "ref": "gen_ai.provider.name",
+          "requirement_level": "recommended",
+          "role": "attributes",
+          "sensitivity": "safe",
+          "stability": "development",
+          "type": "string"
+        },
+        {
+          "cardinality": "bounded",
+          "condition": null,
+          "constraints": {},
+          "field_class": "identifier",
+          "owner": "otel_genai",
+          "ref": "gen_ai.request.model",
+          "requirement_level": "recommended",
+          "role": "attributes",
+          "sensitivity": "internal",
+          "stability": "development",
+          "type": "string"
+        },
+        {
+          "cardinality": "high",
+          "condition": null,
+          "constraints": {},
+          "field_class": "identifier",
+          "owner": "otel_genai",
+          "ref": "gen_ai.response.id",
+          "requirement_level": "recommended",
+          "role": "attributes",
+          "sensitivity": "sensitive",
+          "stability": "development",
+          "type": "string"
+        },
+        {
+          "cardinality": "bounded",
+          "condition": null,
+          "constraints": {},
+          "field_class": "identifier",
+          "owner": "otel_genai",
+          "ref": "gen_ai.response.model",
+          "requirement_level": "recommended",
+          "role": "attributes",
+          "sensitivity": "internal",
+          "stability": "development",
+          "type": "string"
+        },
+        {
+          "cardinality": "high",
+          "condition": null,
+          "constraints": {},
+          "field_class": "identifier",
+          "owner": "otel_genai",
+          "ref": "gen_ai.tool.call.id",
+          "requirement_level": "recommended",
+          "role": "attributes",
+          "sensitivity": "sensitive",
+          "stability": "development",
+          "type": "string"
+        },
+        {
+          "cardinality": "bounded",
+          "condition": null,
+          "constraints": {},
+          "field_class": "identifier",
+          "owner": "otel_genai",
+          "ref": "gen_ai.tool.name",
+          "requirement_level": "recommended",
+          "role": "attributes",
+          "sensitivity": "internal",
+          "stability": "development",
+          "type": "string"
+        },
+        {
+          "cardinality": "low",
+          "condition": null,
+          "constraints": {},
+          "field_class": "metadata",
+          "owner": "otel_genai",
+          "ref": "gen_ai.tool.type",
+          "requirement_level": "recommended",
+          "role": "attributes",
+          "sensitivity": "safe",
+          "stability": "development",
+          "type": "string"
+        },
+        {
+          "cardinality": "high",
+          "condition": null,
+          "constraints": {},
+          "field_class": "identifier",
+          "owner": "otel",
+          "ref": "user.id",
+          "requirement_level": "recommended",
+          "role": "attributes",
+          "sensitivity": "sensitive",
+          "stability": "development",
+          "type": "string"
         }
       ],
       "id": "span.workflow.run",
@@ -57497,19 +58712,36 @@
         "defenseclaw.content.output.hash",
         "defenseclaw.content.output.mime_type",
         "defenseclaw.content.output.original_bytes",
+        "defenseclaw.destination.app",
+        "defenseclaw.model.request.id",
+        "defenseclaw.model.response.id",
         "defenseclaw.operation.id",
+        "defenseclaw.policy.id",
+        "defenseclaw.policy.version",
         "defenseclaw.request.id",
         "defenseclaw.run.id",
         "defenseclaw.session.parent.id",
         "defenseclaw.session.resumed",
         "defenseclaw.session.root.id",
         "defenseclaw.session.source",
+        "defenseclaw.tool.id",
+        "defenseclaw.tool.provider",
+        "defenseclaw.tool.skill_key",
         "defenseclaw.turn.id",
+        "defenseclaw.user.name",
         "gen_ai.agent.id",
         "gen_ai.agent.name",
         "gen_ai.conversation.id",
         "gen_ai.input.messages",
-        "gen_ai.output.messages"
+        "gen_ai.output.messages",
+        "gen_ai.provider.name",
+        "gen_ai.request.model",
+        "gen_ai.response.id",
+        "gen_ai.response.model",
+        "gen_ai.tool.call.id",
+        "gen_ai.tool.name",
+        "gen_ai.tool.type",
+        "user.id"
       ],
       "outcome": {
         "allowed": [
@@ -57527,6 +58759,7 @@
         "requirement": "required"
       },
       "required_attributes": [
+        "defenseclaw.agent.reported_cost.present",
         "defenseclaw.bucket",
         "defenseclaw.config.generation",
         "defenseclaw.content.input.state",
@@ -57644,7 +58877,7 @@
     ],
     "version": 1
   },
-  "materialized_view_sha256": "e96de75fdf61649b727a9b242b659543bdd48e417256e1d8557cd9d16982577b",
+  "materialized_view_sha256": "26121f75397999a4fd1818e84dde325ca55d673b090238cbc61e60f1b6f47380",
   "registry_version": 1,
   "schema_version": 1,
   "semantic_profiles": [

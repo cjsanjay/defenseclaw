@@ -3,7 +3,7 @@
     "artifact": "telemetry.schema.json",
     "authority": "candidate-not-public-authority",
     "generator": "defenseclaw-telemetry-candidate-renderer-v1",
-    "materialized_view_sha256": "e96de75fdf61649b727a9b242b659543bdd48e417256e1d8557cd9d16982577b",
+    "materialized_view_sha256": "26121f75397999a4fd1818e84dde325ca55d673b090238cbc61e60f1b6f47380",
     "registry_version": 1
   },
   "$defs": {
@@ -784,6 +784,39 @@
       },
       "x-defenseclaw-owner": "defenseclaw",
       "x-defenseclaw-sensitivity": "safe"
+    },
+    "attribute:defenseclaw.agent.reported_cost.present": {
+      "type": "boolean",
+      "x-defenseclaw-field-class": "metadata",
+      "x-defenseclaw-normalization": {
+        "effective_constraints": {},
+        "id": "identity-v1",
+        "notes": "Exact availability state from the source payload; never inferred from model pricing or a default numeric value.",
+        "overrides": {}
+      },
+      "x-defenseclaw-owner": "defenseclaw",
+      "x-defenseclaw-sensitivity": "safe"
+    },
+    "attribute:defenseclaw.agent.reported_cost.usd": {
+      "maximum": 1.7976931348623157e+308,
+      "minimum": 0.0,
+      "type": "number",
+      "x-defenseclaw-field-class": "metadata",
+      "x-defenseclaw-finite": true,
+      "x-defenseclaw-normalization": {
+        "effective_constraints": {
+          "max": 1.7976931348623157e+308,
+          "min": 0.0
+        },
+        "id": "numeric-range-v1",
+        "notes": "Finite nonnegative cumulative USD reported by the connector; DefenseClaw never estimates it.",
+        "overrides": {
+          "max": 1.7976931348623157e+308,
+          "min": 0.0
+        }
+      },
+      "x-defenseclaw-owner": "defenseclaw",
+      "x-defenseclaw-sensitivity": "internal"
     },
     "attribute:defenseclaw.agent.root.id": {
       "pattern": "^(?:^[A-Za-z0-9][A-Za-z0-9._:/-]*$)$(?![\\s\\S])",
@@ -6428,6 +6461,28 @@
       "x-defenseclaw-owner": "defenseclaw",
       "x-defenseclaw-sensitivity": "safe"
     },
+    "attribute:defenseclaw.tool.id": {
+      "pattern": "^(?:^[A-Za-z0-9][A-Za-z0-9._:/-]*$)$(?![\\s\\S])",
+      "type": "string",
+      "x-defenseclaw-field-class": "identifier",
+      "x-defenseclaw-max-utf8-bytes": 256,
+      "x-defenseclaw-max-utf8-bytes-enforcement": "builder-runtime-shape-aware-utf8-byte-gate",
+      "x-defenseclaw-max-utf8-bytes-semantics": "raw-scalar-string-utf8",
+      "x-defenseclaw-normalization": {
+        "effective_constraints": {
+          "max_utf8_bytes": 256,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$"
+        },
+        "id": "identifier-v1",
+        "notes": "Preserve only an explicitly reported bounded tool identity; never derive it from tool name or call ID.",
+        "overrides": {}
+      },
+      "x-defenseclaw-owner": "defenseclaw",
+      "x-defenseclaw-pattern-enforcement": "builder-runtime-and-anchored-public-schema",
+      "x-defenseclaw-pattern-semantics": "portable-re2-full-match",
+      "x-defenseclaw-pattern-source": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+      "x-defenseclaw-sensitivity": "internal"
+    },
     "attribute:defenseclaw.tool.output_length": {
       "maximum": 9223372036854775807,
       "minimum": 0,
@@ -8474,6 +8529,28 @@
       },
       "x-defenseclaw-owner": "otel",
       "x-defenseclaw-sensitivity": "safe"
+    },
+    "attribute:user.id": {
+      "pattern": "^(?:^[A-Za-z0-9][A-Za-z0-9._:/-]*$)$(?![\\s\\S])",
+      "type": "string",
+      "x-defenseclaw-field-class": "identifier",
+      "x-defenseclaw-max-utf8-bytes": 256,
+      "x-defenseclaw-max-utf8-bytes-enforcement": "builder-runtime-shape-aware-utf8-byte-gate",
+      "x-defenseclaw-max-utf8-bytes-semantics": "raw-scalar-string-utf8",
+      "x-defenseclaw-normalization": {
+        "effective_constraints": {
+          "max_utf8_bytes": 256,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$"
+        },
+        "id": "identifier-v1",
+        "notes": "preserve only an explicitly reported bounded user-principal identifier; never derive it from a display name or administrative principal",
+        "overrides": {}
+      },
+      "x-defenseclaw-owner": "otel",
+      "x-defenseclaw-pattern-enforcement": "builder-runtime-and-anchored-public-schema",
+      "x-defenseclaw-pattern-semantics": "portable-re2-full-match",
+      "x-defenseclaw-pattern-source": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+      "x-defenseclaw-sensitivity": "sensitive"
     },
     "attribute:verdict": {
       "type": "string",
@@ -24181,6 +24258,29 @@
                   "x-defenseclaw-requirement-level": "recommended",
                   "x-defenseclaw-sensitivity": "safe"
                 },
+                "defenseclaw.tool.id": {
+                  "pattern": "^(?:^[A-Za-z0-9][A-Za-z0-9._:/-]*$)$(?![\\s\\S])",
+                  "type": "string",
+                  "x-defenseclaw-field-class": "identifier",
+                  "x-defenseclaw-max-utf8-bytes": 256,
+                  "x-defenseclaw-max-utf8-bytes-enforcement": "builder-runtime-shape-aware-utf8-byte-gate",
+                  "x-defenseclaw-max-utf8-bytes-semantics": "raw-scalar-string-utf8",
+                  "x-defenseclaw-normalization": {
+                    "effective_constraints": {
+                      "max_utf8_bytes": 256,
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$"
+                    },
+                    "id": "identifier-v1",
+                    "notes": "Preserve only an explicitly reported bounded tool identity; never derive it from tool name or call ID.",
+                    "overrides": {}
+                  },
+                  "x-defenseclaw-owner": "defenseclaw",
+                  "x-defenseclaw-pattern-enforcement": "builder-runtime-and-anchored-public-schema",
+                  "x-defenseclaw-pattern-semantics": "portable-re2-full-match",
+                  "x-defenseclaw-pattern-source": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                  "x-defenseclaw-requirement-level": "recommended",
+                  "x-defenseclaw-sensitivity": "internal"
+                },
                 "defenseclaw.tool.output_length": {
                   "maximum": 9223372036854775807,
                   "minimum": 0,
@@ -25499,6 +25599,29 @@
                   "x-defenseclaw-owner": "defenseclaw",
                   "x-defenseclaw-requirement-level": "recommended",
                   "x-defenseclaw-sensitivity": "safe"
+                },
+                "defenseclaw.tool.id": {
+                  "pattern": "^(?:^[A-Za-z0-9][A-Za-z0-9._:/-]*$)$(?![\\s\\S])",
+                  "type": "string",
+                  "x-defenseclaw-field-class": "identifier",
+                  "x-defenseclaw-max-utf8-bytes": 256,
+                  "x-defenseclaw-max-utf8-bytes-enforcement": "builder-runtime-shape-aware-utf8-byte-gate",
+                  "x-defenseclaw-max-utf8-bytes-semantics": "raw-scalar-string-utf8",
+                  "x-defenseclaw-normalization": {
+                    "effective_constraints": {
+                      "max_utf8_bytes": 256,
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$"
+                    },
+                    "id": "identifier-v1",
+                    "notes": "Preserve only an explicitly reported bounded tool identity; never derive it from tool name or call ID.",
+                    "overrides": {}
+                  },
+                  "x-defenseclaw-owner": "defenseclaw",
+                  "x-defenseclaw-pattern-enforcement": "builder-runtime-and-anchored-public-schema",
+                  "x-defenseclaw-pattern-semantics": "portable-re2-full-match",
+                  "x-defenseclaw-pattern-source": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                  "x-defenseclaw-requirement-level": "recommended",
+                  "x-defenseclaw-sensitivity": "internal"
                 },
                 "defenseclaw.tool.output_length": {
                   "maximum": 9223372036854775807,
@@ -51734,6 +51857,29 @@
                   "x-defenseclaw-requirement-level": "recommended",
                   "x-defenseclaw-sensitivity": "safe"
                 },
+                "defenseclaw.tool.id": {
+                  "pattern": "^(?:^[A-Za-z0-9][A-Za-z0-9._:/-]*$)$(?![\\s\\S])",
+                  "type": "string",
+                  "x-defenseclaw-field-class": "identifier",
+                  "x-defenseclaw-max-utf8-bytes": 256,
+                  "x-defenseclaw-max-utf8-bytes-enforcement": "builder-runtime-shape-aware-utf8-byte-gate",
+                  "x-defenseclaw-max-utf8-bytes-semantics": "raw-scalar-string-utf8",
+                  "x-defenseclaw-normalization": {
+                    "effective_constraints": {
+                      "max_utf8_bytes": 256,
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$"
+                    },
+                    "id": "identifier-v1",
+                    "notes": "Preserve only an explicitly reported bounded tool identity; never derive it from tool name or call ID.",
+                    "overrides": {}
+                  },
+                  "x-defenseclaw-owner": "defenseclaw",
+                  "x-defenseclaw-pattern-enforcement": "builder-runtime-and-anchored-public-schema",
+                  "x-defenseclaw-pattern-semantics": "portable-re2-full-match",
+                  "x-defenseclaw-pattern-source": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                  "x-defenseclaw-requirement-level": "recommended",
+                  "x-defenseclaw-sensitivity": "internal"
+                },
                 "defenseclaw.tool.output_length": {
                   "maximum": 9223372036854775807,
                   "minimum": 0,
@@ -53045,6 +53191,29 @@
                   "x-defenseclaw-requirement-level": "recommended",
                   "x-defenseclaw-sensitivity": "safe"
                 },
+                "defenseclaw.tool.id": {
+                  "pattern": "^(?:^[A-Za-z0-9][A-Za-z0-9._:/-]*$)$(?![\\s\\S])",
+                  "type": "string",
+                  "x-defenseclaw-field-class": "identifier",
+                  "x-defenseclaw-max-utf8-bytes": 256,
+                  "x-defenseclaw-max-utf8-bytes-enforcement": "builder-runtime-shape-aware-utf8-byte-gate",
+                  "x-defenseclaw-max-utf8-bytes-semantics": "raw-scalar-string-utf8",
+                  "x-defenseclaw-normalization": {
+                    "effective_constraints": {
+                      "max_utf8_bytes": 256,
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$"
+                    },
+                    "id": "identifier-v1",
+                    "notes": "Preserve only an explicitly reported bounded tool identity; never derive it from tool name or call ID.",
+                    "overrides": {}
+                  },
+                  "x-defenseclaw-owner": "defenseclaw",
+                  "x-defenseclaw-pattern-enforcement": "builder-runtime-and-anchored-public-schema",
+                  "x-defenseclaw-pattern-semantics": "portable-re2-full-match",
+                  "x-defenseclaw-pattern-source": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                  "x-defenseclaw-requirement-level": "recommended",
+                  "x-defenseclaw-sensitivity": "internal"
+                },
                 "defenseclaw.tool.output_length": {
                   "maximum": 9223372036854775807,
                   "minimum": 0,
@@ -54355,6 +54524,29 @@
                   "x-defenseclaw-owner": "defenseclaw",
                   "x-defenseclaw-requirement-level": "recommended",
                   "x-defenseclaw-sensitivity": "safe"
+                },
+                "defenseclaw.tool.id": {
+                  "pattern": "^(?:^[A-Za-z0-9][A-Za-z0-9._:/-]*$)$(?![\\s\\S])",
+                  "type": "string",
+                  "x-defenseclaw-field-class": "identifier",
+                  "x-defenseclaw-max-utf8-bytes": 256,
+                  "x-defenseclaw-max-utf8-bytes-enforcement": "builder-runtime-shape-aware-utf8-byte-gate",
+                  "x-defenseclaw-max-utf8-bytes-semantics": "raw-scalar-string-utf8",
+                  "x-defenseclaw-normalization": {
+                    "effective_constraints": {
+                      "max_utf8_bytes": 256,
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$"
+                    },
+                    "id": "identifier-v1",
+                    "notes": "Preserve only an explicitly reported bounded tool identity; never derive it from tool name or call ID.",
+                    "overrides": {}
+                  },
+                  "x-defenseclaw-owner": "defenseclaw",
+                  "x-defenseclaw-pattern-enforcement": "builder-runtime-and-anchored-public-schema",
+                  "x-defenseclaw-pattern-semantics": "portable-re2-full-match",
+                  "x-defenseclaw-pattern-source": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                  "x-defenseclaw-requirement-level": "recommended",
+                  "x-defenseclaw-sensitivity": "internal"
                 },
                 "defenseclaw.tool.output_length": {
                   "maximum": 9223372036854775807,
@@ -55670,6 +55862,29 @@
                   "x-defenseclaw-requirement-level": "recommended",
                   "x-defenseclaw-sensitivity": "safe"
                 },
+                "defenseclaw.tool.id": {
+                  "pattern": "^(?:^[A-Za-z0-9][A-Za-z0-9._:/-]*$)$(?![\\s\\S])",
+                  "type": "string",
+                  "x-defenseclaw-field-class": "identifier",
+                  "x-defenseclaw-max-utf8-bytes": 256,
+                  "x-defenseclaw-max-utf8-bytes-enforcement": "builder-runtime-shape-aware-utf8-byte-gate",
+                  "x-defenseclaw-max-utf8-bytes-semantics": "raw-scalar-string-utf8",
+                  "x-defenseclaw-normalization": {
+                    "effective_constraints": {
+                      "max_utf8_bytes": 256,
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$"
+                    },
+                    "id": "identifier-v1",
+                    "notes": "Preserve only an explicitly reported bounded tool identity; never derive it from tool name or call ID.",
+                    "overrides": {}
+                  },
+                  "x-defenseclaw-owner": "defenseclaw",
+                  "x-defenseclaw-pattern-enforcement": "builder-runtime-and-anchored-public-schema",
+                  "x-defenseclaw-pattern-semantics": "portable-re2-full-match",
+                  "x-defenseclaw-pattern-source": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                  "x-defenseclaw-requirement-level": "recommended",
+                  "x-defenseclaw-sensitivity": "internal"
+                },
                 "defenseclaw.tool.output_length": {
                   "maximum": 9223372036854775807,
                   "minimum": 0,
@@ -56980,6 +57195,29 @@
                   "x-defenseclaw-owner": "defenseclaw",
                   "x-defenseclaw-requirement-level": "recommended",
                   "x-defenseclaw-sensitivity": "safe"
+                },
+                "defenseclaw.tool.id": {
+                  "pattern": "^(?:^[A-Za-z0-9][A-Za-z0-9._:/-]*$)$(?![\\s\\S])",
+                  "type": "string",
+                  "x-defenseclaw-field-class": "identifier",
+                  "x-defenseclaw-max-utf8-bytes": 256,
+                  "x-defenseclaw-max-utf8-bytes-enforcement": "builder-runtime-shape-aware-utf8-byte-gate",
+                  "x-defenseclaw-max-utf8-bytes-semantics": "raw-scalar-string-utf8",
+                  "x-defenseclaw-normalization": {
+                    "effective_constraints": {
+                      "max_utf8_bytes": 256,
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$"
+                    },
+                    "id": "identifier-v1",
+                    "notes": "Preserve only an explicitly reported bounded tool identity; never derive it from tool name or call ID.",
+                    "overrides": {}
+                  },
+                  "x-defenseclaw-owner": "defenseclaw",
+                  "x-defenseclaw-pattern-enforcement": "builder-runtime-and-anchored-public-schema",
+                  "x-defenseclaw-pattern-semantics": "portable-re2-full-match",
+                  "x-defenseclaw-pattern-source": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                  "x-defenseclaw-requirement-level": "recommended",
+                  "x-defenseclaw-sensitivity": "internal"
                 },
                 "defenseclaw.tool.output_length": {
                   "maximum": 9223372036854775807,
@@ -77211,6 +77449,42 @@
                           "x-defenseclaw-requirement-level": "recommended",
                           "x-defenseclaw-sensitivity": "safe"
                         },
+                        "defenseclaw.agent.reported_cost.present": {
+                          "type": "boolean",
+                          "x-defenseclaw-field-class": "metadata",
+                          "x-defenseclaw-normalization": {
+                            "effective_constraints": {},
+                            "id": "identity-v1",
+                            "notes": "Exact availability state from the source payload; never inferred from model pricing or a default numeric value.",
+                            "overrides": {}
+                          },
+                          "x-defenseclaw-owner": "defenseclaw",
+                          "x-defenseclaw-requirement-level": "required",
+                          "x-defenseclaw-sensitivity": "safe"
+                        },
+                        "defenseclaw.agent.reported_cost.usd": {
+                          "maximum": 1.7976931348623157e+308,
+                          "minimum": 0.0,
+                          "type": "number",
+                          "x-defenseclaw-condition": "agent-reported-cost-available-v1",
+                          "x-defenseclaw-field-class": "metadata",
+                          "x-defenseclaw-finite": true,
+                          "x-defenseclaw-normalization": {
+                            "effective_constraints": {
+                              "max": 1.7976931348623157e+308,
+                              "min": 0.0
+                            },
+                            "id": "numeric-range-v1",
+                            "notes": "Finite nonnegative cumulative USD reported by the connector; DefenseClaw never estimates it.",
+                            "overrides": {
+                              "max": 1.7976931348623157e+308,
+                              "min": 0.0
+                            }
+                          },
+                          "x-defenseclaw-owner": "defenseclaw",
+                          "x-defenseclaw-requirement-level": "conditional",
+                          "x-defenseclaw-sensitivity": "internal"
+                        },
                         "defenseclaw.agent.root.id": {
                           "pattern": "^(?:^[A-Za-z0-9][A-Za-z0-9._:/-]*$)$(?![\\s\\S])",
                           "type": "string",
@@ -77629,6 +77903,75 @@
                           "x-defenseclaw-requirement-level": "required",
                           "x-defenseclaw-sensitivity": "safe"
                         },
+                        "defenseclaw.destination.app": {
+                          "pattern": "^(?:^[A-Za-z0-9][A-Za-z0-9._:/-]*$)$(?![\\s\\S])",
+                          "type": "string",
+                          "x-defenseclaw-field-class": "identifier",
+                          "x-defenseclaw-max-utf8-bytes": 256,
+                          "x-defenseclaw-max-utf8-bytes-enforcement": "builder-runtime-shape-aware-utf8-byte-gate",
+                          "x-defenseclaw-max-utf8-bytes-semantics": "raw-scalar-string-utf8",
+                          "x-defenseclaw-normalization": {
+                            "effective_constraints": {
+                              "max_utf8_bytes": 256,
+                              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$"
+                            },
+                            "id": "identifier-v1",
+                            "notes": "registered application",
+                            "overrides": {}
+                          },
+                          "x-defenseclaw-owner": "defenseclaw",
+                          "x-defenseclaw-pattern-enforcement": "builder-runtime-and-anchored-public-schema",
+                          "x-defenseclaw-pattern-semantics": "portable-re2-full-match",
+                          "x-defenseclaw-pattern-source": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                          "x-defenseclaw-requirement-level": "recommended",
+                          "x-defenseclaw-sensitivity": "internal"
+                        },
+                        "defenseclaw.model.request.id": {
+                          "pattern": "^(?:^[A-Za-z0-9][A-Za-z0-9._:/-]*$)$(?![\\s\\S])",
+                          "type": "string",
+                          "x-defenseclaw-field-class": "identifier",
+                          "x-defenseclaw-max-utf8-bytes": 256,
+                          "x-defenseclaw-max-utf8-bytes-enforcement": "builder-runtime-shape-aware-utf8-byte-gate",
+                          "x-defenseclaw-max-utf8-bytes-semantics": "raw-scalar-string-utf8",
+                          "x-defenseclaw-normalization": {
+                            "effective_constraints": {
+                              "max_utf8_bytes": 256,
+                              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$"
+                            },
+                            "id": "identifier-v1",
+                            "notes": "typed and bounded",
+                            "overrides": {}
+                          },
+                          "x-defenseclaw-owner": "defenseclaw",
+                          "x-defenseclaw-pattern-enforcement": "builder-runtime-and-anchored-public-schema",
+                          "x-defenseclaw-pattern-semantics": "portable-re2-full-match",
+                          "x-defenseclaw-pattern-source": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                          "x-defenseclaw-requirement-level": "recommended",
+                          "x-defenseclaw-sensitivity": "internal"
+                        },
+                        "defenseclaw.model.response.id": {
+                          "pattern": "^(?:^[A-Za-z0-9][A-Za-z0-9._:/-]*$)$(?![\\s\\S])",
+                          "type": "string",
+                          "x-defenseclaw-field-class": "identifier",
+                          "x-defenseclaw-max-utf8-bytes": 256,
+                          "x-defenseclaw-max-utf8-bytes-enforcement": "builder-runtime-shape-aware-utf8-byte-gate",
+                          "x-defenseclaw-max-utf8-bytes-semantics": "raw-scalar-string-utf8",
+                          "x-defenseclaw-normalization": {
+                            "effective_constraints": {
+                              "max_utf8_bytes": 256,
+                              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$"
+                            },
+                            "id": "identifier-v1",
+                            "notes": "typed and bounded",
+                            "overrides": {}
+                          },
+                          "x-defenseclaw-owner": "defenseclaw",
+                          "x-defenseclaw-pattern-enforcement": "builder-runtime-and-anchored-public-schema",
+                          "x-defenseclaw-pattern-semantics": "portable-re2-full-match",
+                          "x-defenseclaw-pattern-source": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                          "x-defenseclaw-requirement-level": "recommended",
+                          "x-defenseclaw-sensitivity": "internal"
+                        },
                         "defenseclaw.operation.id": {
                           "pattern": "^(?:^[A-Za-z0-9][A-Za-z0-9._:/-]*$)$(?![\\s\\S])",
                           "type": "string",
@@ -77739,6 +78082,52 @@
                           "x-defenseclaw-owner": "defenseclaw",
                           "x-defenseclaw-requirement-level": "conditional",
                           "x-defenseclaw-sensitivity": "safe"
+                        },
+                        "defenseclaw.policy.id": {
+                          "pattern": "^(?:^[A-Za-z0-9][A-Za-z0-9._:/-]*$)$(?![\\s\\S])",
+                          "type": "string",
+                          "x-defenseclaw-field-class": "identifier",
+                          "x-defenseclaw-max-utf8-bytes": 256,
+                          "x-defenseclaw-max-utf8-bytes-enforcement": "builder-runtime-shape-aware-utf8-byte-gate",
+                          "x-defenseclaw-max-utf8-bytes-semantics": "raw-scalar-string-utf8",
+                          "x-defenseclaw-normalization": {
+                            "effective_constraints": {
+                              "max_utf8_bytes": 256,
+                              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$"
+                            },
+                            "id": "identifier-v1",
+                            "notes": "nonempty bounded",
+                            "overrides": {}
+                          },
+                          "x-defenseclaw-owner": "defenseclaw",
+                          "x-defenseclaw-pattern-enforcement": "builder-runtime-and-anchored-public-schema",
+                          "x-defenseclaw-pattern-semantics": "portable-re2-full-match",
+                          "x-defenseclaw-pattern-source": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                          "x-defenseclaw-requirement-level": "recommended",
+                          "x-defenseclaw-sensitivity": "internal"
+                        },
+                        "defenseclaw.policy.version": {
+                          "pattern": "^(?:^[A-Za-z0-9][A-Za-z0-9._:/-]*$)$(?![\\s\\S])",
+                          "type": "string",
+                          "x-defenseclaw-field-class": "identifier",
+                          "x-defenseclaw-max-utf8-bytes": 256,
+                          "x-defenseclaw-max-utf8-bytes-enforcement": "builder-runtime-shape-aware-utf8-byte-gate",
+                          "x-defenseclaw-max-utf8-bytes-semantics": "raw-scalar-string-utf8",
+                          "x-defenseclaw-normalization": {
+                            "effective_constraints": {
+                              "max_utf8_bytes": 256,
+                              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$"
+                            },
+                            "id": "identifier-v1",
+                            "notes": "versioned bounded identifier",
+                            "overrides": {}
+                          },
+                          "x-defenseclaw-owner": "defenseclaw",
+                          "x-defenseclaw-pattern-enforcement": "builder-runtime-and-anchored-public-schema",
+                          "x-defenseclaw-pattern-semantics": "portable-re2-full-match",
+                          "x-defenseclaw-pattern-source": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                          "x-defenseclaw-requirement-level": "recommended",
+                          "x-defenseclaw-sensitivity": "internal"
                         },
                         "defenseclaw.request.id": {
                           "pattern": "^(?:^[A-Za-z0-9][A-Za-z0-9._:/-]*$)$(?![\\s\\S])",
@@ -77979,6 +78368,79 @@
                           "x-defenseclaw-requirement-level": "required",
                           "x-defenseclaw-sensitivity": "safe"
                         },
+                        "defenseclaw.tool.id": {
+                          "pattern": "^(?:^[A-Za-z0-9][A-Za-z0-9._:/-]*$)$(?![\\s\\S])",
+                          "type": "string",
+                          "x-defenseclaw-field-class": "identifier",
+                          "x-defenseclaw-max-utf8-bytes": 256,
+                          "x-defenseclaw-max-utf8-bytes-enforcement": "builder-runtime-shape-aware-utf8-byte-gate",
+                          "x-defenseclaw-max-utf8-bytes-semantics": "raw-scalar-string-utf8",
+                          "x-defenseclaw-normalization": {
+                            "effective_constraints": {
+                              "max_utf8_bytes": 256,
+                              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$"
+                            },
+                            "id": "identifier-v1",
+                            "notes": "Preserve only an explicitly reported bounded tool identity; never derive it from tool name or call ID.",
+                            "overrides": {}
+                          },
+                          "x-defenseclaw-owner": "defenseclaw",
+                          "x-defenseclaw-pattern-enforcement": "builder-runtime-and-anchored-public-schema",
+                          "x-defenseclaw-pattern-semantics": "portable-re2-full-match",
+                          "x-defenseclaw-pattern-source": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                          "x-defenseclaw-requirement-level": "recommended",
+                          "x-defenseclaw-sensitivity": "internal"
+                        },
+                        "defenseclaw.tool.provider": {
+                          "type": "string",
+                          "x-defenseclaw-field-class": "metadata",
+                          "x-defenseclaw-json-schema-item-bound-scope": "root-collection-safe-subset",
+                          "x-defenseclaw-max-item-utf8-bytes": 4096,
+                          "x-defenseclaw-max-item-utf8-bytes-enforcement": "builder-runtime-string-leaf-utf8-byte-gate",
+                          "x-defenseclaw-max-item-utf8-bytes-semantics": "every-string-element-or-structured-string-leaf",
+                          "x-defenseclaw-max-items": 256,
+                          "x-defenseclaw-max-items-enforcement": "builder-runtime-recursive-aggregate-gate",
+                          "x-defenseclaw-max-items-semantics": "recursive-aggregate-members",
+                          "x-defenseclaw-max-utf8-bytes": 4096,
+                          "x-defenseclaw-max-utf8-bytes-enforcement": "builder-runtime-shape-aware-utf8-byte-gate",
+                          "x-defenseclaw-max-utf8-bytes-semantics": "raw-scalar-string-utf8",
+                          "x-defenseclaw-normalization": {
+                            "effective_constraints": {
+                              "max_item_utf8_bytes": 4096,
+                              "max_items": 256,
+                              "max_utf8_bytes": 4096
+                            },
+                            "id": "bounded-v1",
+                            "notes": "typed and bounded",
+                            "overrides": {}
+                          },
+                          "x-defenseclaw-owner": "defenseclaw",
+                          "x-defenseclaw-requirement-level": "recommended",
+                          "x-defenseclaw-sensitivity": "safe"
+                        },
+                        "defenseclaw.tool.skill_key": {
+                          "pattern": "^(?:^[A-Za-z0-9][A-Za-z0-9._:/-]*$)$(?![\\s\\S])",
+                          "type": "string",
+                          "x-defenseclaw-field-class": "identifier",
+                          "x-defenseclaw-max-utf8-bytes": 256,
+                          "x-defenseclaw-max-utf8-bytes-enforcement": "builder-runtime-shape-aware-utf8-byte-gate",
+                          "x-defenseclaw-max-utf8-bytes-semantics": "raw-scalar-string-utf8",
+                          "x-defenseclaw-normalization": {
+                            "effective_constraints": {
+                              "max_utf8_bytes": 256,
+                              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$"
+                            },
+                            "id": "identifier-v1",
+                            "notes": "typed and bounded",
+                            "overrides": {}
+                          },
+                          "x-defenseclaw-owner": "defenseclaw",
+                          "x-defenseclaw-pattern-enforcement": "builder-runtime-and-anchored-public-schema",
+                          "x-defenseclaw-pattern-semantics": "portable-re2-full-match",
+                          "x-defenseclaw-pattern-source": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                          "x-defenseclaw-requirement-level": "recommended",
+                          "x-defenseclaw-sensitivity": "internal"
+                        },
                         "defenseclaw.turn.id": {
                           "pattern": "^(?:^[A-Za-z0-9][A-Za-z0-9._:/-]*$)$(?![\\s\\S])",
                           "type": "string",
@@ -78001,6 +78463,29 @@
                           "x-defenseclaw-pattern-source": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
                           "x-defenseclaw-requirement-level": "recommended",
                           "x-defenseclaw-sensitivity": "internal"
+                        },
+                        "defenseclaw.user.name": {
+                          "pattern": "^(?:^[A-Za-z0-9][A-Za-z0-9._:/-]*$)$(?![\\s\\S])",
+                          "type": "string",
+                          "x-defenseclaw-field-class": "identifier",
+                          "x-defenseclaw-max-utf8-bytes": 256,
+                          "x-defenseclaw-max-utf8-bytes-enforcement": "builder-runtime-shape-aware-utf8-byte-gate",
+                          "x-defenseclaw-max-utf8-bytes-semantics": "raw-scalar-string-utf8",
+                          "x-defenseclaw-normalization": {
+                            "effective_constraints": {
+                              "max_utf8_bytes": 256,
+                              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$"
+                            },
+                            "id": "identifier-v1",
+                            "notes": "NFC bounded",
+                            "overrides": {}
+                          },
+                          "x-defenseclaw-owner": "defenseclaw",
+                          "x-defenseclaw-pattern-enforcement": "builder-runtime-and-anchored-public-schema",
+                          "x-defenseclaw-pattern-semantics": "portable-re2-full-match",
+                          "x-defenseclaw-pattern-source": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                          "x-defenseclaw-requirement-level": "recommended",
+                          "x-defenseclaw-sensitivity": "sensitive"
                         },
                         "error.type": {
                           "type": "string",
@@ -78279,9 +78764,175 @@
                           "x-defenseclaw-owner": "otel_genai",
                           "x-defenseclaw-requirement-level": "recommended",
                           "x-defenseclaw-sensitivity": "safe"
+                        },
+                        "gen_ai.request.model": {
+                          "pattern": "^(?:^[A-Za-z0-9][A-Za-z0-9._:/-]*$)$(?![\\s\\S])",
+                          "type": "string",
+                          "x-defenseclaw-field-class": "identifier",
+                          "x-defenseclaw-max-utf8-bytes": 256,
+                          "x-defenseclaw-max-utf8-bytes-enforcement": "builder-runtime-shape-aware-utf8-byte-gate",
+                          "x-defenseclaw-max-utf8-bytes-semantics": "raw-scalar-string-utf8",
+                          "x-defenseclaw-normalization": {
+                            "effective_constraints": {
+                              "max_utf8_bytes": 256,
+                              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$"
+                            },
+                            "id": "identifier-v1",
+                            "notes": "NFC bounded requested model identity; never infer from response data",
+                            "overrides": {}
+                          },
+                          "x-defenseclaw-owner": "otel_genai",
+                          "x-defenseclaw-pattern-enforcement": "builder-runtime-and-anchored-public-schema",
+                          "x-defenseclaw-pattern-semantics": "portable-re2-full-match",
+                          "x-defenseclaw-pattern-source": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                          "x-defenseclaw-requirement-level": "recommended",
+                          "x-defenseclaw-sensitivity": "internal"
+                        },
+                        "gen_ai.response.id": {
+                          "pattern": "^(?:^[A-Za-z0-9][A-Za-z0-9._:/-]*$)$(?![\\s\\S])",
+                          "type": "string",
+                          "x-defenseclaw-field-class": "identifier",
+                          "x-defenseclaw-max-utf8-bytes": 256,
+                          "x-defenseclaw-max-utf8-bytes-enforcement": "builder-runtime-shape-aware-utf8-byte-gate",
+                          "x-defenseclaw-max-utf8-bytes-semantics": "raw-scalar-string-utf8",
+                          "x-defenseclaw-normalization": {
+                            "effective_constraints": {
+                              "max_utf8_bytes": 256,
+                              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$"
+                            },
+                            "id": "identifier-v1",
+                            "notes": "preserve a nonempty bounded provider response identifier; omit when not reported and never use as a metric label",
+                            "overrides": {}
+                          },
+                          "x-defenseclaw-owner": "otel_genai",
+                          "x-defenseclaw-pattern-enforcement": "builder-runtime-and-anchored-public-schema",
+                          "x-defenseclaw-pattern-semantics": "portable-re2-full-match",
+                          "x-defenseclaw-pattern-source": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                          "x-defenseclaw-requirement-level": "recommended",
+                          "x-defenseclaw-sensitivity": "sensitive"
+                        },
+                        "gen_ai.response.model": {
+                          "pattern": "^(?:^[A-Za-z0-9][A-Za-z0-9._:/-]*$)$(?![\\s\\S])",
+                          "type": "string",
+                          "x-defenseclaw-field-class": "identifier",
+                          "x-defenseclaw-max-utf8-bytes": 256,
+                          "x-defenseclaw-max-utf8-bytes-enforcement": "builder-runtime-shape-aware-utf8-byte-gate",
+                          "x-defenseclaw-max-utf8-bytes-semantics": "raw-scalar-string-utf8",
+                          "x-defenseclaw-normalization": {
+                            "effective_constraints": {
+                              "max_utf8_bytes": 256,
+                              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$"
+                            },
+                            "id": "identifier-v1",
+                            "notes": "NFC bounded provider-reported response model identity; omit when not reported",
+                            "overrides": {}
+                          },
+                          "x-defenseclaw-owner": "otel_genai",
+                          "x-defenseclaw-pattern-enforcement": "builder-runtime-and-anchored-public-schema",
+                          "x-defenseclaw-pattern-semantics": "portable-re2-full-match",
+                          "x-defenseclaw-pattern-source": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                          "x-defenseclaw-requirement-level": "recommended",
+                          "x-defenseclaw-sensitivity": "internal"
+                        },
+                        "gen_ai.tool.call.id": {
+                          "pattern": "^(?:^[A-Za-z0-9][A-Za-z0-9._:/-]*$)$(?![\\s\\S])",
+                          "type": "string",
+                          "x-defenseclaw-field-class": "identifier",
+                          "x-defenseclaw-max-utf8-bytes": 256,
+                          "x-defenseclaw-max-utf8-bytes-enforcement": "builder-runtime-shape-aware-utf8-byte-gate",
+                          "x-defenseclaw-max-utf8-bytes-semantics": "raw-scalar-string-utf8",
+                          "x-defenseclaw-normalization": {
+                            "effective_constraints": {
+                              "max_utf8_bytes": 256,
+                              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$"
+                            },
+                            "id": "identifier-v1",
+                            "notes": "preserve a nonempty bounded producer tool-call identifier; never derive from arguments or use as a metric label",
+                            "overrides": {}
+                          },
+                          "x-defenseclaw-owner": "otel_genai",
+                          "x-defenseclaw-pattern-enforcement": "builder-runtime-and-anchored-public-schema",
+                          "x-defenseclaw-pattern-semantics": "portable-re2-full-match",
+                          "x-defenseclaw-pattern-source": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                          "x-defenseclaw-requirement-level": "recommended",
+                          "x-defenseclaw-sensitivity": "sensitive"
+                        },
+                        "gen_ai.tool.name": {
+                          "pattern": "^(?:^[A-Za-z0-9][A-Za-z0-9._:/-]*$)$(?![\\s\\S])",
+                          "type": "string",
+                          "x-defenseclaw-field-class": "identifier",
+                          "x-defenseclaw-max-utf8-bytes": 256,
+                          "x-defenseclaw-max-utf8-bytes-enforcement": "builder-runtime-shape-aware-utf8-byte-gate",
+                          "x-defenseclaw-max-utf8-bytes-semantics": "raw-scalar-string-utf8",
+                          "x-defenseclaw-normalization": {
+                            "effective_constraints": {
+                              "max_utf8_bytes": 256,
+                              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$"
+                            },
+                            "id": "identifier-v1",
+                            "notes": "NFC bounded tool name; canonical metrics use only registered bounded projections and span names use a normalized bounded form",
+                            "overrides": {}
+                          },
+                          "x-defenseclaw-owner": "otel_genai",
+                          "x-defenseclaw-pattern-enforcement": "builder-runtime-and-anchored-public-schema",
+                          "x-defenseclaw-pattern-semantics": "portable-re2-full-match",
+                          "x-defenseclaw-pattern-source": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                          "x-defenseclaw-requirement-level": "recommended",
+                          "x-defenseclaw-sensitivity": "internal"
+                        },
+                        "gen_ai.tool.type": {
+                          "type": "string",
+                          "x-defenseclaw-field-class": "metadata",
+                          "x-defenseclaw-json-schema-item-bound-scope": "root-collection-safe-subset",
+                          "x-defenseclaw-max-item-utf8-bytes": 4096,
+                          "x-defenseclaw-max-item-utf8-bytes-enforcement": "builder-runtime-string-leaf-utf8-byte-gate",
+                          "x-defenseclaw-max-item-utf8-bytes-semantics": "every-string-element-or-structured-string-leaf",
+                          "x-defenseclaw-max-items": 256,
+                          "x-defenseclaw-max-items-enforcement": "builder-runtime-recursive-aggregate-gate",
+                          "x-defenseclaw-max-items-semantics": "recursive-aggregate-members",
+                          "x-defenseclaw-max-utf8-bytes": 4096,
+                          "x-defenseclaw-max-utf8-bytes-enforcement": "builder-runtime-shape-aware-utf8-byte-gate",
+                          "x-defenseclaw-max-utf8-bytes-semantics": "raw-scalar-string-utf8",
+                          "x-defenseclaw-normalization": {
+                            "effective_constraints": {
+                              "max_item_utf8_bytes": 4096,
+                              "max_items": 256,
+                              "max_utf8_bytes": 4096
+                            },
+                            "id": "bounded-v1",
+                            "notes": "pinned bounded tool-type token",
+                            "overrides": {}
+                          },
+                          "x-defenseclaw-owner": "otel_genai",
+                          "x-defenseclaw-requirement-level": "recommended",
+                          "x-defenseclaw-sensitivity": "safe"
+                        },
+                        "user.id": {
+                          "pattern": "^(?:^[A-Za-z0-9][A-Za-z0-9._:/-]*$)$(?![\\s\\S])",
+                          "type": "string",
+                          "x-defenseclaw-field-class": "identifier",
+                          "x-defenseclaw-max-utf8-bytes": 256,
+                          "x-defenseclaw-max-utf8-bytes-enforcement": "builder-runtime-shape-aware-utf8-byte-gate",
+                          "x-defenseclaw-max-utf8-bytes-semantics": "raw-scalar-string-utf8",
+                          "x-defenseclaw-normalization": {
+                            "effective_constraints": {
+                              "max_utf8_bytes": 256,
+                              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$"
+                            },
+                            "id": "identifier-v1",
+                            "notes": "preserve only an explicitly reported bounded user-principal identifier; never derive it from a display name or administrative principal",
+                            "overrides": {}
+                          },
+                          "x-defenseclaw-owner": "otel",
+                          "x-defenseclaw-pattern-enforcement": "builder-runtime-and-anchored-public-schema",
+                          "x-defenseclaw-pattern-semantics": "portable-re2-full-match",
+                          "x-defenseclaw-pattern-source": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                          "x-defenseclaw-requirement-level": "recommended",
+                          "x-defenseclaw-sensitivity": "sensitive"
                         }
                       },
                       "required": [
+                        "defenseclaw.agent.reported_cost.present",
                         "defenseclaw.agent.type",
                         "defenseclaw.bucket",
                         "defenseclaw.config.generation",
@@ -78946,6 +79597,7 @@
       "x-defenseclaw-family": {
         "bucket": "agent.lifecycle",
         "conditions": [
+          "agent-reported-cost-available-v1",
           "connector-known-v1",
           "operation-terminal-v1",
           "technical-failure-v1"
@@ -79472,6 +80124,42 @@
                           "x-defenseclaw-requirement-level": "recommended",
                           "x-defenseclaw-sensitivity": "safe"
                         },
+                        "defenseclaw.agent.reported_cost.present": {
+                          "type": "boolean",
+                          "x-defenseclaw-field-class": "metadata",
+                          "x-defenseclaw-normalization": {
+                            "effective_constraints": {},
+                            "id": "identity-v1",
+                            "notes": "Exact availability state from the source payload; never inferred from model pricing or a default numeric value.",
+                            "overrides": {}
+                          },
+                          "x-defenseclaw-owner": "defenseclaw",
+                          "x-defenseclaw-requirement-level": "required",
+                          "x-defenseclaw-sensitivity": "safe"
+                        },
+                        "defenseclaw.agent.reported_cost.usd": {
+                          "maximum": 1.7976931348623157e+308,
+                          "minimum": 0.0,
+                          "type": "number",
+                          "x-defenseclaw-condition": "agent-reported-cost-available-v1",
+                          "x-defenseclaw-field-class": "metadata",
+                          "x-defenseclaw-finite": true,
+                          "x-defenseclaw-normalization": {
+                            "effective_constraints": {
+                              "max": 1.7976931348623157e+308,
+                              "min": 0.0
+                            },
+                            "id": "numeric-range-v1",
+                            "notes": "Finite nonnegative cumulative USD reported by the connector; DefenseClaw never estimates it.",
+                            "overrides": {
+                              "max": 1.7976931348623157e+308,
+                              "min": 0.0
+                            }
+                          },
+                          "x-defenseclaw-owner": "defenseclaw",
+                          "x-defenseclaw-requirement-level": "conditional",
+                          "x-defenseclaw-sensitivity": "internal"
+                        },
                         "defenseclaw.agent.root.id": {
                           "pattern": "^(?:^[A-Za-z0-9][A-Za-z0-9._:/-]*$)$(?![\\s\\S])",
                           "type": "string",
@@ -79658,6 +80346,75 @@
                           "x-defenseclaw-requirement-level": "conditional",
                           "x-defenseclaw-sensitivity": "internal"
                         },
+                        "defenseclaw.destination.app": {
+                          "pattern": "^(?:^[A-Za-z0-9][A-Za-z0-9._:/-]*$)$(?![\\s\\S])",
+                          "type": "string",
+                          "x-defenseclaw-field-class": "identifier",
+                          "x-defenseclaw-max-utf8-bytes": 256,
+                          "x-defenseclaw-max-utf8-bytes-enforcement": "builder-runtime-shape-aware-utf8-byte-gate",
+                          "x-defenseclaw-max-utf8-bytes-semantics": "raw-scalar-string-utf8",
+                          "x-defenseclaw-normalization": {
+                            "effective_constraints": {
+                              "max_utf8_bytes": 256,
+                              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$"
+                            },
+                            "id": "identifier-v1",
+                            "notes": "registered application",
+                            "overrides": {}
+                          },
+                          "x-defenseclaw-owner": "defenseclaw",
+                          "x-defenseclaw-pattern-enforcement": "builder-runtime-and-anchored-public-schema",
+                          "x-defenseclaw-pattern-semantics": "portable-re2-full-match",
+                          "x-defenseclaw-pattern-source": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                          "x-defenseclaw-requirement-level": "recommended",
+                          "x-defenseclaw-sensitivity": "internal"
+                        },
+                        "defenseclaw.model.request.id": {
+                          "pattern": "^(?:^[A-Za-z0-9][A-Za-z0-9._:/-]*$)$(?![\\s\\S])",
+                          "type": "string",
+                          "x-defenseclaw-field-class": "identifier",
+                          "x-defenseclaw-max-utf8-bytes": 256,
+                          "x-defenseclaw-max-utf8-bytes-enforcement": "builder-runtime-shape-aware-utf8-byte-gate",
+                          "x-defenseclaw-max-utf8-bytes-semantics": "raw-scalar-string-utf8",
+                          "x-defenseclaw-normalization": {
+                            "effective_constraints": {
+                              "max_utf8_bytes": 256,
+                              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$"
+                            },
+                            "id": "identifier-v1",
+                            "notes": "typed and bounded",
+                            "overrides": {}
+                          },
+                          "x-defenseclaw-owner": "defenseclaw",
+                          "x-defenseclaw-pattern-enforcement": "builder-runtime-and-anchored-public-schema",
+                          "x-defenseclaw-pattern-semantics": "portable-re2-full-match",
+                          "x-defenseclaw-pattern-source": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                          "x-defenseclaw-requirement-level": "recommended",
+                          "x-defenseclaw-sensitivity": "internal"
+                        },
+                        "defenseclaw.model.response.id": {
+                          "pattern": "^(?:^[A-Za-z0-9][A-Za-z0-9._:/-]*$)$(?![\\s\\S])",
+                          "type": "string",
+                          "x-defenseclaw-field-class": "identifier",
+                          "x-defenseclaw-max-utf8-bytes": 256,
+                          "x-defenseclaw-max-utf8-bytes-enforcement": "builder-runtime-shape-aware-utf8-byte-gate",
+                          "x-defenseclaw-max-utf8-bytes-semantics": "raw-scalar-string-utf8",
+                          "x-defenseclaw-normalization": {
+                            "effective_constraints": {
+                              "max_utf8_bytes": 256,
+                              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$"
+                            },
+                            "id": "identifier-v1",
+                            "notes": "typed and bounded",
+                            "overrides": {}
+                          },
+                          "x-defenseclaw-owner": "defenseclaw",
+                          "x-defenseclaw-pattern-enforcement": "builder-runtime-and-anchored-public-schema",
+                          "x-defenseclaw-pattern-semantics": "portable-re2-full-match",
+                          "x-defenseclaw-pattern-source": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                          "x-defenseclaw-requirement-level": "recommended",
+                          "x-defenseclaw-sensitivity": "internal"
+                        },
                         "defenseclaw.operation.id": {
                           "pattern": "^(?:^[A-Za-z0-9][A-Za-z0-9._:/-]*$)$(?![\\s\\S])",
                           "type": "string",
@@ -79768,6 +80525,75 @@
                           "x-defenseclaw-owner": "defenseclaw",
                           "x-defenseclaw-requirement-level": "conditional",
                           "x-defenseclaw-sensitivity": "safe"
+                        },
+                        "defenseclaw.policy.id": {
+                          "pattern": "^(?:^[A-Za-z0-9][A-Za-z0-9._:/-]*$)$(?![\\s\\S])",
+                          "type": "string",
+                          "x-defenseclaw-field-class": "identifier",
+                          "x-defenseclaw-max-utf8-bytes": 256,
+                          "x-defenseclaw-max-utf8-bytes-enforcement": "builder-runtime-shape-aware-utf8-byte-gate",
+                          "x-defenseclaw-max-utf8-bytes-semantics": "raw-scalar-string-utf8",
+                          "x-defenseclaw-normalization": {
+                            "effective_constraints": {
+                              "max_utf8_bytes": 256,
+                              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$"
+                            },
+                            "id": "identifier-v1",
+                            "notes": "nonempty bounded",
+                            "overrides": {}
+                          },
+                          "x-defenseclaw-owner": "defenseclaw",
+                          "x-defenseclaw-pattern-enforcement": "builder-runtime-and-anchored-public-schema",
+                          "x-defenseclaw-pattern-semantics": "portable-re2-full-match",
+                          "x-defenseclaw-pattern-source": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                          "x-defenseclaw-requirement-level": "recommended",
+                          "x-defenseclaw-sensitivity": "internal"
+                        },
+                        "defenseclaw.policy.version": {
+                          "pattern": "^(?:^[A-Za-z0-9][A-Za-z0-9._:/-]*$)$(?![\\s\\S])",
+                          "type": "string",
+                          "x-defenseclaw-field-class": "identifier",
+                          "x-defenseclaw-max-utf8-bytes": 256,
+                          "x-defenseclaw-max-utf8-bytes-enforcement": "builder-runtime-shape-aware-utf8-byte-gate",
+                          "x-defenseclaw-max-utf8-bytes-semantics": "raw-scalar-string-utf8",
+                          "x-defenseclaw-normalization": {
+                            "effective_constraints": {
+                              "max_utf8_bytes": 256,
+                              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$"
+                            },
+                            "id": "identifier-v1",
+                            "notes": "versioned bounded identifier",
+                            "overrides": {}
+                          },
+                          "x-defenseclaw-owner": "defenseclaw",
+                          "x-defenseclaw-pattern-enforcement": "builder-runtime-and-anchored-public-schema",
+                          "x-defenseclaw-pattern-semantics": "portable-re2-full-match",
+                          "x-defenseclaw-pattern-source": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                          "x-defenseclaw-requirement-level": "recommended",
+                          "x-defenseclaw-sensitivity": "internal"
+                        },
+                        "defenseclaw.request.id": {
+                          "pattern": "^(?:^[A-Za-z0-9][A-Za-z0-9._:/-]*$)$(?![\\s\\S])",
+                          "type": "string",
+                          "x-defenseclaw-field-class": "identifier",
+                          "x-defenseclaw-max-utf8-bytes": 256,
+                          "x-defenseclaw-max-utf8-bytes-enforcement": "builder-runtime-shape-aware-utf8-byte-gate",
+                          "x-defenseclaw-max-utf8-bytes-semantics": "raw-scalar-string-utf8",
+                          "x-defenseclaw-normalization": {
+                            "effective_constraints": {
+                              "max_utf8_bytes": 256,
+                              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$"
+                            },
+                            "id": "identifier-v1",
+                            "notes": "nonempty bounded",
+                            "overrides": {}
+                          },
+                          "x-defenseclaw-owner": "defenseclaw",
+                          "x-defenseclaw-pattern-enforcement": "builder-runtime-and-anchored-public-schema",
+                          "x-defenseclaw-pattern-semantics": "portable-re2-full-match",
+                          "x-defenseclaw-pattern-source": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                          "x-defenseclaw-requirement-level": "recommended",
+                          "x-defenseclaw-sensitivity": "internal"
                         },
                         "defenseclaw.run.id": {
                           "pattern": "^(?:^[A-Za-z0-9][A-Za-z0-9._:/-]*$)$(?![\\s\\S])",
@@ -79959,6 +80785,125 @@
                           "x-defenseclaw-requirement-level": "required",
                           "x-defenseclaw-sensitivity": "safe"
                         },
+                        "defenseclaw.tool.id": {
+                          "pattern": "^(?:^[A-Za-z0-9][A-Za-z0-9._:/-]*$)$(?![\\s\\S])",
+                          "type": "string",
+                          "x-defenseclaw-field-class": "identifier",
+                          "x-defenseclaw-max-utf8-bytes": 256,
+                          "x-defenseclaw-max-utf8-bytes-enforcement": "builder-runtime-shape-aware-utf8-byte-gate",
+                          "x-defenseclaw-max-utf8-bytes-semantics": "raw-scalar-string-utf8",
+                          "x-defenseclaw-normalization": {
+                            "effective_constraints": {
+                              "max_utf8_bytes": 256,
+                              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$"
+                            },
+                            "id": "identifier-v1",
+                            "notes": "Preserve only an explicitly reported bounded tool identity; never derive it from tool name or call ID.",
+                            "overrides": {}
+                          },
+                          "x-defenseclaw-owner": "defenseclaw",
+                          "x-defenseclaw-pattern-enforcement": "builder-runtime-and-anchored-public-schema",
+                          "x-defenseclaw-pattern-semantics": "portable-re2-full-match",
+                          "x-defenseclaw-pattern-source": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                          "x-defenseclaw-requirement-level": "recommended",
+                          "x-defenseclaw-sensitivity": "internal"
+                        },
+                        "defenseclaw.tool.provider": {
+                          "type": "string",
+                          "x-defenseclaw-field-class": "metadata",
+                          "x-defenseclaw-json-schema-item-bound-scope": "root-collection-safe-subset",
+                          "x-defenseclaw-max-item-utf8-bytes": 4096,
+                          "x-defenseclaw-max-item-utf8-bytes-enforcement": "builder-runtime-string-leaf-utf8-byte-gate",
+                          "x-defenseclaw-max-item-utf8-bytes-semantics": "every-string-element-or-structured-string-leaf",
+                          "x-defenseclaw-max-items": 256,
+                          "x-defenseclaw-max-items-enforcement": "builder-runtime-recursive-aggregate-gate",
+                          "x-defenseclaw-max-items-semantics": "recursive-aggregate-members",
+                          "x-defenseclaw-max-utf8-bytes": 4096,
+                          "x-defenseclaw-max-utf8-bytes-enforcement": "builder-runtime-shape-aware-utf8-byte-gate",
+                          "x-defenseclaw-max-utf8-bytes-semantics": "raw-scalar-string-utf8",
+                          "x-defenseclaw-normalization": {
+                            "effective_constraints": {
+                              "max_item_utf8_bytes": 4096,
+                              "max_items": 256,
+                              "max_utf8_bytes": 4096
+                            },
+                            "id": "bounded-v1",
+                            "notes": "typed and bounded",
+                            "overrides": {}
+                          },
+                          "x-defenseclaw-owner": "defenseclaw",
+                          "x-defenseclaw-requirement-level": "recommended",
+                          "x-defenseclaw-sensitivity": "safe"
+                        },
+                        "defenseclaw.tool.skill_key": {
+                          "pattern": "^(?:^[A-Za-z0-9][A-Za-z0-9._:/-]*$)$(?![\\s\\S])",
+                          "type": "string",
+                          "x-defenseclaw-field-class": "identifier",
+                          "x-defenseclaw-max-utf8-bytes": 256,
+                          "x-defenseclaw-max-utf8-bytes-enforcement": "builder-runtime-shape-aware-utf8-byte-gate",
+                          "x-defenseclaw-max-utf8-bytes-semantics": "raw-scalar-string-utf8",
+                          "x-defenseclaw-normalization": {
+                            "effective_constraints": {
+                              "max_utf8_bytes": 256,
+                              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$"
+                            },
+                            "id": "identifier-v1",
+                            "notes": "typed and bounded",
+                            "overrides": {}
+                          },
+                          "x-defenseclaw-owner": "defenseclaw",
+                          "x-defenseclaw-pattern-enforcement": "builder-runtime-and-anchored-public-schema",
+                          "x-defenseclaw-pattern-semantics": "portable-re2-full-match",
+                          "x-defenseclaw-pattern-source": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                          "x-defenseclaw-requirement-level": "recommended",
+                          "x-defenseclaw-sensitivity": "internal"
+                        },
+                        "defenseclaw.turn.id": {
+                          "pattern": "^(?:^[A-Za-z0-9][A-Za-z0-9._:/-]*$)$(?![\\s\\S])",
+                          "type": "string",
+                          "x-defenseclaw-field-class": "identifier",
+                          "x-defenseclaw-max-utf8-bytes": 256,
+                          "x-defenseclaw-max-utf8-bytes-enforcement": "builder-runtime-shape-aware-utf8-byte-gate",
+                          "x-defenseclaw-max-utf8-bytes-semantics": "raw-scalar-string-utf8",
+                          "x-defenseclaw-normalization": {
+                            "effective_constraints": {
+                              "max_utf8_bytes": 256,
+                              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$"
+                            },
+                            "id": "identifier-v1",
+                            "notes": "nonempty bounded",
+                            "overrides": {}
+                          },
+                          "x-defenseclaw-owner": "defenseclaw",
+                          "x-defenseclaw-pattern-enforcement": "builder-runtime-and-anchored-public-schema",
+                          "x-defenseclaw-pattern-semantics": "portable-re2-full-match",
+                          "x-defenseclaw-pattern-source": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                          "x-defenseclaw-requirement-level": "recommended",
+                          "x-defenseclaw-sensitivity": "internal"
+                        },
+                        "defenseclaw.user.name": {
+                          "pattern": "^(?:^[A-Za-z0-9][A-Za-z0-9._:/-]*$)$(?![\\s\\S])",
+                          "type": "string",
+                          "x-defenseclaw-field-class": "identifier",
+                          "x-defenseclaw-max-utf8-bytes": 256,
+                          "x-defenseclaw-max-utf8-bytes-enforcement": "builder-runtime-shape-aware-utf8-byte-gate",
+                          "x-defenseclaw-max-utf8-bytes-semantics": "raw-scalar-string-utf8",
+                          "x-defenseclaw-normalization": {
+                            "effective_constraints": {
+                              "max_utf8_bytes": 256,
+                              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$"
+                            },
+                            "id": "identifier-v1",
+                            "notes": "NFC bounded",
+                            "overrides": {}
+                          },
+                          "x-defenseclaw-owner": "defenseclaw",
+                          "x-defenseclaw-pattern-enforcement": "builder-runtime-and-anchored-public-schema",
+                          "x-defenseclaw-pattern-semantics": "portable-re2-full-match",
+                          "x-defenseclaw-pattern-source": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                          "x-defenseclaw-requirement-level": "recommended",
+                          "x-defenseclaw-sensitivity": "sensitive"
+                        },
                         "error.type": {
                           "type": "string",
                           "x-defenseclaw-condition": "technical-failure-v1",
@@ -80055,6 +81000,198 @@
                           "x-defenseclaw-pattern-source": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
                           "x-defenseclaw-requirement-level": "required",
                           "x-defenseclaw-sensitivity": "sensitive"
+                        },
+                        "gen_ai.provider.name": {
+                          "type": "string",
+                          "x-defenseclaw-field-class": "metadata",
+                          "x-defenseclaw-json-schema-item-bound-scope": "root-collection-safe-subset",
+                          "x-defenseclaw-max-item-utf8-bytes": 4096,
+                          "x-defenseclaw-max-item-utf8-bytes-enforcement": "builder-runtime-string-leaf-utf8-byte-gate",
+                          "x-defenseclaw-max-item-utf8-bytes-semantics": "every-string-element-or-structured-string-leaf",
+                          "x-defenseclaw-max-items": 256,
+                          "x-defenseclaw-max-items-enforcement": "builder-runtime-recursive-aggregate-gate",
+                          "x-defenseclaw-max-items-semantics": "recursive-aggregate-members",
+                          "x-defenseclaw-max-utf8-bytes": 4096,
+                          "x-defenseclaw-max-utf8-bytes-enforcement": "builder-runtime-shape-aware-utf8-byte-gate",
+                          "x-defenseclaw-max-utf8-bytes-semantics": "raw-scalar-string-utf8",
+                          "x-defenseclaw-normalization": {
+                            "effective_constraints": {
+                              "max_item_utf8_bytes": 4096,
+                              "max_items": 256,
+                              "max_utf8_bytes": 4096
+                            },
+                            "id": "bounded-v1",
+                            "notes": "lowercase bounded provider token from the pinned convention",
+                            "overrides": {}
+                          },
+                          "x-defenseclaw-owner": "otel_genai",
+                          "x-defenseclaw-requirement-level": "recommended",
+                          "x-defenseclaw-sensitivity": "safe"
+                        },
+                        "gen_ai.request.model": {
+                          "pattern": "^(?:^[A-Za-z0-9][A-Za-z0-9._:/-]*$)$(?![\\s\\S])",
+                          "type": "string",
+                          "x-defenseclaw-field-class": "identifier",
+                          "x-defenseclaw-max-utf8-bytes": 256,
+                          "x-defenseclaw-max-utf8-bytes-enforcement": "builder-runtime-shape-aware-utf8-byte-gate",
+                          "x-defenseclaw-max-utf8-bytes-semantics": "raw-scalar-string-utf8",
+                          "x-defenseclaw-normalization": {
+                            "effective_constraints": {
+                              "max_utf8_bytes": 256,
+                              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$"
+                            },
+                            "id": "identifier-v1",
+                            "notes": "NFC bounded requested model identity; never infer from response data",
+                            "overrides": {}
+                          },
+                          "x-defenseclaw-owner": "otel_genai",
+                          "x-defenseclaw-pattern-enforcement": "builder-runtime-and-anchored-public-schema",
+                          "x-defenseclaw-pattern-semantics": "portable-re2-full-match",
+                          "x-defenseclaw-pattern-source": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                          "x-defenseclaw-requirement-level": "recommended",
+                          "x-defenseclaw-sensitivity": "internal"
+                        },
+                        "gen_ai.response.id": {
+                          "pattern": "^(?:^[A-Za-z0-9][A-Za-z0-9._:/-]*$)$(?![\\s\\S])",
+                          "type": "string",
+                          "x-defenseclaw-field-class": "identifier",
+                          "x-defenseclaw-max-utf8-bytes": 256,
+                          "x-defenseclaw-max-utf8-bytes-enforcement": "builder-runtime-shape-aware-utf8-byte-gate",
+                          "x-defenseclaw-max-utf8-bytes-semantics": "raw-scalar-string-utf8",
+                          "x-defenseclaw-normalization": {
+                            "effective_constraints": {
+                              "max_utf8_bytes": 256,
+                              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$"
+                            },
+                            "id": "identifier-v1",
+                            "notes": "preserve a nonempty bounded provider response identifier; omit when not reported and never use as a metric label",
+                            "overrides": {}
+                          },
+                          "x-defenseclaw-owner": "otel_genai",
+                          "x-defenseclaw-pattern-enforcement": "builder-runtime-and-anchored-public-schema",
+                          "x-defenseclaw-pattern-semantics": "portable-re2-full-match",
+                          "x-defenseclaw-pattern-source": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                          "x-defenseclaw-requirement-level": "recommended",
+                          "x-defenseclaw-sensitivity": "sensitive"
+                        },
+                        "gen_ai.response.model": {
+                          "pattern": "^(?:^[A-Za-z0-9][A-Za-z0-9._:/-]*$)$(?![\\s\\S])",
+                          "type": "string",
+                          "x-defenseclaw-field-class": "identifier",
+                          "x-defenseclaw-max-utf8-bytes": 256,
+                          "x-defenseclaw-max-utf8-bytes-enforcement": "builder-runtime-shape-aware-utf8-byte-gate",
+                          "x-defenseclaw-max-utf8-bytes-semantics": "raw-scalar-string-utf8",
+                          "x-defenseclaw-normalization": {
+                            "effective_constraints": {
+                              "max_utf8_bytes": 256,
+                              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$"
+                            },
+                            "id": "identifier-v1",
+                            "notes": "NFC bounded provider-reported response model identity; omit when not reported",
+                            "overrides": {}
+                          },
+                          "x-defenseclaw-owner": "otel_genai",
+                          "x-defenseclaw-pattern-enforcement": "builder-runtime-and-anchored-public-schema",
+                          "x-defenseclaw-pattern-semantics": "portable-re2-full-match",
+                          "x-defenseclaw-pattern-source": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                          "x-defenseclaw-requirement-level": "recommended",
+                          "x-defenseclaw-sensitivity": "internal"
+                        },
+                        "gen_ai.tool.call.id": {
+                          "pattern": "^(?:^[A-Za-z0-9][A-Za-z0-9._:/-]*$)$(?![\\s\\S])",
+                          "type": "string",
+                          "x-defenseclaw-field-class": "identifier",
+                          "x-defenseclaw-max-utf8-bytes": 256,
+                          "x-defenseclaw-max-utf8-bytes-enforcement": "builder-runtime-shape-aware-utf8-byte-gate",
+                          "x-defenseclaw-max-utf8-bytes-semantics": "raw-scalar-string-utf8",
+                          "x-defenseclaw-normalization": {
+                            "effective_constraints": {
+                              "max_utf8_bytes": 256,
+                              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$"
+                            },
+                            "id": "identifier-v1",
+                            "notes": "preserve a nonempty bounded producer tool-call identifier; never derive from arguments or use as a metric label",
+                            "overrides": {}
+                          },
+                          "x-defenseclaw-owner": "otel_genai",
+                          "x-defenseclaw-pattern-enforcement": "builder-runtime-and-anchored-public-schema",
+                          "x-defenseclaw-pattern-semantics": "portable-re2-full-match",
+                          "x-defenseclaw-pattern-source": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                          "x-defenseclaw-requirement-level": "recommended",
+                          "x-defenseclaw-sensitivity": "sensitive"
+                        },
+                        "gen_ai.tool.name": {
+                          "pattern": "^(?:^[A-Za-z0-9][A-Za-z0-9._:/-]*$)$(?![\\s\\S])",
+                          "type": "string",
+                          "x-defenseclaw-field-class": "identifier",
+                          "x-defenseclaw-max-utf8-bytes": 256,
+                          "x-defenseclaw-max-utf8-bytes-enforcement": "builder-runtime-shape-aware-utf8-byte-gate",
+                          "x-defenseclaw-max-utf8-bytes-semantics": "raw-scalar-string-utf8",
+                          "x-defenseclaw-normalization": {
+                            "effective_constraints": {
+                              "max_utf8_bytes": 256,
+                              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$"
+                            },
+                            "id": "identifier-v1",
+                            "notes": "NFC bounded tool name; canonical metrics use only registered bounded projections and span names use a normalized bounded form",
+                            "overrides": {}
+                          },
+                          "x-defenseclaw-owner": "otel_genai",
+                          "x-defenseclaw-pattern-enforcement": "builder-runtime-and-anchored-public-schema",
+                          "x-defenseclaw-pattern-semantics": "portable-re2-full-match",
+                          "x-defenseclaw-pattern-source": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                          "x-defenseclaw-requirement-level": "recommended",
+                          "x-defenseclaw-sensitivity": "internal"
+                        },
+                        "gen_ai.tool.type": {
+                          "type": "string",
+                          "x-defenseclaw-field-class": "metadata",
+                          "x-defenseclaw-json-schema-item-bound-scope": "root-collection-safe-subset",
+                          "x-defenseclaw-max-item-utf8-bytes": 4096,
+                          "x-defenseclaw-max-item-utf8-bytes-enforcement": "builder-runtime-string-leaf-utf8-byte-gate",
+                          "x-defenseclaw-max-item-utf8-bytes-semantics": "every-string-element-or-structured-string-leaf",
+                          "x-defenseclaw-max-items": 256,
+                          "x-defenseclaw-max-items-enforcement": "builder-runtime-recursive-aggregate-gate",
+                          "x-defenseclaw-max-items-semantics": "recursive-aggregate-members",
+                          "x-defenseclaw-max-utf8-bytes": 4096,
+                          "x-defenseclaw-max-utf8-bytes-enforcement": "builder-runtime-shape-aware-utf8-byte-gate",
+                          "x-defenseclaw-max-utf8-bytes-semantics": "raw-scalar-string-utf8",
+                          "x-defenseclaw-normalization": {
+                            "effective_constraints": {
+                              "max_item_utf8_bytes": 4096,
+                              "max_items": 256,
+                              "max_utf8_bytes": 4096
+                            },
+                            "id": "bounded-v1",
+                            "notes": "pinned bounded tool-type token",
+                            "overrides": {}
+                          },
+                          "x-defenseclaw-owner": "otel_genai",
+                          "x-defenseclaw-requirement-level": "recommended",
+                          "x-defenseclaw-sensitivity": "safe"
+                        },
+                        "user.id": {
+                          "pattern": "^(?:^[A-Za-z0-9][A-Za-z0-9._:/-]*$)$(?![\\s\\S])",
+                          "type": "string",
+                          "x-defenseclaw-field-class": "identifier",
+                          "x-defenseclaw-max-utf8-bytes": 256,
+                          "x-defenseclaw-max-utf8-bytes-enforcement": "builder-runtime-shape-aware-utf8-byte-gate",
+                          "x-defenseclaw-max-utf8-bytes-semantics": "raw-scalar-string-utf8",
+                          "x-defenseclaw-normalization": {
+                            "effective_constraints": {
+                              "max_utf8_bytes": 256,
+                              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$"
+                            },
+                            "id": "identifier-v1",
+                            "notes": "preserve only an explicitly reported bounded user-principal identifier; never derive it from a display name or administrative principal",
+                            "overrides": {}
+                          },
+                          "x-defenseclaw-owner": "otel",
+                          "x-defenseclaw-pattern-enforcement": "builder-runtime-and-anchored-public-schema",
+                          "x-defenseclaw-pattern-semantics": "portable-re2-full-match",
+                          "x-defenseclaw-pattern-source": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                          "x-defenseclaw-requirement-level": "recommended",
+                          "x-defenseclaw-sensitivity": "sensitive"
                         }
                       },
                       "required": [
@@ -80063,6 +81200,7 @@
                         "defenseclaw.agent.lifecycle.event",
                         "defenseclaw.agent.lifecycle.id",
                         "defenseclaw.agent.lifecycle.state",
+                        "defenseclaw.agent.reported_cost.present",
                         "defenseclaw.agent.root.id",
                         "defenseclaw.bucket",
                         "defenseclaw.config.generation",
@@ -80715,6 +81853,7 @@
       "x-defenseclaw-family": {
         "bucket": "agent.lifecycle",
         "conditions": [
+          "agent-reported-cost-available-v1",
           "connector-known-v1",
           "operation-terminal-v1",
           "technical-failure-v1"
@@ -103256,6 +104395,42 @@
                           "x-defenseclaw-requirement-level": "recommended",
                           "x-defenseclaw-sensitivity": "safe"
                         },
+                        "defenseclaw.agent.reported_cost.present": {
+                          "type": "boolean",
+                          "x-defenseclaw-field-class": "metadata",
+                          "x-defenseclaw-normalization": {
+                            "effective_constraints": {},
+                            "id": "identity-v1",
+                            "notes": "Exact availability state from the source payload; never inferred from model pricing or a default numeric value.",
+                            "overrides": {}
+                          },
+                          "x-defenseclaw-owner": "defenseclaw",
+                          "x-defenseclaw-requirement-level": "required",
+                          "x-defenseclaw-sensitivity": "safe"
+                        },
+                        "defenseclaw.agent.reported_cost.usd": {
+                          "maximum": 1.7976931348623157e+308,
+                          "minimum": 0.0,
+                          "type": "number",
+                          "x-defenseclaw-condition": "agent-reported-cost-available-v1",
+                          "x-defenseclaw-field-class": "metadata",
+                          "x-defenseclaw-finite": true,
+                          "x-defenseclaw-normalization": {
+                            "effective_constraints": {
+                              "max": 1.7976931348623157e+308,
+                              "min": 0.0
+                            },
+                            "id": "numeric-range-v1",
+                            "notes": "Finite nonnegative cumulative USD reported by the connector; DefenseClaw never estimates it.",
+                            "overrides": {
+                              "max": 1.7976931348623157e+308,
+                              "min": 0.0
+                            }
+                          },
+                          "x-defenseclaw-owner": "defenseclaw",
+                          "x-defenseclaw-requirement-level": "conditional",
+                          "x-defenseclaw-sensitivity": "internal"
+                        },
                         "defenseclaw.agent.root.id": {
                           "pattern": "^(?:^[A-Za-z0-9][A-Za-z0-9._:/-]*$)$(?![\\s\\S])",
                           "type": "string",
@@ -103674,6 +104849,29 @@
                           "x-defenseclaw-requirement-level": "required",
                           "x-defenseclaw-sensitivity": "safe"
                         },
+                        "defenseclaw.destination.app": {
+                          "pattern": "^(?:^[A-Za-z0-9][A-Za-z0-9._:/-]*$)$(?![\\s\\S])",
+                          "type": "string",
+                          "x-defenseclaw-field-class": "identifier",
+                          "x-defenseclaw-max-utf8-bytes": 256,
+                          "x-defenseclaw-max-utf8-bytes-enforcement": "builder-runtime-shape-aware-utf8-byte-gate",
+                          "x-defenseclaw-max-utf8-bytes-semantics": "raw-scalar-string-utf8",
+                          "x-defenseclaw-normalization": {
+                            "effective_constraints": {
+                              "max_utf8_bytes": 256,
+                              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$"
+                            },
+                            "id": "identifier-v1",
+                            "notes": "registered application",
+                            "overrides": {}
+                          },
+                          "x-defenseclaw-owner": "defenseclaw",
+                          "x-defenseclaw-pattern-enforcement": "builder-runtime-and-anchored-public-schema",
+                          "x-defenseclaw-pattern-semantics": "portable-re2-full-match",
+                          "x-defenseclaw-pattern-source": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                          "x-defenseclaw-requirement-level": "recommended",
+                          "x-defenseclaw-sensitivity": "internal"
+                        },
                         "defenseclaw.model.attempt": {
                           "maximum": 9223372036854775807,
                           "minimum": 0,
@@ -104013,6 +105211,52 @@
                           "x-defenseclaw-requirement-level": "conditional",
                           "x-defenseclaw-sensitivity": "safe"
                         },
+                        "defenseclaw.policy.id": {
+                          "pattern": "^(?:^[A-Za-z0-9][A-Za-z0-9._:/-]*$)$(?![\\s\\S])",
+                          "type": "string",
+                          "x-defenseclaw-field-class": "identifier",
+                          "x-defenseclaw-max-utf8-bytes": 256,
+                          "x-defenseclaw-max-utf8-bytes-enforcement": "builder-runtime-shape-aware-utf8-byte-gate",
+                          "x-defenseclaw-max-utf8-bytes-semantics": "raw-scalar-string-utf8",
+                          "x-defenseclaw-normalization": {
+                            "effective_constraints": {
+                              "max_utf8_bytes": 256,
+                              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$"
+                            },
+                            "id": "identifier-v1",
+                            "notes": "nonempty bounded",
+                            "overrides": {}
+                          },
+                          "x-defenseclaw-owner": "defenseclaw",
+                          "x-defenseclaw-pattern-enforcement": "builder-runtime-and-anchored-public-schema",
+                          "x-defenseclaw-pattern-semantics": "portable-re2-full-match",
+                          "x-defenseclaw-pattern-source": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                          "x-defenseclaw-requirement-level": "recommended",
+                          "x-defenseclaw-sensitivity": "internal"
+                        },
+                        "defenseclaw.policy.version": {
+                          "pattern": "^(?:^[A-Za-z0-9][A-Za-z0-9._:/-]*$)$(?![\\s\\S])",
+                          "type": "string",
+                          "x-defenseclaw-field-class": "identifier",
+                          "x-defenseclaw-max-utf8-bytes": 256,
+                          "x-defenseclaw-max-utf8-bytes-enforcement": "builder-runtime-shape-aware-utf8-byte-gate",
+                          "x-defenseclaw-max-utf8-bytes-semantics": "raw-scalar-string-utf8",
+                          "x-defenseclaw-normalization": {
+                            "effective_constraints": {
+                              "max_utf8_bytes": 256,
+                              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$"
+                            },
+                            "id": "identifier-v1",
+                            "notes": "versioned bounded identifier",
+                            "overrides": {}
+                          },
+                          "x-defenseclaw-owner": "defenseclaw",
+                          "x-defenseclaw-pattern-enforcement": "builder-runtime-and-anchored-public-schema",
+                          "x-defenseclaw-pattern-semantics": "portable-re2-full-match",
+                          "x-defenseclaw-pattern-source": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                          "x-defenseclaw-requirement-level": "recommended",
+                          "x-defenseclaw-sensitivity": "internal"
+                        },
                         "defenseclaw.request.id": {
                           "pattern": "^(?:^[A-Za-z0-9][A-Za-z0-9._:/-]*$)$(?![\\s\\S])",
                           "type": "string",
@@ -104287,6 +105531,29 @@
                           "x-defenseclaw-pattern-source": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
                           "x-defenseclaw-requirement-level": "recommended",
                           "x-defenseclaw-sensitivity": "internal"
+                        },
+                        "defenseclaw.user.name": {
+                          "pattern": "^(?:^[A-Za-z0-9][A-Za-z0-9._:/-]*$)$(?![\\s\\S])",
+                          "type": "string",
+                          "x-defenseclaw-field-class": "identifier",
+                          "x-defenseclaw-max-utf8-bytes": 256,
+                          "x-defenseclaw-max-utf8-bytes-enforcement": "builder-runtime-shape-aware-utf8-byte-gate",
+                          "x-defenseclaw-max-utf8-bytes-semantics": "raw-scalar-string-utf8",
+                          "x-defenseclaw-normalization": {
+                            "effective_constraints": {
+                              "max_utf8_bytes": 256,
+                              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$"
+                            },
+                            "id": "identifier-v1",
+                            "notes": "NFC bounded",
+                            "overrides": {}
+                          },
+                          "x-defenseclaw-owner": "defenseclaw",
+                          "x-defenseclaw-pattern-enforcement": "builder-runtime-and-anchored-public-schema",
+                          "x-defenseclaw-pattern-semantics": "portable-re2-full-match",
+                          "x-defenseclaw-pattern-source": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                          "x-defenseclaw-requirement-level": "recommended",
+                          "x-defenseclaw-sensitivity": "sensitive"
                         },
                         "error.type": {
                           "type": "string",
@@ -104772,9 +106039,33 @@
                           "x-defenseclaw-owner": "otel_genai",
                           "x-defenseclaw-requirement-level": "recommended",
                           "x-defenseclaw-sensitivity": "safe"
+                        },
+                        "user.id": {
+                          "pattern": "^(?:^[A-Za-z0-9][A-Za-z0-9._:/-]*$)$(?![\\s\\S])",
+                          "type": "string",
+                          "x-defenseclaw-field-class": "identifier",
+                          "x-defenseclaw-max-utf8-bytes": 256,
+                          "x-defenseclaw-max-utf8-bytes-enforcement": "builder-runtime-shape-aware-utf8-byte-gate",
+                          "x-defenseclaw-max-utf8-bytes-semantics": "raw-scalar-string-utf8",
+                          "x-defenseclaw-normalization": {
+                            "effective_constraints": {
+                              "max_utf8_bytes": 256,
+                              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$"
+                            },
+                            "id": "identifier-v1",
+                            "notes": "preserve only an explicitly reported bounded user-principal identifier; never derive it from a display name or administrative principal",
+                            "overrides": {}
+                          },
+                          "x-defenseclaw-owner": "otel",
+                          "x-defenseclaw-pattern-enforcement": "builder-runtime-and-anchored-public-schema",
+                          "x-defenseclaw-pattern-semantics": "portable-re2-full-match",
+                          "x-defenseclaw-pattern-source": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                          "x-defenseclaw-requirement-level": "recommended",
+                          "x-defenseclaw-sensitivity": "sensitive"
                         }
                       },
                       "required": [
+                        "defenseclaw.agent.reported_cost.present",
                         "defenseclaw.bucket",
                         "defenseclaw.config.generation",
                         "defenseclaw.content.input.state",
@@ -105440,6 +106731,7 @@
       "x-defenseclaw-family": {
         "bucket": "model.io",
         "conditions": [
+          "agent-reported-cost-available-v1",
           "connector-known-v1",
           "operation-terminal-v1",
           "technical-failure-v1"
@@ -114908,6 +116200,42 @@
                           "x-defenseclaw-requirement-level": "recommended",
                           "x-defenseclaw-sensitivity": "safe"
                         },
+                        "defenseclaw.agent.reported_cost.present": {
+                          "type": "boolean",
+                          "x-defenseclaw-field-class": "metadata",
+                          "x-defenseclaw-normalization": {
+                            "effective_constraints": {},
+                            "id": "identity-v1",
+                            "notes": "Exact availability state from the source payload; never inferred from model pricing or a default numeric value.",
+                            "overrides": {}
+                          },
+                          "x-defenseclaw-owner": "defenseclaw",
+                          "x-defenseclaw-requirement-level": "required",
+                          "x-defenseclaw-sensitivity": "safe"
+                        },
+                        "defenseclaw.agent.reported_cost.usd": {
+                          "maximum": 1.7976931348623157e+308,
+                          "minimum": 0.0,
+                          "type": "number",
+                          "x-defenseclaw-condition": "agent-reported-cost-available-v1",
+                          "x-defenseclaw-field-class": "metadata",
+                          "x-defenseclaw-finite": true,
+                          "x-defenseclaw-normalization": {
+                            "effective_constraints": {
+                              "max": 1.7976931348623157e+308,
+                              "min": 0.0
+                            },
+                            "id": "numeric-range-v1",
+                            "notes": "Finite nonnegative cumulative USD reported by the connector; DefenseClaw never estimates it.",
+                            "overrides": {
+                              "max": 1.7976931348623157e+308,
+                              "min": 0.0
+                            }
+                          },
+                          "x-defenseclaw-owner": "defenseclaw",
+                          "x-defenseclaw-requirement-level": "conditional",
+                          "x-defenseclaw-sensitivity": "internal"
+                        },
                         "defenseclaw.agent.root.id": {
                           "pattern": "^(?:^[A-Za-z0-9][A-Za-z0-9._:/-]*$)$(?![\\s\\S])",
                           "type": "string",
@@ -115460,6 +116788,52 @@
                           "x-defenseclaw-requirement-level": "conditional",
                           "x-defenseclaw-sensitivity": "safe"
                         },
+                        "defenseclaw.policy.id": {
+                          "pattern": "^(?:^[A-Za-z0-9][A-Za-z0-9._:/-]*$)$(?![\\s\\S])",
+                          "type": "string",
+                          "x-defenseclaw-field-class": "identifier",
+                          "x-defenseclaw-max-utf8-bytes": 256,
+                          "x-defenseclaw-max-utf8-bytes-enforcement": "builder-runtime-shape-aware-utf8-byte-gate",
+                          "x-defenseclaw-max-utf8-bytes-semantics": "raw-scalar-string-utf8",
+                          "x-defenseclaw-normalization": {
+                            "effective_constraints": {
+                              "max_utf8_bytes": 256,
+                              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$"
+                            },
+                            "id": "identifier-v1",
+                            "notes": "nonempty bounded",
+                            "overrides": {}
+                          },
+                          "x-defenseclaw-owner": "defenseclaw",
+                          "x-defenseclaw-pattern-enforcement": "builder-runtime-and-anchored-public-schema",
+                          "x-defenseclaw-pattern-semantics": "portable-re2-full-match",
+                          "x-defenseclaw-pattern-source": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                          "x-defenseclaw-requirement-level": "recommended",
+                          "x-defenseclaw-sensitivity": "internal"
+                        },
+                        "defenseclaw.policy.version": {
+                          "pattern": "^(?:^[A-Za-z0-9][A-Za-z0-9._:/-]*$)$(?![\\s\\S])",
+                          "type": "string",
+                          "x-defenseclaw-field-class": "identifier",
+                          "x-defenseclaw-max-utf8-bytes": 256,
+                          "x-defenseclaw-max-utf8-bytes-enforcement": "builder-runtime-shape-aware-utf8-byte-gate",
+                          "x-defenseclaw-max-utf8-bytes-semantics": "raw-scalar-string-utf8",
+                          "x-defenseclaw-normalization": {
+                            "effective_constraints": {
+                              "max_utf8_bytes": 256,
+                              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$"
+                            },
+                            "id": "identifier-v1",
+                            "notes": "versioned bounded identifier",
+                            "overrides": {}
+                          },
+                          "x-defenseclaw-owner": "defenseclaw",
+                          "x-defenseclaw-pattern-enforcement": "builder-runtime-and-anchored-public-schema",
+                          "x-defenseclaw-pattern-semantics": "portable-re2-full-match",
+                          "x-defenseclaw-pattern-source": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                          "x-defenseclaw-requirement-level": "recommended",
+                          "x-defenseclaw-sensitivity": "internal"
+                        },
                         "defenseclaw.request.id": {
                           "pattern": "^(?:^[A-Za-z0-9][A-Za-z0-9._:/-]*$)$(?![\\s\\S])",
                           "type": "string",
@@ -115754,6 +117128,29 @@
                           "x-defenseclaw-requirement-level": "recommended",
                           "x-defenseclaw-sensitivity": "safe"
                         },
+                        "defenseclaw.tool.id": {
+                          "pattern": "^(?:^[A-Za-z0-9][A-Za-z0-9._:/-]*$)$(?![\\s\\S])",
+                          "type": "string",
+                          "x-defenseclaw-field-class": "identifier",
+                          "x-defenseclaw-max-utf8-bytes": 256,
+                          "x-defenseclaw-max-utf8-bytes-enforcement": "builder-runtime-shape-aware-utf8-byte-gate",
+                          "x-defenseclaw-max-utf8-bytes-semantics": "raw-scalar-string-utf8",
+                          "x-defenseclaw-normalization": {
+                            "effective_constraints": {
+                              "max_utf8_bytes": 256,
+                              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$"
+                            },
+                            "id": "identifier-v1",
+                            "notes": "Preserve only an explicitly reported bounded tool identity; never derive it from tool name or call ID.",
+                            "overrides": {}
+                          },
+                          "x-defenseclaw-owner": "defenseclaw",
+                          "x-defenseclaw-pattern-enforcement": "builder-runtime-and-anchored-public-schema",
+                          "x-defenseclaw-pattern-semantics": "portable-re2-full-match",
+                          "x-defenseclaw-pattern-source": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                          "x-defenseclaw-requirement-level": "recommended",
+                          "x-defenseclaw-sensitivity": "internal"
+                        },
                         "defenseclaw.tool.output_length": {
                           "maximum": 9223372036854775807,
                           "minimum": 0,
@@ -115874,6 +117271,29 @@
                           "x-defenseclaw-pattern-source": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
                           "x-defenseclaw-requirement-level": "recommended",
                           "x-defenseclaw-sensitivity": "internal"
+                        },
+                        "defenseclaw.user.name": {
+                          "pattern": "^(?:^[A-Za-z0-9][A-Za-z0-9._:/-]*$)$(?![\\s\\S])",
+                          "type": "string",
+                          "x-defenseclaw-field-class": "identifier",
+                          "x-defenseclaw-max-utf8-bytes": 256,
+                          "x-defenseclaw-max-utf8-bytes-enforcement": "builder-runtime-shape-aware-utf8-byte-gate",
+                          "x-defenseclaw-max-utf8-bytes-semantics": "raw-scalar-string-utf8",
+                          "x-defenseclaw-normalization": {
+                            "effective_constraints": {
+                              "max_utf8_bytes": 256,
+                              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$"
+                            },
+                            "id": "identifier-v1",
+                            "notes": "NFC bounded",
+                            "overrides": {}
+                          },
+                          "x-defenseclaw-owner": "defenseclaw",
+                          "x-defenseclaw-pattern-enforcement": "builder-runtime-and-anchored-public-schema",
+                          "x-defenseclaw-pattern-semantics": "portable-re2-full-match",
+                          "x-defenseclaw-pattern-source": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                          "x-defenseclaw-requirement-level": "recommended",
+                          "x-defenseclaw-sensitivity": "sensitive"
                         },
                         "error.type": {
                           "type": "string",
@@ -116274,9 +117694,33 @@
                           "x-defenseclaw-owner": "otel_genai",
                           "x-defenseclaw-requirement-level": "recommended",
                           "x-defenseclaw-sensitivity": "safe"
+                        },
+                        "user.id": {
+                          "pattern": "^(?:^[A-Za-z0-9][A-Za-z0-9._:/-]*$)$(?![\\s\\S])",
+                          "type": "string",
+                          "x-defenseclaw-field-class": "identifier",
+                          "x-defenseclaw-max-utf8-bytes": 256,
+                          "x-defenseclaw-max-utf8-bytes-enforcement": "builder-runtime-shape-aware-utf8-byte-gate",
+                          "x-defenseclaw-max-utf8-bytes-semantics": "raw-scalar-string-utf8",
+                          "x-defenseclaw-normalization": {
+                            "effective_constraints": {
+                              "max_utf8_bytes": 256,
+                              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$"
+                            },
+                            "id": "identifier-v1",
+                            "notes": "preserve only an explicitly reported bounded user-principal identifier; never derive it from a display name or administrative principal",
+                            "overrides": {}
+                          },
+                          "x-defenseclaw-owner": "otel",
+                          "x-defenseclaw-pattern-enforcement": "builder-runtime-and-anchored-public-schema",
+                          "x-defenseclaw-pattern-semantics": "portable-re2-full-match",
+                          "x-defenseclaw-pattern-source": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                          "x-defenseclaw-requirement-level": "recommended",
+                          "x-defenseclaw-sensitivity": "sensitive"
                         }
                       },
                       "required": [
+                        "defenseclaw.agent.reported_cost.present",
                         "defenseclaw.bucket",
                         "defenseclaw.config.generation",
                         "defenseclaw.content.input.state",
@@ -116949,6 +118393,7 @@
       "x-defenseclaw-family": {
         "bucket": "tool.activity",
         "conditions": [
+          "agent-reported-cost-available-v1",
           "connector-known-v1",
           "operation-terminal-v1",
           "technical-failure-v1"
@@ -117475,6 +118920,42 @@
                           "x-defenseclaw-requirement-level": "recommended",
                           "x-defenseclaw-sensitivity": "safe"
                         },
+                        "defenseclaw.agent.reported_cost.present": {
+                          "type": "boolean",
+                          "x-defenseclaw-field-class": "metadata",
+                          "x-defenseclaw-normalization": {
+                            "effective_constraints": {},
+                            "id": "identity-v1",
+                            "notes": "Exact availability state from the source payload; never inferred from model pricing or a default numeric value.",
+                            "overrides": {}
+                          },
+                          "x-defenseclaw-owner": "defenseclaw",
+                          "x-defenseclaw-requirement-level": "required",
+                          "x-defenseclaw-sensitivity": "safe"
+                        },
+                        "defenseclaw.agent.reported_cost.usd": {
+                          "maximum": 1.7976931348623157e+308,
+                          "minimum": 0.0,
+                          "type": "number",
+                          "x-defenseclaw-condition": "agent-reported-cost-available-v1",
+                          "x-defenseclaw-field-class": "metadata",
+                          "x-defenseclaw-finite": true,
+                          "x-defenseclaw-normalization": {
+                            "effective_constraints": {
+                              "max": 1.7976931348623157e+308,
+                              "min": 0.0
+                            },
+                            "id": "numeric-range-v1",
+                            "notes": "Finite nonnegative cumulative USD reported by the connector; DefenseClaw never estimates it.",
+                            "overrides": {
+                              "max": 1.7976931348623157e+308,
+                              "min": 0.0
+                            }
+                          },
+                          "x-defenseclaw-owner": "defenseclaw",
+                          "x-defenseclaw-requirement-level": "conditional",
+                          "x-defenseclaw-sensitivity": "internal"
+                        },
                         "defenseclaw.agent.root.id": {
                           "pattern": "^(?:^[A-Za-z0-9][A-Za-z0-9._:/-]*$)$(?![\\s\\S])",
                           "type": "string",
@@ -117893,6 +119374,75 @@
                           "x-defenseclaw-requirement-level": "required",
                           "x-defenseclaw-sensitivity": "safe"
                         },
+                        "defenseclaw.destination.app": {
+                          "pattern": "^(?:^[A-Za-z0-9][A-Za-z0-9._:/-]*$)$(?![\\s\\S])",
+                          "type": "string",
+                          "x-defenseclaw-field-class": "identifier",
+                          "x-defenseclaw-max-utf8-bytes": 256,
+                          "x-defenseclaw-max-utf8-bytes-enforcement": "builder-runtime-shape-aware-utf8-byte-gate",
+                          "x-defenseclaw-max-utf8-bytes-semantics": "raw-scalar-string-utf8",
+                          "x-defenseclaw-normalization": {
+                            "effective_constraints": {
+                              "max_utf8_bytes": 256,
+                              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$"
+                            },
+                            "id": "identifier-v1",
+                            "notes": "registered application",
+                            "overrides": {}
+                          },
+                          "x-defenseclaw-owner": "defenseclaw",
+                          "x-defenseclaw-pattern-enforcement": "builder-runtime-and-anchored-public-schema",
+                          "x-defenseclaw-pattern-semantics": "portable-re2-full-match",
+                          "x-defenseclaw-pattern-source": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                          "x-defenseclaw-requirement-level": "recommended",
+                          "x-defenseclaw-sensitivity": "internal"
+                        },
+                        "defenseclaw.model.request.id": {
+                          "pattern": "^(?:^[A-Za-z0-9][A-Za-z0-9._:/-]*$)$(?![\\s\\S])",
+                          "type": "string",
+                          "x-defenseclaw-field-class": "identifier",
+                          "x-defenseclaw-max-utf8-bytes": 256,
+                          "x-defenseclaw-max-utf8-bytes-enforcement": "builder-runtime-shape-aware-utf8-byte-gate",
+                          "x-defenseclaw-max-utf8-bytes-semantics": "raw-scalar-string-utf8",
+                          "x-defenseclaw-normalization": {
+                            "effective_constraints": {
+                              "max_utf8_bytes": 256,
+                              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$"
+                            },
+                            "id": "identifier-v1",
+                            "notes": "typed and bounded",
+                            "overrides": {}
+                          },
+                          "x-defenseclaw-owner": "defenseclaw",
+                          "x-defenseclaw-pattern-enforcement": "builder-runtime-and-anchored-public-schema",
+                          "x-defenseclaw-pattern-semantics": "portable-re2-full-match",
+                          "x-defenseclaw-pattern-source": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                          "x-defenseclaw-requirement-level": "recommended",
+                          "x-defenseclaw-sensitivity": "internal"
+                        },
+                        "defenseclaw.model.response.id": {
+                          "pattern": "^(?:^[A-Za-z0-9][A-Za-z0-9._:/-]*$)$(?![\\s\\S])",
+                          "type": "string",
+                          "x-defenseclaw-field-class": "identifier",
+                          "x-defenseclaw-max-utf8-bytes": 256,
+                          "x-defenseclaw-max-utf8-bytes-enforcement": "builder-runtime-shape-aware-utf8-byte-gate",
+                          "x-defenseclaw-max-utf8-bytes-semantics": "raw-scalar-string-utf8",
+                          "x-defenseclaw-normalization": {
+                            "effective_constraints": {
+                              "max_utf8_bytes": 256,
+                              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$"
+                            },
+                            "id": "identifier-v1",
+                            "notes": "typed and bounded",
+                            "overrides": {}
+                          },
+                          "x-defenseclaw-owner": "defenseclaw",
+                          "x-defenseclaw-pattern-enforcement": "builder-runtime-and-anchored-public-schema",
+                          "x-defenseclaw-pattern-semantics": "portable-re2-full-match",
+                          "x-defenseclaw-pattern-source": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                          "x-defenseclaw-requirement-level": "recommended",
+                          "x-defenseclaw-sensitivity": "internal"
+                        },
                         "defenseclaw.operation.id": {
                           "pattern": "^(?:^[A-Za-z0-9][A-Za-z0-9._:/-]*$)$(?![\\s\\S])",
                           "type": "string",
@@ -118003,6 +119553,52 @@
                           "x-defenseclaw-owner": "defenseclaw",
                           "x-defenseclaw-requirement-level": "conditional",
                           "x-defenseclaw-sensitivity": "safe"
+                        },
+                        "defenseclaw.policy.id": {
+                          "pattern": "^(?:^[A-Za-z0-9][A-Za-z0-9._:/-]*$)$(?![\\s\\S])",
+                          "type": "string",
+                          "x-defenseclaw-field-class": "identifier",
+                          "x-defenseclaw-max-utf8-bytes": 256,
+                          "x-defenseclaw-max-utf8-bytes-enforcement": "builder-runtime-shape-aware-utf8-byte-gate",
+                          "x-defenseclaw-max-utf8-bytes-semantics": "raw-scalar-string-utf8",
+                          "x-defenseclaw-normalization": {
+                            "effective_constraints": {
+                              "max_utf8_bytes": 256,
+                              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$"
+                            },
+                            "id": "identifier-v1",
+                            "notes": "nonempty bounded",
+                            "overrides": {}
+                          },
+                          "x-defenseclaw-owner": "defenseclaw",
+                          "x-defenseclaw-pattern-enforcement": "builder-runtime-and-anchored-public-schema",
+                          "x-defenseclaw-pattern-semantics": "portable-re2-full-match",
+                          "x-defenseclaw-pattern-source": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                          "x-defenseclaw-requirement-level": "recommended",
+                          "x-defenseclaw-sensitivity": "internal"
+                        },
+                        "defenseclaw.policy.version": {
+                          "pattern": "^(?:^[A-Za-z0-9][A-Za-z0-9._:/-]*$)$(?![\\s\\S])",
+                          "type": "string",
+                          "x-defenseclaw-field-class": "identifier",
+                          "x-defenseclaw-max-utf8-bytes": 256,
+                          "x-defenseclaw-max-utf8-bytes-enforcement": "builder-runtime-shape-aware-utf8-byte-gate",
+                          "x-defenseclaw-max-utf8-bytes-semantics": "raw-scalar-string-utf8",
+                          "x-defenseclaw-normalization": {
+                            "effective_constraints": {
+                              "max_utf8_bytes": 256,
+                              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$"
+                            },
+                            "id": "identifier-v1",
+                            "notes": "versioned bounded identifier",
+                            "overrides": {}
+                          },
+                          "x-defenseclaw-owner": "defenseclaw",
+                          "x-defenseclaw-pattern-enforcement": "builder-runtime-and-anchored-public-schema",
+                          "x-defenseclaw-pattern-semantics": "portable-re2-full-match",
+                          "x-defenseclaw-pattern-source": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                          "x-defenseclaw-requirement-level": "recommended",
+                          "x-defenseclaw-sensitivity": "internal"
                         },
                         "defenseclaw.request.id": {
                           "pattern": "^(?:^[A-Za-z0-9][A-Za-z0-9._:/-]*$)$(?![\\s\\S])",
@@ -118243,6 +119839,79 @@
                           "x-defenseclaw-requirement-level": "required",
                           "x-defenseclaw-sensitivity": "safe"
                         },
+                        "defenseclaw.tool.id": {
+                          "pattern": "^(?:^[A-Za-z0-9][A-Za-z0-9._:/-]*$)$(?![\\s\\S])",
+                          "type": "string",
+                          "x-defenseclaw-field-class": "identifier",
+                          "x-defenseclaw-max-utf8-bytes": 256,
+                          "x-defenseclaw-max-utf8-bytes-enforcement": "builder-runtime-shape-aware-utf8-byte-gate",
+                          "x-defenseclaw-max-utf8-bytes-semantics": "raw-scalar-string-utf8",
+                          "x-defenseclaw-normalization": {
+                            "effective_constraints": {
+                              "max_utf8_bytes": 256,
+                              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$"
+                            },
+                            "id": "identifier-v1",
+                            "notes": "Preserve only an explicitly reported bounded tool identity; never derive it from tool name or call ID.",
+                            "overrides": {}
+                          },
+                          "x-defenseclaw-owner": "defenseclaw",
+                          "x-defenseclaw-pattern-enforcement": "builder-runtime-and-anchored-public-schema",
+                          "x-defenseclaw-pattern-semantics": "portable-re2-full-match",
+                          "x-defenseclaw-pattern-source": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                          "x-defenseclaw-requirement-level": "recommended",
+                          "x-defenseclaw-sensitivity": "internal"
+                        },
+                        "defenseclaw.tool.provider": {
+                          "type": "string",
+                          "x-defenseclaw-field-class": "metadata",
+                          "x-defenseclaw-json-schema-item-bound-scope": "root-collection-safe-subset",
+                          "x-defenseclaw-max-item-utf8-bytes": 4096,
+                          "x-defenseclaw-max-item-utf8-bytes-enforcement": "builder-runtime-string-leaf-utf8-byte-gate",
+                          "x-defenseclaw-max-item-utf8-bytes-semantics": "every-string-element-or-structured-string-leaf",
+                          "x-defenseclaw-max-items": 256,
+                          "x-defenseclaw-max-items-enforcement": "builder-runtime-recursive-aggregate-gate",
+                          "x-defenseclaw-max-items-semantics": "recursive-aggregate-members",
+                          "x-defenseclaw-max-utf8-bytes": 4096,
+                          "x-defenseclaw-max-utf8-bytes-enforcement": "builder-runtime-shape-aware-utf8-byte-gate",
+                          "x-defenseclaw-max-utf8-bytes-semantics": "raw-scalar-string-utf8",
+                          "x-defenseclaw-normalization": {
+                            "effective_constraints": {
+                              "max_item_utf8_bytes": 4096,
+                              "max_items": 256,
+                              "max_utf8_bytes": 4096
+                            },
+                            "id": "bounded-v1",
+                            "notes": "typed and bounded",
+                            "overrides": {}
+                          },
+                          "x-defenseclaw-owner": "defenseclaw",
+                          "x-defenseclaw-requirement-level": "recommended",
+                          "x-defenseclaw-sensitivity": "safe"
+                        },
+                        "defenseclaw.tool.skill_key": {
+                          "pattern": "^(?:^[A-Za-z0-9][A-Za-z0-9._:/-]*$)$(?![\\s\\S])",
+                          "type": "string",
+                          "x-defenseclaw-field-class": "identifier",
+                          "x-defenseclaw-max-utf8-bytes": 256,
+                          "x-defenseclaw-max-utf8-bytes-enforcement": "builder-runtime-shape-aware-utf8-byte-gate",
+                          "x-defenseclaw-max-utf8-bytes-semantics": "raw-scalar-string-utf8",
+                          "x-defenseclaw-normalization": {
+                            "effective_constraints": {
+                              "max_utf8_bytes": 256,
+                              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$"
+                            },
+                            "id": "identifier-v1",
+                            "notes": "typed and bounded",
+                            "overrides": {}
+                          },
+                          "x-defenseclaw-owner": "defenseclaw",
+                          "x-defenseclaw-pattern-enforcement": "builder-runtime-and-anchored-public-schema",
+                          "x-defenseclaw-pattern-semantics": "portable-re2-full-match",
+                          "x-defenseclaw-pattern-source": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                          "x-defenseclaw-requirement-level": "recommended",
+                          "x-defenseclaw-sensitivity": "internal"
+                        },
                         "defenseclaw.turn.id": {
                           "pattern": "^(?:^[A-Za-z0-9][A-Za-z0-9._:/-]*$)$(?![\\s\\S])",
                           "type": "string",
@@ -118265,6 +119934,29 @@
                           "x-defenseclaw-pattern-source": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
                           "x-defenseclaw-requirement-level": "recommended",
                           "x-defenseclaw-sensitivity": "internal"
+                        },
+                        "defenseclaw.user.name": {
+                          "pattern": "^(?:^[A-Za-z0-9][A-Za-z0-9._:/-]*$)$(?![\\s\\S])",
+                          "type": "string",
+                          "x-defenseclaw-field-class": "identifier",
+                          "x-defenseclaw-max-utf8-bytes": 256,
+                          "x-defenseclaw-max-utf8-bytes-enforcement": "builder-runtime-shape-aware-utf8-byte-gate",
+                          "x-defenseclaw-max-utf8-bytes-semantics": "raw-scalar-string-utf8",
+                          "x-defenseclaw-normalization": {
+                            "effective_constraints": {
+                              "max_utf8_bytes": 256,
+                              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$"
+                            },
+                            "id": "identifier-v1",
+                            "notes": "NFC bounded",
+                            "overrides": {}
+                          },
+                          "x-defenseclaw-owner": "defenseclaw",
+                          "x-defenseclaw-pattern-enforcement": "builder-runtime-and-anchored-public-schema",
+                          "x-defenseclaw-pattern-semantics": "portable-re2-full-match",
+                          "x-defenseclaw-pattern-source": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                          "x-defenseclaw-requirement-level": "recommended",
+                          "x-defenseclaw-sensitivity": "sensitive"
                         },
                         "defenseclaw.workflow.name": {
                           "pattern": "^(?:^[a-z0-9][a-z0-9_.-]{0,127}$)$(?![\\s\\S])",
@@ -118464,9 +120156,202 @@
                           "x-defenseclaw-owner": "otel_genai",
                           "x-defenseclaw-requirement-level": "recommended",
                           "x-defenseclaw-sensitivity": "sensitive"
+                        },
+                        "gen_ai.provider.name": {
+                          "type": "string",
+                          "x-defenseclaw-field-class": "metadata",
+                          "x-defenseclaw-json-schema-item-bound-scope": "root-collection-safe-subset",
+                          "x-defenseclaw-max-item-utf8-bytes": 4096,
+                          "x-defenseclaw-max-item-utf8-bytes-enforcement": "builder-runtime-string-leaf-utf8-byte-gate",
+                          "x-defenseclaw-max-item-utf8-bytes-semantics": "every-string-element-or-structured-string-leaf",
+                          "x-defenseclaw-max-items": 256,
+                          "x-defenseclaw-max-items-enforcement": "builder-runtime-recursive-aggregate-gate",
+                          "x-defenseclaw-max-items-semantics": "recursive-aggregate-members",
+                          "x-defenseclaw-max-utf8-bytes": 4096,
+                          "x-defenseclaw-max-utf8-bytes-enforcement": "builder-runtime-shape-aware-utf8-byte-gate",
+                          "x-defenseclaw-max-utf8-bytes-semantics": "raw-scalar-string-utf8",
+                          "x-defenseclaw-normalization": {
+                            "effective_constraints": {
+                              "max_item_utf8_bytes": 4096,
+                              "max_items": 256,
+                              "max_utf8_bytes": 4096
+                            },
+                            "id": "bounded-v1",
+                            "notes": "lowercase bounded provider token from the pinned convention",
+                            "overrides": {}
+                          },
+                          "x-defenseclaw-owner": "otel_genai",
+                          "x-defenseclaw-requirement-level": "recommended",
+                          "x-defenseclaw-sensitivity": "safe"
+                        },
+                        "gen_ai.request.model": {
+                          "pattern": "^(?:^[A-Za-z0-9][A-Za-z0-9._:/-]*$)$(?![\\s\\S])",
+                          "type": "string",
+                          "x-defenseclaw-field-class": "identifier",
+                          "x-defenseclaw-max-utf8-bytes": 256,
+                          "x-defenseclaw-max-utf8-bytes-enforcement": "builder-runtime-shape-aware-utf8-byte-gate",
+                          "x-defenseclaw-max-utf8-bytes-semantics": "raw-scalar-string-utf8",
+                          "x-defenseclaw-normalization": {
+                            "effective_constraints": {
+                              "max_utf8_bytes": 256,
+                              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$"
+                            },
+                            "id": "identifier-v1",
+                            "notes": "NFC bounded requested model identity; never infer from response data",
+                            "overrides": {}
+                          },
+                          "x-defenseclaw-owner": "otel_genai",
+                          "x-defenseclaw-pattern-enforcement": "builder-runtime-and-anchored-public-schema",
+                          "x-defenseclaw-pattern-semantics": "portable-re2-full-match",
+                          "x-defenseclaw-pattern-source": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                          "x-defenseclaw-requirement-level": "recommended",
+                          "x-defenseclaw-sensitivity": "internal"
+                        },
+                        "gen_ai.response.id": {
+                          "pattern": "^(?:^[A-Za-z0-9][A-Za-z0-9._:/-]*$)$(?![\\s\\S])",
+                          "type": "string",
+                          "x-defenseclaw-field-class": "identifier",
+                          "x-defenseclaw-max-utf8-bytes": 256,
+                          "x-defenseclaw-max-utf8-bytes-enforcement": "builder-runtime-shape-aware-utf8-byte-gate",
+                          "x-defenseclaw-max-utf8-bytes-semantics": "raw-scalar-string-utf8",
+                          "x-defenseclaw-normalization": {
+                            "effective_constraints": {
+                              "max_utf8_bytes": 256,
+                              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$"
+                            },
+                            "id": "identifier-v1",
+                            "notes": "preserve a nonempty bounded provider response identifier; omit when not reported and never use as a metric label",
+                            "overrides": {}
+                          },
+                          "x-defenseclaw-owner": "otel_genai",
+                          "x-defenseclaw-pattern-enforcement": "builder-runtime-and-anchored-public-schema",
+                          "x-defenseclaw-pattern-semantics": "portable-re2-full-match",
+                          "x-defenseclaw-pattern-source": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                          "x-defenseclaw-requirement-level": "recommended",
+                          "x-defenseclaw-sensitivity": "sensitive"
+                        },
+                        "gen_ai.response.model": {
+                          "pattern": "^(?:^[A-Za-z0-9][A-Za-z0-9._:/-]*$)$(?![\\s\\S])",
+                          "type": "string",
+                          "x-defenseclaw-field-class": "identifier",
+                          "x-defenseclaw-max-utf8-bytes": 256,
+                          "x-defenseclaw-max-utf8-bytes-enforcement": "builder-runtime-shape-aware-utf8-byte-gate",
+                          "x-defenseclaw-max-utf8-bytes-semantics": "raw-scalar-string-utf8",
+                          "x-defenseclaw-normalization": {
+                            "effective_constraints": {
+                              "max_utf8_bytes": 256,
+                              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$"
+                            },
+                            "id": "identifier-v1",
+                            "notes": "NFC bounded provider-reported response model identity; omit when not reported",
+                            "overrides": {}
+                          },
+                          "x-defenseclaw-owner": "otel_genai",
+                          "x-defenseclaw-pattern-enforcement": "builder-runtime-and-anchored-public-schema",
+                          "x-defenseclaw-pattern-semantics": "portable-re2-full-match",
+                          "x-defenseclaw-pattern-source": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                          "x-defenseclaw-requirement-level": "recommended",
+                          "x-defenseclaw-sensitivity": "internal"
+                        },
+                        "gen_ai.tool.call.id": {
+                          "pattern": "^(?:^[A-Za-z0-9][A-Za-z0-9._:/-]*$)$(?![\\s\\S])",
+                          "type": "string",
+                          "x-defenseclaw-field-class": "identifier",
+                          "x-defenseclaw-max-utf8-bytes": 256,
+                          "x-defenseclaw-max-utf8-bytes-enforcement": "builder-runtime-shape-aware-utf8-byte-gate",
+                          "x-defenseclaw-max-utf8-bytes-semantics": "raw-scalar-string-utf8",
+                          "x-defenseclaw-normalization": {
+                            "effective_constraints": {
+                              "max_utf8_bytes": 256,
+                              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$"
+                            },
+                            "id": "identifier-v1",
+                            "notes": "preserve a nonempty bounded producer tool-call identifier; never derive from arguments or use as a metric label",
+                            "overrides": {}
+                          },
+                          "x-defenseclaw-owner": "otel_genai",
+                          "x-defenseclaw-pattern-enforcement": "builder-runtime-and-anchored-public-schema",
+                          "x-defenseclaw-pattern-semantics": "portable-re2-full-match",
+                          "x-defenseclaw-pattern-source": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                          "x-defenseclaw-requirement-level": "recommended",
+                          "x-defenseclaw-sensitivity": "sensitive"
+                        },
+                        "gen_ai.tool.name": {
+                          "pattern": "^(?:^[A-Za-z0-9][A-Za-z0-9._:/-]*$)$(?![\\s\\S])",
+                          "type": "string",
+                          "x-defenseclaw-field-class": "identifier",
+                          "x-defenseclaw-max-utf8-bytes": 256,
+                          "x-defenseclaw-max-utf8-bytes-enforcement": "builder-runtime-shape-aware-utf8-byte-gate",
+                          "x-defenseclaw-max-utf8-bytes-semantics": "raw-scalar-string-utf8",
+                          "x-defenseclaw-normalization": {
+                            "effective_constraints": {
+                              "max_utf8_bytes": 256,
+                              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$"
+                            },
+                            "id": "identifier-v1",
+                            "notes": "NFC bounded tool name; canonical metrics use only registered bounded projections and span names use a normalized bounded form",
+                            "overrides": {}
+                          },
+                          "x-defenseclaw-owner": "otel_genai",
+                          "x-defenseclaw-pattern-enforcement": "builder-runtime-and-anchored-public-schema",
+                          "x-defenseclaw-pattern-semantics": "portable-re2-full-match",
+                          "x-defenseclaw-pattern-source": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                          "x-defenseclaw-requirement-level": "recommended",
+                          "x-defenseclaw-sensitivity": "internal"
+                        },
+                        "gen_ai.tool.type": {
+                          "type": "string",
+                          "x-defenseclaw-field-class": "metadata",
+                          "x-defenseclaw-json-schema-item-bound-scope": "root-collection-safe-subset",
+                          "x-defenseclaw-max-item-utf8-bytes": 4096,
+                          "x-defenseclaw-max-item-utf8-bytes-enforcement": "builder-runtime-string-leaf-utf8-byte-gate",
+                          "x-defenseclaw-max-item-utf8-bytes-semantics": "every-string-element-or-structured-string-leaf",
+                          "x-defenseclaw-max-items": 256,
+                          "x-defenseclaw-max-items-enforcement": "builder-runtime-recursive-aggregate-gate",
+                          "x-defenseclaw-max-items-semantics": "recursive-aggregate-members",
+                          "x-defenseclaw-max-utf8-bytes": 4096,
+                          "x-defenseclaw-max-utf8-bytes-enforcement": "builder-runtime-shape-aware-utf8-byte-gate",
+                          "x-defenseclaw-max-utf8-bytes-semantics": "raw-scalar-string-utf8",
+                          "x-defenseclaw-normalization": {
+                            "effective_constraints": {
+                              "max_item_utf8_bytes": 4096,
+                              "max_items": 256,
+                              "max_utf8_bytes": 4096
+                            },
+                            "id": "bounded-v1",
+                            "notes": "pinned bounded tool-type token",
+                            "overrides": {}
+                          },
+                          "x-defenseclaw-owner": "otel_genai",
+                          "x-defenseclaw-requirement-level": "recommended",
+                          "x-defenseclaw-sensitivity": "safe"
+                        },
+                        "user.id": {
+                          "pattern": "^(?:^[A-Za-z0-9][A-Za-z0-9._:/-]*$)$(?![\\s\\S])",
+                          "type": "string",
+                          "x-defenseclaw-field-class": "identifier",
+                          "x-defenseclaw-max-utf8-bytes": 256,
+                          "x-defenseclaw-max-utf8-bytes-enforcement": "builder-runtime-shape-aware-utf8-byte-gate",
+                          "x-defenseclaw-max-utf8-bytes-semantics": "raw-scalar-string-utf8",
+                          "x-defenseclaw-normalization": {
+                            "effective_constraints": {
+                              "max_utf8_bytes": 256,
+                              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$"
+                            },
+                            "id": "identifier-v1",
+                            "notes": "preserve only an explicitly reported bounded user-principal identifier; never derive it from a display name or administrative principal",
+                            "overrides": {}
+                          },
+                          "x-defenseclaw-owner": "otel",
+                          "x-defenseclaw-pattern-enforcement": "builder-runtime-and-anchored-public-schema",
+                          "x-defenseclaw-pattern-semantics": "portable-re2-full-match",
+                          "x-defenseclaw-pattern-source": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+                          "x-defenseclaw-requirement-level": "recommended",
+                          "x-defenseclaw-sensitivity": "sensitive"
                         }
                       },
                       "required": [
+                        "defenseclaw.agent.reported_cost.present",
                         "defenseclaw.bucket",
                         "defenseclaw.config.generation",
                         "defenseclaw.content.input.state",
@@ -119128,6 +121013,7 @@
       "x-defenseclaw-family": {
         "bucket": "agent.lifecycle",
         "conditions": [
+          "agent-reported-cost-available-v1",
           "connector-known-v1",
           "operation-terminal-v1",
           "technical-failure-v1"
@@ -124595,6 +126481,7 @@
     {
       "description": "The producer or adapter has a canonical connector identity.",
       "enforcement": {
+        "attribute": null,
         "fact": "connector_known",
         "kind": "builder_fact"
       },
@@ -124604,6 +126491,7 @@
     {
       "description": "The bounded operation has reached a terminal state.",
       "enforcement": {
+        "attribute": null,
         "fact": "operation_terminal",
         "kind": "builder_fact"
       },
@@ -124613,6 +126501,7 @@
     {
       "description": "The operation ended because of a technical failure.",
       "enforcement": {
+        "attribute": null,
         "fact": "technical_failure",
         "kind": "builder_fact"
       },
@@ -124622,6 +126511,7 @@
     {
       "description": "The guardrail producer supplied a terminal domain decision.",
       "enforcement": {
+        "attribute": null,
         "fact": "guardrail_terminal_decision_available",
         "kind": "builder_fact"
       },
@@ -124631,6 +126521,7 @@
     {
       "description": "The producer supplied or the adapter canonically normalized security severity.",
       "enforcement": {
+        "attribute": null,
         "fact": "security_severity_available",
         "kind": "builder_fact"
       },
@@ -124640,6 +126531,7 @@
     {
       "description": "The judge output could not be parsed into the registered result shape.",
       "enforcement": {
+        "attribute": null,
         "fact": "judge_output_parse_failed",
         "kind": "builder_fact"
       },
@@ -124649,11 +126541,22 @@
     {
       "description": "The authenticated administrative principal is known.",
       "enforcement": {
+        "attribute": null,
         "fact": "admin_principal_known",
         "kind": "builder_fact"
       },
       "false_requirement": "forbidden",
       "id": "admin-principal-known-v1"
+    },
+    {
+      "description": "The connector explicitly supplied a cumulative agent/session cost in USD; reported zero is available, while an absent value is not.",
+      "enforcement": {
+        "attribute": "defenseclaw.agent.reported_cost.present",
+        "fact": null,
+        "kind": "boolean_attribute"
+      },
+      "false_requirement": "forbidden",
+      "id": "agent-reported-cost-available-v1"
     }
   ],
   "x-defenseclaw-conformance": {
@@ -127742,7 +129645,7 @@
   ],
   "x-defenseclaw-versions": {
     "bucket_catalog_version": 1,
-    "materialized_view_sha256": "e96de75fdf61649b727a9b242b659543bdd48e417256e1d8557cd9d16982577b",
+    "materialized_view_sha256": "26121f75397999a4fd1818e84dde325ca55d673b090238cbc61e60f1b6f47380",
     "registry_version": 1,
     "schema_version": 1
   }

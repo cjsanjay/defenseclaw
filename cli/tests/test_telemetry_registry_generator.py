@@ -5398,8 +5398,15 @@ def test_structural_contract_ir_is_closed_lossless_and_runtime_bound(tmp_path: P
         "security-severity-available-v1",
         "judge-output-parse-failed-v1",
         "admin-principal-known-v1",
+        "agent-reported-cost-available-v1",
     )
-    assert all(condition.enforcement.kind == "builder_fact" for condition in ir.conditions)
+    assert sum(condition.enforcement.kind == "builder_fact" for condition in ir.conditions) == 7
+    attribute_condition = next(
+        condition for condition in ir.conditions if condition.enforcement.kind == "boolean_attribute"
+    )
+    assert attribute_condition.id == "agent-reported-cost-available-v1"
+    assert attribute_condition.enforcement.fact is None
+    assert attribute_condition.enforcement.attribute == "defenseclaw.agent.reported_cost.present"
     assert {condition.false_requirement for condition in ir.conditions} == {"forbidden", "optional"}
     phase_catalog = ir.value_catalogs[0]
     assert phase_catalog.id == "agent-phase-v1"
@@ -8892,6 +8899,174 @@ def test_updater_candidate_reference_rejects_sparse_oversized_file(tmp_path: Pat
             module._validate_candidate_references(root_descriptor, ((relative, "0" * 64),))
 
 
+def test_core_runtime_span_context_cost_and_compatibility_contracts_are_exact() -> None:
+    module = _load_generator_module("telemetry_registry_runtime_span_contract_completion")
+    ir = module.compile_registry(ROOT)
+    groups = {group.id: group for domain in ir.domains for group in domain.groups}
+    local_attributes = {attribute.id: attribute for domain in ir.domains for attribute in domain.attributes}
+    extensions = {extension.ref: extension for domain in ir.domains for extension in domain.attribute_extensions}
+
+    target_ids = (
+        "span.agent.transition",
+        "span.agent.invoke",
+        "span.workflow.run",
+        "span.model.chat",
+        "span.tool.execute",
+    )
+    shared_context = {
+        "defenseclaw.request.id",
+        "defenseclaw.turn.id",
+        "user.id",
+        "defenseclaw.user.name",
+        "defenseclaw.policy.id",
+        "defenseclaw.policy.version",
+        "defenseclaw.destination.app",
+    }
+    for family_id in target_ids:
+        uses = {use.ref: use for use in groups[family_id].resolved_uses}
+        assert shared_context <= set(uses)
+        assert all(uses[reference].requirement_level == "recommended" for reference in shared_context)
+        assert uses["defenseclaw.agent.reported_cost.present"].requirement_level == "required"
+        cost = uses["defenseclaw.agent.reported_cost.usd"]
+        assert cost.requirement_level == "conditional"
+        assert cost.conditional == "agent-reported-cost-available-v1"
+        assert "llm.cost.total" not in uses
+
+    lifecycle_capable = ("span.agent.transition", "span.agent.invoke", "span.workflow.run")
+    model_identity = {
+        "gen_ai.provider.name",
+        "gen_ai.request.model",
+        "gen_ai.response.model",
+        "gen_ai.response.id",
+        "defenseclaw.model.request.id",
+        "defenseclaw.model.response.id",
+    }
+    tool_identity = {
+        "defenseclaw.tool.id",
+        "gen_ai.tool.name",
+        "gen_ai.tool.type",
+        "gen_ai.tool.call.id",
+        "defenseclaw.tool.provider",
+        "defenseclaw.tool.skill_key",
+    }
+    for family_id in lifecycle_capable:
+        uses = {use.ref: use for use in groups[family_id].resolved_uses}
+        assert model_identity | tool_identity <= set(uses)
+        assert all(uses[reference].requirement_level == "recommended" for reference in model_identity | tool_identity)
+
+    model_uses = {use.ref: use for use in groups["span.model.chat"].resolved_uses}
+    assert model_identity <= set(model_uses)
+    assert model_uses["gen_ai.request.model"].requirement_level == "required"
+    tool_uses = {use.ref: use for use in groups["span.tool.execute"].resolved_uses}
+    assert tool_identity <= set(tool_uses)
+    assert tool_uses["gen_ai.tool.name"].requirement_level == "required"
+
+    assert local_attributes["defenseclaw.agent.reported_cost.present"].field_class == "metadata"
+    assert local_attributes["defenseclaw.agent.reported_cost.usd"].field_class == "metadata"
+    assert local_attributes["defenseclaw.tool.id"].field_class == "identifier"
+    assert local_attributes["defenseclaw.policy.id"].field_class == "identifier"
+    assert local_attributes["defenseclaw.destination.app"].field_class == "identifier"
+    assert extensions["user.id"].field_class == "identifier"
+    assert extensions["user.id"].sensitivity == "sensitive"
+
+    condition = next(item for item in ir.conditions if item.id == "agent-reported-cost-available-v1")
+    assert condition.enforcement.kind == "boolean_attribute"
+    assert condition.enforcement.fact is None
+    assert condition.enforcement.attribute == "defenseclaw.agent.reported_cost.present"
+    assert condition.false_requirement == "forbidden"
+    transition = groups["span.agent.transition"]
+    assert transition.compatibility_profiles == ("local-observability-v1",)
+    ineligible = next(binding for binding in transition.legacy_bindings or () if binding.source == "galileo-rich-v2")
+    assert ineligible.disposition == "explicitly_ineligible"
+    assert ineligible.details["fabrication"] == "forbidden"
+    assert "gen_ai.operation.name=invoke_agent" in ineligible.details["missing_required_semantics"]
+    assert groups["span.agent.invoke"].compatibility_profiles == (
+        "galileo-rich-v2",
+        "openinference-v1",
+        "local-observability-v1",
+    )
+    assert "galileo-rich-v2" in (groups["span.model.chat"].compatibility_profiles or ())
+    assert "galileo-rich-v2" in (groups["span.tool.execute"].compatibility_profiles or ())
+
+
+@pytest.mark.parametrize(
+    ("enforcement", "expected"),
+    (
+        ({"kind": "boolean_attribute"}, "boolean_attribute requires only attribute"),
+        (
+            {"kind": "boolean_attribute", "attribute": "defenseclaw.agent.reported_cost.present", "fact": "x"},
+            "boolean_attribute requires only attribute",
+        ),
+        (
+            {"kind": "builder_fact", "fact": "x", "attribute": "defenseclaw.agent.reported_cost.present"},
+            "builder_fact requires only fact",
+        ),
+    ),
+)
+def test_condition_enforcement_arms_are_shape_closed(
+    tmp_path: Path,
+    enforcement: dict[str, str],
+    expected: str,
+) -> None:
+    root = _fixture_root(tmp_path)
+    path = root / "schemas/telemetry/v8/registry.yaml"
+    registry = yaml.safe_load(path.read_text(encoding="utf-8"))
+    registry["conditions"][-1]["enforcement"] = enforcement
+    _write_yaml(path, registry)
+
+    result = _run(root, "--write")
+
+    assert result.returncode == 1
+    assert expected in result.stderr
+
+
+@pytest.mark.parametrize(
+    ("mode", "expected"),
+    (
+        ("missing", "requires unconditional boolean source"),
+        ("not_required", "requires unconditional boolean source"),
+        ("not_boolean", "must be a boolean attribute"),
+    ),
+)
+def test_boolean_attribute_conditions_fail_closed_at_compile_time(mode: str, expected: str) -> None:
+    module = _load_generator_module(f"telemetry_registry_boolean_condition_{mode}")
+    ir = module.compile_registry(ROOT)
+    groups = {group.id: group for domain in ir.domains for group in domain.groups}
+    local_attributes = {attribute.id: attribute for domain in ir.domains for attribute in domain.attributes}
+    upstream_attributes = {
+        attribute.id: (dependency.id, attribute)
+        for dependency in ir.dependencies
+        for attribute in dependency.snapshot.attributes
+    }
+    condition = next(item for item in ir.conditions if item.id == "agent-reported-cost-available-v1")
+    cost_group = groups["cost.agent.reported"]
+    present = next(use for use in cost_group.resolved_uses if use.ref == "defenseclaw.agent.reported_cost.present")
+    amount = next(use for use in cost_group.resolved_uses if use.ref == "defenseclaw.agent.reported_cost.usd")
+    if mode == "missing":
+        changed = module.replace(cost_group, resolved_uses=(amount,))
+    elif mode == "not_required":
+        changed = module.replace(
+            cost_group,
+            resolved_uses=(module.replace(present, requirement_level="recommended"), amount),
+        )
+    else:
+        string_source = module.replace(present, ref="defenseclaw.agent.type")
+        changed_condition = module.replace(
+            condition,
+            enforcement=module.ConditionEnforcementIR("boolean_attribute", None, "defenseclaw.agent.type"),
+        )
+        changed = module.replace(cost_group, resolved_uses=(string_source, amount))
+        condition = changed_condition
+
+    with pytest.raises(module.RegistryError, match=expected):
+        module._validate_condition_references(
+            {changed.id: changed},
+            tuple(condition if item.id == condition.id else item for item in ir.conditions),
+            local_attributes,
+            upstream_attributes,
+        )
+
+
 def test_updater_transaction_bootstrap_failure_removes_exact_created_inode(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -9202,16 +9377,16 @@ def test_canonical_go_symbol_table_matches_digest_addressed_reviewed_baseline(
     table = ir.go_symbol_table
     baseline_digest = module._validate_reviewed_go_symbol_baseline(ROOT, table)
 
-    assert len(table.rows) == 1773
+    assert len(table.rows) == 1778
     assert dict(table.kind_counts) == module.EXPECTED_GO_SYMBOL_KIND_COUNTS
     assert dict(table.declaration_form_counts) == {
-        "exported_const": 893,
+        "exported_const": 898,
         "exported_type": 459,
         "exported_function": 178,
         "family_builder_method": 243,
     }
-    assert table.table_sha256 == "d897fab03a91351740e122682f96cc821a66f522250ba881e3a47b65afcc5fd7"
-    assert baseline_digest.sha256 == "ee63f1aed1d6940f7315bc309db828095511f6d977d8137c3406e477e3803232"
+    assert table.table_sha256 == "8488349afc135212c436225a154bd834afe9a2751d2b76e13e12d895405a8b32"
+    assert baseline_digest.sha256 == "eb90d5b5056aa28293f8235d65dab0429faab03e7a0dc32247797a16f52a210a"
     assert baseline_digest.path.endswith(f"/{baseline_digest.sha256}.json")
     rank = {kind: index for index, kind in enumerate(module.GO_SYMBOL_KIND_ORDER)}
     assert list(table.rows) == sorted(
@@ -9236,6 +9411,13 @@ def test_canonical_go_symbol_table_matches_digest_addressed_reviewed_baseline(
     )
     assert rows[("family_input", "span.model.chat")].symbol == "SpanModelChatInput"
     assert rows[("family_builder", "span.model.chat")].symbol == "BuildSpanModelChat"
+    assert rows[("attribute", "defenseclaw.agent.reported_cost.present")].symbol == (
+        "TelemetryAttributeDefenseClawAgentReportedCostPresent"
+    )
+    assert rows[("condition", "agent-reported-cost-available-v1")].symbol == (
+        "TelemetryConditionAgentReportedCostAvailableV1"
+    )
+    assert ("condition_fact", "agent_reported_cost_available") not in rows
     assert rows[("span_event_input", "span.model.chat#model.retry")].symbol == ("SpanModelChatModelRetryEventInput")
     assert rows[("span_link_constructor", "span.model.chat#caused_by")].symbol == ("NewSpanModelChatCausedByLink")
 
@@ -9266,7 +9448,7 @@ def test_go_symbol_file_domain_ownership_counts_are_frozen(
         else:
             family_id = row.source_id.split("#", 1)[0]
             ownership[family_domains[family_id]] += 1
-    assert ownership == {"ids": 893, "genai": 282, "security": 212, "operations": 386}
+    assert ownership == {"ids": 898, "genai": 282, "security": 212, "operations": 386}
 
 
 def test_go_symbol_policy_and_table_are_materialized_and_row_order_is_digest_significant(

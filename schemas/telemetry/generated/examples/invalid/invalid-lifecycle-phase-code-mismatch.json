@@ -3,7 +3,7 @@
     "artifact": "examples/invalid/invalid-lifecycle-phase-code-mismatch.json",
     "authority": "candidate-not-public-authority",
     "generator": "defenseclaw-telemetry-candidate-renderer-v1",
-    "materialized_view_sha256": "e96de75fdf61649b727a9b242b659543bdd48e417256e1d8557cd9d16982577b",
+    "materialized_view_sha256": "26121f75397999a4fd1818e84dde325ca55d673b090238cbc61e60f1b6f47380",
     "registry_version": 1
   },
   "base_example": "valid-root-agent-lifecycle-transition",
@@ -48,7 +48,7 @@
   "family": "span.agent.transition",
   "field_classes": {},
   "id": "invalid-lifecycle-phase-code-mismatch",
-  "materialized_view_sha256": "e96de75fdf61649b727a9b242b659543bdd48e417256e1d8557cd9d16982577b",
+  "materialized_view_sha256": "26121f75397999a4fd1818e84dde325ca55d673b090238cbc61e60f1b6f47380",
   "mutation": {
     "changes": [
       {
@@ -69,6 +69,8 @@
         "defenseclaw.agent.lifecycle.state": "active",
         "defenseclaw.agent.phase": "planning",
         "defenseclaw.agent.phase.code": 4,
+        "defenseclaw.agent.reported_cost.present": true,
+        "defenseclaw.agent.reported_cost.usd": 0.0,
         "defenseclaw.agent.root.id": "agent-root",
         "defenseclaw.agent.sequence": 4,
         "defenseclaw.bucket": "agent.lifecycle",
@@ -125,6 +127,8 @@
       "/attributes/defenseclaw.agent.lifecycle.state": "metadata",
       "/attributes/defenseclaw.agent.phase": "metadata",
       "/attributes/defenseclaw.agent.phase.code": "metadata",
+      "/attributes/defenseclaw.agent.reported_cost.present": "metadata",
+      "/attributes/defenseclaw.agent.reported_cost.usd": "metadata",
       "/attributes/defenseclaw.agent.root.id": "identifier",
       "/attributes/defenseclaw.agent.sequence": "metadata",
       "/attributes/defenseclaw.bucket": "metadata",

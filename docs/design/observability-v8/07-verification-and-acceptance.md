@@ -797,12 +797,26 @@ Required cases:
   use-level weakening, and disagreement between direct refs, group resolution
   order, resolved copies, origin closure/order, dominant requiredness, or registered
   conditional IDs before candidate rendering.
-- Conditional uses accept only the seven registered stable IDs. Each catalog entry
-  is `builder_fact`; true/false builder fixtures enforce its required/forbidden or
-  optional behavior, and the generated public schema exposes the enforcement
-  annotation without pretending the conditioned field proves its own predicate.
-  Unknown IDs, prose clauses, duplicate facts, a false forbidden-field emission,
-  and a true missing field fail.
+- Conditional uses accept only the eight registered stable IDs. Seven catalog
+  entries are independent `builder_fact` predicates. The eighth,
+  `agent-reported-cost-available-v1`, is a `boolean_attribute` predicate derived
+  directly from the required `defenseclaw.agent.reported_cost.present` input; it
+  does not add an eighth condition-fact selector. True/false builder fixtures
+  enforce required/forbidden or optional behavior, and the generated public
+  schema exposes the enforcement annotation without pretending the conditioned
+  value proves its own predicate. Unknown IDs, prose clauses, duplicate facts,
+  a missing/nonrequired/non-Boolean source attribute, a false forbidden-field
+  emission, and a true missing field fail.
+- Successor-baseline tests prove the delta from the retained 1,773-row artifact is
+  exactly four attributes (`user.id`, `defenseclaw.tool.id`, and the reported-cost
+  presence/value pair) plus `agent-reported-cost-available-v1`, with no removal or
+  rename. The five core runtime families—`span.agent.transition`,
+  `span.agent.invoke`, `span.workflow.run`, `span.model.chat`, and
+  `span.tool.execute`—all expose interaction and cost state. Builder tests prove
+  false-plus-value is `forbidden_field`, true-without-value is `missing_required`,
+  and reported zero succeeds. Projection tests prove no default `llm.cost.total`
+  alias and prove `span.agent.transition` remains local-observability eligible but
+  Galileo-ineligible without fabricated invoke-agent/provider/input/output data.
 - Every `semantic_ref` resolves to one registered attribute/group or one closed
   compiler-owned dynamic-family contract. Type, normalization, field class, and
   sensitivity mismatches fail; unknown pseudo-references and hardcoded scope/link
@@ -911,10 +925,19 @@ Required cases:
   brand evasion, and post-override collisions fail. Registry v1 proves the
   override table is empty because there is no default collision or named prior
   released-symbol baseline; a prose reason never authorizes a rename.
-  The reviewed ROOT table also proves the fixed 22-kind/bytewise-source order,
+  The initial reviewed ROOT table also proves the fixed 22-kind/bytewise-source order,
   exact 1,773 rows and 893/459/178/243 declaration-form totals, domain-separated
   digest `d897fab03a91351740e122682f96cc821a66f522250ba881e3a47b65afcc5fd7`,
   and exact content-addressed baseline `ee63f1aed1d6940f7315bc309db828095511f6d977d8137c3406e477e3803232`.
+  The additive rich-trace successor is separately pinned at exactly 1,778 rows,
+  898/459/178/243 declaration-form totals, 329 attribute rows, eight condition
+  rows, seven condition-fact rows, table digest
+  `8488349afc135212c436225a154bd834afe9a2751d2b76e13e12d895405a8b32`,
+  and content-addressed baseline
+  `eb90d5b5056aa28293f8235d65dab0429faab03e7a0dc32247797a16f52a210a.json`.
+  Acceptance proves both baseline files remain byte-valid and that current ROOT
+  equals the successor; it never rewrites or silently reinterprets the prior
+  baseline.
   Missing, renamed, reordered, byte-tampered, row-tampered, digest-mismatched, or
   count-mismatched golden state fails the acceptance test. The baseline remains
   test-only and is never read by `compile_registry` or a renderer.
@@ -925,14 +948,14 @@ Required cases:
   `defenseclaw.outcome` label remains producer input. Missing, duplicate, unused,
   wrong-context, name-inferred, or source-incompatible derivations fail.
 - The complete compiler-owned `GoAPIPlanIR` is digest-pinned independently of the
-  1,773-row declaration table. Golden tests cover every selector, type AST,
+  current 1,778-row declaration table. Golden tests cover every selector, type AST,
   required/optional presence, field order, callable parameter/result/error
   contract, conversion operation, private descriptor binding, exact constant
   literal kind/value, and file assignment.
   They prove the fixed common log/span/metric/event/link layouts, the common typed
   resource/scope structural inputs, family-local typed resource values,
   selected-family condition/mandatory fields, parsed span-name
-  parts, and exact 893/282/212/386 declaration partition. Renderer tests receive
+  parts, and exact 898/282/212/386 declaration partition. Renderer tests receive
   only this plan and fail if asked to tokenize an ID, strip a symbol prefix, join a
   condition/constraint, parse a span name, infer a value source, or choose a file.
 - Structured API-plan tests cover all 21 owner shapes, 31 fixed fields, 17 ordered
