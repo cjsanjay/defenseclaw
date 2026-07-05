@@ -45,6 +45,103 @@ from jsonschema import validators
 from referencing import Registry, Resource
 from referencing.exceptions import NoSuchResource
 
+_PARITY_PACKAGE_MODE = (
+    __package__ == "scripts"
+    and __spec__ is not None
+    and __spec__.name == "scripts.check_telemetry_public_schema_parity"
+)
+
+
+def _canonical_sibling_name(module_name: str) -> str:
+    return f"scripts.{module_name}" if _PARITY_PACKAGE_MODE else module_name
+
+
+def _validated_sibling_module(
+    module: Any,
+    *,
+    canonical_name: str,
+    path: Path,
+    purpose: str,
+) -> ModuleType:
+    if not isinstance(module, ModuleType):
+        raise RuntimeError(f"preloaded {purpose} is unsafe")
+    try:
+        module_path = Path(module.__file__).resolve(strict=True)
+        module_spec = module.__spec__
+        if (
+            module.__name__ != canonical_name
+            or module_spec is None
+            or module_spec.name != canonical_name
+            or module_spec.loader is None
+            or module_spec.origin is None
+        ):
+            raise RuntimeError("preloaded module has no canonical import identity")
+        origin_path = Path(module_spec.origin).resolve(strict=True)
+        regular = stat.S_ISREG(module_path.stat().st_mode) and stat.S_ISREG(origin_path.stat().st_mode)
+    except (AttributeError, OSError, RuntimeError, TypeError) as exc:
+        raise RuntimeError(f"preloaded {purpose} is unsafe") from exc
+    if not regular:
+        raise RuntimeError(f"preloaded {purpose} is unsafe")
+    if module_path != path or origin_path != path:
+        raise RuntimeError(f"preloaded {purpose} has foreign provenance")
+    return module
+
+
+def _reject_opposite_sibling_identity(module_name: str, path: Path, purpose: str) -> None:
+    opposite_name = module_name if _PARITY_PACKAGE_MODE else f"scripts.{module_name}"
+    opposite = sys.modules.get(opposite_name)
+    if not isinstance(opposite, ModuleType):
+        return
+    opposite_paths: list[Path] = []
+    try:
+        opposite_paths.append(Path(opposite.__file__).resolve(strict=True))
+    except (AttributeError, OSError, TypeError):
+        pass
+    try:
+        opposite_paths.append(Path(opposite.__spec__.origin).resolve(strict=True))
+    except (AttributeError, OSError, TypeError):
+        pass
+    if path in opposite_paths:
+        raise RuntimeError(f"{purpose} is already loaded under the conflicting identity {opposite_name}")
+
+
+def _load_sibling_module(module_name: str, purpose: str) -> ModuleType:
+    canonical_name = _canonical_sibling_name(module_name)
+    try:
+        path = Path(__file__).resolve().with_name(module_name + ".py").resolve(strict=True)
+        if not stat.S_ISREG(path.stat().st_mode):
+            raise OSError("module is not a regular file")
+    except (OSError, RuntimeError) as exc:
+        raise RuntimeError(f"cannot load {purpose}") from exc
+    _reject_opposite_sibling_identity(module_name, path, purpose)
+    existing = sys.modules.get(canonical_name)
+    if existing is not None:
+        return _validated_sibling_module(
+            existing,
+            canonical_name=canonical_name,
+            path=path,
+            purpose=purpose,
+        )
+    spec = importlib.util.spec_from_file_location(canonical_name, path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"cannot load {purpose}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[canonical_name] = module
+    try:
+        spec.loader.exec_module(module)
+    except Exception:
+        if sys.modules.get(canonical_name) is module:
+            del sys.modules[canonical_name]
+        raise
+    return module
+
+
+def _load_generated_transaction() -> ModuleType:
+    return _load_sibling_module(
+        "telemetry_generated_transaction",
+        "telemetry generated-output transaction helper",
+    )
+
 
 def _load_baseline_reader() -> ModuleType:
     name = "telemetry_public_schema_baseline"
@@ -91,6 +188,7 @@ def _load_baseline_reader() -> ModuleType:
     return module
 
 
+generated_transaction = _load_generated_transaction()
 baseline_reader = _load_baseline_reader()
 
 DEFAULT_MANIFEST: Final = Path("schemas/telemetry/v8/fixtures/legacy-public-schema-parity-v1/manifest.json")
@@ -146,6 +244,7 @@ SCHEMA_CHILD_VALUES: Final = (
     "unevaluatedProperties",
 )
 SCHEMA_CHILD_ARRAYS: Final = ("allOf", "anyOf", "oneOf", "prefixItems")
+MAX_LIVE_PUBLIC_VIEW_BYTES: Final = 256 * 1024
 
 
 class ParityError(RuntimeError):
@@ -227,30 +326,15 @@ def _load_yaml_mapping(raw: bytes, context: str) -> dict[str, Any]:
     return value
 
 
-def _validated_live_candidate_path(root: Path, relative_path: str) -> Path:
-    pure = PurePosixPath(relative_path)
-    if (
-        not relative_path
-        or pure.is_absolute()
-        or pure.as_posix() != relative_path
-        or any(part in {"", ".", ".."} for part in pure.parts)
-    ):
-        _fail("live public-view path is not a normalized repository-relative path")
-    current = root
-    for index, part in enumerate(pure.parts):
-        current /= part
-        try:
-            mode = current.lstat().st_mode
-        except OSError as exc:
-            raise ParityError("declared live public-view path is missing") from exc
-        if stat.S_ISLNK(mode):
-            _fail("declared live public-view path contains a symlink")
-        if index == len(pure.parts) - 1:
-            if not stat.S_ISREG(mode):
-                _fail("declared live public-view path is not a regular file")
-        elif not stat.S_ISDIR(mode):
-            _fail("declared live public-view parent is not a directory")
-    return current
+def _read_live_candidate(root: Path, relative_path: str) -> bytes:
+    try:
+        return generated_transaction.read_repository_file_bounded(
+            root,
+            relative_path,
+            maximum=MAX_LIVE_PUBLIC_VIEW_BYTES,
+        )
+    except generated_transaction.TransactionError as exc:
+        raise ParityError("declared live public-view path is unsafe or unreadable") from exc
 
 
 def _escape(value: str) -> str:
@@ -892,15 +976,17 @@ def check_repository(
     if len(expected_live) != EXPECTED_COUNTS["outputs"]:
         _fail("live public-view inventory count drift")
 
-    live_files = {path: _validated_live_candidate_path(root, path) for path in expected_live}
+    # Read every declared live path before applying in-memory test overrides.
+    # The transaction helper pins each no-follow descriptor through the read,
+    # eliminating the prior lstat-then-reopen race without weakening the exact
+    # path-inventory or override semantics.
+    live_raw = {path: _read_live_candidate(root, path) for path in expected_live}
 
     overrides = dict(candidate_overrides or {})
     unknown_overrides = set(overrides) - set(expected_live)
     if unknown_overrides:
         _fail("candidate override path inventory drift")
-    candidate_raw: dict[str, bytes] = {
-        path: overrides.get(path, live_files[path].read_bytes()) for path in expected_live
-    }
+    candidate_raw: dict[str, bytes] = {path: overrides.get(path, live_raw[path]) for path in expected_live}
     for target, primary in expected_live.items():
         if candidate_raw[target] != candidate_raw[primary]:
             _fail("live mirror/embed byte drift")

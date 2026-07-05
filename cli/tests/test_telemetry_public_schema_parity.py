@@ -14,6 +14,7 @@ import copy
 import hashlib
 import importlib.util
 import json
+import os
 import sys
 from collections.abc import Mapping
 from pathlib import Path
@@ -39,6 +40,56 @@ def _load_module() -> ModuleType:
 
 
 parity = _load_module()
+
+
+@pytest.mark.parametrize("preload", ["foreign-module", "same-path-object-spoof"])
+def test_checker_rejects_noncanonical_preloaded_generated_transaction(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    preload: str,
+) -> None:
+    name = "telemetry_generated_transaction"
+    if preload == "foreign-module":
+        foreign = tmp_path / f"{name}.py"
+        foreign.write_text("# foreign transaction helper\n", encoding="utf-8")
+        spec = importlib.util.spec_from_file_location(name, foreign)
+        assert spec is not None and spec.loader is not None
+        existing = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(existing)
+        diagnostic = "foreign provenance"
+    else:
+        existing = object()
+        diagnostic = "unsafe"
+    monkeypatch.setitem(sys.modules, name, existing)
+
+    with pytest.raises(RuntimeError, match=diagnostic):
+        parity._load_generated_transaction()
+
+
+def test_generated_transaction_loader_uses_package_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(parity, "_PARITY_PACKAGE_MODE", True)
+    monkeypatch.delitem(sys.modules, "telemetry_generated_transaction", raising=False)
+    monkeypatch.delitem(sys.modules, "scripts.telemetry_generated_transaction", raising=False)
+
+    loaded = parity._load_generated_transaction()
+
+    assert loaded.__name__ == "scripts.telemetry_generated_transaction"
+    assert parity._load_generated_transaction() is loaded
+
+
+def test_generated_transaction_loader_rejects_opposite_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setitem(
+        sys.modules,
+        "scripts.telemetry_generated_transaction",
+        parity.generated_transaction,
+    )
+
+    with pytest.raises(RuntimeError, match="conflicting identity"):
+        parity._load_generated_transaction()
 
 
 @pytest.mark.parametrize("preload", ["foreign-module", "same-path-object-spoof"])
@@ -257,7 +308,15 @@ def test_live_mirror_mutation_is_rejected() -> None:
         parity.check_repository(ROOT, candidate_overrides=candidates)
 
 
-def test_live_candidate_path_rejects_symlink(tmp_path: Path) -> None:
+def test_live_candidate_reader_reads_safe_direct_file(tmp_path: Path) -> None:
+    candidate = tmp_path / "schemas" / "candidate.json"
+    candidate.parent.mkdir()
+    candidate.write_bytes(b"{}\n")
+
+    assert parity._read_live_candidate(tmp_path, "schemas/candidate.json") == b"{}\n"
+
+
+def test_live_candidate_reader_rejects_symlink(tmp_path: Path) -> None:
     target = tmp_path / "target.json"
     target.write_text("{}\n", encoding="utf-8")
     candidate = tmp_path / "schemas" / "candidate.json"
@@ -267,5 +326,106 @@ def test_live_candidate_path_rejects_symlink(tmp_path: Path) -> None:
     except OSError:
         pytest.skip("platform does not permit test symlinks")
 
-    with pytest.raises(parity.ParityError, match="contains a symlink"):
-        parity._validated_live_candidate_path(tmp_path, "schemas/candidate.json")
+    with pytest.raises(parity.ParityError, match="unsafe or unreadable"):
+        parity._read_live_candidate(tmp_path, "schemas/candidate.json")
+
+
+def test_live_candidate_reader_rejects_hard_link(tmp_path: Path) -> None:
+    target = tmp_path / "target.json"
+    target.write_bytes(b"{}\n")
+    candidate = tmp_path / "schemas" / "candidate.json"
+    candidate.parent.mkdir()
+    try:
+        os.link(target, candidate)
+    except OSError:
+        pytest.skip("platform does not permit test hard links")
+
+    with pytest.raises(parity.ParityError, match="unsafe or unreadable"):
+        parity._read_live_candidate(tmp_path, "schemas/candidate.json")
+
+
+def test_live_candidate_reader_rejects_path_swapped_to_symlink_before_open(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    candidate = tmp_path / "schemas" / "candidate.json"
+    candidate.parent.mkdir()
+    candidate.write_bytes(b"{}\n")
+    outside = tmp_path / "outside.json"
+    outside.write_bytes(b'{"unsafe": true}\n')
+    original_read = parity.generated_transaction.read_repository_file_bounded
+
+    def swap_then_read(root: Path, relative: str, *, maximum: int) -> bytes:
+        (root / relative).replace(root / "original.json")
+        (root / relative).symlink_to(outside)
+        return original_read(root, relative, maximum=maximum)
+
+    monkeypatch.setattr(
+        parity.generated_transaction,
+        "read_repository_file_bounded",
+        swap_then_read,
+    )
+
+    with pytest.raises(parity.ParityError, match="unsafe or unreadable"):
+        parity._read_live_candidate(tmp_path, "schemas/candidate.json")
+
+
+def test_live_candidate_reader_rejects_directory_entry_swapped_during_read(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    candidate = tmp_path / "schemas" / "candidate.json"
+    candidate.parent.mkdir()
+    candidate.write_bytes(b"{}\n")
+    original_read = parity.generated_transaction.os.read
+    swapped = False
+
+    def swap_after_read(descriptor: int, maximum: int) -> bytes:
+        nonlocal swapped
+        chunk = original_read(descriptor, maximum)
+        if not swapped:
+            swapped = True
+            candidate.replace(tmp_path / "original.json")
+            candidate.write_bytes(b'{"replacement": true}\n')
+        return chunk
+
+    monkeypatch.setattr(parity.generated_transaction.os, "read", swap_after_read)
+
+    with pytest.raises(parity.ParityError, match="unsafe or unreadable"):
+        parity._read_live_candidate(tmp_path, "schemas/candidate.json")
+    assert swapped
+
+
+def test_live_candidate_reader_rejects_oversized_file(tmp_path: Path) -> None:
+    candidate = tmp_path / "schemas" / "candidate.json"
+    candidate.parent.mkdir()
+    candidate.write_bytes(b"x" * (parity.MAX_LIVE_PUBLIC_VIEW_BYTES + 1))
+
+    with pytest.raises(parity.ParityError, match="unsafe or unreadable"):
+        parity._read_live_candidate(tmp_path, "schemas/candidate.json")
+
+
+def test_live_candidate_reader_rejects_missing_file(tmp_path: Path) -> None:
+    (tmp_path / "schemas").mkdir()
+
+    with pytest.raises(parity.ParityError, match="unsafe or unreadable"):
+        parity._read_live_candidate(tmp_path, "schemas/candidate.json")
+
+
+def test_candidate_overrides_still_read_every_declared_live_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    candidates = _live_candidates()
+    observed: list[str] = []
+    original_read = parity._read_live_candidate
+
+    def observing_read(root: Path, relative: str) -> bytes:
+        observed.append(relative)
+        return original_read(root, relative)
+
+    monkeypatch.setattr(parity, "_read_live_candidate", observing_read)
+
+    parity.check_repository(ROOT, candidate_overrides=candidates)
+
+    assert len(observed) == 26
+    assert set(observed) == set(candidates)
