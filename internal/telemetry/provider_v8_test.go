@@ -26,6 +26,7 @@ import (
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 	logglobal "go.opentelemetry.io/otel/log/global"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
@@ -348,6 +349,95 @@ func TestV8AttributeByteLimitPreservesUTF8AcrossSpanEventsErrorsAndLinks(t *test
 		}
 		for _, link := range recorded.Links {
 			checkAttrs("link", link.Attributes)
+		}
+	}
+}
+
+func TestV8MutationTextByteLimitPreservesBoundaryMultibyteAndStatus(t *testing.T) {
+	plan := v8PlanForTest(t, "always_on", "", func(source *config.ObservabilityV8Source) {
+		source.TracePolicy.Limits.MaxAttributeValueBytes = 256
+	})
+	provider, exporter := activeV8ProviderForTest(t, plan, 1)
+
+	exactBoundary := strings.Repeat("b", 256)
+	_, boundarySpan := provider.TracerForBucket(observability.BucketDiagnostic).Start(
+		context.Background(), exactBoundary,
+	)
+	boundarySpan.SetName(exactBoundary)
+	boundarySpan.AddEvent(exactBoundary)
+	boundarySpan.SetStatus(codes.Error, exactBoundary)
+	boundarySpan.End()
+
+	multibytePrefix := strings.Repeat("界", 85)
+	overlongSpanName := multibytePrefix + "界-span-raw-tail"
+	overlongEventName := multibytePrefix + "界-event-raw-tail"
+	overlongStatus := multibytePrefix + "界-status-raw-tail"
+	_, boundedSpan := provider.TracerForBucket(observability.BucketDiagnostic).Start(
+		context.Background(), overlongSpanName,
+	)
+	boundedSpan.AddEvent(overlongEventName)
+	boundedSpan.SetStatus(codes.Error, overlongStatus)
+	boundedSpan.End()
+	_, renamedSpan := provider.TracerForBucket(observability.BucketDiagnostic).Start(
+		context.Background(), "renamed",
+	)
+	renamedSpan.SetName(overlongSpanName)
+	renamedSpan.End()
+
+	spans := exporter.GetSpans()
+	if len(spans) != 3 {
+		t.Fatalf("spans=%d, want 3", len(spans))
+	}
+	boundary := spans[0]
+	if boundary.Name != exactBoundary || len(boundary.Events) != 1 ||
+		boundary.Events[0].Name != exactBoundary || boundary.Status.Description != exactBoundary {
+		t.Fatalf("exact-boundary mutation changed: name=%d event=%d status=%d",
+			len(boundary.Name), len(boundary.Events[0].Name), len(boundary.Status.Description))
+	}
+	if boundary.Status.Code != codes.Error {
+		t.Fatalf("exact-boundary status=%v, want Error", boundary.Status.Code)
+	}
+
+	bounded := spans[1]
+	if bounded.Name != multibytePrefix || len(bounded.Events) != 1 ||
+		bounded.Events[0].Name != multibytePrefix || bounded.Status.Description != multibytePrefix {
+		t.Fatalf("multibyte mutation was not deterministically bounded: name=%q event=%q status=%q",
+			bounded.Name, bounded.Events[0].Name, bounded.Status.Description)
+	}
+	if bounded.Status.Code != codes.Error {
+		t.Fatalf("bounded status=%v, want Error", bounded.Status.Code)
+	}
+	for label, value := range map[string]string{
+		"span": bounded.Name, "event": bounded.Events[0].Name, "status": bounded.Status.Description,
+	} {
+		if len(value) != len(multibytePrefix) || len(value) > 256 || !utf8.ValidString(value) {
+			t.Errorf("%s bytes=%d valid=%v, want %d valid UTF-8 bytes",
+				label, len(value), utf8.ValidString(value), len(multibytePrefix))
+		}
+		if strings.Contains(value, "raw-tail") {
+			t.Errorf("%s retained over-limit raw tail", label)
+		}
+	}
+	if renamed := spans[2].Name; renamed != multibytePrefix {
+		t.Errorf("SetName mutation=%q, want %q", renamed, multibytePrefix)
+	}
+}
+
+func TestV8MutationTextBoundingIsDeterministicAndPreservesCompatibleNames(t *testing.T) {
+	const maximum = 256
+	invalidAndOverlong := "prefix\xff" + strings.Repeat("界", 100) + "raw-tail"
+	first := v8BoundUTF8(invalidAndOverlong, maximum)
+	second := v8BoundUTF8(invalidAndOverlong, maximum)
+	if first != second || len(first) > maximum || !utf8.ValidString(first) {
+		t.Fatalf("bounded value is not deterministic valid UTF-8: equal=%v bytes=%d valid=%v",
+			first == second, len(first), utf8.ValidString(first))
+	}
+	if strings.Contains(first, "raw-tail") {
+		t.Fatal("bounded value retained over-limit raw tail")
+	}
+	for _, compatible := range []string{"chat gpt-5", "model.stream.first_token", "technical timeout"} {
+		if got := v8BoundUTF8(compatible, maximum); got != compatible {
+			t.Errorf("compatible value %q changed to %q", compatible, got)
 		}
 	}
 }

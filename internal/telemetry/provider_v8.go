@@ -28,6 +28,7 @@ import (
 
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 	logNoop "go.opentelemetry.io/otel/log/noop"
 	"go.opentelemetry.io/otel/metric"
 	metricNoop "go.opentelemetry.io/otel/metric/noop"
@@ -989,7 +990,9 @@ func (tracer *v8ByteBoundedTracer) Start(
 	if config.NewRoot() {
 		boundedOptions = append(boundedOptions, trace.WithNewRoot())
 	}
-	startedContext, span := tracer.Tracer.Start(ctx, name, boundedOptions...)
+	startedContext, span := tracer.Tracer.Start(
+		ctx, v8BoundUTF8(name, tracer.maxBytes), boundedOptions...,
+	)
 	boundedSpan := &v8ByteBoundedSpan{
 		Span: span, maxBytes: tracer.maxBytes, maxStacktraceBytes: tracer.maxStacktraceBytes, provider: tracer.provider,
 	}
@@ -1014,6 +1017,14 @@ func (span *v8ByteBoundedSpan) SetAttributes(values ...attribute.KeyValue) {
 	span.Span.SetAttributes(v8BoundAttributes(values, span.maxBytes)...)
 }
 
+func (span *v8ByteBoundedSpan) SetName(name string) {
+	span.Span.SetName(v8BoundUTF8(name, span.maxBytes))
+}
+
+func (span *v8ByteBoundedSpan) SetStatus(code codes.Code, description string) {
+	span.Span.SetStatus(code, v8BoundUTF8(description, span.maxBytes))
+}
+
 func (span *v8ByteBoundedSpan) AddEvent(name string, options ...trace.EventOption) {
 	config := trace.NewEventConfig(options...)
 	attrs := v8BoundAttributes(config.Attributes(), span.maxBytes)
@@ -1030,7 +1041,7 @@ func (span *v8ByteBoundedSpan) AddEvent(name string, options ...trace.EventOptio
 	if !config.Timestamp().IsZero() {
 		bounded = append(bounded, trace.WithTimestamp(config.Timestamp()))
 	}
-	span.Span.AddEvent(name, bounded...)
+	span.Span.AddEvent(v8BoundUTF8(name, span.maxBytes), bounded...)
 }
 
 func (span *v8ByteBoundedSpan) AddLink(link trace.Link) {
