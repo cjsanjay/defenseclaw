@@ -114,6 +114,7 @@ func (trace *proxyV8RequestTrace) StartModel(
 		return ctx, nil
 	}
 	if trace.agent != nil {
+		inheritProxyV8AgentIdentity(&input, trace.agentInput)
 		model, err := trace.agent.StartModel(input)
 		if err != nil || model == nil {
 			return ctx, nil
@@ -167,6 +168,14 @@ func (p *GuardrailProxy) proxyV8AgentInput(
 	start time.Time,
 ) observability.SpanAgentInvokeInput {
 	envelope, facts := p.proxyV8Envelope(ctx, "invoke_agent")
+	// The configured logical agent is valid evidence only when this request
+	// actually produced an agent root (a reported/default agent type selected
+	// that branch). A root-model fallback must not inherit process-global agent
+	// registry state from an unrelated request or test.
+	if facts.agentID == "" {
+		facts.agentID = proxyV8StableID(p.agentIDForRequest())
+		envelope.Correlation.AgentID = facts.agentID
+	}
 	messages, inputBytes, inputReported := proxyV8InputMessages(req.Messages)
 	input := observability.SpanAgentInvokeInput{
 		Envelope: envelope, Outcome: observability.OutcomeCompleted, Kind: "INTERNAL",
@@ -255,7 +264,7 @@ func (p *GuardrailProxy) proxyV8Envelope(
 		connector: proxyV8StableID(firstNonEmpty(auditEnvelope.Connector, p.connectorName())),
 		runID:     proxyV8StableID(auditEnvelope.RunID), requestID: proxyV8StableID(firstNonEmpty(auditEnvelope.RequestID, RequestIDFromContext(ctx))),
 		sessionID: proxyV8StableID(firstNonEmpty(auditEnvelope.SessionID, SessionIDFromContext(ctx))),
-		turnID:    proxyV8StableID(auditEnvelope.TurnID), agentID: proxyV8StableID(firstNonEmpty(auditEnvelope.AgentID, p.agentIDForRequest())),
+		turnID:    proxyV8StableID(auditEnvelope.TurnID), agentID: proxyV8StableID(auditEnvelope.AgentID),
 		agentName: proxyV8StableID(auditEnvelope.AgentName), agentInstance: proxyV8StableID(auditEnvelope.AgentInstanceID),
 		policyID:    proxyV8StableID(firstNonEmpty(auditEnvelope.PolicyID, p.defaultPolicyID)),
 		destination: proxyV8StableID(auditEnvelope.DestinationApp),
@@ -271,6 +280,31 @@ func (p *GuardrailProxy) proxyV8Envelope(
 		},
 		Provenance: observability.FamilyProvenanceInput{Producer: proxyV8Producer},
 	}, facts
+}
+
+func inheritProxyV8AgentIdentity(
+	model *observability.SpanModelChatInput,
+	agent observability.SpanAgentInvokeInput,
+) {
+	if model == nil {
+		return
+	}
+	model.Envelope.Correlation.AgentID = agent.Envelope.Correlation.AgentID
+	model.Envelope.Correlation.AgentInstanceID = agent.Envelope.Correlation.AgentInstanceID
+	model.GenAIAgentID = agent.GenAIAgentID
+	model.GenAIAgentName = agent.GenAIAgentName
+	if value, present := agent.DefenseClawAgentType, agent.DefenseClawAgentType != ""; present {
+		model.DefenseClawAgentType = observability.Present(value)
+	}
+	model.DefenseClawAgentInstanceID = agent.DefenseClawAgentInstanceID
+	model.DefenseClawAgentRootID = agent.DefenseClawAgentRootID
+	model.DefenseClawAgentParentID = agent.DefenseClawAgentParentID
+	model.DefenseClawAgentLineageProvenance = agent.DefenseClawAgentLineageProvenance
+	model.DefenseClawSessionRootID = agent.DefenseClawSessionRootID
+	model.DefenseClawSessionParentID = agent.DefenseClawSessionParentID
+	model.DefenseClawAgentLifecycleID = agent.DefenseClawAgentLifecycleID
+	model.DefenseClawAgentExecutionID = agent.DefenseClawAgentExecutionID
+	model.DefenseClawAgentDepth = agent.DefenseClawAgentDepth
 }
 
 func applyProxyV8FactsToAgent(input *observability.SpanAgentInvokeInput, facts proxyV8Facts, agentType string) {
