@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[2]
 DASHBOARDS = ROOT / "bundles" / "local_observability_stack" / "grafana" / "dashboards"
 AGENT360 = DASHBOARDS / "defenseclaw-agent-360.json"
@@ -394,7 +393,11 @@ def test_collector_derives_agent_span_metrics_and_fans_them_to_prometheus() -> N
     assert "defenseclaw.agent.phase.code" in config
     assert "- name: connector" in config
     assert "gen_ai.tool.name" in config
-    assert "exporters: [otlp/tempo, spanmetrics/agent360, debug]" in config
+    assert "filter/agent360-canary:" in config
+    assert 'span.attributes["defenseclaw.telemetry.canary"] == true' in config
+    assert "exporters: [otlp/tempo, forward/agent360, debug]" in config
+    assert "receivers: [forward/agent360]" in config
+    assert "exporters: [spanmetrics/agent360]" in config
     assert "receivers: [otlp, spanmetrics/agent360]" in config
     assert "exporters: [prometheusremotewrite/prometheus, debug]" in config
     assert "deltatocumulative:" in config

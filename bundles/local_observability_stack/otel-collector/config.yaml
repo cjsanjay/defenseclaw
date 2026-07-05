@@ -35,6 +35,16 @@ processors:
   # Keep this in the metrics pipeline only.
   deltatocumulative:
 
+  # Generated pipeline canaries must remain queryable in Tempo, but they are
+  # synthetic health probes rather than user activity and therefore must not
+  # increment the Agent360 RED metrics. This processor is attached only to the
+  # forward/agent360 branch below; the primary trace branch reaches Tempo and
+  # the debug exporter before this exact boolean-attribute filter.
+  filter/agent360-canary:
+    error_mode: ignore
+    trace_conditions:
+      - 'span.attributes["defenseclaw.telemetry.canary"] == true'
+
   # Defense-in-depth resource enrichment so every signal carries the
   # service.namespace=defenseclaw label even if the sidecar forgets to
   # set it. The `insert` action keeps the sidecar-supplied value when
@@ -102,6 +112,11 @@ processors:
           - set(body, Substring(body, 0, 200000)) where IsString(body) and Len(body) > 200000
 
 connectors:
+  # Fork the post-resource trace stream into a dedicated spanmetrics branch.
+  # Keeping Tempo on the primary branch ensures the generated two-span canary
+  # remains available for end-to-end trace-topology validation.
+  forward/agent360:
+
   # Turn completed runtime spans into per-agent RED metrics. These dimensions
   # are the stable Agent360 correlation contract; request IDs and prompt text
   # are intentionally excluded from labels. The native agent.last_seen metric
@@ -196,7 +211,11 @@ service:
     traces:
       receivers: [otlp]
       processors: [resource, batch]
-      exporters: [otlp/tempo, spanmetrics/agent360, debug]
+      exporters: [otlp/tempo, forward/agent360, debug]
+    traces/agent360-spanmetrics:
+      receivers: [forward/agent360]
+      processors: [filter/agent360-canary]
+      exporters: [spanmetrics/agent360]
     metrics:
       receivers: [otlp, spanmetrics/agent360]
       processors: [resource, deltatocumulative, batch]

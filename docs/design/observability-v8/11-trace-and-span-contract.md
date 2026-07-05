@@ -381,8 +381,9 @@ resource attributes likewise require one typed bounded canonical representation,
 not acceptance as unregistered SDK-only extras. Activation additionally requires
 the generated two-span root-agent/model canary, a runtime-graph lease/reload E2E
 from start through end, PR #403 producer and Galileo projection migration, and PR
-#412 local-observability validation with diagnostic canaries excluded from the
-Agent360 spanmetrics connector while remaining available in Tempo.
+#412 local-observability validation through the dedicated Agent360 branch that
+excludes exact Boolean-marked diagnostic canaries from spanmetrics while retaining
+them in Tempo.
 
 ## 6. Resource and Scope Attributes
 

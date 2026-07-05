@@ -108,6 +108,12 @@ def test_collector_preserves_three_signal_pipeline_and_agent360_dimensions() -> 
     assert pipelines["metrics"]["exporters"].count("prometheusremotewrite/prometheus") == 1
     assert "deltatocumulative" not in pipelines["logs"]["processors"]
     assert "deltatocumulative" not in pipelines["traces"]["processors"]
+    assert pipelines["traces"]["exporters"] == ["otlp/tempo", "forward/agent360", "debug"]
+    assert pipelines["traces/agent360-spanmetrics"] == {
+        "receivers": ["forward/agent360"],
+        "processors": ["filter/agent360-canary"],
+        "exporters": ["spanmetrics/agent360"],
+    }
     dimensions = {item["name"] for item in collector["connectors"]["spanmetrics/agent360"]["dimensions"]}
     assert dimensions == compat.EXPECTED_SPANMETRICS_DIMENSIONS
     assert not dimensions & {
@@ -119,6 +125,99 @@ def test_collector_preserves_three_signal_pipeline_and_agent360_dimensions() -> 
         "defenseclaw.tool.result",
         "error.message",
     }
+
+
+def _trace_terminals(collector: dict, span_attributes: dict[str, object]) -> set[str]:
+    """Walk the configured trace-connector graph for one representative span."""
+
+    pipelines = collector["service"]["pipelines"]
+    connectors = collector["connectors"]
+    receiving_pipelines: dict[str, list[str]] = {}
+    for pipeline_name, pipeline in pipelines.items():
+        if not pipeline_name.startswith("traces"):
+            continue
+        for receiver in pipeline.get("receivers", []):
+            if receiver in connectors:
+                receiving_pipelines.setdefault(receiver, []).append(pipeline_name)
+
+    terminals: set[str] = set()
+
+    def walk(pipeline_name: str) -> None:
+        pipeline = pipelines[pipeline_name]
+        for processor_name in pipeline.get("processors", []):
+            if processor_name != "filter/agent360-canary":
+                continue
+            processor = collector["processors"][processor_name]
+            assert processor == {
+                "error_mode": "ignore",
+                "trace_conditions": [compat.EXPECTED_CANARY_FILTER_CONDITION],
+            }
+            if span_attributes.get(compat.EXPECTED_CANARY_ATTRIBUTE) is True:
+                return
+        for exporter in pipeline.get("exporters", []):
+            downstream = receiving_pipelines.get(exporter, [])
+            if downstream:
+                for downstream_pipeline in downstream:
+                    walk(downstream_pipeline)
+            elif exporter != "forward/agent360":
+                terminals.add(exporter)
+
+    walk("traces")
+    return terminals
+
+
+def test_source_and_packaged_collector_keep_canary_in_tempo_but_out_of_spanmetrics() -> None:
+    paths = [
+        compat.COLLECTOR,
+        compat.PACKAGED / "otel-collector/config.yaml",
+    ]
+    for path in paths:
+        collector = yaml.safe_load(path.read_text(encoding="utf-8"))
+        condition = collector["processors"]["filter/agent360-canary"]["trace_conditions"]
+        assert condition == [compat.EXPECTED_CANARY_FILTER_CONDITION]
+        assert "span.name" not in condition[0]
+        assert "defenseclaw.destination" not in condition[0]
+        assert "operation" not in condition[0]
+
+        assert _trace_terminals(
+            collector,
+            {compat.EXPECTED_CANARY_ATTRIBUTE: True},
+        ) == {"otlp/tempo", "debug"}
+        assert _trace_terminals(collector, {}) == {
+            "otlp/tempo",
+            "spanmetrics/agent360",
+            "debug",
+        }
+        assert _trace_terminals(
+            collector,
+            {compat.EXPECTED_CANARY_ATTRIBUTE: False},
+        ) == {"otlp/tempo", "spanmetrics/agent360", "debug"}
+        assert _trace_terminals(
+            collector,
+            {compat.EXPECTED_CANARY_ATTRIBUTE: "true"},
+        ) == {"otlp/tempo", "spanmetrics/agent360", "debug"}
+
+
+def test_collector_validator_rejects_canary_filter_or_branch_drift(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    collector = yaml.safe_load(compat.COLLECTOR.read_text(encoding="utf-8"))
+    collector["processors"]["filter/agent360-canary"]["trace_conditions"] = [
+        'span.name == "invoke_agent defenseclaw"',
+    ]
+    collector["service"]["pipelines"]["traces"]["exporters"].remove("otlp/tempo")
+    path = tmp_path / "collector.yaml"
+    path.write_text(yaml.safe_dump(collector), encoding="utf-8")
+    monkeypatch.setattr(compat, "COLLECTOR", path)
+
+    errors = compat._collector_errors()
+
+    assert "Collector signal pipelines drifted from local-observability-v1" in errors
+    assert (
+        "Agent360 canary filter must drop only the exact canonical boolean span attribute"
+        in errors
+    )
 
 
 def test_collector_validator_rejects_delta_conversion_or_dimension_drift(

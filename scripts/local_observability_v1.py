@@ -87,6 +87,10 @@ EXPECTED_SPANMETRICS_BUCKETS = [
     "1m",
     "5m",
 ]
+EXPECTED_CANARY_ATTRIBUTE = "defenseclaw.telemetry.canary"
+EXPECTED_CANARY_FILTER_CONDITION = (
+    'span.attributes["defenseclaw.telemetry.canary"] == true'
+)
 EXPECTED_VOLUMES = {"prometheus-data", "loki-data", "tempo-data", "grafana-data"}
 
 # Checked PR #412/P3 baselines.  These are intentionally hashes, not generated
@@ -451,7 +455,12 @@ def _collector_errors() -> list[str]:
         "traces": {
             "receivers": ["otlp"],
             "processors": ["resource", "batch"],
-            "exporters": ["otlp/tempo", "spanmetrics/agent360", "debug"],
+            "exporters": ["otlp/tempo", "forward/agent360", "debug"],
+        },
+        "traces/agent360-spanmetrics": {
+            "receivers": ["forward/agent360"],
+            "processors": ["filter/agent360-canary"],
+            "exporters": ["spanmetrics/agent360"],
         },
         "metrics": {
             "receivers": ["otlp", "spanmetrics/agent360"],
@@ -466,6 +475,17 @@ def _collector_errors() -> list[str]:
     }
     if pipelines != expected_pipelines:
         errors.append("Collector signal pipelines drifted from local-observability-v1")
+    connectors = collector.get("connectors", {})
+    if "forward/agent360" not in connectors or connectors.get("forward/agent360") not in (None, {}):
+        errors.append("forward/agent360 must remain an unconfigured trace branch connector")
+    canary_filter = collector.get("processors", {}).get("filter/agent360-canary", {})
+    if canary_filter != {
+        "error_mode": "ignore",
+        "trace_conditions": [EXPECTED_CANARY_FILTER_CONDITION],
+    }:
+        errors.append(
+            "Agent360 canary filter must drop only the exact canonical boolean span attribute",
+        )
     spanmetrics = collector.get("connectors", {}).get("spanmetrics/agent360", {})
     dimensions = {item.get("name") for item in spanmetrics.get("dimensions", [])}
     if dimensions != EXPECTED_SPANMETRICS_DIMENSIONS:

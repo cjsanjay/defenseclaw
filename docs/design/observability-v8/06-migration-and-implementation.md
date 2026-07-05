@@ -494,7 +494,8 @@ full OTLP flags; a typed bounded representation for configured safe custom
 resource attributes; the generated two-span root-agent/model canary; runtime-graph
 lease/reload E2E coverage from span start through canonical end; PR #403 producer
 and Galileo projection migration; and PR #412 local-observability projection
-validation, including exclusion of diagnostic canaries from Agent360 spanmetrics.
+validation through the branch-specific filter that retains diagnostic canaries in
+Tempo while excluding only exact Boolean-marked canaries from Agent360 spanmetrics.
 The handoff substrate may coexist with named legacy processors before this gate,
 but a canonical destination has no legacy fallback when registration or parity
 fails.
