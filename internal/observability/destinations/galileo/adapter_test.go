@@ -468,6 +468,9 @@ func TestAdapterRejectsMissingOrMismatchedCanonicalEndedIdentityBeforeNetwork(t 
 		{name: "mismatched Galileo profile", mutate: func(t *testing.T, wire map[string]any) {
 			projectedScopeAttributes(t, wire)["defenseclaw.galileo.compatibility_profile"] = "galileo-rich-v3"
 		}},
+		{name: "non string Galileo profile", mutate: func(t *testing.T, wire map[string]any) {
+			projectedScopeAttributes(t, wire)["defenseclaw.galileo.compatibility_profile"] = json.Number("2")
+		}},
 		{name: "non string resource attribute", mutate: func(t *testing.T, wire map[string]any) {
 			projectedResourceAttributes(t, wire)["custom.count"] = json.Number("3")
 		}},
@@ -534,6 +537,38 @@ func TestProjectedResourceCompatibilityAliasesRemainPolicyControlled(t *testing.
 	}
 	if got := attributes["team.owner"].GetStringValue(); got != "runtime-security" {
 		t.Fatalf("custom resource attribute = %q", got)
+	}
+}
+
+func TestGeneratedCanonicalScopeReceivesDestinationOwnedGalileoProfile(t *testing.T) {
+	t.Parallel()
+	result := makeResult(t, testTraceID, "797a7b7c7d7e7f80", "chat", false, true)
+	encoded, err := result.Bytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wire map[string]any
+	decoder := json.NewDecoder(bytes.NewReader(encoded))
+	decoder.UseNumber()
+	if err := decoder.Decode(&wire); err != nil {
+		t.Fatal(err)
+	}
+	delete(projectedScopeAttributes(t, wire), "defenseclaw.galileo.compatibility_profile")
+	encoded, err = json.Marshal(wire)
+	if err != nil {
+		t.Fatal(err)
+	}
+	projected, ok := decodeProjection(encoded)
+	if !ok {
+		t.Fatal("generated canonical projection without destination profile rejected")
+	}
+	_, _, scope, _, _, ok := projected.otlp("galileo")
+	if !ok {
+		t.Fatal("destination-owned Galileo profile was not applied")
+	}
+	attributes := protoAttributes(scope.Attributes)
+	if got := attributes["defenseclaw.galileo.compatibility_profile"].GetStringValue(); got != compatibility.ProfileID {
+		t.Fatalf("Galileo scope profile = %q, want %q", got, compatibility.ProfileID)
 	}
 }
 

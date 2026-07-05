@@ -525,13 +525,28 @@ func requiredScope(input projectedScope) (*commonpb.InstrumentationScope, bool) 
 		strings.TrimSpace(input.SchemaURL) == "" {
 		return nil, false
 	}
-	attributes, ok := attributes(input.Attributes)
-	if !ok {
+	if stringMap(input.Attributes, "defenseclaw.trace.schema_version") != traceSchemaProfileID ||
+		stringMap(input.Attributes, "defenseclaw.semantic_profile") != semanticProfileID {
 		return nil, false
 	}
-	if stringMap(input.Attributes, "defenseclaw.trace.schema_version") != traceSchemaProfileID ||
-		stringMap(input.Attributes, "defenseclaw.semantic_profile") != semanticProfileID ||
-		stringMap(input.Attributes, "defenseclaw.galileo.compatibility_profile") != compatibility.ProfileID {
+	// Generated canonical spans carry only the pinned DefenseClaw trace and
+	// semantic profiles. The Galileo compatibility profile belongs to this
+	// destination-owned projection, so inject it when absent and reject only an
+	// explicitly conflicting value. This keeps producer schemas destination-
+	// neutral without weakening the projected OTLP scope contract.
+	if rawProfile, present := input.Attributes["defenseclaw.galileo.compatibility_profile"]; present {
+		profile, valid := rawProfile.(string)
+		if !valid || profile != compatibility.ProfileID {
+			return nil, false
+		}
+	}
+	projected := make(map[string]any, len(input.Attributes)+1)
+	for key, value := range input.Attributes {
+		projected[key] = value
+	}
+	projected["defenseclaw.galileo.compatibility_profile"] = compatibility.ProfileID
+	attributes, ok := attributes(projected)
+	if !ok {
 		return nil, false
 	}
 	return &commonpb.InstrumentationScope{Name: input.Name, Version: input.Version, Attributes: attributes}, true
