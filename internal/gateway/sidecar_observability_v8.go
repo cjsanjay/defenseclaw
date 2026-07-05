@@ -93,6 +93,11 @@ func (s *Sidecar) bindObservabilityRuntime(emitter sidecarRuntimeEmitter) error 
 		return &sidecarObservabilityError{code: sidecarObservabilityAlreadyBound}
 	}
 	s.observabilityV8 = emitter
+	s.observabilityV8Trace, _ = emitter.(proxyV8TraceRuntime)
+	traceRuntime := s.observabilityV8Trace
+	if proxy := s.proxySnapshot(); proxy != nil {
+		proxy.bindObservabilityV8Trace(traceRuntime)
+	}
 	return nil
 }
 

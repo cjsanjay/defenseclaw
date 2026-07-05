@@ -79,22 +79,23 @@ type Sidecar struct {
 	osNotifier    *notifier.Dispatcher
 	configMgr     *ConfigManager
 
-	otelMu             sync.RWMutex
-	webhooksMu         sync.RWMutex
-	aiDiscoveryMu      sync.RWMutex
-	apiMu              sync.RWMutex
-	apiServer          *APIServer
-	proxyMu            sync.RWMutex
-	guardrailProxy     *GuardrailProxy
-	apiRestartCh       chan struct{}
-	watcherRestartCh   chan struct{}
-	guardrailRestartCh chan struct{}
-	aiRestartCh        chan struct{}
-	runCancelMu        sync.Mutex
-	runCancel          context.CancelFunc
-	observabilityV8Mu  sync.Mutex
-	observabilityV8    sidecarRuntimeEmitter
-	observabilityV8Run bool
+	otelMu               sync.RWMutex
+	webhooksMu           sync.RWMutex
+	aiDiscoveryMu        sync.RWMutex
+	apiMu                sync.RWMutex
+	apiServer            *APIServer
+	proxyMu              sync.RWMutex
+	guardrailProxy       *GuardrailProxy
+	apiRestartCh         chan struct{}
+	watcherRestartCh     chan struct{}
+	guardrailRestartCh   chan struct{}
+	aiRestartCh          chan struct{}
+	runCancelMu          sync.Mutex
+	runCancel            context.CancelFunc
+	observabilityV8Mu    sync.Mutex
+	observabilityV8      sidecarRuntimeEmitter
+	observabilityV8Trace proxyV8TraceRuntime
+	observabilityV8Run   bool
 
 	alertCtx    context.Context
 	alertCancel context.CancelFunc
@@ -1476,6 +1477,12 @@ func (s *Sidecar) apiSnapshot() *APIServer {
 }
 
 func (s *Sidecar) setGuardrailProxy(proxy *GuardrailProxy) {
+	s.observabilityV8Mu.Lock()
+	traceRuntime := s.observabilityV8Trace
+	s.observabilityV8Mu.Unlock()
+	if proxy != nil {
+		proxy.bindObservabilityV8Trace(traceRuntime)
+	}
 	s.proxyMu.Lock()
 	s.guardrailProxy = proxy
 	s.proxyMu.Unlock()

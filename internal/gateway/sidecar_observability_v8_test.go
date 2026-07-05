@@ -211,6 +211,30 @@ func TestSidecarCanonicalLifecyclePersistsExactlyOnceWithGraphProvenance(t *test
 	}
 }
 
+func TestSidecarBindsCanonicalTraceRuntimeToProxyInEitherConstructionOrder(t *testing.T) {
+	for _, bindFirst := range []bool{false, true} {
+		t.Run(fmt.Sprintf("bind-first-%t", bindFirst), func(t *testing.T) {
+			fixture := newSidecarRuntimeFixture(t, true)
+			sidecar := &Sidecar{}
+			proxy := &GuardrailProxy{}
+			if bindFirst {
+				if err := sidecar.BindObservabilityRuntime(fixture.runtime); err != nil {
+					t.Fatal(err)
+				}
+				sidecar.setGuardrailProxy(proxy)
+			} else {
+				sidecar.setGuardrailProxy(proxy)
+				if err := sidecar.BindObservabilityRuntime(fixture.runtime); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if proxy.observabilityV8TraceRuntime() != fixture.runtime {
+				t.Fatal("proxy did not receive the process-owned v8 trace runtime")
+			}
+		})
+	}
+}
+
 type fakeSidecarEmitter struct {
 	emit func(context.Context, router.Metadata, observabilityruntime.EmitBuilder) (pipeline.LocalLogOutcome, error)
 }
