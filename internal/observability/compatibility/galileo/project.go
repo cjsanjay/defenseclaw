@@ -22,12 +22,13 @@ import (
 
 	"github.com/defenseclaw/defenseclaw/internal/observability"
 	"github.com/defenseclaw/defenseclaw/internal/observability/redaction"
+	"go.opentelemetry.io/otel/trace"
 )
 
 const (
-	canaryFamily         = "span.diagnostic.canary"
 	canaryMarkerKey      = "defenseclaw.telemetry.canary"
 	canaryOperationKey   = "defenseclaw.telemetry.canary.operation"
+	canaryDestinationKey = "defenseclaw.telemetry.canary.destination"
 	canaryOperationValue = "runtime-pipeline-test"
 )
 
@@ -110,27 +111,15 @@ func projectionMetadataValid(metadata map[string]any) bool {
 func selectContract(envelope projectedEnvelope, attributes map[string]any) (shapeContract, Reason, []string) {
 	family := envelope.Family
 	operation, operationPresent := stringAttribute(attributes, "gen_ai.operation.name")
-	if family == canaryFamily {
-		marker, markerOK := boolAttribute(attributes, canaryMarkerKey)
-		canaryOperation, operationOK := stringAttribute(attributes, canaryOperationKey)
-		if !markerOK || !marker || !operationOK || canaryOperation != canaryOperationValue {
-			return shapeContract{}, ReasonUnsupportedShape, nil
-		}
-		switch operation {
-		case "invoke_agent":
-			return contract(ShapeAgent, family, operation, "AGENT", internalOrClient), ReasonEligible, nil
-		case "chat", "text_completion":
-			return contract(ShapeLLM, family, operation, "LLM", clientOnly), ReasonEligible, nil
-		default:
-			if !operationPresent {
-				return shapeContract{}, ReasonSchemaMissingRequired, []string{"gen_ai.operation.name"}
-			}
-			return shapeContract{}, ReasonUnsupportedShape, nil
-		}
+	canaryPresent, canaryValid := generatedCanaryMetadata(attributes)
+	if canaryPresent && (!canaryValid ||
+		family != observability.TelemetryFamilyAgentInvoke &&
+			family != observability.TelemetryFamilyModelChat) {
+		return shapeContract{}, ReasonUnsupportedShape, nil
 	}
 
 	switch family {
-	case "span.agent.invoke":
+	case observability.TelemetryFamilyAgentInvoke:
 		if !operationPresent {
 			return shapeContract{}, ReasonSchemaMissingRequired, []string{"gen_ai.operation.name"}
 		}
@@ -138,7 +127,7 @@ func selectContract(envelope projectedEnvelope, attributes map[string]any) (shap
 			return shapeContract{}, ReasonUnsupportedShape, nil
 		}
 		return contract(ShapeAgent, family, operation, "AGENT", internalOrClient), ReasonEligible, nil
-	case "span.model.chat", "span.guardrail.judge":
+	case observability.TelemetryFamilyModelChat, "span.guardrail.judge":
 		if !operationPresent {
 			return shapeContract{}, ReasonSchemaMissingRequired, []string{"gen_ai.operation.name"}
 		}
@@ -175,6 +164,25 @@ func selectContract(envelope projectedEnvelope, attributes map[string]any) (shap
 	default:
 		return shapeContract{}, ReasonUnsupportedShape, nil
 	}
+}
+
+// generatedCanaryMetadata recognizes only the release probe carried by the
+// generated agent/model families. The ordinary span.diagnostic.canary family
+// remains an independent one-span diagnostic signal and is never rewritten
+// into a Galileo agent or model shape.
+func generatedCanaryMetadata(attributes map[string]any) (present, valid bool) {
+	markerRaw, markerPresent := attributes[canaryMarkerKey]
+	operationRaw, operationPresent := attributes[canaryOperationKey]
+	destinationRaw, destinationPresent := attributes[canaryDestinationKey]
+	present = markerPresent || operationPresent || destinationPresent
+	if !present {
+		return false, true
+	}
+	marker, markerOK := markerRaw.(bool)
+	operation, operationOK := operationRaw.(string)
+	destination, destinationOK := destinationRaw.(string)
+	return true, markerOK && marker && operationOK && operation == canaryOperationValue &&
+		destinationOK && observability.IsStableToken(destination)
 }
 
 func contract(shape Shape, family, operation, oiKind string, kinds map[string]struct{}) shapeContract {
@@ -327,6 +335,26 @@ func projectBody(input, attributes map[string]any, limits Limits) (map[string]an
 	}
 	if kind, ok := normalizedSpanKind(input["kind"]); ok {
 		output["kind"] = kind
+	}
+	if raw, present := input["flags"]; present {
+		flags, valid := raw.(json.Number)
+		if !valid || !validUnsignedJSONNumber(flags, 32) {
+			return nil, false
+		}
+		output["flags"] = json.Number(strings.Clone(flags.String()))
+	}
+	if raw, present := input["trace_state"]; present {
+		traceState, valid := raw.(string)
+		if !valid || len(traceState) > 512 || !utf8.ValidString(traceState) {
+			return nil, false
+		}
+		if traceState != "" {
+			parsed, err := trace.ParseTraceState(traceState)
+			if err != nil || parsed.String() != traceState {
+				return nil, false
+			}
+		}
+		output["trace_state"] = strings.Clone(traceState)
 	}
 	output["attributes"] = cloneObject(attributes)
 	if events := projectEvents(input["events"], limits); len(events) > 0 {
@@ -499,7 +527,7 @@ func allowedAttribute(key string) bool {
 		"defenseclaw.llm.tool_calls", "defenseclaw.llm.guardrail", "defenseclaw.llm.guardrail.result",
 		"defenseclaw.tool.status", "defenseclaw.tool.dangerous", "defenseclaw.tool.provider",
 		"defenseclaw.tool.exit_code", "defenseclaw.tool.output_length",
-		canaryMarkerKey, canaryOperationKey, "defenseclaw.telemetry.canary.destination":
+		canaryMarkerKey, canaryOperationKey, canaryDestinationKey:
 		return true
 	}
 	return strings.HasPrefix(key, "defenseclaw.telemetry.input.") ||

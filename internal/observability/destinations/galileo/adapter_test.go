@@ -127,12 +127,22 @@ func TestAdapterExportsRichRedactedCanaryAndAcknowledgesExactTrace(t *testing.T)
 		t.Fatalf("spans = %d, want 2", len(spans))
 	}
 	operations := make(map[string]bool)
+	var agentSpan, modelSpan *tracepb.Span
 	for _, span := range spans {
 		if got := span.TraceId; !bytes.Equal(got, mustHex(t, testTraceID)) {
 			t.Fatalf("trace ID = %x", got)
 		}
 		attrs := protoAttributes(span.Attributes)
-		operations[attrs["gen_ai.operation.name"].GetStringValue()] = true
+		operation := attrs["gen_ai.operation.name"].GetStringValue()
+		operations[operation] = true
+		if operation == "invoke_agent" {
+			agentSpan = span
+		} else if operation == "chat" {
+			modelSpan = span
+		}
+		if span.Flags != 0x101 || span.TraceState != "dc=runtime-pipeline-test" {
+			t.Errorf("trace metadata = flags:%#x state:%q", span.Flags, span.TraceState)
+		}
 		for _, key := range []string{
 			"defenseclaw.agent.root.id", "defenseclaw.agent.parent.id",
 			"defenseclaw.agent.lifecycle.id", "defenseclaw.agent.execution.id",
@@ -148,6 +158,10 @@ func TestAdapterExportsRichRedactedCanaryAndAcknowledgesExactTrace(t *testing.T)
 	}
 	if !operations["invoke_agent"] || !operations["chat"] {
 		t.Fatalf("operations = %v", operations)
+	}
+	if agentSpan == nil || modelSpan == nil || len(agentSpan.ParentSpanId) != 0 ||
+		!bytes.Equal(modelSpan.ParentSpanId, agentSpan.SpanId) {
+		t.Fatalf("generated canary parent graph = agent:%+v model:%+v", agentSpan, modelSpan)
 	}
 	encoded, _ := proto.Marshal(request)
 	if bytes.Contains(encoded, []byte(testRawPII)) {
@@ -170,8 +184,8 @@ func TestAdapterExportsRichRedactedCanaryAndAcknowledgesExactTrace(t *testing.T)
 				t.Errorf("resource %q = %q, want %q", key, got, want)
 			}
 		}
-		if resource.Resource.DroppedAttributesCount != 7 {
-			t.Errorf("resource dropped attributes = %d, want 7", resource.Resource.DroppedAttributesCount)
+		if resource.Resource.DroppedAttributesCount != 0 {
+			t.Errorf("resource dropped attributes = %d, want 0", resource.Resource.DroppedAttributesCount)
 		}
 	}
 	if got := observer.snapshot(); !reflect.DeepEqual(got, []otlp.CanaryAcknowledgement{{
@@ -224,6 +238,75 @@ func TestAdapterPartialSuccessIsExactTerminalAndNeverAcknowledgesCanary(t *testi
 	}
 	if got := observer.snapshot(); len(got) != 0 {
 		t.Fatalf("partial response acknowledged canary: %+v", got)
+	}
+}
+
+func TestProjectedCanaryAcknowledgementRejectsMalformedOrPartialPairs(t *testing.T) {
+	t.Parallel()
+	if spans := projectedCanaryPair(t); !completeProjectedCanaryTrace(spans) {
+		t.Fatal("valid projected generated pair was not acknowledged")
+	}
+	tests := map[string]func([]projectedCanarySpan){
+		"wrong parent": func(spans []projectedCanarySpan) {
+			spans[1].span.ParentSpanId = mustHex(t, "3132333435363738")
+		},
+		"different trace": func(spans []projectedCanarySpan) {
+			spans[1].span.TraceId = mustHex(t, "11111111111111111111111111111111")
+		},
+		"same span id": func(spans []projectedCanarySpan) {
+			spans[1].span.SpanId = append([]byte(nil), spans[0].span.SpanId...)
+		},
+		"wrong full flags": func(spans []projectedCanarySpan) {
+			spans[1].span.Flags = 0x100
+		},
+		"tracestate mismatch": func(spans []projectedCanarySpan) {
+			spans[1].span.TraceState = "vendor=other"
+		},
+		"generation mismatch": func(spans []projectedCanarySpan) {
+			spans[1].wire.Provenance["config_generation"] = json.Number("9")
+		},
+		"resource mismatch": func(spans []projectedCanarySpan) {
+			attrs := protoAttributes(spans[1].resource.Attributes)
+			attrs["team.owner"].Value = &commonpb.AnyValue_StringValue{StringValue: "other-team"}
+		},
+		"resource dropped fields": func(spans []projectedCanarySpan) {
+			spans[0].resource.DroppedAttributesCount = 1
+		},
+		"resource schema mismatch": func(spans []projectedCanarySpan) {
+			spans[1].resourceSchema = "https://example.test/other"
+		},
+		"scope mismatch": func(spans []projectedCanarySpan) {
+			spans[1].scope.Version = "other"
+		},
+		"wrong root name": func(spans []projectedCanarySpan) {
+			spans[0].span.Name = "invoke_agent other"
+		},
+		"wrong child kind": func(spans []projectedCanarySpan) {
+			spans[1].span.Kind = tracepb.Span_SPAN_KIND_INTERNAL
+		},
+		"wrong status": func(spans []projectedCanarySpan) {
+			spans[1].span.Status.Code = tracepb.Status_STATUS_CODE_ERROR
+		},
+		"wrong outcome": func(spans []projectedCanarySpan) {
+			spans[1].wire.Body.Attributes["defenseclaw.outcome"] = string(observability.OutcomeFailed)
+		},
+		"diagnostic family": func(spans []projectedCanarySpan) {
+			spans[1].wire.Family = observability.TelemetryFamilyDiagnosticCanary
+		},
+	}
+	for name, mutate := range tests {
+		name, mutate := name, mutate
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			spans := projectedCanaryPair(t)
+			mutate(spans)
+			if completeProjectedCanaryTrace(spans) {
+				t.Fatal("malformed projected pair was acknowledged")
+			}
+		})
+	}
+	if spans := projectedCanaryPair(t); completeProjectedCanaryTrace(spans[:1]) {
+		t.Fatal("partial projected pair was acknowledged")
 	}
 }
 
@@ -663,6 +746,34 @@ func protoAttributes(attributes []*commonpb.KeyValue) map[string]*commonpb.AnyVa
 	return output
 }
 
+func projectedCanaryPair(t *testing.T) []projectedCanarySpan {
+	t.Helper()
+	results := []compatibility.Result{
+		makeResult(t, testTraceID, "1112131415161718", "invoke_agent", true, true),
+		makeResult(t, testTraceID, "2122232425262728", "chat", true, true),
+	}
+	spans := make([]projectedCanarySpan, 0, len(results))
+	for _, result := range results {
+		encoded, err := result.Bytes()
+		if err != nil {
+			t.Fatal(err)
+		}
+		wire, ok := decodeProjection(encoded)
+		if !ok {
+			t.Fatal("decode projected canary")
+		}
+		resource, span, scope, resourceSchema, scopeSchema, ok := wire.otlp("galileo")
+		if !ok {
+			t.Fatal("convert projected canary to OTLP")
+		}
+		spans = append(spans, projectedCanarySpan{
+			wire: wire, resource: resource, resourceSchema: resourceSchema,
+			scope: scope, scopeSchema: scopeSchema, span: span,
+		})
+	}
+	return spans
+}
+
 func makeResult(
 	t *testing.T,
 	traceID, spanID, operation string,
@@ -686,10 +797,14 @@ func makeResult(
 		attributes["gen_ai.agent.name"] = "reviewer"
 	}
 	if canary {
-		bucket, family = observability.BucketDiagnostic, canaryFamily
 		attributes[canaryMarker] = true
 		attributes[canaryOperation] = canaryOperationTag
 		attributes[canaryDestination] = "galileo"
+		if operation == "invoke_agent" {
+			name = "invoke_agent diagnostic"
+		} else {
+			name = "chat gpt-4o-mini"
+		}
 	}
 	attributes["defenseclaw.bucket"] = string(bucket)
 	attributes["defenseclaw.span.family"] = string(family)
@@ -713,8 +828,17 @@ func makeResult(
 	if transportReady {
 		body["start_time_unix_nano"] = uint64(1_000_000_000)
 		body["end_time_unix_nano"] = uint64(1_100_000_000)
+		body["flags"] = uint32(0x101)
+		body["trace_state"] = "dc=runtime-pipeline-test"
+		if canary && operation == "chat" {
+			body["parent_span_id"] = "1112131415161718"
+		}
+		resourceDropped := uint32(7)
+		if canary {
+			resourceDropped = 0
+		}
 		body["resource"] = map[string]any{
-			"schema_url": "https://opentelemetry.io/schemas/1.42.0", "dropped_attributes_count": uint32(7),
+			"schema_url": "https://opentelemetry.io/schemas/1.42.0", "dropped_attributes_count": resourceDropped,
 			"attributes": map[string]any{
 				"service.name": "defenseclaw", "service.version": "v8-test", "service.namespace": "defenseclaw",
 				"service.instance.id": "instance", "deployment.environment.name": "test",

@@ -74,6 +74,10 @@ type APIServer struct {
 	// admission is emitted through the canonical collection/redaction/routing
 	// graph instead of the legacy audit/sink path.
 	observabilityV8 sidecarRuntimeEmitter
+	// observabilityV8Canary pins the generated two-span diagnostic to one
+	// runtime-graph generation through export acknowledgement. It is separate
+	// from log admission so partial test/runtime integrations stay explicit.
+	observabilityV8Canary sidecarRuntimeCanaryEmitter
 
 	// cfgMu protects mutable fields in scannerCfg.Guardrail (Mode,
 	// ScannerMode) which can be changed at runtime via the PATCH
@@ -913,7 +917,7 @@ func (a *APIServer) handleTelemetryCanary(w http.ResponseWriter, r *http.Request
 		a.writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
-	if a.otel == nil || !a.otel.TracesEnabled() {
+	if a.observabilityV8Canary == nil && (a.otel == nil || !a.otel.TracesEnabled()) {
 		a.writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "OTel traces are not enabled"})
 		return
 	}
@@ -929,6 +933,26 @@ func (a *APIServer) handleTelemetryCanary(w http.ResponseWriter, r *http.Request
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
+	if a.observabilityV8Canary != nil {
+		result, err := a.observabilityV8Canary.EmitTraceCanary(ctx, request.Destination)
+		destination := result.Destination
+		if destination == "" {
+			destination = request.Destination
+		}
+		payload := map[string]interface{}{
+			"trace_id": result.TraceID, "destination": destination,
+			"generation": result.Generation, "acknowledged": result.Acknowledged,
+		}
+		if err != nil {
+			payload["error"] = err.Error()
+		}
+		status := http.StatusOK
+		if err != nil || !result.Acknowledged {
+			status = http.StatusBadGateway
+		}
+		a.writeJSON(w, status, payload)
+		return
+	}
 	traceID, err := a.otel.EmitGenAICanaryToDestination(ctx, request.Destination)
 	after := a.otel.DestinationDeliveryStats(request.Destination)
 	acknowledged := a.otel.DestinationAcknowledgedCanaryTrace(request.Destination, traceID)

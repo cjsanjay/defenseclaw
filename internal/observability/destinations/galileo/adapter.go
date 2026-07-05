@@ -36,14 +36,15 @@ import (
 	compatibility "github.com/defenseclaw/defenseclaw/internal/observability/compatibility/galileo"
 	"github.com/defenseclaw/defenseclaw/internal/observability/delivery"
 	"github.com/defenseclaw/defenseclaw/internal/observability/destinations/otlp"
+	"go.opentelemetry.io/otel/trace"
 	collectortracepb "go.opentelemetry.io/proto/otlp/collector/trace/v1"
 	commonpb "go.opentelemetry.io/proto/otlp/common/v1"
 	resourcepb "go.opentelemetry.io/proto/otlp/resource/v1"
 	tracepb "go.opentelemetry.io/proto/otlp/trace/v1"
+	"google.golang.org/protobuf/proto"
 )
 
 const (
-	canaryFamily       = "span.diagnostic.canary"
 	canaryMarker       = "defenseclaw.telemetry.canary"
 	canaryOperation    = "defenseclaw.telemetry.canary.operation"
 	canaryOperationTag = "runtime-pipeline-test"
@@ -115,7 +116,7 @@ func NewPayload(result compatibility.Result, originDestination string) (delivery
 	}
 	target := ""
 	if value, ok := wire.Body.Attributes[canaryDestination].(string); ok {
-		target = strings.TrimSpace(value)
+		target = value
 	}
 	if _, _, _, _, _, ok := wire.otlp(target); !ok {
 		return delivery.Payload{}, &Error{code: ErrorInvalidProjection}
@@ -168,7 +169,7 @@ func (projectedBuilder) BuildProjectedTraceRequest(
 		return otlp.ProjectedTraceRequest{}, false
 	}
 	resources := make([]*tracepb.ResourceSpans, 0, batch.Len())
-	canarySpans := make(map[string]map[string]int)
+	canarySpans := make(map[string][]projectedCanarySpan)
 	traceSpanCount := make(map[string]int)
 	for _, item := range batch.Items() {
 		wire, ok := decodeProjection(item.Bytes())
@@ -187,20 +188,19 @@ func (projectedBuilder) BuildProjectedTraceRequest(
 		})
 		traceID := stringMap(wire.Correlation, "trace_id")
 		traceSpanCount[traceID]++
-		if wire.Family == canaryFamily {
-			operation, _ := wire.Body.Attributes["gen_ai.operation.name"].(string)
-			byOperation := canarySpans[traceID]
-			if byOperation == nil {
-				byOperation = make(map[string]int)
-				canarySpans[traceID] = byOperation
+		if present, valid := generatedCanaryWire(wire, destination); present {
+			if !valid {
+				return otlp.ProjectedTraceRequest{}, false
 			}
-			byOperation[operation]++
+			canarySpans[traceID] = append(canarySpans[traceID], projectedCanarySpan{
+				wire: wire, resource: resource, resourceSchema: resourceSchema,
+				scope: scope, scopeSchema: scopeSchema, span: span,
+			})
 		}
 	}
 	acknowledged := make([]string, 0, len(canarySpans))
-	for traceID, operations := range canarySpans {
-		if traceSpanCount[traceID] == 2 && operations["invoke_agent"] == 1 &&
-			operations["chat"] == 1 && len(operations) == 2 {
+	for traceID, spans := range canarySpans {
+		if traceSpanCount[traceID] == 2 && completeProjectedCanaryTrace(spans) {
 			acknowledged = append(acknowledged, traceID)
 		}
 	}
@@ -209,6 +209,56 @@ func (projectedBuilder) BuildProjectedTraceRequest(
 		Request:        &collectortracepb.ExportTraceServiceRequest{ResourceSpans: resources},
 		CanaryTraceIDs: acknowledged,
 	}, true
+}
+
+type projectedCanarySpan struct {
+	wire           projectedWire
+	resource       *resourcepb.Resource
+	resourceSchema string
+	scope          *commonpb.InstrumentationScope
+	scopeSchema    string
+	span           *tracepb.Span
+}
+
+func completeProjectedCanaryTrace(spans []projectedCanarySpan) bool {
+	if len(spans) != 2 {
+		return false
+	}
+	var root, child *projectedCanarySpan
+	for index := range spans {
+		candidate := &spans[index]
+		switch candidate.wire.Family {
+		case observability.TelemetryFamilyAgentInvoke:
+			if root != nil {
+				return false
+			}
+			root = candidate
+		case observability.TelemetryFamilyModelChat:
+			if child != nil {
+				return false
+			}
+			child = candidate
+		default:
+			return false
+		}
+	}
+	if root == nil || child == nil || root.span == nil || child.span == nil ||
+		root.span.Name != "invoke_agent diagnostic" || child.span.Name != "chat gpt-4o-mini" ||
+		root.span.Kind != tracepb.Span_SPAN_KIND_INTERNAL || child.span.Kind != tracepb.Span_SPAN_KIND_CLIENT ||
+		root.span.Status == nil || root.span.Status.Code != tracepb.Status_STATUS_CODE_OK ||
+		child.span.Status == nil || child.span.Status.Code != tracepb.Status_STATUS_CODE_OK ||
+		len(root.span.ParentSpanId) != 0 || !bytes.Equal(child.span.ParentSpanId, root.span.SpanId) ||
+		!bytes.Equal(root.span.TraceId, child.span.TraceId) || bytes.Equal(root.span.SpanId, child.span.SpanId) ||
+		root.span.Flags != 0x101 || child.span.Flags != 0x101 ||
+		root.span.TraceState != child.span.TraceState ||
+		integerMap(root.wire.Provenance, "config_generation") != integerMap(child.wire.Provenance, "config_generation") ||
+		root.resourceSchema != child.resourceSchema || root.scopeSchema != child.scopeSchema ||
+		!proto.Equal(root.resource, child.resource) || !proto.Equal(root.scope, child.scope) ||
+		root.resource == nil || root.resource.DroppedAttributesCount != 0 {
+		return false
+	}
+	return stringMap(root.wire.Body.Attributes, "defenseclaw.outcome") == string(observability.OutcomeCompleted) &&
+		stringMap(child.wire.Body.Attributes, "defenseclaw.outcome") == string(observability.OutcomeCompleted)
 }
 
 type projectedWire struct {
@@ -248,6 +298,8 @@ type projectedMetadata struct {
 type projectedBody struct {
 	Kind                   string            `json:"kind"`
 	ParentSpanID           string            `json:"parent_span_id,omitempty"`
+	TraceState             string            `json:"trace_state,omitempty"`
+	Flags                  json.Number       `json:"flags"`
 	StartTimeUnixNano      json.Number       `json:"start_time_unix_nano"`
 	EndTimeUnixNano        json.Number       `json:"end_time_unix_nano"`
 	DroppedAttributesCount json.Number       `json:"dropped_attributes_count,omitempty"`
@@ -380,14 +432,18 @@ func (wire projectedWire) otlp(destination string) (
 	if !canonicalEndedIdentity(wire) {
 		return nil, nil, nil, "", "", false
 	}
-	if wire.Family == canaryFamily {
-		if !validCanary(attributes, destination) {
+	if present, valid := generatedCanaryWire(wire, destination); present && !valid {
+		return nil, nil, nil, "", "", false
+	}
+	flags, ok := unsigned(wire.Body.Flags, 32)
+	if !ok || wire.Body.Flags == "" || flags&^uint64(0x3ff) != 0 {
+		return nil, nil, nil, "", "", false
+	}
+	if wire.Body.TraceState != "" {
+		state, err := trace.ParseTraceState(wire.Body.TraceState)
+		if err != nil || state.String() != wire.Body.TraceState {
 			return nil, nil, nil, "", "", false
 		}
-	} else if marker, _ := wire.Body.Attributes[canaryMarker].(bool); marker ||
-		stringMap(wire.Body.Attributes, canaryOperation) != "" ||
-		stringMap(wire.Body.Attributes, canaryDestination) != "" {
-		return nil, nil, nil, "", "", false
 	}
 	resourceAttributes, ok := requiredResourceAttributes(wire.Body.Resource.Attributes)
 	if !ok {
@@ -428,6 +484,7 @@ func (wire projectedWire) otlp(destination string) (
 	span := &tracepb.Span{
 		TraceId: traceID, SpanId: spanID, ParentSpanId: parentSpanID,
 		Name: wire.SpanName, Kind: kind, StartTimeUnixNano: start, EndTimeUnixNano: end,
+		TraceState: wire.Body.TraceState, Flags: uint32(flags),
 		Attributes: attributes, DroppedAttributesCount: uint32(droppedAttributes),
 		Events: events, DroppedEventsCount: uint32(droppedEvents),
 		Links: links, DroppedLinksCount: uint32(droppedLinks), Status: status,
@@ -499,17 +556,31 @@ func canonicalEndedIdentity(wire projectedWire) bool {
 		string(outcome) == wire.Outcome
 }
 
-func validCanary(attributes []*commonpb.KeyValue, destination string) bool {
-	values := make(map[string]*commonpb.AnyValue, len(attributes))
-	for _, item := range attributes {
-		if item != nil {
-			values[item.Key] = item.Value
-		}
+func generatedCanaryWire(wire projectedWire, destination string) (present, valid bool) {
+	markerRaw, markerPresent := wire.Body.Attributes[canaryMarker]
+	operationRaw, operationPresent := wire.Body.Attributes[canaryOperation]
+	targetRaw, targetPresent := wire.Body.Attributes[canaryDestination]
+	present = markerPresent || operationPresent || targetPresent
+	if !present {
+		return false, true
 	}
-	marker := values[canaryMarker].GetBoolValue()
-	operation := values[canaryOperation].GetStringValue()
-	target := values[canaryDestination].GetStringValue()
-	return marker && operation == canaryOperationTag && target == destination
+	marker, markerOK := markerRaw.(bool)
+	operation, operationOK := operationRaw.(string)
+	target, targetOK := targetRaw.(string)
+	genAIOperation, genAIOperationOK := wire.Body.Attributes["gen_ai.operation.name"].(string)
+	expectedOperation := ""
+	expectedBucket := ""
+	switch wire.Family {
+	case observability.TelemetryFamilyAgentInvoke:
+		expectedOperation, expectedBucket = "invoke_agent", string(observability.BucketAgentLifecycle)
+	case observability.TelemetryFamilyModelChat:
+		expectedOperation, expectedBucket = "chat", string(observability.BucketModelIO)
+	default:
+		return true, false
+	}
+	return true, markerOK && marker && operationOK && operation == canaryOperationTag &&
+		targetOK && target == destination && observability.IsStableToken(target) &&
+		genAIOperationOK && genAIOperation == expectedOperation && wire.Bucket == expectedBucket
 }
 
 func attributes(input map[string]any) ([]*commonpb.KeyValue, bool) {

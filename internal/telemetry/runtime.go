@@ -326,7 +326,11 @@ func (p *Provider) emitGenAICanary(ctx context.Context, destination string) (str
 		return "", fmt.Errorf("OTel traces are not enabled")
 	}
 	if p.v8 != nil {
-		return p.emitV8GenAICanary(ctx, destination)
+		// A v8 provider is owned by one runtime-graph generation. A bare provider
+		// cannot prove that generation remains leased through span construction,
+		// canonical handoff, flush, and destination acknowledgement. Callers must
+		// use EmitV8GeneratedCanary with the live lease instead.
+		return "", newV8ProviderError(V8ProviderErrorCanary, nil)
 	}
 	rootCtx := trace.ContextWithSpanContext(ctx, trace.SpanContext{})
 	agentCtx, agentSpan := p.StartAgentSpan(
@@ -354,65 +358,6 @@ func (p *Provider) emitGenAICanary(ctx context.Context, destination string) (str
 	p.EndAgentSpan(agentSpan, "")
 	if err := p.tracerProvider.ForceFlush(ctx); err != nil {
 		return traceID, fmt.Errorf("flush runtime canary: %w", err)
-	}
-	return traceID, nil
-}
-
-func (p *Provider) emitV8GenAICanary(ctx context.Context, destination string) (string, error) {
-	if !p.TraceBucketEnabled(observability.BucketDiagnostic) {
-		return "", fmt.Errorf("diagnostic trace collection is not enabled")
-	}
-	markerAttrs := append(p.v8StartAttributes(observability.BucketDiagnostic),
-		attribute.Bool(telemetryCanaryAttribute, true),
-		attribute.String(v8CanaryOperationAttribute, v8CanaryOperationValue),
-	)
-	if destination != "" {
-		markerAttrs = append(markerAttrs, attribute.String(telemetryCanaryDestinationAttribute, destination))
-	}
-	rootCtx := trace.ContextWithSpanContext(ctx, trace.SpanContext{})
-	agentCtx, agentSpan := p.tracer.Start(rootCtx, "invoke_agent defenseclaw",
-		trace.WithSpanKind(trace.SpanKindInternal),
-		trace.WithTimestamp(time.Now()),
-		trace.WithAttributes(markerAttrs...),
-	)
-	p.setSpanResourceContext(agentSpan)
-	agentSpan.SetAttributes(
-		attribute.String("gen_ai.operation.name", "invoke_agent"),
-		attribute.String("gen_ai.agent.name", "defenseclaw"),
-		attribute.String("gen_ai.agent.id", "canary"),
-		attribute.String("gen_ai.agent.type", "diagnostic"),
-		attribute.String("gen_ai.conversation.id", "defenseclaw-galileo-canary"),
-		attribute.String("gen_ai.provider.name", "openai"),
-		attribute.String("defenseclaw.connector.source", "defenseclaw"),
-		attribute.String("openinference.span.kind", "AGENT"),
-	)
-	p.SetGenAIInput(agentSpan, "DefenseClaw Galileo runtime canary request")
-	p.SetGenAIOutput(agentSpan, "DefenseClaw Galileo runtime canary response")
-
-	_, llmSpan := p.tracer.Start(agentCtx, "chat gpt-4o-mini",
-		trace.WithSpanKind(trace.SpanKindClient),
-		trace.WithTimestamp(time.Now()),
-		trace.WithAttributes(markerAttrs...),
-	)
-	p.setSpanResourceContext(llmSpan)
-	llmSpan.SetAttributes(
-		attribute.String("gen_ai.operation.name", "chat"),
-		attribute.String("gen_ai.system", "openai"),
-		attribute.String("gen_ai.provider.name", "openai"),
-		attribute.String("gen_ai.request.model", "gpt-4o-mini"),
-		attribute.String("openinference.span.kind", "LLM"),
-	)
-	p.SetGenAIInput(llmSpan, "DefenseClaw Galileo runtime canary request")
-	p.SetGenAIOutput(llmSpan, "DefenseClaw Galileo runtime canary response")
-	traceID := llmSpan.SpanContext().TraceID().String()
-	p.EndLLMSpan(
-		ctx, llmSpan, "gpt-4o-mini", 0, 0, []string{"stop"}, 0,
-		"diagnostic", "pass", "openai", time.Now(),
-		"defenseclaw", "diagnostic", "canary", "defenseclaw-galileo-canary",
-	)
-	p.EndAgentSpan(agentSpan, "")
-	if err := p.tracerProvider.ForceFlush(ctx); err != nil {
-		return traceID, newV8ProviderError(V8ProviderErrorFlush, err)
 	}
 	return traceID, nil
 }

@@ -29,6 +29,17 @@ type sidecarRuntimeEmitter interface {
 	) (pipeline.LocalLogOutcome, error)
 }
 
+// sidecarRuntimeCanaryEmitter is intentionally separate from
+// sidecarRuntimeEmitter. Log-only test doubles and integrations do not need to
+// implement the trace diagnostic, while the real v8 Runtime exposes both on
+// the same generation-owned object.
+type sidecarRuntimeCanaryEmitter interface {
+	EmitTraceCanary(
+		context.Context,
+		string,
+	) (observabilityruntime.TraceCanaryResult, error)
+}
+
 type sidecarObservabilityErrorCode string
 
 const (
@@ -105,6 +116,22 @@ func (s *Sidecar) observabilityV8Emitter() sidecarRuntimeEmitter {
 	s.observabilityV8Mu.Lock()
 	defer s.observabilityV8Mu.Unlock()
 	return s.observabilityV8
+}
+
+func (s *Sidecar) observabilityV8CanaryEmitter() sidecarRuntimeCanaryEmitter {
+	emitter := s.observabilityV8Emitter()
+	if emitter == nil {
+		return nil
+	}
+	canary, _ := emitter.(sidecarRuntimeCanaryEmitter)
+	return canary
+}
+
+func (a *APIServer) bindTelemetryCanaryRuntime(emitter sidecarRuntimeCanaryEmitter) {
+	if a == nil {
+		return
+	}
+	a.observabilityV8Canary = emitter
 }
 
 func (s *Sidecar) recordSidecarLifecycle(ctx context.Context, action audit.Action) error {
@@ -214,3 +241,4 @@ func (s *Sidecar) recordSidecarLifecycle(ctx context.Context, action audit.Actio
 }
 
 var _ sidecarRuntimeEmitter = (*observabilityruntime.Runtime)(nil)
+var _ sidecarRuntimeCanaryEmitter = (*observabilityruntime.Runtime)(nil)

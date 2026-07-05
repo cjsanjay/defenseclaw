@@ -14,14 +14,17 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"reflect"
 	"strings"
 	"sync"
 
 	"github.com/defenseclaw/defenseclaw/internal/observability"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 	tracegrpc "go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
 	tracehttp "go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/trace"
 	"google.golang.org/grpc"
 )
 
@@ -189,7 +192,7 @@ func (exporter *SpanExporter) ExportSpans(ctx context.Context, spans []sdktrace.
 		}
 	}
 	for _, canary := range canaries {
-		traceID := completeOTLPCanaryTrace(canary)
+		traceID := completeOTLPCanaryTrace(canary, exporter.destination)
 		if err := exporter.exportBatch(ctx, canary, traceID); err != nil {
 			exportErrors = append(exportErrors, err)
 		}
@@ -197,32 +200,176 @@ func (exporter *SpanExporter) ExportSpans(ctx context.Context, spans []sdktrace.
 	return errors.Join(exportErrors...)
 }
 
-func completeOTLPCanaryTrace(spans []sdktrace.ReadOnlySpan) string {
+func completeOTLPCanaryTrace(spans []sdktrace.ReadOnlySpan, destination string) string {
 	if len(spans) != 2 {
+		return ""
+	}
+	if !observability.IsStableToken(destination) {
 		return ""
 	}
 	traceID := spans[0].SpanContext().TraceID()
 	if !traceID.IsValid() || spans[1].SpanContext().TraceID() != traceID {
 		return ""
 	}
-	operations := make(map[string]struct{}, 2)
+	var root, child sdktrace.ReadOnlySpan
+	var rootContract, childContract otlpCanaryContract
 	for _, span := range spans {
-		if !isOTLPCanarySpan(span) {
+		contract, valid := otlpGeneratedCanaryContract(span, destination)
+		if !valid {
 			return ""
 		}
-		for _, item := range span.Attributes() {
-			if string(item.Key) == "gen_ai.operation.name" && item.Value.Type() == attribute.STRING {
-				operations[item.Value.AsString()] = struct{}{}
+		switch contract.family {
+		case observability.TelemetryFamilyAgentInvoke:
+			if root != nil {
+				return ""
 			}
+			root = span
+			rootContract = contract
+		case observability.TelemetryFamilyModelChat:
+			if child != nil {
+				return ""
+			}
+			child = span
+			childContract = contract
+		default:
+			return ""
 		}
 	}
-	if _, ok := operations["invoke_agent"]; !ok {
+	if root == nil || child == nil || rootContract.generation != childContract.generation ||
+		root.Name() != "invoke_agent diagnostic" ||
+		child.Name() != "chat gpt-4o-mini" || root.SpanKind() != trace.SpanKindInternal ||
+		child.SpanKind() != trace.SpanKindClient || root.Status().Code != codes.Ok ||
+		child.Status().Code != codes.Ok || root.Parent().IsValid() ||
+		root.SpanContext().SpanID() == child.SpanContext().SpanID() {
 		return ""
 	}
-	if _, ok := operations["chat"]; !ok {
+	rootContext, childContext, parent := root.SpanContext(), child.SpanContext(), child.Parent()
+	if rootContext.IsRemote() || childContext.IsRemote() || !rootContext.IsSampled() ||
+		!childContext.IsSampled() || rootContext.TraceFlags() != trace.FlagsSampled ||
+		childContext.TraceFlags() != trace.FlagsSampled ||
+		rootContext.TraceState().String() != childContext.TraceState().String() ||
+		!parent.IsValid() || parent.IsRemote() || parent.TraceID() != traceID ||
+		parent.SpanID() != rootContext.SpanID() ||
+		parent.TraceFlags() != rootContext.TraceFlags() ||
+		parent.TraceState().String() != rootContext.TraceState().String() {
+		return ""
+	}
+	rootResource, rootSchema, valid := otlpCanonicalResource(root)
+	if !valid {
+		return ""
+	}
+	childResource, childSchema, valid := otlpCanonicalResource(child)
+	if !valid || rootSchema != childSchema || !reflect.DeepEqual(rootResource, childResource) ||
+		!otlpCanonicalScopeEqual(root, child) {
 		return ""
 	}
 	return traceID.String()
+}
+
+type otlpCanaryContract struct {
+	family     string
+	generation int64
+}
+
+func otlpGeneratedCanaryContract(span sdktrace.ReadOnlySpan, destination string) (otlpCanaryContract, bool) {
+	if span == nil {
+		return otlpCanaryContract{}, false
+	}
+	values := make(map[string]attribute.Value, 10)
+	for _, item := range span.Attributes() {
+		key := string(item.Key)
+		switch key {
+		case "defenseclaw.bucket", "defenseclaw.span.family", "defenseclaw.span.family_schema_version",
+			"defenseclaw.config.generation", "defenseclaw.source", "defenseclaw.outcome",
+			"defenseclaw.telemetry.canary", "defenseclaw.telemetry.canary.operation",
+			"defenseclaw.telemetry.canary.destination", "gen_ai.operation.name":
+			if _, duplicate := values[key]; duplicate {
+				return otlpCanaryContract{}, false
+			}
+			values[key] = item.Value
+		}
+	}
+	family, ok := otlpStringAttribute(values, "defenseclaw.span.family")
+	if !ok {
+		return otlpCanaryContract{}, false
+	}
+	expectedBucket, expectedOperation := "", ""
+	switch family {
+	case observability.TelemetryFamilyAgentInvoke:
+		expectedBucket, expectedOperation = string(observability.BucketAgentLifecycle), "invoke_agent"
+	case observability.TelemetryFamilyModelChat:
+		expectedBucket, expectedOperation = string(observability.BucketModelIO), "chat"
+	default:
+		return otlpCanaryContract{}, false
+	}
+	bucket, bucketOK := otlpStringAttribute(values, "defenseclaw.bucket")
+	operation, operationOK := otlpStringAttribute(values, "gen_ai.operation.name")
+	canaryOperation, canaryOperationOK := otlpStringAttribute(values, "defenseclaw.telemetry.canary.operation")
+	target, targetOK := otlpStringAttribute(values, "defenseclaw.telemetry.canary.destination")
+	source, sourceOK := otlpStringAttribute(values, "defenseclaw.source")
+	outcome, outcomeOK := otlpStringAttribute(values, "defenseclaw.outcome")
+	marker, markerOK := values["defenseclaw.telemetry.canary"]
+	familyVersion, familyVersionOK := values["defenseclaw.span.family_schema_version"]
+	generation, generationOK := values["defenseclaw.config.generation"]
+	if !bucketOK || bucket != expectedBucket || !operationOK || operation != expectedOperation ||
+		!canaryOperationOK || canaryOperation != "runtime-pipeline-test" ||
+		!targetOK || target != destination || !observability.IsStableToken(target) ||
+		!sourceOK || !observability.IsStableToken(source) || !outcomeOK || outcome != string(observability.OutcomeCompleted) ||
+		!markerOK || marker.Type() != attribute.BOOL || !marker.AsBool() ||
+		!familyVersionOK || familyVersion.Type() != attribute.INT64 || familyVersion.AsInt64() <= 0 ||
+		!generationOK || generation.Type() != attribute.INT64 || generation.AsInt64() < 0 {
+		return otlpCanaryContract{}, false
+	}
+	return otlpCanaryContract{family: family, generation: generation.AsInt64()}, true
+}
+
+func otlpStringAttribute(values map[string]attribute.Value, key string) (string, bool) {
+	value, ok := values[key]
+	if !ok || value.Type() != attribute.STRING {
+		return "", false
+	}
+	return value.AsString(), true
+}
+
+func otlpCanonicalResource(span sdktrace.ReadOnlySpan) (map[string]string, string, bool) {
+	resource := span.Resource()
+	if resource == nil || strings.TrimSpace(resource.SchemaURL()) == "" {
+		return nil, "", false
+	}
+	values := make(map[string]string)
+	validation := make(map[string]any)
+	for _, item := range resource.Attributes() {
+		key := string(item.Key)
+		if key == "" || item.Value.Type() != attribute.STRING {
+			return nil, "", false
+		}
+		if _, duplicate := values[key]; duplicate {
+			return nil, "", false
+		}
+		values[key] = item.Value.AsString()
+		validation[key] = item.Value.AsString()
+	}
+	if observability.ValidateTelemetryResourceAttributes(validation) != nil {
+		return nil, "", false
+	}
+	return values, resource.SchemaURL(), true
+}
+
+func otlpCanonicalScopeEqual(root, child sdktrace.ReadOnlySpan) bool {
+	rootScope, childScope := root.InstrumentationScope(), child.InstrumentationScope()
+	if rootScope.Name != "defenseclaw.telemetry" || rootScope.Version == "" || rootScope.SchemaURL == "" ||
+		rootScope.Name != childScope.Name || rootScope.Version != childScope.Version || rootScope.SchemaURL != childScope.SchemaURL ||
+		!rootScope.Attributes.Equals(&childScope.Attributes) {
+		return false
+	}
+	values := make(map[string]attribute.Value)
+	for _, item := range rootScope.Attributes.ToSlice() {
+		values[string(item.Key)] = item.Value
+	}
+	traceSchema, traceOK := otlpStringAttribute(values, "defenseclaw.trace.schema_version")
+	semanticProfile, semanticOK := otlpStringAttribute(values, "defenseclaw.semantic_profile")
+	return len(values) == 2 && traceOK && traceSchema == observability.RuntimeTraceSchemaVersion &&
+		semanticOK && semanticProfile == observability.RuntimeSemanticProfileID
 }
 
 func (exporter *SpanExporter) exportBatch(ctx context.Context, spans []sdktrace.ReadOnlySpan, canaryTraceID string) error {

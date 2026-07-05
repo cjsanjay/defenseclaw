@@ -393,12 +393,12 @@ func TestProjectNeverRecoversRawContentAndDestinationProjectionsRemainIndependen
 		"attributes": map[string]any{
 			"gen_ai.operation.name": "invoke_agent", "gen_ai.provider.name": "openai", "gen_ai.agent.name": "defenseclaw",
 			"gen_ai.input.messages": messages("user", canary), "gen_ai.output.messages": messages("assistant", canary),
-			canaryMarkerKey: true, canaryOperationKey: canaryOperationValue,
+			canaryMarkerKey: true, canaryOperationKey: canaryOperationValue, canaryDestinationKey: "galileo",
 		},
 		"events": []any{map[string]any{"name": "guardrail.decision", "attributes": map[string]any{"decision": "allow", "reason": canary}}},
 		"status": map[string]any{"code": 1, "message": canary},
 	}
-	record := newTraceRecord(t, observability.BucketDiagnostic, canaryFamily, "invoke_agent defenseclaw", body)
+	record := newTraceRecord(t, observability.BucketAgentLifecycle, observability.EventName(observability.TelemetryFamilyAgentInvoke), "invoke_agent diagnostic", body)
 	rawRoute := redactRecord(t, record, redaction.ProfileNone)
 	strictRoute := redactRecord(t, record, redaction.ProfileStrict)
 	rawBefore, _ := rawRoute.Bytes()
@@ -598,30 +598,92 @@ func TestProjectRejectsNonCanonicalResourceShapes(t *testing.T) {
 
 func TestProjectCanarySurfaceIsExact(t *testing.T) {
 	t.Parallel()
-	base := map[string]any{
-		"gen_ai.operation.name": "chat", "gen_ai.provider.name": "openai",
-		"gen_ai.input.messages": messages("user", "canary"), "gen_ai.output.messages": messages("assistant", "ok"),
-		canaryMarkerKey: true, canaryOperationKey: canaryOperationValue,
+	base := func() map[string]any {
+		return map[string]any{
+			"gen_ai.operation.name": "chat", "gen_ai.provider.name": "openai",
+			"gen_ai.input.messages": messages("user", "canary"), "gen_ai.output.messages": messages("assistant", "ok"),
+			canaryMarkerKey: true, canaryOperationKey: canaryOperationValue, canaryDestinationKey: "galileo",
+		}
 	}
-	valid := projectRecord(t, observability.BucketDiagnostic, canaryFamily, "chat canary", map[string]any{
-		"kind": "CLIENT", "attributes": base,
+	valid := projectRecord(t, observability.BucketModelIO, observability.EventName(observability.TelemetryFamilyModelChat), "chat gpt-4o-mini", map[string]any{
+		"kind": "CLIENT", "attributes": base(),
 	}, redaction.ProfileNone)
-	if result := Project(valid, Limits{}); !result.Eligible() || result.Shape() != ShapeLLM {
+	result := Project(valid, Limits{})
+	if !result.Eligible() || result.Shape() != ShapeLLM {
 		t.Fatalf("valid canary = %q/%q", result.Reason(), result.Shape())
 	}
-	for _, mutation := range []func(map[string]any){
-		func(attributes map[string]any) { delete(attributes, canaryMarkerKey) },
-		func(attributes map[string]any) { attributes[canaryMarkerKey] = false },
-		func(attributes map[string]any) { attributes[canaryOperationKey] = "probe" },
+	wire := resultWire(t, result)
+	if wire["bucket"] != string(observability.BucketModelIO) ||
+		wire["event_name"] != observability.TelemetryFamilyModelChat {
+		t.Fatalf("canonical canary identity was rewritten: %#v", wire)
+	}
+	for name, mutation := range map[string]func(map[string]any){
+		"missing marker":      func(attributes map[string]any) { delete(attributes, canaryMarkerKey) },
+		"false marker":        func(attributes map[string]any) { attributes[canaryMarkerKey] = false },
+		"wrong operation tag": func(attributes map[string]any) { attributes[canaryOperationKey] = "probe" },
+		"missing destination": func(attributes map[string]any) { delete(attributes, canaryDestinationKey) },
+		"unstable destination": func(attributes map[string]any) {
+			attributes[canaryDestinationKey] = " galileo "
+		},
 	} {
-		attributes := cloneObject(base)
-		mutation(attributes)
-		projection := projectRecord(t, observability.BucketDiagnostic, canaryFamily, "chat canary", map[string]any{
-			"kind": "CLIENT", "attributes": attributes,
-		}, redaction.ProfileNone)
-		if result := Project(projection, Limits{}); result.Reason() != ReasonUnsupportedShape {
-			t.Fatalf("invalid canary reason = %q", result.Reason())
-		}
+		t.Run(name, func(t *testing.T) {
+			attributes := base()
+			mutation(attributes)
+			projection := projectRecord(t, observability.BucketModelIO, observability.EventName(observability.TelemetryFamilyModelChat), "chat gpt-4o-mini", map[string]any{
+				"kind": "CLIENT", "attributes": attributes,
+			}, redaction.ProfileNone)
+			if result := Project(projection, Limits{}); result.Reason() != ReasonUnsupportedShape {
+				t.Fatalf("invalid canary reason = %q", result.Reason())
+			}
+		})
+	}
+	diagnostic := projectRecord(t, observability.BucketDiagnostic, observability.EventName(observability.TelemetryFamilyDiagnosticCanary), "diagnostic canary", map[string]any{
+		"kind": "INTERNAL", "attributes": map[string]any{
+			canaryMarkerKey: true, canaryOperationKey: canaryOperationValue, canaryDestinationKey: "galileo",
+		},
+	}, redaction.ProfileNone)
+	if result := Project(diagnostic, Limits{}); result.Reason() != ReasonUnsupportedShape {
+		t.Fatalf("ordinary diagnostic family was rewritten into release canary: %q", result.Reason())
+	}
+}
+
+func TestProjectPreservesCanonicalTraceStateAndFullFlags(t *testing.T) {
+	t.Parallel()
+	projection := projectRecord(t, observability.BucketModelIO, observability.EventName(observability.TelemetryFamilyModelChat), "chat fixture", map[string]any{
+		"kind": "CLIENT", "trace_state": "vendor=value", "flags": uint32(0x301),
+		"attributes": map[string]any{
+			"gen_ai.operation.name": "chat", "gen_ai.provider.name": "openai",
+			"gen_ai.input.messages": messages("user", "safe"), "gen_ai.output.messages": messages("assistant", "safe"),
+		},
+	}, redaction.ProfileNone)
+	result := Project(projection, Limits{})
+	if !result.Eligible() {
+		t.Fatalf("projection = %q", result.Reason())
+	}
+	body := resultWire(t, result)["body"].(map[string]any)
+	if body["trace_state"] != "vendor=value" || body["flags"] != json.Number("769") {
+		t.Fatalf("trace metadata = state:%#v flags:%#v", body["trace_state"], body["flags"])
+	}
+
+	for name, mutation := range map[string]func(map[string]any){
+		"invalid trace state": func(body map[string]any) { body["trace_state"] = "Invalid=state" },
+		"negative flags":      func(body map[string]any) { body["flags"] = -1 },
+		"fractional flags":    func(body map[string]any) { body["flags"] = 1.5 },
+	} {
+		t.Run(name, func(t *testing.T) {
+			body := map[string]any{
+				"kind": "CLIENT", "trace_state": "vendor=value", "flags": uint32(0x101),
+				"attributes": map[string]any{
+					"gen_ai.operation.name": "chat", "gen_ai.provider.name": "openai",
+					"gen_ai.input.messages": messages("user", "safe"), "gen_ai.output.messages": messages("assistant", "safe"),
+				},
+			}
+			mutation(body)
+			projection := projectRecord(t, observability.BucketModelIO, observability.EventName(observability.TelemetryFamilyModelChat), "chat fixture", body, redaction.ProfileNone)
+			if result := Project(projection, Limits{}); result.Reason() != ReasonInvalidProjection {
+				t.Fatalf("invalid trace metadata = %q", result.Reason())
+			}
+		})
 	}
 }
 

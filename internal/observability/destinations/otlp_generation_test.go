@@ -26,8 +26,11 @@ import (
 	"github.com/defenseclaw/defenseclaw/internal/observability"
 	"github.com/defenseclaw/defenseclaw/internal/telemetry"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/sdk/instrumentation"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
+	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	"go.opentelemetry.io/otel/trace"
@@ -394,8 +397,8 @@ func TestOTLPGenerationCanaryTargetIsolationAcknowledgementAndSplitBatch(t *test
 			otherServer := httptest.NewServer(http.HandlerFunc(otherCapture.handler))
 			defer targetServer.Close()
 			defer otherServer.Close()
-			target := traceSend("target", targetServer.URL, []observability.Bucket{observability.BucketDiagnostic})
-			other := traceSend("other", otherServer.URL, []observability.Bucket{observability.BucketDiagnostic})
+			target := traceSend("target", targetServer.URL, generationCanaryBuckets())
+			other := traceSend("other", otherServer.URL, generationCanaryBuckets())
 			target.Batch.MaxExportBatchSize = test.batchSize
 			other.Batch.MaxExportBatchSize = test.batchSize
 			plan := compileGenerationPlan(t, target, other)
@@ -440,7 +443,7 @@ func TestOTLPGenerationAssemblerKeepsReloadGenerationsIsolated(t *testing.T) {
 	defer server.Close()
 	factory := newTestFactory(t, io.Discard, nil, nil, net.Dialer{}, nil)
 	plan := compileGenerationPlan(t,
-		traceSend("reload-traces", server.URL, []observability.Bucket{observability.BucketDiagnostic}),
+		traceSend("reload-traces", server.URL, generationCanaryBuckets()),
 	)
 	oldPipelines, err := factory.PrepareOTLPGenerationPipelines(context.Background(), plan, 41, generationMetricSpec())
 	if err != nil {
@@ -500,7 +503,7 @@ func TestOTLPGenerationAssemblerCleansPartialFailureWithoutAffectingActiveGenera
 	}
 	factory := newTestFactory(t, io.Discard, nil, loader, net.Dialer{}, nil)
 	activePlan := compileGenerationPlan(t, secureTraceSend(
-		"active-traces", server.URL, validCA, []observability.Bucket{observability.BucketDiagnostic},
+		"active-traces", server.URL, validCA, generationCanaryBuckets(),
 	))
 	active, err := factory.PrepareOTLPGenerationPipelines(context.Background(), activePlan, 51, generationMetricSpec())
 	if err != nil {
@@ -508,8 +511,8 @@ func TestOTLPGenerationAssemblerCleansPartialFailureWithoutAffectingActiveGenera
 	}
 
 	failingPlan := compileGenerationPlan(t,
-		secureTraceSend("a-prepared", server.URL, validCA, []observability.Bucket{observability.BucketDiagnostic}),
-		secureTraceSend("z-invalid-ca", server.URL, invalidCA, []observability.Bucket{observability.BucketDiagnostic}),
+		secureTraceSend("a-prepared", server.URL, validCA, generationCanaryBuckets()),
+		secureTraceSend("z-invalid-ca", server.URL, invalidCA, generationCanaryBuckets()),
 	)
 	failed, err := factory.PrepareOTLPGenerationPipelines(context.Background(), failingPlan, 52, generationMetricSpec())
 	if err == nil || len(failed.SpanPipelines) != 0 || len(failed.MetricReaders) != 0 {
@@ -688,23 +691,69 @@ func emitGenerationCanary(
 	}
 }
 
+func generationCanaryBuckets() []observability.Bucket {
+	return []observability.Bucket{
+		observability.BucketAgentLifecycle,
+		observability.BucketModelIO,
+	}
+}
+
 func generationCanarySpan(traceID trace.TraceID, operation, destination string) sdktrace.ReadOnlySpan {
+	rootID := trace.SpanID{1, 2, 3, 4, 5, 6, 7, 8}
+	childID := trace.SpanID{8, 7, 6, 5, 4, 3, 2, 1}
+	rootContext := trace.NewSpanContext(trace.SpanContextConfig{
+		TraceID: traceID, SpanID: rootID, TraceFlags: trace.FlagsSampled,
+	})
+	spanID := childID
+	parent := rootContext
 	name := "chat gpt-4o-mini"
+	kind := trace.SpanKindClient
+	bucket := observability.BucketModelIO
+	family := observability.TelemetryFamilyModelChat
 	if operation == "invoke_agent" {
-		name = "invoke_agent defenseclaw"
+		name = "invoke_agent diagnostic"
+		kind = trace.SpanKindInternal
+		bucket = observability.BucketAgentLifecycle
+		family = observability.TelemetryFamilyAgentInvoke
+		spanID = rootID
+		parent = trace.SpanContext{}
+	}
+	canaryResource := resource.NewWithAttributes(
+		"https://opentelemetry.io/schemas/1.42.0",
+		attribute.String("service.name", "defenseclaw"),
+		attribute.String("service.version", "v8-test"),
+		attribute.String("service.namespace", "cisco.ai-defense"),
+		attribute.String("service.instance.id", "instance-1"),
+		attribute.String("deployment.environment.name", "test"),
+		attribute.String("defenseclaw.instance.id", "instance-1"),
+	)
+	canaryScope := instrumentation.Scope{
+		Name: "defenseclaw.telemetry", Version: "v8-test",
+		SchemaURL: "https://defenseclaw.io/schemas/telemetry/v8",
+		Attributes: attribute.NewSet(
+			attribute.String("defenseclaw.trace.schema_version", observability.RuntimeTraceSchemaVersion),
+			attribute.String("defenseclaw.semantic_profile", observability.RuntimeSemanticProfileID),
+		),
 	}
 	return tracetest.SpanStub{
-		Name: name,
+		Name: name, Parent: parent, SpanKind: kind, Status: sdktrace.Status{Code: codes.Ok},
 		SpanContext: trace.NewSpanContext(trace.SpanContextConfig{
-			TraceID: traceID, SpanID: trace.SpanID{byte(len(operation) + 1)}, TraceFlags: trace.FlagsSampled,
+			TraceID: traceID, SpanID: spanID, TraceFlags: trace.FlagsSampled,
 		}),
 		Attributes: []attribute.KeyValue{
-			attribute.String("defenseclaw.bucket", string(observability.BucketDiagnostic)),
+			attribute.String("defenseclaw.bucket", string(bucket)),
+			attribute.String("defenseclaw.span.family", family),
+			attribute.Int64("defenseclaw.span.family_schema_version", 1),
+			attribute.Int64("defenseclaw.config.generation", 8),
+			attribute.String("defenseclaw.source", string(observability.SourceSystem)),
+			attribute.String("defenseclaw.outcome", string(observability.OutcomeCompleted)),
 			attribute.Bool("defenseclaw.telemetry.canary", true),
+			attribute.String("defenseclaw.telemetry.canary.operation", "runtime-pipeline-test"),
 			attribute.String("defenseclaw.telemetry.canary.destination", destination),
 			attribute.String("gen_ai.operation.name", operation),
 		},
 		StartTime: time.Now().Add(-time.Millisecond), EndTime: time.Now(),
+		Resource: canaryResource, InstrumentationScope: canaryScope,
 	}.Snapshot()
 }
 

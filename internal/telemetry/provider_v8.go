@@ -247,6 +247,7 @@ const (
 	V8ProviderErrorProcessorInitialization V8ProviderErrorCode = "processor_initialization_failed"
 	V8ProviderErrorReaderInitialization    V8ProviderErrorCode = "reader_initialization_failed"
 	V8ProviderErrorPipelineInitialization  V8ProviderErrorCode = "signal_pipeline_initialization_failed"
+	V8ProviderErrorCanary                  V8ProviderErrorCode = "canary_failed"
 	V8ProviderErrorFlush                   V8ProviderErrorCode = "flush_failed"
 	V8ProviderErrorShutdown                V8ProviderErrorCode = "shutdown_failed"
 )
@@ -1243,10 +1244,7 @@ func (sampler *v8Sampler) result(parentContext context.Context, reason string, d
 func (sampler *v8Sampler) Description() string { return "DefenseClawV8/" + sampler.name }
 
 func v8TargetedCanary(parameters sdktrace.SamplingParameters) bool {
-	if parameters.Name != "invoke_agent defenseclaw" && parameters.Name != "chat gpt-4o-mini" {
-		return false
-	}
-	var destination, bucket, operation string
+	var destination, bucket, family, operation string
 	var canary bool
 	for _, item := range parameters.Attributes {
 		switch string(item.Key) {
@@ -1256,12 +1254,21 @@ func v8TargetedCanary(parameters sdktrace.SamplingParameters) bool {
 			destination = item.Value.AsString()
 		case "defenseclaw.bucket":
 			bucket = item.Value.AsString()
+		case "defenseclaw.span.family":
+			family = item.Value.AsString()
 		case v8CanaryOperationAttribute:
 			operation = item.Value.AsString()
 		}
 	}
-	return canary && strings.TrimSpace(destination) != "" &&
-		bucket == string(observability.BucketDiagnostic) && operation == v8CanaryOperationValue
+	if !canary || strings.TrimSpace(destination) == "" || operation != v8CanaryOperationValue {
+		return false
+	}
+	return (parameters.Name == "invoke_agent diagnostic" &&
+		bucket == string(observability.BucketAgentLifecycle) &&
+		family == observability.TelemetryFamilyAgentInvoke) ||
+		(parameters.Name == "chat gpt-4o-mini" &&
+			bucket == string(observability.BucketModelIO) &&
+			family == observability.TelemetryFamilyModelChat)
 }
 
 type v8ByteBoundedTracer struct {

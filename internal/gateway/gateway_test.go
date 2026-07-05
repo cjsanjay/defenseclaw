@@ -46,6 +46,7 @@ import (
 	"github.com/defenseclaw/defenseclaw/internal/enforce"
 	"github.com/defenseclaw/defenseclaw/internal/gateway/connector"
 	"github.com/defenseclaw/defenseclaw/internal/guardrail"
+	observabilityruntime "github.com/defenseclaw/defenseclaw/internal/observability/runtime"
 	"github.com/defenseclaw/defenseclaw/internal/policy"
 	"github.com/defenseclaw/defenseclaw/internal/telemetry"
 )
@@ -4324,6 +4325,59 @@ func TestTelemetryCanaryUsesRuntimeExporterAcknowledgement(t *testing.T) {
 			"target requests=%d unrelated requests=%d; canary must be destination-scoped",
 			targetRequests.Load(), unrelatedRequests.Load(),
 		)
+	}
+}
+
+type fakeRuntimeCanaryEmitter struct {
+	called      atomic.Int64
+	destination string
+	result      observabilityruntime.TraceCanaryResult
+	err         error
+}
+
+func (emitter *fakeRuntimeCanaryEmitter) EmitTraceCanary(
+	_ context.Context,
+	destination string,
+) (observabilityruntime.TraceCanaryResult, error) {
+	emitter.called.Add(1)
+	emitter.destination = destination
+	return emitter.result, emitter.err
+}
+
+func TestTelemetryCanaryPrefersGenerationOwnedRuntime(t *testing.T) {
+	emitter := &fakeRuntimeCanaryEmitter{result: observabilityruntime.TraceCanaryResult{
+		TraceID:      "0123456789abcdef0123456789abcdef",
+		Destination:  "otlp-primary",
+		Generation:   42,
+		Acknowledged: true,
+	}}
+	api := &APIServer{}
+	api.bindTelemetryCanaryRuntime(emitter)
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(
+		http.MethodPost, "/api/v1/telemetry/canary",
+		strings.NewReader(`{"destination":"otlp-primary"}`),
+	)
+
+	api.handleTelemetryCanary(recorder, request)
+
+	if recorder.Code != http.StatusOK || emitter.called.Load() != 1 ||
+		emitter.destination != "otlp-primary" {
+		t.Fatalf("status=%d called=%d destination=%q body=%s",
+			recorder.Code, emitter.called.Load(), emitter.destination, recorder.Body.String())
+	}
+	var payload struct {
+		TraceID      string `json:"trace_id"`
+		Destination  string `json:"destination"`
+		Generation   uint64 `json:"generation"`
+		Acknowledged bool   `json:"acknowledged"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.TraceID != emitter.result.TraceID || payload.Destination != "otlp-primary" ||
+		payload.Generation != 42 || !payload.Acknowledged {
+		t.Fatalf("payload=%+v", payload)
 	}
 }
 

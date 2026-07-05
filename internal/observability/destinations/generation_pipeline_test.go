@@ -92,7 +92,11 @@ func compositePipelinePlan(
 				NetworkSafety: config.ObservabilityV8NetworkSafetySource{
 					AllowPrivateNetworks: true,
 				},
-				Batch: config.ObservabilityV8BatchSource{ScheduledDelayMS: 1},
+				// Keep the release canary's generated root/child pair in one
+				// request even under the race detector. A separate OTLP test
+				// deliberately sets MaxExportBatchSize=1 and proves a truly split
+				// pair is not acknowledged.
+				Batch: config.ObservabilityV8BatchSource{ScheduledDelayMS: 100},
 			},
 			{
 				Name: "prometheus", Kind: config.ObservabilityV8DestinationPrometheus,
@@ -210,11 +214,15 @@ func TestGenerationPipelineFactoryRuntimeGraphFanoutReloadAndGlobalIsolation(t *
 	if !bound || firstDigest != firstPlan.Digest() || firstGeneration != 1 {
 		t.Fatalf("first provider binding=%q/%d/%v", firstDigest, firstGeneration, bound)
 	}
-	firstLease.Release()
 	firstProvider.RecordAgentDiscovery(t.Context(), "cli", false, "ok", 1, 1, 1)
-	traceID, err := firstProvider.EmitGenAICanaryToDestination(t.Context(), "otlp-all")
+	firstCanary, err := firstProvider.EmitV8GeneratedCanary(t.Context(), firstLease, "otlp-all")
+	firstLease.Release()
 	if err != nil {
 		t.Fatal(err)
+	}
+	traceID := firstCanary.TraceID
+	if !firstCanary.Acknowledged || firstCanary.Generation != 1 {
+		t.Fatalf("first canary=%+v", firstCanary)
 	}
 	if !firstProvider.DestinationAcknowledgedCanaryTrace("otlp-all", traceID) {
 		t.Fatal("composite callback lost the OTLP canary acknowledgement bridge")
@@ -250,11 +258,15 @@ func TestGenerationPipelineFactoryRuntimeGraphFanoutReloadAndGlobalIsolation(t *
 	if !bound || secondProvider == firstProvider || secondDigest != secondPlan.Digest() || secondGeneration != 2 {
 		t.Fatalf("second provider binding/identity=%q/%d/%v same=%v", secondDigest, secondGeneration, bound, secondProvider == firstProvider)
 	}
-	secondLease.Release()
 	secondProvider.RecordAgentDiscovery(t.Context(), "cli", false, "ok", 1, 1, 1)
-	secondTraceID, err := secondProvider.EmitGenAICanaryToDestination(t.Context(), "otlp-all")
+	secondCanary, err := secondProvider.EmitV8GeneratedCanary(t.Context(), secondLease, "otlp-all")
+	secondLease.Release()
 	if err != nil {
 		t.Fatal(err)
+	}
+	secondTraceID := secondCanary.TraceID
+	if !secondCanary.Acknowledged || secondCanary.Generation != 2 {
+		t.Fatalf("second canary=%+v", secondCanary)
 	}
 	if !secondProvider.DestinationAcknowledgedCanaryTrace("otlp-all", secondTraceID) ||
 		secondProvider.DestinationAcknowledgedCanaryTrace("otlp-all", traceID) {

@@ -3620,6 +3620,10 @@ func (s *Sidecar) runAPI(ctx context.Context) error {
 	}
 	addr := fmt.Sprintf("%s:%d", bind, s.currentConfig().Gateway.APIPort)
 	api := NewAPIServer(addr, s.health, s.client, s.store, s.logger, cloneConfig(s.currentConfig()))
+	// The v8 canary uses the process-owned Runtime rather than the mutable
+	// legacy provider snapshot, so one graph lease covers construction, flush,
+	// acknowledgement, and reload-safe release.
+	api.bindTelemetryCanaryRuntime(s.observabilityV8CanaryEmitter())
 	if s.configMgr != nil {
 		api.SetConfigRuntime(s.configMgr.Reload, s.currentConfig)
 	}

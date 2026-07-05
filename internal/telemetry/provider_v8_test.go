@@ -212,21 +212,51 @@ func TestV8TargetedCanaryBypassesSamplingExactlyAndDebugIsSafe(t *testing.T) {
 	provider.v8.active.Store(true)
 	t.Cleanup(func() { _ = provider.Shutdown(context.Background()) })
 
-	if _, err := provider.EmitGenAICanary(context.Background()); err != nil {
-		t.Fatalf("untargeted canary: %v", err)
+	if _, err := provider.EmitGenAICanary(context.Background()); err == nil {
+		t.Fatal("bare v8 provider accepted an unleased canary")
 	}
+	if _, err := provider.EmitGenAICanaryToDestination(context.Background(), "galileo"); err == nil {
+		t.Fatal("bare v8 provider accepted a targeted unleased canary")
+	}
+	rootCtx, unmarkedRoot := provider.tracer.Start(context.Background(), "invoke_agent diagnostic",
+		trace.WithAttributes(append(provider.v8StartAttributes(observability.BucketAgentLifecycle),
+			attribute.String("defenseclaw.span.family", observability.TelemetryFamilyAgentInvoke),
+			attribute.Int64("defenseclaw.span.family_schema_version", v8CanaryFamilySchemaVersion),
+		)...),
+	)
+	_, unmarkedChild := provider.tracer.Start(rootCtx, "chat gpt-4o-mini",
+		trace.WithAttributes(append(provider.v8StartAttributes(observability.BucketModelIO),
+			attribute.String("defenseclaw.span.family", observability.TelemetryFamilyModelChat),
+			attribute.Int64("defenseclaw.span.family_schema_version", v8CanaryFamilySchemaVersion),
+		)...),
+	)
+	unmarkedChild.End()
+	unmarkedRoot.End()
 	if got := len(exporter.GetSpans()); got != 0 {
 		t.Fatalf("untargeted canary bypassed always_off: %d spans", got)
 	}
-	if _, err := provider.EmitGenAICanaryToDestination(context.Background(), "galileo"); err != nil {
-		t.Fatalf("targeted canary: %v", err)
-	}
+	targetedRootCtx, targetedRoot := provider.tracer.Start(context.Background(), "invoke_agent diagnostic",
+		trace.WithAttributes(provider.v8CanaryStartAttributes(
+			observability.BucketAgentLifecycle, observability.TelemetryFamilyAgentInvoke, "galileo",
+		)...),
+	)
+	_, targetedChild := provider.tracer.Start(targetedRootCtx, "chat gpt-4o-mini",
+		trace.WithAttributes(provider.v8CanaryStartAttributes(
+			observability.BucketModelIO, observability.TelemetryFamilyModelChat, "galileo",
+		)...),
+	)
+	targetedChild.End()
+	targetedRoot.End()
 	spans := exporter.GetSpans()
 	if len(spans) != 2 {
 		t.Fatalf("targeted canary exported %d spans, want 2", len(spans))
 	}
 	for _, span := range spans {
-		if !span.SpanContext.IsSampled() || !provider.TraceExportEligible(observability.BucketDiagnostic, span.SpanContext) {
+		bucket := observability.BucketModelIO
+		if span.Name == "invoke_agent diagnostic" {
+			bucket = observability.BucketAgentLifecycle
+		}
+		if !span.SpanContext.IsSampled() || !provider.TraceExportEligible(bucket, span.SpanContext) {
 			t.Fatalf("canary span %q was not sampled/eligible", span.Name)
 		}
 	}
@@ -1066,7 +1096,7 @@ func TestV8BackendErrorsAreBoundedAndPreserveOnlyContextIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	provider.v8.active.Store(true)
-	_, flushErr := provider.EmitGenAICanaryToDestination(context.Background(), "galileo")
+	flushErr := (&V8ProviderComponent{provider: provider}).Drain(context.Background())
 	if flushErr == nil || strings.Contains(flushErr.Error(), secret) || !errors.Is(flushErr, context.DeadlineExceeded) {
 		t.Fatalf("canary flush error=%v, want bounded error", flushErr)
 	}
