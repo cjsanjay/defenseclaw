@@ -7616,6 +7616,9 @@ def _parse_explicit_builder_context(
     condition_values = _builder_fact_values(condition_facts)
     use_contexts = _example_condition_use_contexts(signal, family, record, groups)
     referenced_conditions = {use.conditional for use, _ in use_contexts if use.conditional is not None}
+    unknown_conditions = sorted(referenced_conditions - conditions.keys())
+    if unknown_conditions:
+        raise RegistryError(f"{path}.condition_facts: unknown condition ID {unknown_conditions[0]!r}")
     expected_condition_facts = {
         conditions[condition_id].enforcement.fact
         for condition_id in referenced_conditions

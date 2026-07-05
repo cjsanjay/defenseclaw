@@ -5602,7 +5602,9 @@ def test_conditional_use_requires_registered_stable_condition_id(tmp_path: Path)
     root = _fixture_root(tmp_path)
     path = root / "schemas/telemetry/v8/genai.yaml"
     domain = yaml.safe_load(path.read_text(encoding="utf-8"))
-    domain["groups"][0]["attributes"][0].update({"requirement_level": "conditional", "conditional": "connector known"})
+    span_core = next(group for group in domain["groups"] if group["id"] == "span.core")
+    connector = next(item for item in span_core["attributes"] if item["ref"] == "defenseclaw.connector.source")
+    connector["conditional"] = "connector known"
     _write_yaml(path, domain)
 
     result = _run(root, "--write")
