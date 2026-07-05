@@ -104,6 +104,8 @@ defenseclaw = [
     "_data/config/v8/*.json",
     "_data/config/v8/*.yaml",
     "_data/config/v8/*.md",
+    "_data/telemetry/v8/telemetry.schema.json",
+    "_data/telemetry/v8/catalog.json",
     "inventory/ai_signatures.json",
     "inventory/hook_contracts.json",
     "_data/policies/openshell/*.rego",

@@ -696,6 +696,8 @@ _bundle-data:
 	@mkdir -p cli/defenseclaw/_data/local_observability_stack
 	@mkdir -p cli/defenseclaw/_data/llm
 	@mkdir -p cli/defenseclaw/_data/config/v8
+	@rm -rf cli/defenseclaw/_data/telemetry/v8
+	@mkdir -p cli/defenseclaw/_data/telemetry/v8
 	@rm -rf cli/defenseclaw/_data/policies/guardrail/default
 	@rm -rf cli/defenseclaw/_data/policies/guardrail/strict
 	@rm -rf cli/defenseclaw/_data/policies/guardrail/permissive
@@ -721,6 +723,11 @@ _bundle-data:
 	cp schemas/config/v8/defenseclaw-config.schema.json cli/defenseclaw/_data/config/v8/
 	cp schemas/config/v8/reference/observability.yaml cli/defenseclaw/_data/config/v8/
 	cp schemas/config/v8/reference/observability.md cli/defenseclaw/_data/config/v8/
+	@# The generated telemetry bundle and catalog are the only public telemetry
+	@# resources shipped in the Python wheel. This ignored directory is disposable
+	@# build staging; canonical generated authority remains under schemas/.
+	cp schemas/telemetry/generated/telemetry.schema.json cli/defenseclaw/_data/telemetry/v8/
+	cp schemas/telemetry/generated/catalog.json cli/defenseclaw/_data/telemetry/v8/
 	@# splunk_local_bridge and local_observability_stack are bind-mounted by Docker
 	@# (Grafana, Loki, Splunk, etc.) when `defenseclaw obs up` is running. Prefer
 	@# rsync-with-delete over `rm -rf && cp -r` because Docker Desktop on macOS
