@@ -39,6 +39,7 @@ Section references are to this specification package.
 | D-020 | 06 §3; 10 | 07 §§11,16 |
 | D-021 | 03 §§4.2.1,5; 09 §3.3 | 07 §§4.1,4.3,E2E-5 |
 | D-022 | 01 G-14/INV-14; 11 §§3-5,18; 14 §§1-10 | 07 §§2,9.7,11,E2E-9,17; 14 §11 |
+| D-023 | 05 §8; 12 §§4.1,6.4; 15 §§1-2 | 07 §9.5; 15 §10 OTLP-A01..A24 |
 
 ## 3. Semantic clarification decisions
 
@@ -131,6 +132,11 @@ Section references are to this specification package.
 | P-068 | 12 §§6.5,13 | 07 §§2,9.6 |
 | P-069 | 02 §§3-3.6; 11 §§5-6; 12 §§4-6.1,8,10-12 | 07 §§2,3.4,9.1,9.3,9.6; generated builder/bundle/OTLP conformance |
 | P-070 | 12 §§5.2.3,6,12,17 | 07 §§2,3.4,9.6,17; mandatory-rule, four-input/digest/property-disposition, bounded canonical-JSON recursion, dynamic-member/variant, null/tag/collision/redaction, structured-symbol, portable example-path preflight, kernel, seven-file, and builder/bundle/fixture conformance |
+| P-071 | 12 §§4.1,6.4; 15 §§2,4 | 07 §§9.5-9.6; 15 §10 OTLP-A01..A11 |
+| P-072 | 02 §§3-3.5; 05 §§6.5,8; 15 §§5-6 | 07 §9.5; 15 §10 OTLP-A12..A14 |
+| P-073 | 04 §§1-4,7; 05 §§2,6-8; 15 §§3-4,7 | 07 §§5-7,9.5; 15 §10 OTLP-A10..A18 |
+| P-074 | 05 §§6.5,8; 15 §§7-8 | 07 §§9.5,13; 15 §10 OTLP-A18..A20,A23..A24 |
+| P-075 | 14 §§3-10; 15 §§2.2-2.3,4.3-4.4,9 | 07 §§9.3,9.5,9.7,E2E-9; 14 §11; 15 §10 OTLP-A06..A09,A21..A22 |
 
 ## 5. Review use
 

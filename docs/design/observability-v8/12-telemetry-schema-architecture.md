@@ -113,6 +113,7 @@ schemas/telemetry/generated/
   compatibility/openinference.json
   compatibility/local-observability.json # generated dashboard/query consumer profile
   compatibility/v7-exporter-selection.json # generated migration eligibility/profile map
+  compatibility/inbound-otlp.json # generated exact accepted-record binding catalog
 ```
 
 The manifest, three domain model files, lock, and curated examples are the only
@@ -126,6 +127,13 @@ hand-maintained telemetry manifest. Everything under `generated/` is reproducibl
 and carries a generated-file header. CI fails on drift. Contributors normally
 touch one domain file for a new family; consumers normally open only the generated
 catalog or bundle.
+
+The manifest also owns the closed cross-domain `inbound_bindings` catalog from 15
+section 2. A binding may reference a family in any domain file, but cannot define a
+family, bucket, field class, dynamic shape, or mandatory rule. Keeping this
+transport mapping in `registry.yaml` preserves the one-manifest/three-domain-file
+authoring model; there is no fourth hand-authored schema file or runtime binding
+list.
 
 There is no separately authored trace or span-family file. Each span family from
 `11-trace-and-span-contract.md` section 7 is owned by its primary semantic domain:
@@ -1754,6 +1762,19 @@ and MUST NOT contain a hand-maintained duplicate family list. It is versioned wi
 the registry, deterministic, secret-free, and fails generation when a current
 producer/exporter has no unambiguous disposition.
 
+`compatibility/inbound-otlp.json` is the accepted-record counterpart. It contains
+the exact signal/source discriminators, target families, typed field mappings,
+timestamp/outcome rules, unknown-field disposition, reverse-mapping eligibility,
+and import-versus-derivation mode from 15 section 2. Authored classes are expanded
+to one exact artifact entry per eligible target; runtime wildcard target selection
+is forbidden. The receiver consumes the generated Go form of the same materialized
+data, including target-specific self-echo recognizers and private import-only log
+contexts that reuse family validation/classes but cannot set mandatory/floor state.
+The compiler rejects missing/duplicate/overlapping expansion, a target not owned by
+the registry, an unclassified mapped leaf, a non-reversible
+`native_round_trip` claim, a heuristic name predicate, or a mapping that could
+supply identity/floor/classification authority from an inbound value.
+
 ### 6.5 Generated compatibility views and embed APIs
 
 The existing public telemetry schema paths remain available during the
@@ -2256,3 +2277,7 @@ live content or secret values.
 - The generated v7 exporter-selection artifact covers every current producer,
   action, signal, span-filter operation, and destination eligibility rule; the
   migration converter consumes it without a duplicate hand-authored family list.
+- The generated inbound-OTLP artifact and Go normalizer cover every identity in 15
+  section 2.2, have mutually exclusive exact discriminators, and pass 15 section
+  10 without a hand-coded fallback, raw body path, or sender-controlled bucket,
+  floor, field class, route, or redaction decision.

@@ -779,11 +779,29 @@ Required cases:
 
 ### 9.5 Inbound receiver
 
-- Logs, traces, and metrics normalize to expected buckets.
-- Collection is enforced before re-export.
+- The complete executable matrix is 15 section 10, `OTLP-A01` through
+  `OTLP-A24`; every row is a release requirement, not an optional example.
+- Logs, traces, and metrics with one exact generated binding normalize to the
+  registered target bucket/family. Unknown and ambiguous identities have no
+  generic/raw fallback.
+- Collection is enforced before full family construction, SQLite persistence,
+  derivation, or re-export, independently for every primary and derived target.
 - Malformed input records safe telemetry-ingest rejection.
-- No opaque decoded HEC/raw body bypass survives.
-- Origin/hop handling prevents export loops.
+- Unknown attributes and bodies are dropped and counted; local exact field classes,
+  generated builders, and central route redaction prove that no opaque decoded
+  HEC/raw body bypass survives.
+- Every imported occurrence gets a new local record ID and trusted local
+  provenance. The original semantic resource instance remains distinct from the
+  immediate forward-instance transport key; only the latter can suppress an exact
+  local echo or populate local `OriginDestination`. The fixed four-hop matrix
+  prevents cross-instance loops without trusting a remote destination name.
+- Mixed-batch accounting has exactly one primary disposition per decoded leaf and
+  retains the empty-success permanent-drop acknowledgement required to suppress
+  retry storms.
+- Native PR #403 spans preserve real topology and never fabricate missing
+  lifecycle facts. Exact PR #412 Codex/Claude derivations preserve the two metric
+  families, labels, token types, cadence, and local dashboard consumers without
+  placing record/origin/hop/content values in metric labels.
 
 ### 9.6 Telemetry registry and generated schemas
 

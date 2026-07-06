@@ -37,7 +37,7 @@ def test_observability_v8_spec_is_complete_and_traceable() -> None:
     result = _run()
 
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "D=22 S=12 P=70 total=104" in result.stdout
+    assert "D=23 S=12 P=75 total=110" in result.stdout
 
 
 def test_observability_v8_redaction_contract_locks_machine_boundaries() -> None:

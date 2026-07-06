@@ -11,8 +11,8 @@ phase-specific implementation and verification progress.
 - Repository baseline: DefenseClaw configuration v7
 - Repository location: `docs/design/observability-v8/`
 - Execution ledger: [`../../../spec.md`](../../../spec.md)
-- Decision registry: 22 locked product decisions, 12 semantic decisions, and 70
-  ambiguity-removal decisions (104 total)
+- Decision registry: 23 locked product decisions, 12 semantic decisions, and 75
+  ambiguity-removal decisions (110 total)
 
 ## Purpose
 
@@ -51,6 +51,7 @@ The terms **MUST**, **MUST NOT**, **REQUIRED**, **SHOULD**, **SHOULD NOT**, and
 | [12-telemetry-schema-architecture.md](12-telemetry-schema-architecture.md) | One OTel-compatible schema registry, standard-plus-DefenseClaw composition, generated artifacts, versioning, and migration from hand-authored schema files |
 | [13-decision-traceability.md](13-decision-traceability.md) | Mechanical mapping from every D-/S-/P- decision to its normative contracts and required verification |
 | [14-agent-lifecycle-and-dashboard-compatibility.md](14-agent-lifecycle-and-dashboard-compatibility.md) | PR #403 root/subagent lifecycle and traceability compatibility, PR #412 dashboard data contracts, local-stack signal ownership, and upgrade verification |
+| [15-inbound-otlp-import-and-reexport.md](15-inbound-otlp-import-and-reexport.md) | Closed generated inbound OTLP mappings, accepted-record construction, provenance/hops, partial batches, redaction/re-export, and executable acceptance matrix |
 | [current-state-inventory.yaml](current-state-inventory.yaml) | Machine-readable v7/current config, producer, schema, metric, dashboard, datasource, and compatibility baseline with migration dispositions |
 | [config-v8-observability-minimal.yaml](config-v8-observability-minimal.yaml) | Recommended compact starting point with explanatory ASCII banner |
 | [config-v8-observability-reference.yaml](config-v8-observability-reference.yaml) | Fully commented reference showing all observability knobs and destination kinds |
@@ -186,6 +187,10 @@ The terms **MUST**, **MUST NOT**, **REQUIRED**, **SHOULD**, **SHOULD NOT**, and
     observation, field classification, stable conditions, phase/code bijection,
     group lifecycle, and canonical-to-OTLP mappings. Generated APIs reuse the
     existing immutable `internal/observability` record substrate.
+48. Inbound OTLP uses one closed generated binding catalog. Supported leaves become
+    new locally validated canonical occurrences or explicitly labeled derived
+    observations; unsupported leaves never pass through raw, and exact per-leaf
+    self suppression plus a fixed four-hop ceiling bounds re-export cycles.
 
 ## Review Method
 
@@ -206,4 +211,6 @@ Review in this order:
    `12-telemetry-schema-architecture.md`.
 9. Validate merged agent-lifecycle and local-dashboard compatibility in
    `14-agent-lifecycle-and-dashboard-compatibility.md`.
-10. Validate migration and acceptance scope before implementation begins.
+10. Validate accepted-record import and re-export in
+    `15-inbound-otlp-import-and-reexport.md`.
+11. Validate migration and acceptance scope before implementation begins.

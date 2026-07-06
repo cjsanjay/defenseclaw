@@ -485,9 +485,15 @@ events are not a compatibility mechanism and are rejected.
 
 ## 8. Inbound OTLP
 
+The complete accepted-record, field-mapping, identity/provenance, partial-batch,
+origin/hop, compatibility, and executable-test contract is
+[`15-inbound-otlp-import-and-reexport.md`](15-inbound-otlp-import-and-reexport.md).
+That document is normative; this section is its storage/delivery summary.
+
 - Inbound OTLP logs, traces, and metrics are producer inputs, not trusted pre-routed
   output.
-- Normalize supported records into canonical buckets and event names.
+- Normalize only records with one exact generated registry binding into canonical
+  buckets and event names. Zero or ambiguous matches have no generic fallback.
 - Apply collection before local persistence or re-export.
 - Malformed batches follow the existing retry-suppression requirements only where
   returning a transport error would create an unsafe retry storm; the rejection is
@@ -495,7 +501,12 @@ events are not a compatibility mechanism and are rejected.
 - Remove opaque transport-specific raw bypasses such as preserved decoded HEC event
   blobs. Retain safe normalized fields or bounded redacted summaries.
 - A receiver must not export a record back to its origin in an infinite loop;
-  provenance and hop limits are required.
+  generated import provenance, exact per-leaf self suppression, and the fixed
+  four-hop limit are required.
+- Imported logs use the same SQLite-first guarantee as locally produced logs.
+  Imported traces and metrics do not acquire SQLite storage. Every optional export
+  is reconstructed from the new local canonical record and its route-specific
+  central projection; adapters never receive the decoded inbound leaf.
 
 ## 9. Query and Operator Surfaces
 
