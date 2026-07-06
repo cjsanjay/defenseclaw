@@ -37,6 +37,7 @@ import (
 
 	"github.com/defenseclaw/defenseclaw/internal/config"
 	"github.com/defenseclaw/defenseclaw/internal/observability"
+	"github.com/defenseclaw/defenseclaw/internal/observability/delivery"
 	"github.com/defenseclaw/defenseclaw/internal/observability/runtimegraph"
 )
 
@@ -879,10 +880,27 @@ func (processor *v8TrackingProcessor) Shutdown(context.Context) error {
 }
 func (*v8TrackingProcessor) ForceFlush(context.Context) error { return nil }
 
+type v8StaticHealthSource struct {
+	snapshot delivery.HealthSnapshot
+	panic    bool
+}
+
+func (source *v8StaticHealthSource) DeliveryHealthSnapshot() delivery.HealthSnapshot {
+	if source.panic {
+		panic("isolated health source")
+	}
+	return source.snapshot
+}
+
 func TestV8GenerationPipelineFactoryBindsExactCandidateAndOwnsChildren(t *testing.T) {
 	plan := v8PlanForTest(t, "always_on", "", nil)
 	processor := &v8TrackingProcessor{}
 	reader := sdkmetric.NewManualReader()
+	healthSource := &v8StaticHealthSource{snapshot: delivery.HealthSnapshot{
+		Destination: "test", Generation: 17, Signal: string(observability.SignalTraces),
+		State: delivery.HealthHealthy, Reason: string(delivery.HealthReasonRecovered),
+		Queue: &delivery.QueueSnapshot{Items: 1, Bytes: 10, MaxItems: 4, MaxBytes: 40},
+	}}
 	var calls atomic.Uint64
 	provider, err := NewProviderV8Inactive(context.Background(), plan, 17, V8ProviderOptions{
 		Version: "test-version", Environment: "test",
@@ -900,6 +918,9 @@ func TestV8GenerationPipelineFactoryBindsExactCandidateAndOwnsChildren(t *testin
 			return V8GenerationPipelines{
 				SpanPipelines: []V8GenerationSpanPipeline{{Destination: "test", Legacy: processor}},
 				MetricReaders: []sdkmetric.Reader{reader},
+				HealthSources: []delivery.SnapshotSource{
+					healthSource, &v8StaticHealthSource{panic: true},
+				},
 				CanaryAcknowledged: func(destination, traceID string) bool {
 					return destination == "galileo" && traceID == "0102030405060708090a0b0c0d0e0f10"
 				},
@@ -911,6 +932,16 @@ func TestV8GenerationPipelineFactoryBindsExactCandidateAndOwnsChildren(t *testin
 	}
 	if calls.Load() != 1 {
 		t.Fatalf("pipeline factory calls = %d", calls.Load())
+	}
+	component := &V8ProviderComponent{provider: provider}
+	health := component.DeliveryHealthSnapshots()
+	if len(health) != 1 || health[0].Destination != "test" || health[0].Generation != 17 ||
+		health[0].Queue == nil || health[0].Queue.Items != 1 {
+		t.Fatalf("provider health=%+v", health)
+	}
+	health[0].Queue.Items = 99
+	if fresh := component.DeliveryHealthSnapshots(); len(fresh) != 1 || fresh[0].Queue.Items != 1 {
+		t.Fatalf("provider health retained caller mutation: %+v", fresh)
 	}
 	provider.v8.active.Store(true)
 	if !provider.DestinationAcknowledgedCanaryTrace("galileo", "0102030405060708090a0b0c0d0e0f10") ||

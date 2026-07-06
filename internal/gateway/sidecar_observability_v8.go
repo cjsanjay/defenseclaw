@@ -106,6 +106,9 @@ func (s *Sidecar) bindObservabilityRuntime(emitter sidecarRuntimeEmitter) error 
 	s.observabilityV8ConsumersDetached = false
 	s.bindObservabilityV8ConsumersLocked()
 	s.observabilityV8Mu.Unlock()
+	if source, ok := emitter.(observabilityV8HealthSource); ok && s.health != nil {
+		s.health.bindObservabilityV8HealthSource(source)
+	}
 	return nil
 }
 

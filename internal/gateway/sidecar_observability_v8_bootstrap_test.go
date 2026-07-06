@@ -24,6 +24,7 @@ import (
 	"github.com/defenseclaw/defenseclaw/internal/config"
 	"github.com/defenseclaw/defenseclaw/internal/gatewaylog"
 	"github.com/defenseclaw/defenseclaw/internal/observability"
+	"github.com/defenseclaw/defenseclaw/internal/observability/delivery"
 	"github.com/defenseclaw/defenseclaw/internal/observability/destinations/localobservability"
 	"github.com/defenseclaw/defenseclaw/internal/observability/runtimegraph"
 	"github.com/defenseclaw/defenseclaw/internal/telemetry"
@@ -105,6 +106,14 @@ func TestSidecarBootstrapObservabilityV8BindsOneValidatedOwnedRuntime(t *testing
 	}
 	if proxy.observabilityV8TraceRuntime() != owner {
 		t.Fatal("validated runtime was not bound to the existing proxy")
+	}
+	health := fixture.sidecar.health.Snapshot().Telemetry
+	rows, healthOK := health.Details["destinations"].([]map[string]interface{})
+	if health.State != StateRunning || !healthOK || len(rows) != 1 ||
+		rows[0]["name"] != config.ObservabilityV8LocalDestinationName ||
+		rows[0]["kind"] != string(config.ObservabilityV8DestinationLocalSQLite) ||
+		rows[0]["state"] != string(delivery.HealthHealthy) || rows[0]["queue"] != nil {
+		t.Fatalf("bootstrap health=%+v", health)
 	}
 	if rebound, secondErr := fixture.sidecar.BootstrapObservabilityRuntime(
 		t.Context(), fixture.configPath, fixture.raw,

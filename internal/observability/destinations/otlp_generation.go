@@ -20,6 +20,7 @@ import (
 	"github.com/defenseclaw/defenseclaw/internal/config"
 	"github.com/defenseclaw/defenseclaw/internal/observability"
 	compatibility "github.com/defenseclaw/defenseclaw/internal/observability/compatibility/galileo"
+	"github.com/defenseclaw/defenseclaw/internal/observability/delivery"
 	galileodestination "github.com/defenseclaw/defenseclaw/internal/observability/destinations/galileo"
 	"github.com/defenseclaw/defenseclaw/internal/observability/destinations/localobservability"
 	"github.com/defenseclaw/defenseclaw/internal/observability/destinations/otlp"
@@ -195,7 +196,7 @@ func (factory *Factory) PrepareOTLPGenerationPipelines(
 				return fail(newError(ErrorAdapterPrepare))
 			}
 			dispatcher, valid := observabilityruntime.CompiledDispatcherConfig(
-				candidate.destination, factory.deliveryObserver,
+				candidate.destination, generation, observability.SignalTraces, factory.deliveryObserver,
 			)
 			if !valid {
 				_ = closeGalileoAdapter(adapter)
@@ -220,6 +221,7 @@ func (factory *Factory) PrepareOTLPGenerationPipelines(
 			pipelines.SpanPipelines = append(pipelines.SpanPipelines, telemetry.V8GenerationSpanPipeline{
 				Destination: candidate.destination.Name, Canonical: registered,
 			})
+			pipelines.HealthSources = append(pipelines.HealthSources, registered)
 			canonicalConsumers = append(canonicalConsumers, consumer)
 		} else if containsSignal(candidate.signals, observability.SignalTraces) && candidate.local {
 			if traceProjection == nil {
@@ -237,7 +239,7 @@ func (factory *Factory) PrepareOTLPGenerationPipelines(
 				return fail(newError(ErrorAdapterPrepare))
 			}
 			dispatcher, valid := observabilityruntime.CompiledDispatcherConfig(
-				candidate.destination, factory.deliveryObserver,
+				candidate.destination, generation, observability.SignalTraces, factory.deliveryObserver,
 			)
 			if !valid {
 				_ = closeOTLPCanonicalAdapter(adapter)
@@ -260,6 +262,7 @@ func (factory *Factory) PrepareOTLPGenerationPipelines(
 			pipelines.SpanPipelines = append(pipelines.SpanPipelines, telemetry.V8GenerationSpanPipeline{
 				Destination: candidate.destination.Name, Canonical: registered,
 			})
+			pipelines.HealthSources = append(pipelines.HealthSources, registered)
 			localConsumers = append(localConsumers, consumer)
 		} else if containsSignal(candidate.signals, observability.SignalTraces) && candidate.canonical {
 			if traceProjection == nil {
@@ -277,7 +280,7 @@ func (factory *Factory) PrepareOTLPGenerationPipelines(
 				return fail(newError(ErrorAdapterPrepare))
 			}
 			dispatcher, valid := observabilityruntime.CompiledDispatcherConfig(
-				candidate.destination, factory.deliveryObserver,
+				candidate.destination, generation, observability.SignalTraces, factory.deliveryObserver,
 			)
 			if !valid {
 				_ = closeOTLPCanonicalAdapter(adapter)
@@ -299,6 +302,7 @@ func (factory *Factory) PrepareOTLPGenerationPipelines(
 			pipelines.SpanPipelines = append(pipelines.SpanPipelines, telemetry.V8GenerationSpanPipeline{
 				Destination: candidate.destination.Name, Canonical: registered,
 			})
+			pipelines.HealthSources = append(pipelines.HealthSources, registered)
 			generalCanonicalConsumers = append(generalCanonicalConsumers, consumer)
 		}
 		if candidate.metrics != nil {
@@ -317,7 +321,15 @@ func (factory *Factory) PrepareOTLPGenerationPipelines(
 				cancel()
 				return fail(newError(ErrorAdapterPrepare))
 			}
+			healthSource, healthErr := reader.DeliveryHealthSource(generation)
+			if healthErr != nil {
+				cleanupContext, cancel := context.WithTimeout(context.Background(), generationPipelineCleanupTimeout)
+				_ = reader.Shutdown(cleanupContext)
+				cancel()
+				return fail(newError(ErrorAdapterPrepare))
+			}
 			pipelines.MetricReaders = append(pipelines.MetricReaders, sdkReader)
+			pipelines.HealthSources = append(pipelines.HealthSources, healthSource)
 			families := selectedMetricFamilies(candidate.metrics)
 			projection := telemetry.V8MetricProjectionCanonical
 			if candidate.local {
@@ -658,6 +670,17 @@ type canaryRegisteredCanonicalConsumer struct {
 	telemetry.V8CanonicalSpanConsumer
 	releaseOnce sync.Once
 	release     func()
+}
+
+func (consumer *canaryRegisteredCanonicalConsumer) DeliveryHealthSnapshot() delivery.HealthSnapshot {
+	if consumer == nil || consumer.V8CanonicalSpanConsumer == nil {
+		return delivery.HealthSnapshot{State: delivery.HealthStopped}
+	}
+	source, ok := consumer.V8CanonicalSpanConsumer.(delivery.SnapshotSource)
+	if !ok || source == nil {
+		return delivery.HealthSnapshot{}
+	}
+	return source.DeliveryHealthSnapshot()
 }
 
 func (consumer *canaryRegisteredCanonicalConsumer) Shutdown(ctx context.Context) error {

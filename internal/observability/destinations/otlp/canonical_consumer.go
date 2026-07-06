@@ -369,6 +369,15 @@ func (consumer *CanonicalTraceConsumer) Counters() CanonicalTraceConsumerCounter
 	}
 }
 
+// DeliveryHealthSnapshot exposes only the consumer's bounded dispatcher
+// state. Projection records and transport details remain unreachable.
+func (consumer *CanonicalTraceConsumer) DeliveryHealthSnapshot() delivery.HealthSnapshot {
+	if consumer == nil || consumer.dispatcher == nil {
+		return delivery.HealthSnapshot{State: delivery.HealthStopped}
+	}
+	return consumer.dispatcher.DeliveryHealthSnapshot()
+}
+
 func (consumer *CanonicalTraceConsumer) observe(code CanonicalFailureCode) {
 	if consumer == nil || consumer.observer == nil {
 		return

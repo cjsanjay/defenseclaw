@@ -78,7 +78,7 @@ func (factory *destinationDispatchFactory) Prepare(
 	}
 
 	component := &destinationDispatchComponent{
-		digest:   input.Config.PlanDigest,
+		digest: input.Config.PlanDigest, generation: input.Generation,
 		byName:   make(map[string]*destinationDispatcher),
 		observer: factory.observer,
 	}
@@ -120,7 +120,9 @@ func (factory *destinationDispatchFactory) Prepare(
 		if err != nil || nilInterface(adapter) {
 			return nil, &destinationDispatchError{}
 		}
-		dispatcherConfig, ok := CompiledDispatcherConfig(destination, component.observer)
+		dispatcherConfig, ok := CompiledDispatcherConfig(
+			destination, input.Generation, observability.SignalLogs, component.observer,
+		)
 		if !ok {
 			return nil, &destinationDispatchError{}
 		}
@@ -152,8 +154,13 @@ func destinationSelectsLogs(destination config.ObservabilityV8EffectiveDestinati
 // not silently diverge in queue, batching, retry, or timeout behavior.
 func CompiledDispatcherConfig(
 	destination config.ObservabilityV8EffectiveDestination,
+	generation uint64,
+	signal observability.Signal,
 	observer delivery.Observer,
 ) (delivery.Config, bool) {
+	if generation == 0 || !observability.IsSignal(signal) {
+		return delivery.Config{}, false
+	}
 	batch := destination.Transport.Batch
 	if batch == nil || batch.MaxQueueSize <= 0 || batch.MaxQueueBytes <= 0 {
 		return delivery.Config{}, false
@@ -179,7 +186,7 @@ func CompiledDispatcherConfig(
 		attemptTimeout = time.Duration(destination.Transport.TimeoutMS) * time.Millisecond
 	}
 	return delivery.Config{
-		Destination: destination.Name, Enabled: true,
+		Destination: destination.Name, Generation: generation, Signal: string(signal), Enabled: true,
 		MaxQueueItems: batch.MaxQueueSize, MaxQueueBytes: batch.MaxQueueBytes,
 		MaxBatchItems: maxBatchItems, MaxBatchBytes: maxBatchBytes,
 		ScheduledDelay: scheduledDelay, AttemptTimeout: attemptTimeout,
@@ -224,10 +231,30 @@ type destinationDispatcher struct {
 // independent dispatchers. Queued payload bytes therefore remain attached to
 // the graph lease generation that projected them during reload.
 type destinationDispatchComponent struct {
-	digest   string
-	order    []string
-	byName   map[string]*destinationDispatcher
-	observer *safeDeliveryObserver
+	digest     string
+	generation uint64
+	order      []string
+	byName     map[string]*destinationDispatcher
+	observer   *safeDeliveryObserver
+}
+
+func (component *destinationDispatchComponent) deliveryHealthSnapshots() []delivery.HealthSnapshot {
+	if component == nil {
+		return nil
+	}
+	result := make([]delivery.HealthSnapshot, 0, len(component.order))
+	for _, name := range component.order {
+		entry := component.byName[name]
+		if entry == nil || entry.dispatcher == nil {
+			continue
+		}
+		snapshot := entry.dispatcher.DeliveryHealthSnapshot()
+		if snapshot.Generation != component.generation || snapshot.Destination != name {
+			continue
+		}
+		result = append(result, snapshot)
+	}
+	return result
 }
 
 func (component *destinationDispatchComponent) Activate() {

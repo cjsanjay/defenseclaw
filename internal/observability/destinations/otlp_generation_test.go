@@ -253,7 +253,7 @@ func TestOTLPGenerationAssemblerUsesUnmaskedRuntimeTransportAndDefaultAllSignals
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(pipelines.SpanPipelines) != 1 || len(pipelines.MetricReaders) != 1 || len(pipelines.MetricPipelines) != 1 ||
+	if len(pipelines.SpanPipelines) != 1 || len(pipelines.MetricReaders) != 1 || len(pipelines.MetricPipelines) != 1 || len(pipelines.HealthSources) != 2 ||
 		pipelines.CanaryAcknowledged == nil || secrets.callCount("OTLP_AUTH") != 1 || loader.callCount(caPath) != 1 {
 		t.Fatalf("pipelines=%d/%d secret=%d CA=%d", len(pipelines.SpanPipelines), len(pipelines.MetricReaders), secrets.callCount("OTLP_AUTH"), loader.callCount(caPath))
 	}
@@ -308,7 +308,7 @@ func TestOTLPGenerationAssemblerAppliesBucketRoutesAcrossMultipleDestinations(t 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(pipelines.SpanPipelines) != 2 || len(pipelines.MetricReaders) != 1 || len(pipelines.MetricPipelines) != 1 {
+	if len(pipelines.SpanPipelines) != 2 || len(pipelines.MetricReaders) != 1 || len(pipelines.MetricPipelines) != 1 || len(pipelines.HealthSources) != 3 {
 		t.Fatalf("pipelines = %d/%d", len(pipelines.SpanPipelines), len(pipelines.MetricReaders))
 	}
 	if pipelines.SpanPipelines[0].Destination != "agent-traces" ||
@@ -384,7 +384,7 @@ func TestOTLPGenerationAssemblerAppliesMetricEventNameFirstMatchRoutes(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(pipelines.SpanPipelines) != 0 || len(pipelines.MetricReaders) != 1 || len(pipelines.MetricPipelines) != 1 {
+	if len(pipelines.SpanPipelines) != 0 || len(pipelines.MetricReaders) != 1 || len(pipelines.MetricPipelines) != 1 || len(pipelines.HealthSources) != 1 {
 		t.Fatalf("pipelines=%d/%d", len(pipelines.SpanPipelines), len(pipelines.MetricReaders))
 	}
 	if pipelines.CanaryAcknowledged != nil {
@@ -822,7 +822,7 @@ func TestOTLPGenerationAssemblerAcceptsCentralRedactionAndAdvancedTraceRoutes(t 
 			}
 			plan := compileGenerationPlan(t, test.destination)
 			pipelines, err := factory.PrepareOTLPGenerationPipelines(context.Background(), plan, uint64(20+index), generationMetricSpec())
-			if err != nil || len(pipelines.SpanPipelines) != 1 || len(pipelines.MetricReaders) != 0 ||
+			if err != nil || len(pipelines.SpanPipelines) != 1 || len(pipelines.MetricReaders) != 0 || len(pipelines.HealthSources) != 1 ||
 				pipelines.SpanPipelines[0].Canonical == nil || pipelines.SpanPipelines[0].Legacy != nil {
 				t.Fatalf("pipelines=%+v error=%v", pipelines, err)
 			}
@@ -850,7 +850,7 @@ func TestOTLPGenerationAssemblerPreparesCanonicalGalileoAndNeverRawLegacy(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(pipelines.SpanPipelines) != 1 || pipelines.SpanPipelines[0].Destination != "galileo" ||
+	if len(pipelines.SpanPipelines) != 1 || len(pipelines.HealthSources) != 1 || pipelines.SpanPipelines[0].Destination != "galileo" ||
 		pipelines.SpanPipelines[0].Canonical == nil || pipelines.SpanPipelines[0].Legacy != nil ||
 		pipelines.CanaryAcknowledged == nil {
 		t.Fatalf("Galileo pipeline is not canonical XOR: %+v", pipelines)

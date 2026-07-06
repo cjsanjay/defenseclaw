@@ -41,6 +41,7 @@ import (
 
 	"github.com/defenseclaw/defenseclaw/internal/config"
 	"github.com/defenseclaw/defenseclaw/internal/observability"
+	"github.com/defenseclaw/defenseclaw/internal/observability/delivery"
 	"github.com/defenseclaw/defenseclaw/internal/observability/runtimegraph"
 )
 
@@ -84,6 +85,10 @@ type V8MetricReaderFactory func(generation uint64, spec V8MetricReaderSpec) (sdk
 type V8GenerationPipelines struct {
 	SpanPipelines []V8GenerationSpanPipeline
 	MetricReaders []sdkmetric.Reader
+	// HealthSources are non-owning read-only views over children already owned
+	// by SpanPipelines or MetricReaders/MetricPipelines. They add no cleanup
+	// authority and must identify the exact candidate generation.
+	HealthSources []delivery.SnapshotSource
 	// MetricPipelines is separate from MetricReaders because one SDK
 	// MeterProvider cannot project different label names per reader.
 	MetricPipelines []V8GenerationMetricPipeline
@@ -317,6 +322,7 @@ type v8ProviderState struct {
 	handoff        *v8SpanHandoff
 	spanProcessor  *v8CompositeSpanProcessor
 	metricRecorder *v8MetricRecorder
+	healthSources  []delivery.SnapshotSource
 	resource       V8ResourceContext
 }
 
@@ -711,6 +717,7 @@ func newProviderV8Inactive(
 			}(),
 			spanProcessor:  composite,
 			metricRecorder: metricRecorder,
+			healthSources:  append([]delivery.SnapshotSource(nil), pipelines.HealthSources...),
 			resource:       resourceContext,
 		},
 	}, nil
@@ -764,6 +771,19 @@ func validV8GenerationPipelines(
 	tracesCollected bool,
 	metricsCollected bool,
 ) bool {
+	if len(pipelines.HealthSources) > (config.ObservabilityV8MaxDestinations+1)*len(observability.Signals()) ||
+		(!tracesCollected && !metricsCollected && len(pipelines.HealthSources) != 0) {
+		return false
+	}
+	for _, source := range pipelines.HealthSources {
+		if source == nil {
+			return false
+		}
+		reflected := reflect.ValueOf(source)
+		if (reflected.Kind() == reflect.Pointer || reflected.Kind() == reflect.Interface) && reflected.IsNil() {
+			return false
+		}
+	}
 	if !tracesCollected && len(pipelines.SpanPipelines) != 0 {
 		return false
 	}
@@ -1113,6 +1133,39 @@ func (factory *V8ProviderFactory) Prepare(
 type V8ProviderComponent struct {
 	provider *Provider
 	closed   atomic.Bool
+}
+
+// DeliveryHealthSnapshots returns detached snapshots from only this provider
+// generation. A malformed or panicking optional source is skipped so health
+// inspection cannot destabilize telemetry production.
+func (component *V8ProviderComponent) DeliveryHealthSnapshots() []delivery.HealthSnapshot {
+	if component == nil || component.provider == nil || component.closed.Load() ||
+		component.provider.v8 == nil {
+		return nil
+	}
+	state := component.provider.v8
+	result := make([]delivery.HealthSnapshot, 0, len(state.healthSources))
+	for _, source := range state.healthSources {
+		if source == nil {
+			continue
+		}
+		var snapshot delivery.HealthSnapshot
+		func() {
+			defer func() { _ = recover() }()
+			snapshot = source.DeliveryHealthSnapshot()
+		}()
+		if snapshot.Generation != state.generation ||
+			!observability.IsStableToken(snapshot.Destination) ||
+			!observability.IsSignal(observability.Signal(snapshot.Signal)) {
+			continue
+		}
+		if snapshot.Queue != nil {
+			queue := *snapshot.Queue
+			snapshot.Queue = &queue
+		}
+		result = append(result, snapshot)
+	}
+	return result
 }
 
 func (component *V8ProviderComponent) Activate() {

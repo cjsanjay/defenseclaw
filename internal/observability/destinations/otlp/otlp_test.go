@@ -994,6 +994,42 @@ func TestMetricSelectorsAreExplicitAndIgnoreAmbientPreference(t *testing.T) {
 	_ = deltaExporter.Shutdown(context.Background())
 }
 
+func TestMetricReaderHealthSourceIsGenerationBoundAndQueueFree(t *testing.T) {
+	server := httptest.NewServer(http.NotFoundHandler())
+	defer server.Close()
+	batch := testBatch()
+	batch.ExportInterval = time.Hour
+	factory := prepareTestFactory(t, Config{
+		Destination: "metric-health", Protocol: ProtocolHTTP, Endpoint: server.URL,
+		Selected: []observability.Signal{observability.SignalMetrics}, Timeout: time.Second,
+		TLS: TLSConfig{Insecure: true}, NetworkSafety: NetworkSafety{AllowPrivateNetworks: true},
+		Batch: batch,
+	}, Dependencies{})
+	reader, err := factory.NewPeriodicMetricReader(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	source, err := reader.DeliveryHealthSource(7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := reader.DeliveryHealthSource(8); !IsError(err, ErrorInvalidConfig) {
+		t.Fatalf("cross-generation source error=%v", err)
+	}
+	snapshot := source.DeliveryHealthSnapshot()
+	if snapshot.Destination != "metric-health" || snapshot.Generation != 7 ||
+		snapshot.Signal != string(observability.SignalMetrics) ||
+		snapshot.State != delivery.HealthInitializing || snapshot.Queue != nil {
+		t.Fatalf("metric reader health=%+v", snapshot)
+	}
+	if err := reader.Shutdown(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if stopped := source.DeliveryHealthSnapshot(); stopped.State != delivery.HealthStopped || stopped.Queue != nil {
+		t.Fatalf("stopped metric reader health=%+v", stopped)
+	}
+}
+
 func TestLogFailureClassificationAndMalformedProjection(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -1502,6 +1538,10 @@ func TestMetricExporterPreflightRejectsAboveEncodedByteCeiling(t *testing.T) {
 	if calls.Load() != 0 || exporter.Counters().RejectedOversize != 1 {
 		t.Fatalf("oversize calls=%d counters=%+v", calls.Load(), exporter.Counters())
 	}
+	if health := exporter.deliveryHealthSnapshot(); health.State != delivery.HealthFailing ||
+		health.Reason != string(delivery.HealthReasonDeliveryFailed) || health.LastFailure.IsZero() {
+		t.Fatalf("oversize metric health=%+v", health)
+	}
 	_ = exporter.Shutdown(context.Background())
 
 	config.Destination = "metric-bound-ok"
@@ -1519,6 +1559,10 @@ func TestMetricExporterPreflightRejectsAboveEncodedByteCeiling(t *testing.T) {
 	}
 	if calls.Load() != 1 || exporter.Counters().Exported != 1 {
 		t.Fatalf("boundary calls=%d counters=%+v", calls.Load(), exporter.Counters())
+	}
+	if health := exporter.deliveryHealthSnapshot(); health.State != delivery.HealthHealthy ||
+		health.Reason != string(delivery.HealthReasonRecovered) || health.LastSuccess.IsZero() {
+		t.Fatalf("successful metric health=%+v", health)
 	}
 	if wireBytes.Load() <= 0 || wireBytes.Load() > int64(bound) {
 		t.Fatalf("metric wire bytes = %d, conservative bound = %d", wireBytes.Load(), bound)

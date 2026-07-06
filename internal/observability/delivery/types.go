@@ -200,10 +200,45 @@ type Counters struct {
 	Rejected  uint64
 }
 
+// QueueSnapshot is an immutable, content-free view of one generation-owned
+// delivery queue. Items and Bytes include the in-flight batch because those
+// projections remain charged until they reach a terminal disposition.
+type QueueSnapshot struct {
+	Items         int
+	Bytes         int
+	InFlightItems int
+	InFlightBytes int
+	MaxItems      int
+	MaxBytes      int
+}
+
+// HealthSnapshot is the narrow read-only health contract shared by the log,
+// trace, metric, and pull-reader generation components. Queue is nil for a
+// signal that has no DefenseClaw-owned queue. Reason is a closed token owned by
+// the source package; it never contains an error, endpoint, header, or payload.
+type HealthSnapshot struct {
+	Destination string
+	Generation  uint64
+	Signal      string
+	State       HealthState
+	Reason      string
+	Queue       *QueueSnapshot
+	Counters    Counters
+	LastSuccess time.Time
+	LastFailure time.Time
+}
+
+// SnapshotSource exposes no transport operation or mutable queue handle.
+// Implementations return a detached value on every call.
+type SnapshotSource interface {
+	DeliveryHealthSnapshot() HealthSnapshot
+}
+
 // HealthTransition is safe for mandatory platform-health reporting. It carries
 // only bounded destination identity, closed state/reason values, and counters.
 type HealthTransition struct {
 	Destination string
+	Generation  uint64
 	Previous    HealthState
 	Current     HealthState
 	Reason      HealthReason
@@ -231,6 +266,8 @@ type RetryPolicy struct {
 // Config is generation-owned and immutable after NewDispatcher returns.
 type Config struct {
 	Destination      string
+	Generation       uint64
+	Signal           string
 	Enabled          bool
 	MaxQueueItems    int
 	MaxQueueBytes    int

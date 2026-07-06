@@ -266,6 +266,7 @@ func TestDispatcherRejectsInvalidCapacityBeforeStartingWorker(t *testing.T) {
 	valid := testConfig("validation")
 	mutations := []func(*delivery.Config){
 		func(config *delivery.Config) { config.Destination = "INVALID" },
+		func(config *delivery.Config) { config.Signal = "future" },
 		func(config *delivery.Config) { config.MaxQueueItems = 0 },
 		func(config *delivery.Config) { config.MaxQueueItems = 65_537 },
 		func(config *delivery.Config) { config.MaxQueueBytes = 256*1024*1024 + 1 },
@@ -313,10 +314,19 @@ func TestQueueDropsNewestAtCountLimitWhileInflightRemainsCharged(t *testing.T) {
 	if items != 2 || size != 6 || inFlight != 1 || inFlightBytes != 3 {
 		t.Fatalf("usage=(%d,%d,%d,%d)", items, size, inFlight, inFlightBytes)
 	}
+	failureSnapshot := dispatcher.DeliveryHealthSnapshot()
+	if failureSnapshot.LastFailure.IsZero() || failureSnapshot.State != delivery.HealthDegraded ||
+		failureSnapshot.Reason != string(delivery.HealthReasonQueueFull) {
+		t.Fatalf("queue-full health=%+v", failureSnapshot)
+	}
 	close(release)
 	closeDispatcher(t, dispatcher)
 	if got := dispatcher.Counters(); got.Accepted != 2 || got.Delivered != 2 || got.Dropped != 1 {
 		t.Fatalf("counters=%+v", got)
+	}
+	completed := dispatcher.DeliveryHealthSnapshot()
+	if completed.LastSuccess.IsZero() || completed.LastSuccess.Before(failureSnapshot.LastFailure) {
+		t.Fatalf("completed health=%+v failure=%+v", completed, failureSnapshot)
 	}
 	attempts := adapter.snapshot()
 	if len(attempts) != 2 || attempts[0].ids[0] != "a" || attempts[1].ids[0] != "b" {

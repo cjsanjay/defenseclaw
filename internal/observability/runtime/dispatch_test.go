@@ -254,7 +254,7 @@ func TestQueueOnlyDispatcherSeparatesProjectedQueueBytesFromEncodedWriteBytes(t 
 			},
 		},
 	}
-	compiled, ok := CompiledDispatcherConfig(destination, nil)
+	compiled, ok := CompiledDispatcherConfig(destination, 1, observability.SignalLogs, nil)
 	if !ok {
 		t.Fatal("queue-only destination did not compile")
 	}
@@ -264,6 +264,12 @@ func TestQueueOnlyDispatcherSeparatesProjectedQueueBytesFromEncodedWriteBytes(t 
 	}
 	if compiled.MaxQueueBytes != 4_198_400 {
 		t.Fatalf("projected queue byte ceiling changed to %d", compiled.MaxQueueBytes)
+	}
+	if _, ok := CompiledDispatcherConfig(destination, 0, observability.SignalLogs, nil); ok {
+		t.Fatal("zero generation dispatcher config compiled")
+	}
+	if _, ok := CompiledDispatcherConfig(destination, 1, observability.Signal("future"), nil); ok {
+		t.Fatal("unknown signal dispatcher config compiled")
 	}
 }
 

@@ -399,6 +399,19 @@ func (owner *sidecarOwnedObservabilityV8Runtime) RecordGeneratedMetric(
 	return owner.runtime.RecordGeneratedMetric(ctx, family, builder)
 }
 
+func (owner *sidecarOwnedObservabilityV8Runtime) DestinationHealthSnapshot(
+	ctx context.Context,
+) (observabilityruntime.DestinationHealthSnapshot, error) {
+	if owner == nil || owner.runtime == nil || ctx == nil {
+		return observabilityruntime.DestinationHealthSnapshot{},
+			newSidecarObservabilityV8BootstrapError(sidecarObservabilityV8BootstrapClose, nil)
+	}
+	// Runtime's graph manager is the synchronization authority for this
+	// read-only lease. Avoid the owner's shutdown mutex here so a health request
+	// remains context-bounded while Close is waiting on graph retirement.
+	return owner.runtime.DestinationHealthSnapshot(ctx)
+}
+
 func (owner *sidecarOwnedObservabilityV8Runtime) StartAgentTrace(
 	ctx context.Context,
 	input observability.SpanAgentInvokeInput,
@@ -549,6 +562,9 @@ func (s *Sidecar) closeOwnedObservabilityV8Runtime() error {
 	if err := owner.closeWithTimeout(); err != nil {
 		return err
 	}
+	if s.health != nil {
+		s.health.clearObservabilityV8HealthSource()
+	}
 	s.observabilityV8Mu.Lock()
 	if s.observabilityV8 == owner {
 		s.observabilityV8 = nil
@@ -625,58 +641,49 @@ func (s *Sidecar) observeObservabilityV8Delivery(transition delivery.HealthTrans
 	if s == nil || s.health == nil {
 		return
 	}
-	state := StateRunning
-	if transition.Current == delivery.HealthDegraded || transition.Current == delivery.HealthStopped {
-		state = StateError
+	if transition.Generation == 0 || transition.OccurredAt.IsZero() {
+		return
 	}
-	s.health.SetTelemetry(state, "", map[string]interface{}{
-		"destination": transition.Destination,
-		"state":       string(transition.Current),
-		"reason":      string(transition.Reason),
-	})
+	if transition.Current == delivery.HealthDegraded || transition.Current == delivery.HealthFailing {
+		s.health.observeObservabilityV8Failure(
+			transition.Destination, transition.Generation, string(transition.Reason), transition.OccurredAt,
+		)
+	}
 }
 
 func (s *Sidecar) observeObservabilityV8Warning(warning push.Warning) {
-	if s == nil || s.health == nil {
-		return
-	}
-	s.health.SetTelemetry(StateError, "", map[string]interface{}{
-		"destination": warning.Destination,
-		"warning":     string(warning.Code),
-	})
+	// Preparation warnings have no graph generation and may belong to a
+	// candidate that is never published. The effective plan already exposes
+	// them; live destination state must not attach them to an active generation.
+	_ = s
+	_ = warning
 }
 
 func (s *Sidecar) observeObservabilityV8Galileo(failure galileo.CanonicalFailure) {
 	if s == nil || s.health == nil {
 		return
 	}
-	s.health.SetTelemetry(StateError, "", map[string]interface{}{
-		"destination": failure.Destination,
-		"generation":  failure.Generation,
-		"failure":     string(failure.Code),
-	})
+	s.health.observeObservabilityV8Failure(
+		failure.Destination, failure.Generation, string(failure.Code), time.Now().UTC(),
+	)
 }
 
 func (s *Sidecar) observeObservabilityV8OTLP(failure otlp.CanonicalFailure) {
 	if s == nil || s.health == nil {
 		return
 	}
-	s.health.SetTelemetry(StateError, "", map[string]interface{}{
-		"destination": failure.Destination,
-		"generation":  failure.Generation,
-		"failure":     string(failure.Code),
-	})
+	s.health.observeObservabilityV8Failure(
+		failure.Destination, failure.Generation, string(failure.Code), time.Now().UTC(),
+	)
 }
 
 func (s *Sidecar) observeObservabilityV8Local(failure localobservability.Failure) {
 	if s == nil || s.health == nil {
 		return
 	}
-	s.health.SetTelemetry(StateError, "", map[string]interface{}{
-		"destination": failure.Destination,
-		"generation":  failure.Generation,
-		"failure":     string(failure.Code),
-	})
+	s.health.observeObservabilityV8Failure(
+		failure.Destination, failure.Generation, string(failure.Code), time.Now().UTC(),
+	)
 }
 
 type sidecarV8RetentionObserver struct{ s *Sidecar }
@@ -687,15 +694,9 @@ func (observer sidecarV8RetentionObserver) ReportRetentionController(
 	if observer.s == nil || observer.s.health == nil {
 		return
 	}
-	state := StateRunning
-	if status.State == observabilityruntime.RetentionStateDegraded {
-		state = StateError
-	}
-	observer.s.health.SetTelemetry(state, "", map[string]interface{}{
-		"retention_state": string(status.State),
-		"retention_days":  status.RetentionDays,
-		"failure":         string(status.Failure),
-	})
+	observer.s.health.setObservabilityV8Retention(
+		string(status.State), status.RetentionDays, string(status.Failure),
+	)
 }
 
 type sidecarV8EventHistoryObserver struct{ s *Sidecar }
@@ -706,9 +707,7 @@ func (observer sidecarV8EventHistoryObserver) ReportEventHistoryHealth(
 	if observer.s == nil || observer.s.health == nil {
 		return
 	}
-	observer.s.health.SetTelemetry(StateError, "", map[string]interface{}{
-		"event_history_failure": string(code),
-	})
+	observer.s.health.setObservabilityV8EventHistoryFailure(string(code))
 }
 
 func newSidecarObservabilityV8BootstrapError(

@@ -31,15 +31,22 @@ func (dispatcher *Dispatcher) transitionHealth(state HealthState, reason HealthR
 		return
 	}
 	if previous == state {
+		dispatcher.healthReason = reason
 		dispatcher.healthMu.Unlock()
 		return
 	}
 	dispatcher.health = state
+	dispatcher.healthReason = reason
+	now := time.Now().UTC()
+	if state == HealthDegraded || state == HealthFailing {
+		dispatcher.lastFailure = now
+	}
 	dispatcher.healthSequence++
 	transition := HealthTransition{
 		Destination: dispatcher.config.Destination,
+		Generation:  dispatcher.config.Generation,
 		Previous:    previous, Current: state, Reason: reason,
-		Counters: dispatcher.Counters(), OccurredAt: time.Now().UTC(),
+		Counters: dispatcher.Counters(), OccurredAt: now,
 		sequence: dispatcher.healthSequence,
 	}
 	dispatcher.pendingTransition = &transition

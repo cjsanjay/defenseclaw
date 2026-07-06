@@ -29,6 +29,7 @@ import (
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 
 	"github.com/defenseclaw/defenseclaw/internal/config"
+	"github.com/defenseclaw/defenseclaw/internal/observability"
 	"github.com/defenseclaw/defenseclaw/internal/observability/delivery"
 	"github.com/defenseclaw/defenseclaw/internal/telemetry"
 )
@@ -64,8 +65,11 @@ type Reader struct {
 	shutdownDone chan struct{}
 	shutdownErr  error
 
-	healthMu sync.Mutex
-	health   delivery.HealthState
+	healthMu     sync.Mutex
+	health       delivery.HealthState
+	healthReason HealthReason
+	lastSuccess  time.Time
+	lastFailure  time.Time
 
 	scrapes   atomic.Uint64
 	succeeded atomic.Uint64
@@ -265,12 +269,18 @@ func (writer *statusWriter) WriteHeader(status int) {
 func (reader *Reader) observeScrape(success bool) {
 	if success {
 		reader.succeeded.Add(1)
+		reader.healthMu.Lock()
+		reader.lastSuccess = time.Now().UTC()
+		reader.healthMu.Unlock()
 		if reader.Health().State == delivery.HealthDegraded {
 			reader.transition(delivery.HealthHealthy, HealthReasonRecovered)
 		}
 		return
 	}
 	reader.failed.Add(1)
+	reader.healthMu.Lock()
+	reader.lastFailure = time.Now().UTC()
+	reader.healthMu.Unlock()
 	reader.transition(delivery.HealthDegraded, HealthReasonScrapeFailed)
 }
 
@@ -282,10 +292,15 @@ func (reader *Reader) transition(state delivery.HealthState, reason HealthReason
 	previous := reader.health
 	if previous == state || previous == delivery.HealthStopped ||
 		(previous == delivery.HealthDraining && state != delivery.HealthStopped) {
+		reader.healthReason = reason
 		reader.healthMu.Unlock()
 		return
 	}
 	reader.health = state
+	reader.healthReason = reason
+	if state == delivery.HealthDegraded || state == delivery.HealthFailing {
+		reader.lastFailure = time.Now().UTC()
+	}
 	transition := HealthTransition{
 		Destination: reader.destination, Generation: reader.generation,
 		Previous: previous, Current: state, Reason: reason,
@@ -374,6 +389,29 @@ func (reader *Reader) Health() HealthSnapshot {
 	state := reader.health
 	reader.healthMu.Unlock()
 	return HealthSnapshot{Generation: reader.generation, State: state, Counters: reader.Counters()}
+}
+
+// DeliveryHealthSnapshot implements the common generation-owned read-only
+// health seam. Prometheus is a pull destination and therefore has no queue.
+func (reader *Reader) DeliveryHealthSnapshot() delivery.HealthSnapshot {
+	if reader == nil {
+		return delivery.HealthSnapshot{State: delivery.HealthStopped}
+	}
+	reader.healthMu.Lock()
+	state := reader.health
+	reason := reader.healthReason
+	lastSuccess := reader.lastSuccess
+	lastFailure := reader.lastFailure
+	reader.healthMu.Unlock()
+	counters := reader.Counters()
+	return delivery.HealthSnapshot{
+		Destination: reader.destination, Generation: reader.generation,
+		Signal: string(observability.SignalMetrics), State: state, Reason: string(reason),
+		Counters: delivery.Counters{
+			Accepted: counters.Scrapes, Delivered: counters.Succeeded, Rejected: counters.Failed,
+		},
+		LastSuccess: lastSuccess, LastFailure: lastFailure,
+	}
 }
 
 // Addr is the actual bound loopback address. It is intended for operator

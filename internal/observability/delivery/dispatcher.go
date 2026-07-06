@@ -68,6 +68,9 @@ type Dispatcher struct {
 
 	healthMu          sync.Mutex
 	health            HealthState
+	healthReason      HealthReason
+	lastSuccess       time.Time
+	lastFailure       time.Time
 	healthSequence    uint64
 	pendingTransition *HealthTransition
 	healthNotify      chan struct{}
@@ -84,7 +87,8 @@ type Dispatcher struct {
 // the destination. Enabled dispatchers begin in initializing; disabled ones
 // remain disabled and own no worker.
 func NewDispatcher(config Config, adapter Adapter) (*Dispatcher, error) {
-	if !observability.IsStableToken(config.Destination) || config.ObserverInterval < 0 {
+	if !observability.IsStableToken(config.Destination) || config.ObserverInterval < 0 ||
+		(config.Signal != "" && !observability.IsSignal(observability.Signal(config.Signal))) {
 		return nil, newError(ErrorInvalidConfig)
 	}
 	if config.Enabled && !validEnabledConfig(config, adapter) {
@@ -155,12 +159,14 @@ func (dispatcher *Dispatcher) Enqueue(payload Payload) EnqueueResult {
 	if dispatcher == nil || !payload.valid() {
 		if dispatcher != nil {
 			dispatcher.counters.rejected.Add(1)
+			dispatcher.recordFailure(time.Now())
 		}
 		return EnqueueResult{Disposition: EnqueueRejected, Reason: ReasonInvalidPayload}
 	}
 	identity := payload.identity
 	if identity.OriginDestination != "" && identity.OriginDestination == dispatcher.config.Destination {
 		dispatcher.counters.rejected.Add(1)
+		dispatcher.recordFailure(time.Now())
 		dispatcher.setOperationalHealth(HealthDegraded, HealthReasonOriginLoop)
 		return EnqueueResult{Disposition: EnqueueRejected, Reason: ReasonOriginLoop}
 	}
@@ -185,6 +191,7 @@ func (dispatcher *Dispatcher) Enqueue(payload Payload) EnqueueResult {
 		dispatcher.queueMu.Unlock()
 		dispatcher.lifecycleMu.Unlock()
 		dispatcher.counters.dropped.Add(1)
+		dispatcher.recordFailure(time.Now())
 		dispatcher.setOperationalHealth(HealthDegraded, HealthReasonQueueFull)
 		reason := ReasonCountLimit
 		if countFull && byteFull {
@@ -349,6 +356,54 @@ func (dispatcher *Dispatcher) QueueUsage() (items, projectedBytes, inFlightItems
 		dispatcher.inFlightItems, dispatcher.inFlightBytes
 }
 
+// DeliveryHealthSnapshot returns a detached, generation-bound view. It never
+// exposes queued payloads or the adapter. Sequential locks avoid coupling the
+// queue hot path to health observation while still returning values that were
+// all actually observed by this dispatcher.
+func (dispatcher *Dispatcher) DeliveryHealthSnapshot() HealthSnapshot {
+	if dispatcher == nil {
+		return HealthSnapshot{State: HealthStopped}
+	}
+	dispatcher.healthMu.Lock()
+	state := dispatcher.health
+	reason := dispatcher.healthReason
+	lastSuccess := dispatcher.lastSuccess
+	lastFailure := dispatcher.lastFailure
+	dispatcher.healthMu.Unlock()
+	items, bytes, inFlightItems, inFlightBytes := dispatcher.QueueUsage()
+	return HealthSnapshot{
+		Destination: dispatcher.config.Destination,
+		Generation:  dispatcher.config.Generation,
+		Signal:      dispatcher.config.Signal,
+		State:       state,
+		Reason:      string(reason),
+		Queue: &QueueSnapshot{
+			Items: items, Bytes: bytes,
+			InFlightItems: inFlightItems, InFlightBytes: inFlightBytes,
+			MaxItems: dispatcher.config.MaxQueueItems, MaxBytes: dispatcher.config.MaxQueueBytes,
+		},
+		Counters: dispatcher.Counters(), LastSuccess: lastSuccess, LastFailure: lastFailure,
+	}
+}
+
+func (dispatcher *Dispatcher) recordSuccess(at time.Time) {
+	if dispatcher == nil || at.IsZero() {
+		return
+	}
+	dispatcher.healthMu.Lock()
+	dispatcher.lastSuccess = at.UTC()
+	dispatcher.healthMu.Unlock()
+}
+
+func (dispatcher *Dispatcher) recordFailure(at time.Time) {
+	if dispatcher == nil || at.IsZero() {
+		return
+	}
+	dispatcher.healthMu.Lock()
+	dispatcher.lastFailure = at.UTC()
+	dispatcher.healthMu.Unlock()
+}
+
 func (dispatcher *Dispatcher) run() {
 	defer dispatcher.finishWorker()
 	for {
@@ -499,6 +554,7 @@ func (dispatcher *Dispatcher) deliver(payloads []Payload, encodedSize int) bool 
 				return true
 			}
 			dispatcher.counters.delivered.Add(uint64(len(payloads)))
+			dispatcher.recordSuccess(time.Now())
 			dispatcher.release(payloads)
 			dispatcher.setOperationalHealth(HealthHealthy, HealthReasonRecovered)
 			return true
@@ -509,6 +565,9 @@ func (dispatcher *Dispatcher) deliver(payloads []Payload, encodedSize int) bool 
 			}
 			dispatcher.counters.delivered.Add(uint64(result.DeliveredItems))
 			dispatcher.counters.rejected.Add(uint64(result.RejectedItems))
+			now := time.Now()
+			dispatcher.recordSuccess(now)
+			dispatcher.recordFailure(now)
 			dispatcher.release(payloads)
 			dispatcher.setOperationalHealth(HealthDegraded, HealthReasonPartial)
 			return true
@@ -518,6 +577,7 @@ func (dispatcher *Dispatcher) deliver(payloads []Payload, encodedSize int) bool 
 				return true
 			}
 			if attempt == dispatcher.config.Retry.MaxAttempts {
+				dispatcher.recordFailure(time.Now())
 				dispatcher.counters.rejected.Add(uint64(len(payloads)))
 				dispatcher.release(payloads)
 				dispatcher.setOperationalHealth(HealthFailing, HealthReasonDeliveryFailed)
@@ -536,11 +596,13 @@ func (dispatcher *Dispatcher) deliver(payloads []Payload, encodedSize int) bool 
 				return true
 			}
 			dispatcher.counters.rejected.Add(uint64(len(payloads)))
+			dispatcher.recordFailure(time.Now())
 			dispatcher.release(payloads)
 			dispatcher.setOperationalHealth(HealthFailing, HealthReasonDeliveryFailed)
 			return true
 		default:
 			dispatcher.counters.rejected.Add(uint64(len(payloads)))
+			dispatcher.recordFailure(time.Now())
 			dispatcher.release(payloads)
 			dispatcher.setOperationalHealth(HealthFailing, HealthReasonDeliveryFailed)
 			return true
@@ -557,6 +619,7 @@ func validPartialResult(result DeliveryResult, batchItems int) bool {
 
 func (dispatcher *Dispatcher) rejectMalformedResult(payloads []Payload) {
 	dispatcher.counters.rejected.Add(uint64(len(payloads)))
+	dispatcher.recordFailure(time.Now())
 	dispatcher.release(payloads)
 	dispatcher.setOperationalHealth(HealthFailing, HealthReasonDeliveryFailed)
 }

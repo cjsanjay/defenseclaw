@@ -72,6 +72,7 @@ func (factory *Factory) PrepareGenerationPipelines(
 	}
 	pipelines.MetricReaders = append(pipelines.MetricReaders, prometheusPipelines.MetricReaders...)
 	pipelines.MetricPipelines = append(pipelines.MetricPipelines, prometheusPipelines.MetricPipelines...)
+	pipelines.HealthSources = append(pipelines.HealthSources, prometheusPipelines.HealthSources...)
 	if err := ctx.Err(); err != nil {
 		return fail(err)
 	}

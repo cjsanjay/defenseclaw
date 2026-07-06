@@ -644,7 +644,7 @@ func TestGeneratedPrometheusCollectionGatePrecedesDestinationConstruction(t *tes
 
 	plan, _ = compilePrometheus(t, allMetricsSource("metrics"), true)
 	prepared, err = PreparePlanPipelines(t.Context(), plan, 1, deltaSpec(), Options{Listen: listen})
-	if err != nil || len(prepared.MetricPipelines) != 1 || len(prepared.MetricReaders) != 1 || calls.Load() != 1 {
+	if err != nil || len(prepared.MetricPipelines) != 1 || len(prepared.MetricReaders) != 1 || len(prepared.HealthSources) != 1 || calls.Load() != 1 {
 		t.Fatalf("declaration pipelines=%d readers=%d listener calls=%d err=%v",
 			len(prepared.MetricPipelines), len(prepared.MetricReaders), calls.Load(), err)
 	}

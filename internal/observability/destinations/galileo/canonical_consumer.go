@@ -428,6 +428,15 @@ func (consumer *CanonicalTraceConsumer) Counters() CanonicalTraceConsumerCounter
 	}
 }
 
+// DeliveryHealthSnapshot is a detached queue/counter view with no Galileo
+// content, endpoint, credentials, or request diagnostics.
+func (consumer *CanonicalTraceConsumer) DeliveryHealthSnapshot() delivery.HealthSnapshot {
+	if consumer == nil || consumer.dispatcher == nil {
+		return delivery.HealthSnapshot{State: delivery.HealthStopped}
+	}
+	return consumer.dispatcher.DeliveryHealthSnapshot()
+}
+
 func (consumer *CanonicalTraceConsumer) observe(code CanonicalFailureCode) {
 	if consumer == nil || consumer.observer == nil {
 		return

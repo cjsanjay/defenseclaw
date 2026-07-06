@@ -365,6 +365,15 @@ func (consumer *Consumer) Counters() Counters {
 	}
 }
 
+// DeliveryHealthSnapshot returns only the generation-owned trace queue's
+// bounded operational state; it cannot expose projected span contents.
+func (consumer *Consumer) DeliveryHealthSnapshot() delivery.HealthSnapshot {
+	if consumer == nil || consumer.dispatcher == nil {
+		return delivery.HealthSnapshot{State: delivery.HealthStopped}
+	}
+	return consumer.dispatcher.DeliveryHealthSnapshot()
+}
+
 func (consumer *Consumer) observe(code FailureCode) {
 	if consumer == nil || consumer.observer == nil {
 		return

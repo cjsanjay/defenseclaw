@@ -265,6 +265,7 @@ func PreparePlanPipelines(
 			return fail(newError(ErrorExporterInit, nil))
 		}
 		result.MetricReaders = append(result.MetricReaders, reader)
+		result.HealthSources = append(result.HealthSources, reader)
 		families := factory.selectedFamilies()
 		if len(families) == 0 {
 			continue
