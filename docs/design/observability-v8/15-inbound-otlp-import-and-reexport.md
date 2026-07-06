@@ -330,6 +330,19 @@ object. It is generated with the envelope and is not a caller-owned dynamic map.
 | `last_hop_instance_id` | optional bounded string / identifier | Immediate exporter from `defenseclaw.telemetry.forward.instance_id`; distinct from `upstream_instance_id` |
 | `last_hop_destination` | optional bounded string / identifier | Immediate exporter's configured destination from `defenseclaw.telemetry.forward.destination`; provenance only for another instance |
 
+The import object has one executable normalization boundary. Every bounded string
+in this table is valid UTF-8 and at most 512 bytes. The
+`upstream_redaction_profile` is instead an existing lower-case stable token and is
+therefore at most 128 ASCII bytes. `upstream_record_id` is valid only when it is
+either a canonical hyphenated RFC 4122 UUID (hexadecimal is compared
+case-insensitively and the received bytes are preserved) or an existing
+lower-case stable token. Empty optional strings are absent, not present values.
+`derivation` is required exactly when `mode` is `derive` or
+`import_and_derive`, and is forbidden for `import`. `source_aggregate_count` is
+required and greater than zero exactly for `arithmetic_mean`; it is forbidden for
+every other derivation and for a pure import. `ingress_hop_count` is in the closed
+range zero through four.
+
 The normal local provenance continues to identify the local importer binary,
 registry schema, build, config generation, and config digest. Inbound producer or
 provenance values never replace those trusted local fields.
