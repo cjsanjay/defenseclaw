@@ -871,6 +871,7 @@ func TestEventHistoryWriterPersistsMandatoryClassification(t *testing.T) {
 		ProducerKind: observability.ProducerGatewayEvent,
 		ProducerKey:  "activity",
 		ClassificationContext: observability.ClassificationContext{
+			Bucket:      observability.BucketComplianceActivity,
 			EventName:   "config.change.applied",
 			RawSeverity: "WARN",
 			MandatoryFacts: observability.MandatoryFacts{

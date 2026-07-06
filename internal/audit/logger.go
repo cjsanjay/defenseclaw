@@ -754,6 +754,16 @@ func (l *Logger) logActionWithEnvelopeContextAndAsset(
 		}
 		return nil
 	}
+	disposition, emitErr = l.emitAuditPlatformHealthV8(ctx, event)
+	if emitErr != nil {
+		return emitErr
+	}
+	if disposition != auditV8Unhandled {
+		if disposition == auditV8Persisted && otel != nil {
+			otel.RecordAuditEvent(context.Background(), event.Action, event.Severity, event.Connector)
+		}
+		return nil
+	}
 	runtimeV8 := l.runtimeV8Snapshot()
 	if mapping, mapped := telemetry.AssetLifecycleAction(action); runtimeV8 != nil && mapped && mapping.CanonicalEvent != "" {
 		input := AssetLifecycleInput{
@@ -917,6 +927,16 @@ func (l *Logger) logEventWithV8(ctx context.Context, event Event, emit auditV8Ev
 		if emitErr != nil {
 			return emitErr
 		}
+	}
+	if disposition != auditV8Unhandled {
+		if disposition == auditV8Persisted && otel != nil {
+			otel.RecordAuditEvent(context.Background(), event.Action, event.Severity, event.Connector)
+		}
+		return nil
+	}
+	disposition, emitErr := l.emitAuditPlatformHealthV8(ctx, event)
+	if emitErr != nil {
+		return emitErr
 	}
 	if disposition != auditV8Unhandled {
 		if disposition == auditV8Persisted && otel != nil {

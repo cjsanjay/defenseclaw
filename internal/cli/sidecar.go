@@ -110,6 +110,11 @@ func runSidecar(_ *cobra.Command, _ []string) error {
 	if err := bootstrapConfiguredObservabilityRuntime(ctx, cfg, activeObservabilityV8Startup, sc); err != nil {
 		return err
 	}
+	if cfg.ConfigVersion == 8 {
+		if err := sc.EmitPostBootstrapPlatformHealth(); err != nil {
+			return fmt.Errorf("sidecar: post-bootstrap platform health: %w", err)
+		}
+	}
 
 	// Always capture the common shutdown signals so we can cancel ctx
 	// cleanly. Previously this function also installed wide signal

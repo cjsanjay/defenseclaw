@@ -128,6 +128,14 @@ type Sidecar struct {
 	// close it after the queue drains; the audit.Store keeps
 	// audit_events / activity_events on its own file.
 	judgeBodyStore *audit.JudgeBodyStore
+
+	// Schema-v8 construction opens the forensic store before the canonical
+	// observability runtime can be bound. Retain the content-free readiness
+	// occurrence until the CLI completes that binding; v7 continues to emit it
+	// synchronously from NewSidecar.
+	judgeBodiesReadyMu      sync.Mutex
+	judgeBodiesReadyPending bool
+	judgeBodiesReadyDetails string
 }
 
 // NewSidecar creates a sidecar instance ready to connect.
@@ -374,8 +382,10 @@ func NewSidecar(cfg *config.Config, store *audit.Store, logger *audit.Logger, sh
 		logger.SetGatewayLogWriter(events)
 	}
 	var (
-		judgeStore     *JudgeStore
-		judgeBodyStore *audit.JudgeBodyStore
+		judgeStore              *JudgeStore
+		judgeBodyStore          *audit.JudgeBodyStore
+		judgeBodiesReadyPending bool
+		judgeBodiesReadyDetails string
 	)
 	cleanupFailedConstruction := func() {
 		alertCancel()
@@ -444,14 +454,10 @@ func NewSidecar(cfg *config.Config, store *audit.Store, logger *audit.Logger, sh
 			return nil, openErr
 		}
 		judgeBodyStore = bs
-		if logger != nil {
-			_ = logger.LogEvent(audit.Event{
-				Action:   string(audit.ActionGatewayJudgeBodiesReady),
-				Actor:    "defenseclaw-gateway",
-				Severity: "INFO",
-				Details:  "path=" + bodyDBPath,
-			})
-		}
+		judgeBodiesReadyDetails = "path=" + bodyDBPath
+		judgeBodiesReadyPending = emitOrDeferJudgeBodiesReady(
+			cfg.ConfigVersion, logger, judgeBodiesReadyDetails,
+		)
 	}
 	var bodyInserter JudgeBodyInserter
 	if retainJudge && judgeBodyStore != nil {
@@ -479,33 +485,80 @@ func NewSidecar(cfg *config.Config, store *audit.Store, logger *audit.Logger, sh
 	}
 
 	sidecar := &Sidecar{
-		cfg:                cfg,
-		client:             client,
-		store:              store,
-		logger:             logger,
-		health:             NewSidecarHealth(),
-		shell:              shell,
-		otel:               otel,
-		otelFanout:         otelFanout,
-		notify:             notify,
-		webhooks:           webhooks,
-		hilt:               hilt,
-		aiDiscovery:        aiDiscovery,
-		osNotifier:         osNotifier,
-		apiRestartCh:       make(chan struct{}, 1),
-		watcherRestartCh:   make(chan struct{}, 1),
-		guardrailRestartCh: make(chan struct{}, 1),
-		aiRestartCh:        make(chan struct{}, 1),
-		alertCtx:           alertCtx,
-		alertCancel:        alertCancel,
-		events:             events,
-		judge:              hookJudge,
-		judgeStore:         judgeStore,
-		judgeBodyStore:     judgeBodyStore,
+		cfg:                     cfg,
+		client:                  client,
+		store:                   store,
+		logger:                  logger,
+		health:                  NewSidecarHealth(),
+		shell:                   shell,
+		otel:                    otel,
+		otelFanout:              otelFanout,
+		notify:                  notify,
+		webhooks:                webhooks,
+		hilt:                    hilt,
+		aiDiscovery:             aiDiscovery,
+		osNotifier:              osNotifier,
+		apiRestartCh:            make(chan struct{}, 1),
+		watcherRestartCh:        make(chan struct{}, 1),
+		guardrailRestartCh:      make(chan struct{}, 1),
+		aiRestartCh:             make(chan struct{}, 1),
+		alertCtx:                alertCtx,
+		alertCancel:             alertCancel,
+		events:                  events,
+		judge:                   hookJudge,
+		judgeStore:              judgeStore,
+		judgeBodyStore:          judgeBodyStore,
+		judgeBodiesReadyPending: judgeBodiesReadyPending,
+		judgeBodiesReadyDetails: judgeBodiesReadyDetails,
 	}
 	sidecar.setEventRouter(router)
 	sidecar.publishConfig(cfg)
 	return sidecar, nil
+}
+
+func emitOrDeferJudgeBodiesReady(configVersion int, logger *audit.Logger, details string) bool {
+	if logger == nil {
+		return false
+	}
+	if configVersion == 8 {
+		return true
+	}
+	// Preserve the exact v7 construction-time best-effort behavior.
+	_ = logger.LogEvent(audit.Event{
+		Action:   string(audit.ActionGatewayJudgeBodiesReady),
+		Actor:    "defenseclaw-gateway",
+		Severity: "INFO",
+		Details:  details,
+	})
+	return false
+}
+
+// EmitPostBootstrapPlatformHealth publishes construction-time health facts
+// that schema v8 must not emit before its canonical runtime is authoritative.
+// It is idempotent and clears the pending occurrence only after persistence.
+func (s *Sidecar) EmitPostBootstrapPlatformHealth() error {
+	if s == nil {
+		return fmt.Errorf("sidecar: post-bootstrap platform health is unavailable")
+	}
+	s.judgeBodiesReadyMu.Lock()
+	defer s.judgeBodiesReadyMu.Unlock()
+	if !s.judgeBodiesReadyPending {
+		return nil
+	}
+	if s.logger == nil || s.observabilityV8Emitter() == nil {
+		return fmt.Errorf("sidecar: post-bootstrap platform health runtime is unavailable")
+	}
+	if err := s.logger.LogEvent(audit.Event{
+		Action:   string(audit.ActionGatewayJudgeBodiesReady),
+		Actor:    "defenseclaw-gateway",
+		Severity: "INFO",
+		Details:  s.judgeBodiesReadyDetails,
+	}); err != nil {
+		return err
+	}
+	s.judgeBodiesReadyPending = false
+	s.judgeBodiesReadyDetails = ""
+	return nil
 }
 
 func (s *Sidecar) currentConfig() *config.Config {
@@ -824,12 +877,6 @@ func (s *Sidecar) Run(ctx context.Context) (runErr error) {
 	if webhooks := s.webhooksSnapshot(); webhooks != nil {
 		webhooks.Close()
 	}
-	// Bootstrap-owned observability v8 state must retire before either SQLite
-	// store is drained or closed. Caller-bound v7/test runtimes remain caller
-	// owned and are deliberately ignored by this helper.
-	if err := s.closeOwnedObservabilityV8Runtime(); err != nil {
-		return err
-	}
 	// Drain the async judge completion queue BEFORE the audit DB handle is
 	// closed: canonical summaries and any enabled body rows still buffered after
 	// SIGTERM must be processed. Shutdown
@@ -894,6 +941,13 @@ func (s *Sidecar) Run(ctx context.Context) (runErr error) {
 				fmt.Fprintf(os.Stderr, "[sidecar] judge-bodies db close: %v\n", err)
 			}
 		}
+	}
+	// Keep the canonical runtime authoritative through judge-queue drain and
+	// forensic-store close so their terminal health failures can persist without
+	// a legacy fallback. Retire it immediately afterward, while audit.db is still
+	// open; the deferred close above remains the abnormal-return safety net.
+	if err := s.closeOwnedObservabilityV8Runtime(); err != nil {
+		return err
 	}
 	s.logger.Close()
 	_ = s.client.Close()

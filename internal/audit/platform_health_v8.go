@@ -72,6 +72,8 @@ const (
 	sinkHealthV8AuthorizationDenied
 	sinkHealthV8ExportFailed
 	sinkHealthV8QueueFull
+	sinkHealthV8Degraded
+	sinkHealthV8Ready
 	sinkHealthV8Restored
 )
 
@@ -87,6 +89,7 @@ type sinkHealthV8Occurrence struct {
 	durableHealthTransition      bool
 	protectedBoundaryAuthFailure bool
 	timestamp                    time.Time
+	event                        Event
 }
 
 func (occurrence sinkHealthV8Occurrence) mandatory() bool {
@@ -103,6 +106,10 @@ func (occurrence sinkHealthV8Occurrence) eventName() observability.EventName {
 		return observability.EventName(observability.TelemetryEventDestinationExportFailed)
 	case sinkHealthV8QueueFull:
 		return observability.EventName(observability.TelemetryEventDestinationQueueFull)
+	case sinkHealthV8Degraded:
+		return observability.EventName(observability.TelemetryEventSubsystemDegraded)
+	case sinkHealthV8Ready:
+		return observability.EventName(observability.TelemetryEventSubsystemReady)
 	case sinkHealthV8Restored:
 		return observability.EventName(observability.TelemetryEventSubsystemRestored)
 	default:
@@ -118,11 +125,20 @@ func (l *Logger) emitSinkHealthV8(
 	binding runtimeV8Binding,
 	occurrence sinkHealthV8Occurrence,
 ) error {
+	_, err := l.emitPlatformHealthV8Occurrence(ctx, binding, occurrence)
+	return err
+}
+
+func (l *Logger) emitPlatformHealthV8Occurrence(
+	ctx context.Context,
+	binding runtimeV8Binding,
+	occurrence sinkHealthV8Occurrence,
+) (auditV8Disposition, error) {
 	if !binding.authoritative {
-		return fmt.Errorf("audit: v8 sink health is not authoritative")
+		return auditV8Unhandled, fmt.Errorf("audit: v8 platform health is not authoritative")
 	}
 	if binding.emitter == nil {
-		return fmt.Errorf("audit: v8 sink health runtime is unavailable")
+		return auditV8Persisted, fmt.Errorf("audit: v8 platform health runtime is unavailable")
 	}
 	if ctx == nil {
 		ctx = context.Background()
@@ -133,8 +149,27 @@ func (l *Logger) emitSinkHealthV8(
 	eventName := occurrence.eventName()
 	if eventName == "" || !observability.IsStableToken(occurrence.phase) ||
 		!observability.IsStableToken(occurrence.subsystem) {
-		return fmt.Errorf("audit: v8 sink health occurrence is invalid")
+		return auditV8Persisted, fmt.Errorf("audit: v8 platform health occurrence is invalid")
 	}
+	event := occurrence.event
+	if event.Timestamp.IsZero() {
+		event.Timestamp = occurrence.timestamp.UTC()
+	}
+	event.Action = string(occurrence.action)
+	if event.Target == "" {
+		event.Target = occurrence.subsystem
+	}
+	if event.Actor == "" {
+		event.Actor = "defenseclaw"
+	}
+	event.Severity = occurrence.severity
+	if event.RunID == "" {
+		event.RunID = currentRunID()
+	}
+	if event.SidecarInstanceID == "" {
+		event.SidecarInstanceID = ProcessAgentInstanceID()
+	}
+	stampAuditEventEnvelope(&event)
 	classification := observability.ClassificationContext{
 		Bucket:      observability.BucketPlatformHealth,
 		EventName:   eventName,
@@ -149,19 +184,13 @@ func (l *Logger) emitSinkHealthV8(
 		observability.ProducerKey(occurrence.action),
 		classification,
 		observability.SourceSystem,
-		"",
+		event.Connector,
 		observability.ProducerKey(occurrence.action),
 	)
 	if err != nil {
-		return fmt.Errorf("audit: classify v8 sink health: %w", err)
+		return auditV8Persisted, fmt.Errorf("audit: classify v8 platform health: %w", err)
 	}
 
-	event := Event{
-		Timestamp: occurrence.timestamp.UTC(), Action: string(occurrence.action),
-		Target: occurrence.subsystem, Actor: "defenseclaw", Severity: occurrence.severity,
-		RunID: currentRunID(), SidecarInstanceID: ProcessAgentInstanceID(),
-	}
-	stampAuditEventEnvelope(&event)
 	result, err := binding.emitter.EmitRuntimeV8(ctx, metadata, func(
 		snapshot RuntimeV8BuildContext,
 		admission router.Admission,
@@ -188,10 +217,76 @@ func (l *Logger) emitSinkHealthV8(
 		return verifyRuntimeV8Record(record, buildErr, event, occurrence.mandatory())
 	})
 	if err != nil {
-		return fmt.Errorf("audit: emit v8 sink health: %w", err)
+		return auditV8Persisted, fmt.Errorf("audit: emit v8 platform health: %w", err)
 	}
-	_, err = runtimeV8Disposition(result, occurrence.mandatory())
-	return err
+	disposition, err := runtimeV8Disposition(result, occurrence.mandatory())
+	if err != nil {
+		return auditV8Persisted, err
+	}
+	return disposition, nil
+}
+
+func (l *Logger) emitAuditPlatformHealthV8(
+	ctx context.Context,
+	event Event,
+) (auditV8Disposition, error) {
+	occurrence, handled := auditPlatformHealthV8Occurrence(event)
+	if !handled {
+		return auditV8Unhandled, nil
+	}
+	binding := l.runtimeV8BindingSnapshot()
+	if !binding.authoritative {
+		return auditV8Unhandled, nil
+	}
+	return l.emitPlatformHealthV8Occurrence(ctx, binding, occurrence)
+}
+
+func auditPlatformHealthV8Occurrence(event Event) (sinkHealthV8Occurrence, bool) {
+	occurrence := sinkHealthV8Occurrence{
+		action: Action(event.Action), event: event, timestamp: event.Timestamp,
+	}
+	switch Action(event.Action) {
+	case ActionSidecarConnected:
+		occurrence.durableHealthTransition = true
+		occurrence.family, occurrence.phase = sinkHealthV8Ready, "connection"
+		occurrence.outcome, occurrence.severity = observability.OutcomeCompleted, "INFO"
+		occurrence.subsystem, occurrence.healthState = "gateway", "ready"
+	case ActionSidecarDisconnected:
+		occurrence.durableHealthTransition = true
+		occurrence.family, occurrence.phase = sinkHealthV8Degraded, "connection"
+		occurrence.outcome, occurrence.severity = observability.OutcomeFailed, "HIGH"
+		occurrence.subsystem, occurrence.healthState = "gateway", "degraded"
+		occurrence.errorCode = observability.Present("connection_lost")
+	case ActionGuardrailHealthy:
+		occurrence.durableHealthTransition = true
+		occurrence.family, occurrence.phase = sinkHealthV8Ready, "readiness"
+		occurrence.outcome, occurrence.severity = observability.OutcomeCompleted, "INFO"
+		occurrence.subsystem, occurrence.healthState = "guardrail", "ready"
+	case ActionGuardrailDegraded:
+		occurrence.durableHealthTransition = true
+		occurrence.family, occurrence.phase = sinkHealthV8Degraded, "health"
+		occurrence.outcome, occurrence.severity = observability.OutcomeFailed, "HIGH"
+		occurrence.subsystem, occurrence.healthState = "guardrail", "degraded"
+		occurrence.errorCode = observability.Present("guardrail_degraded")
+	case ActionGatewayJudgeBodiesReady:
+		occurrence.durableHealthTransition = true
+		occurrence.family, occurrence.phase = sinkHealthV8Ready, "storage"
+		occurrence.outcome, occurrence.severity = observability.OutcomeCompleted, "INFO"
+		occurrence.subsystem, occurrence.healthState = "judge_bodies", "ready"
+	case ActionGatewayJudgeStoreDrainTimeout:
+		occurrence.family, occurrence.phase = sinkHealthV8Degraded, "drain"
+		occurrence.outcome, occurrence.severity = observability.OutcomeFailed, "HIGH"
+		occurrence.subsystem, occurrence.healthState = "judge_store", "degraded"
+		occurrence.errorCode = observability.Present("drain_timeout")
+	case ActionGatewayJudgeBodiesCloseError:
+		occurrence.family, occurrence.phase = sinkHealthV8Degraded, "shutdown"
+		occurrence.outcome, occurrence.severity = observability.OutcomeFailed, "HIGH"
+		occurrence.subsystem, occurrence.healthState = "judge_bodies", "degraded"
+		occurrence.errorCode = observability.Present("close_failed")
+	default:
+		return sinkHealthV8Occurrence{}, false
+	}
+	return occurrence, true
 }
 
 func buildSinkHealthV8Family(
@@ -233,6 +328,22 @@ func buildSinkHealthV8Family(
 		})
 	case sinkHealthV8QueueFull:
 		return builder.BuildLogDestinationQueueFull(observability.LogDestinationQueueFullInput{
+			Envelope: envelope, Severity: severity, LogLevel: logLevel,
+			Outcome: occurrence.outcome, DefenseClawHealthSubsystem: subsystem,
+			DefenseClawHealthState:           occurrence.healthState,
+			DefenseClawSchemaErrorCode:       occurrence.errorCode,
+			MandatoryDurableHealthTransition: occurrence.durableHealthTransition,
+		})
+	case sinkHealthV8Degraded:
+		return builder.BuildLogSubsystemDegraded(observability.LogSubsystemDegradedInput{
+			Envelope: envelope, Severity: severity, LogLevel: logLevel,
+			Outcome: occurrence.outcome, DefenseClawHealthSubsystem: subsystem,
+			DefenseClawHealthState:           occurrence.healthState,
+			DefenseClawSchemaErrorCode:       occurrence.errorCode,
+			MandatoryDurableHealthTransition: occurrence.durableHealthTransition,
+		})
+	case sinkHealthV8Ready:
+		return builder.BuildLogSubsystemReady(observability.LogSubsystemReadyInput{
 			Envelope: envelope, Severity: severity, LogLevel: logLevel,
 			Outcome: occurrence.outcome, DefenseClawHealthSubsystem: subsystem,
 			DefenseClawHealthState:           occurrence.healthState,
