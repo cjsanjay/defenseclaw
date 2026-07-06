@@ -6,7 +6,7 @@ goal_status: active
 current_phase: P3-P7
 target_config_version: 8
 baseline_commit: fd13acedfcffc0cc431d5a72f329b56b50b22baa
-last_verified_commit: 3aa357c71
+last_verified_commit: 9680c9283
 last_updated: 2026-07-06
 ```
 
@@ -436,6 +436,7 @@ only “passed.” A relevant change invalidates old evidence.
 | `V-0125` | 2026-07-06 | `47b7eb4f3` | P3-WP02 inbound generation isolation | Full observability-runtime tests; focused inbound/metric race; scoped vet; diff check | One request-scoped import batch holds the runtime-graph lease across per-target collection, generated construction, SQLite-first log processing, destination enqueue, and synchronous generated metric delivery. Reload may publish a replacement while the request continues, but cannot retire the old generation or capture its remaining work. Disabled targets remain lazy and imported logs cannot acquire mandatory/floor state. Imported trace handoff will extend this same scope after generated provenance and reverse descriptors land. | root |
 | `V-0126` | 2026-07-06 | `157423063` | P5-WP04 OpenClaw/EventRouter fact-fidelity contract | Spec validator (`D=23 S=12 P=76 total=111`); 9 focused spec tests; focused EventRouter/agent gateway tests; primary-source audit of pinned DefenseClaw, OpenClaw, and Bifrost revisions; diff check | P-076 and ER-RUN-01..12 distinguish OpenClaw's caller idempotency/run ID, per-run payload sequence, producer millisecond times, and literal start/end/error observations from the connection-local outer sequence and PR #403 session/root/subagent semantics. The current producer remains one legacy owner until the exact outcome-free `log.agent.run.observed` family is generated; no trace/generation lease or fabricated topology may bridge deliveries. | root + lifecycle-contract subagent |
 | `V-0127` | 2026-07-06 | `3aa357c71` | P3-WP02 typed inbound attribute boundary | Full gateway tests; focused typed-attribute race; gateway vet; diff check | Generated discriminators can consume request-owned protobuf attributes through an exact-key/oneof-arm index with no JSON-map reconstruction, trimming, case folding, or scalar coercion. Repeated keys are ambiguous even when byte-equivalent, malformed presence remains distinguishable, and arrays/key-value lists/bytes cannot be flattened into strings. Target-specific mapping and unknown-field accounting remain pending the generated catalog. | root |
+| `V-0128` | 2026-07-06 | `9680c9283` | P3-WP02 typed OTLP leaf traversal | Full gateway tests; focused typed-leaf/attribute race; gateway vet; diff check | One closed request-owned union now walks logs, spans, and every metric data point directly from the official protobuf model in protocol order, retaining exact resource/scope schema and typed attributes. Nil model elements fail structural processing, empty metric descriptors create no leaf, and v8 batch accounting uses the same walker the importer will consume, eliminating descriptor-versus-point drift. Generated matching/mapping and dispositions remain open. | root |
 
 Final integration requires, at minimum:
 
