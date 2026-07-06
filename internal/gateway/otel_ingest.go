@@ -523,58 +523,7 @@ func decodeOTLPIngestBody(
 // receiver accounting with the independently disposable unit used by inbound
 // binding, collection, and partial-batch dispositions.
 func decodedOTLPIngestStats(message proto.Message, signal otelIngestSignal) (otelIngestStats, error) {
-	stats := otelIngestStats{}
-	switch signal {
-	case otelSignalLogs:
-		request, ok := message.(*collectorlogspb.ExportLogsServiceRequest)
-		if !ok || request == nil {
-			return stats, errors.New("OTLP logs request type mismatch")
-		}
-		stats.Resources = int64(len(request.GetResourceLogs()))
-		for _, resource := range request.GetResourceLogs() {
-			for _, scope := range resource.GetScopeLogs() {
-				stats.Records += int64(len(scope.GetLogRecords()))
-			}
-		}
-	case otelSignalTraces:
-		request, ok := message.(*collectortracepb.ExportTraceServiceRequest)
-		if !ok || request == nil {
-			return stats, errors.New("OTLP traces request type mismatch")
-		}
-		stats.Resources = int64(len(request.GetResourceSpans()))
-		for _, resource := range request.GetResourceSpans() {
-			for _, scope := range resource.GetScopeSpans() {
-				stats.Records += int64(len(scope.GetSpans()))
-			}
-		}
-	case otelSignalMetrics:
-		request, ok := message.(*collectormetricspb.ExportMetricsServiceRequest)
-		if !ok || request == nil {
-			return stats, errors.New("OTLP metrics request type mismatch")
-		}
-		stats.Resources = int64(len(request.GetResourceMetrics()))
-		for _, resource := range request.GetResourceMetrics() {
-			for _, scope := range resource.GetScopeMetrics() {
-				for _, metric := range scope.GetMetrics() {
-					switch {
-					case metric.GetGauge() != nil:
-						stats.Records += int64(len(metric.GetGauge().GetDataPoints()))
-					case metric.GetSum() != nil:
-						stats.Records += int64(len(metric.GetSum().GetDataPoints()))
-					case metric.GetHistogram() != nil:
-						stats.Records += int64(len(metric.GetHistogram().GetDataPoints()))
-					case metric.GetExponentialHistogram() != nil:
-						stats.Records += int64(len(metric.GetExponentialHistogram().GetDataPoints()))
-					case metric.GetSummary() != nil:
-						stats.Records += int64(len(metric.GetSummary().GetDataPoints()))
-					}
-				}
-			}
-		}
-	default:
-		return stats, errors.New("unknown OTLP signal")
-	}
-	return stats, nil
+	return walkDecodedOTLPLeaves(message, signal, nil)
 }
 
 // validateUniqueOTLPJSONMembers rejects duplicate object members before the
