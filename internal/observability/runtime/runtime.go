@@ -265,6 +265,23 @@ func (runtime *Runtime) emit(
 		return pipeline.LocalLogOutcome{}, err
 	}
 	defer lease.Release()
+	return runtime.emitWithLease(ctx, lease, metadata, builder, localOnly)
+}
+
+// emitWithLease is the single log-processing implementation for ordinary
+// one-record producers and request-scoped inbound batches. The caller owns the
+// live lease. Keeping construction, SQLite persistence, projection, and
+// destination enqueue on that lease prevents reload from mixing generations.
+func (runtime *Runtime) emitWithLease(
+	ctx context.Context,
+	lease *runtimegraph.Lease,
+	metadata router.Metadata,
+	builder EmitBuilder,
+	localOnly bool,
+) (pipeline.LocalLogOutcome, error) {
+	if runtime == nil || ctx == nil || lease == nil || builder == nil {
+		return pipeline.LocalLogOutcome{}, &Error{code: ErrorInvalidDependency}
+	}
 	graph := lease.Graph()
 	component, ok := lease.Component(LocalLogComponentName)
 	if graph == nil || !ok {

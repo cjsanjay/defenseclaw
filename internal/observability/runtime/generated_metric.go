@@ -14,6 +14,7 @@ import (
 	"context"
 
 	"github.com/defenseclaw/defenseclaw/internal/observability"
+	"github.com/defenseclaw/defenseclaw/internal/observability/runtimegraph"
 	"github.com/defenseclaw/defenseclaw/internal/telemetry"
 )
 
@@ -63,6 +64,18 @@ func (runtime *Runtime) RecordGeneratedMetric(
 		return telemetry.V8MetricRecordResult{}, err
 	}
 	defer lease.Release()
+	return runtime.recordGeneratedMetricWithLease(ctx, lease, family, builder)
+}
+
+func (runtime *Runtime) recordGeneratedMetricWithLease(
+	ctx context.Context,
+	lease *runtimegraph.Lease,
+	family observability.EventName,
+	builder GeneratedMetricBuilder,
+) (telemetry.V8MetricRecordResult, error) {
+	if runtime == nil || ctx == nil || lease == nil || family == "" || builder == nil {
+		return telemetry.V8MetricRecordResult{}, &GeneratedMetricError{code: GeneratedMetricInvalidInput}
+	}
 	graph := lease.Graph()
 	provider, ok := telemetry.V8ProviderFromLease(lease)
 	if graph == nil || !ok {
