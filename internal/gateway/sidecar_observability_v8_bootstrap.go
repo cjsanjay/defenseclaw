@@ -429,6 +429,36 @@ func (owner *sidecarOwnedObservabilityV8Runtime) StartModelTrace(
 	return owner.runtime.StartModelTrace(ctx, input)
 }
 
+func (owner *sidecarOwnedObservabilityV8Runtime) StartToolTrace(
+	ctx context.Context,
+	input observability.SpanToolExecuteInput,
+) (context.Context, *observabilityruntime.ToolTrace, error) {
+	if owner == nil || owner.runtime == nil {
+		return ctx, nil, newSidecarObservabilityV8BootstrapError(sidecarObservabilityV8BootstrapClose, nil)
+	}
+	owner.lifecycleMu.RLock()
+	defer owner.lifecycleMu.RUnlock()
+	if owner.closed {
+		return ctx, nil, newSidecarObservabilityV8BootstrapError(sidecarObservabilityV8BootstrapClose, nil)
+	}
+	return owner.runtime.StartToolTrace(ctx, input)
+}
+
+func (owner *sidecarOwnedObservabilityV8Runtime) StartApprovalTrace(
+	ctx context.Context,
+	input observability.SpanApprovalResolveInput,
+) (context.Context, *observabilityruntime.ApprovalTrace, error) {
+	if owner == nil || owner.runtime == nil {
+		return ctx, nil, newSidecarObservabilityV8BootstrapError(sidecarObservabilityV8BootstrapClose, nil)
+	}
+	owner.lifecycleMu.RLock()
+	defer owner.lifecycleMu.RUnlock()
+	if owner.closed {
+		return ctx, nil, newSidecarObservabilityV8BootstrapError(sidecarObservabilityV8BootstrapClose, nil)
+	}
+	return owner.runtime.StartApprovalTrace(ctx, input)
+}
+
 func (owner *sidecarOwnedObservabilityV8Runtime) reload(
 	ctx context.Context,
 	plan *config.ObservabilityV8Plan,
@@ -490,18 +520,26 @@ func (s *Sidecar) closeOwnedObservabilityV8Runtime() error {
 	if s.logger != nil {
 		s.logger.SetRuntimeV8Emitter(nil)
 	}
+	// Generated trace producers must lose their acquisition seam before Close
+	// begins waiting for leases already held by request-bounded handles. This
+	// prevents a producer from extending shutdown by starting new work while an
+	// older handle is completing.
+	s.observabilityV8Mu.Lock()
+	if s.observabilityV8 == owner {
+		s.observabilityV8Lifecycle = nil
+		s.observabilityV8ConsumersDetached = true
+		s.bindObservabilityV8ConsumersLocked()
+	}
+	s.observabilityV8Mu.Unlock()
 	if err := owner.closeWithTimeout(); err != nil {
 		return err
 	}
 	s.observabilityV8Mu.Lock()
 	if s.observabilityV8 == owner {
 		s.observabilityV8 = nil
-		s.observabilityV8Trace = nil
+		s.observabilityV8Lifecycle = nil
 	}
 	s.observabilityV8Mu.Unlock()
-	if proxy := s.proxySnapshot(); proxy != nil {
-		proxy.bindObservabilityV8Trace(nil)
-	}
 	return nil
 }
 
@@ -676,7 +714,7 @@ func newSidecarObservabilityV8BootstrapError(
 var (
 	_ sidecarRuntimeEmitter                = (*sidecarOwnedObservabilityV8Runtime)(nil)
 	_ sidecarRuntimeCanaryEmitter          = (*sidecarOwnedObservabilityV8Runtime)(nil)
-	_ proxyV8TraceRuntime                  = (*sidecarOwnedObservabilityV8Runtime)(nil)
+	_ lifecycleV8Runtime                   = (*sidecarOwnedObservabilityV8Runtime)(nil)
 	_ audit.RuntimeV8Emitter               = (*sidecarOwnedObservabilityV8Runtime)(nil)
 	_ config.ObservabilityV8SecretResolver = sidecarObservabilityV8SecretResolver{}
 )

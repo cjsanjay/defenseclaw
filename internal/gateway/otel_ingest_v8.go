@@ -199,11 +199,13 @@ func (a *APIServer) bindOTLPObservabilityRuntime(emitter sidecarRuntimeEmitter) 
 	if a == nil {
 		return
 	}
+	a.observabilityV8Mu.Lock()
 	a.observabilityV8 = emitter
+	a.observabilityV8Mu.Unlock()
 }
 
 func (a *APIServer) hasOTLPObservabilityRuntime() bool {
-	return a != nil && a.observabilityV8 != nil
+	return a != nil && a.observabilityV8RuntimeEmitter() != nil
 }
 
 func otlpIngestProducerKey(signal otelIngestSignal) observability.ProducerKey {
@@ -246,7 +248,11 @@ func (a *APIServer) emitOTLPIngestV8(
 	ctx context.Context,
 	event otlpIngestV8Event,
 ) (pipeline.LocalLogOutcome, error) {
-	if a == nil || a.observabilityV8 == nil || ctx == nil {
+	if a == nil || ctx == nil {
+		return pipeline.LocalLogOutcome{}, &otlpIngestV8Error{code: otlpIngestV8InvalidGraph}
+	}
+	emitter := a.observabilityV8RuntimeEmitter()
+	if emitter == nil {
 		return pipeline.LocalLogOutcome{}, &otlpIngestV8Error{code: otlpIngestV8InvalidGraph}
 	}
 	classification := observability.ClassificationContext{
@@ -266,7 +272,7 @@ func (a *APIServer) emitOTLPIngestV8(
 		return pipeline.LocalLogOutcome{}, &otlpIngestV8Error{code: otlpIngestV8InvalidMetadata}
 	}
 
-	outcome, emitErr := a.observabilityV8.Emit(ctx, metadata, func(
+	outcome, emitErr := emitter.Emit(ctx, metadata, func(
 		snapshot observabilityruntime.EmitContext,
 		admission router.Admission,
 	) (observability.Record, error) {
@@ -493,7 +499,7 @@ func (a *APIServer) recordOTLPGeneratedMetricV8(
 	connector string,
 	build otlpGeneratedMetricBuild,
 ) error {
-	runtime, ok := a.observabilityV8.(otlpGeneratedMetricRuntime)
+	runtime, ok := a.observabilityV8RuntimeEmitter().(otlpGeneratedMetricRuntime)
 	if !ok || runtime == nil || ctx == nil || build == nil {
 		return &otlpIngestV8Error{code: otlpIngestV8InvalidGraph}
 	}

@@ -93,19 +93,19 @@ func (s *Sidecar) bindObservabilityRuntime(emitter sidecarRuntimeEmitter) error 
 		return &sidecarObservabilityError{code: sidecarObservabilityInvalidBinding}
 	}
 	s.observabilityV8Mu.Lock()
-	defer s.observabilityV8Mu.Unlock()
 	if s.observabilityV8Run {
+		s.observabilityV8Mu.Unlock()
 		return &sidecarObservabilityError{code: sidecarObservabilityRunStarted}
 	}
 	if s.observabilityV8 != nil {
+		s.observabilityV8Mu.Unlock()
 		return &sidecarObservabilityError{code: sidecarObservabilityAlreadyBound}
 	}
 	s.observabilityV8 = emitter
-	s.observabilityV8Trace, _ = emitter.(proxyV8TraceRuntime)
-	traceRuntime := s.observabilityV8Trace
-	if proxy := s.proxySnapshot(); proxy != nil {
-		proxy.bindObservabilityV8Trace(traceRuntime)
-	}
+	s.observabilityV8Lifecycle, _ = emitter.(lifecycleV8Runtime)
+	s.observabilityV8ConsumersDetached = false
+	s.bindObservabilityV8ConsumersLocked()
+	s.observabilityV8Mu.Unlock()
 	return nil
 }
 
@@ -137,21 +137,41 @@ func (s *Sidecar) observabilityV8Emitter() sidecarRuntimeEmitter {
 	return s.observabilityV8
 }
 
-func (s *Sidecar) observabilityV8CanaryEmitter() sidecarRuntimeCanaryEmitter {
-	emitter := s.observabilityV8Emitter()
-	if emitter == nil {
+func (s *Sidecar) observabilityV8LifecycleRuntime() lifecycleV8Runtime {
+	if s == nil {
 		return nil
 	}
-	canary, _ := emitter.(sidecarRuntimeCanaryEmitter)
+	s.observabilityV8Mu.Lock()
+	defer s.observabilityV8Mu.Unlock()
+	if s.observabilityV8ConsumersDetached {
+		return nil
+	}
+	return s.observabilityV8Lifecycle
+}
+
+func (s *Sidecar) observabilityV8CanaryEmitter() sidecarRuntimeCanaryEmitter {
+	if s == nil {
+		return nil
+	}
+	s.observabilityV8Mu.Lock()
+	defer s.observabilityV8Mu.Unlock()
+	if s.observabilityV8ConsumersDetached {
+		return nil
+	}
+	canary, _ := s.observabilityV8.(sidecarRuntimeCanaryEmitter)
 	return canary
 }
 
 func (s *Sidecar) observabilityV8LocalOnlyEmitter() sidecarRuntimeLocalOnlyEmitter {
-	emitter := s.observabilityV8Emitter()
-	if emitter == nil {
+	if s == nil {
 		return nil
 	}
-	localOnly, _ := emitter.(sidecarRuntimeLocalOnlyEmitter)
+	s.observabilityV8Mu.Lock()
+	defer s.observabilityV8Mu.Unlock()
+	if s.observabilityV8ConsumersDetached {
+		return nil
+	}
+	localOnly, _ := s.observabilityV8.(sidecarRuntimeLocalOnlyEmitter)
 	return localOnly
 }
 
@@ -159,26 +179,153 @@ func (a *APIServer) bindTelemetryCanaryRuntime(emitter sidecarRuntimeCanaryEmitt
 	if a == nil {
 		return
 	}
+	a.observabilityV8Mu.Lock()
 	a.observabilityV8Canary = emitter
+	a.observabilityV8Mu.Unlock()
 }
 
 func (a *APIServer) bindLocalOnlyObservabilityRuntime(emitter sidecarRuntimeLocalOnlyEmitter) {
 	if a == nil {
 		return
 	}
+	a.observabilityV8Mu.Lock()
 	a.observabilityV8LocalOnly = emitter
+	a.observabilityV8Mu.Unlock()
+}
+
+func (a *APIServer) bindObservabilityV8Lifecycle(runtime lifecycleV8Runtime) {
+	if a == nil {
+		return
+	}
+	a.observabilityV8Mu.Lock()
+	a.observabilityV8Lifecycle = runtime
+	a.observabilityV8Mu.Unlock()
+}
+
+func (a *APIServer) bindObservabilityV8Runtimes(
+	emitter sidecarRuntimeEmitter,
+	canary sidecarRuntimeCanaryEmitter,
+	localOnly sidecarRuntimeLocalOnlyEmitter,
+	lifecycle lifecycleV8Runtime,
+) {
+	if a == nil {
+		return
+	}
+	a.observabilityV8Mu.Lock()
+	a.observabilityV8 = emitter
+	a.observabilityV8Canary = canary
+	a.observabilityV8LocalOnly = localOnly
+	a.observabilityV8Lifecycle = lifecycle
+	a.observabilityV8Mu.Unlock()
+}
+
+func (a *APIServer) observabilityV8RuntimeEmitter() sidecarRuntimeEmitter {
+	if a == nil {
+		return nil
+	}
+	a.observabilityV8Mu.RLock()
+	defer a.observabilityV8Mu.RUnlock()
+	return a.observabilityV8
+}
+
+func (a *APIServer) observabilityV8CanaryRuntime() sidecarRuntimeCanaryEmitter {
+	if a == nil {
+		return nil
+	}
+	a.observabilityV8Mu.RLock()
+	defer a.observabilityV8Mu.RUnlock()
+	return a.observabilityV8Canary
+}
+
+func (a *APIServer) observabilityV8LocalOnlyRuntime() sidecarRuntimeLocalOnlyEmitter {
+	if a == nil {
+		return nil
+	}
+	a.observabilityV8Mu.RLock()
+	defer a.observabilityV8Mu.RUnlock()
+	return a.observabilityV8LocalOnly
+}
+
+func (a *APIServer) observabilityV8LifecycleRuntime() lifecycleV8Runtime {
+	if a == nil {
+		return nil
+	}
+	a.observabilityV8Mu.RLock()
+	defer a.observabilityV8Mu.RUnlock()
+	return a.observabilityV8Lifecycle
+}
+
+func (r *EventRouter) bindObservabilityV8Lifecycle(runtime lifecycleV8Runtime) {
+	if r == nil {
+		return
+	}
+	r.observabilityV8LifecycleMu.Lock()
+	r.observabilityV8Lifecycle = runtime
+	r.observabilityV8LifecycleMu.Unlock()
+}
+
+func (r *EventRouter) observabilityV8LifecycleRuntime() lifecycleV8Runtime {
+	if r == nil {
+		return nil
+	}
+	r.observabilityV8LifecycleMu.RLock()
+	defer r.observabilityV8LifecycleMu.RUnlock()
+	return r.observabilityV8Lifecycle
 }
 
 func (s *Sidecar) bindAPIServerObservabilityV8(api *APIServer) {
 	if s == nil || api == nil {
 		return
 	}
-	emitter := s.observabilityV8Emitter()
+	s.observabilityV8Mu.Lock()
+	defer s.observabilityV8Mu.Unlock()
+	s.bindAPIServerObservabilityV8Locked(api)
+}
+
+// bindAPIServerObservabilityV8Locked publishes the complete API capability set
+// in one critical section. The caller MUST hold observabilityV8Mu.
+func (s *Sidecar) bindAPIServerObservabilityV8Locked(api *APIServer) {
+	if s == nil || api == nil {
+		return
+	}
+	emitter := s.observabilityV8
+	lifecycle := s.observabilityV8Lifecycle
+	if s.observabilityV8ConsumersDetached {
+		emitter = nil
+		lifecycle = nil
+	}
 	canary, _ := emitter.(sidecarRuntimeCanaryEmitter)
 	localOnly, _ := emitter.(sidecarRuntimeLocalOnlyEmitter)
-	api.bindTelemetryCanaryRuntime(canary)
-	api.bindLocalOnlyObservabilityRuntime(localOnly)
-	api.bindOTLPObservabilityRuntime(emitter)
+	api.bindObservabilityV8Runtimes(emitter, canary, localOnly, lifecycle)
+}
+
+// bindObservabilityV8ConsumersLocked synchronizes runtime publication with
+// consumer construction and shutdown. Lock order is observabilityV8Mu, then
+// apiMu/proxyMu, then the consumer's own runtime lock. The caller MUST hold
+// observabilityV8Mu; helpers invoked here must not reacquire it.
+func (s *Sidecar) bindObservabilityV8ConsumersLocked() {
+	emitter := s.observabilityV8
+	lifecycle := s.observabilityV8Lifecycle
+	if s.observabilityV8ConsumersDetached {
+		emitter = nil
+		lifecycle = nil
+	}
+	canary, _ := emitter.(sidecarRuntimeCanaryEmitter)
+	localOnly, _ := emitter.(sidecarRuntimeLocalOnlyEmitter)
+
+	s.apiMu.RLock()
+	if api := s.apiServer; api != nil {
+		api.bindObservabilityV8Runtimes(emitter, canary, localOnly, lifecycle)
+	}
+	s.apiMu.RUnlock()
+	if s.router != nil {
+		s.router.bindObservabilityV8Lifecycle(lifecycle)
+	}
+	s.proxyMu.RLock()
+	if proxy := s.guardrailProxy; proxy != nil {
+		proxy.bindObservabilityV8Trace(lifecycle)
+	}
+	s.proxyMu.RUnlock()
 }
 
 func (s *Sidecar) recordSidecarLifecycle(ctx context.Context, action audit.Action) error {

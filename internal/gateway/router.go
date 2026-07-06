@@ -57,19 +57,24 @@ type activeAgent struct {
 // EventRouter dispatches gateway events to the appropriate handlers and logs
 // everything to the audit store.
 type EventRouter struct {
-	client       *Client
-	store        *audit.Store
-	logger       *audit.Logger
-	policy       *enforce.PolicyEngine
-	otelMu       sync.RWMutex
-	otel         *telemetry.Provider
-	configMu     sync.RWMutex
-	notify       *NotificationQueue
-	judge        *LLMJudge
-	rp           *guardrail.RulePack
-	guardrailCfg *config.GuardrailConfig
-	hilt         *HILTApprovalManager
-	judgeSem     chan struct{} // bounds concurrent active tool-judge executions
+	client *Client
+	store  *audit.Store
+	logger *audit.Logger
+	policy *enforce.PolicyEngine
+	otelMu sync.RWMutex
+	otel   *telemetry.Provider
+	// observabilityV8Lifecycle is bound independently from the mutable legacy
+	// provider. EventRouter producers remain on the legacy path until their
+	// bounded P5-WP04 cutover; no generated handle is stored in the router.
+	observabilityV8LifecycleMu sync.RWMutex
+	observabilityV8Lifecycle   lifecycleV8Runtime
+	configMu                   sync.RWMutex
+	notify                     *NotificationQueue
+	judge                      *LLMJudge
+	rp                         *guardrail.RulePack
+	guardrailCfg               *config.GuardrailConfig
+	hilt                       *HILTApprovalManager
+	judgeSem                   chan struct{} // bounds concurrent active tool-judge executions
 
 	autoApprove      bool
 	activeToolSpans  map[string][]*activeSpan

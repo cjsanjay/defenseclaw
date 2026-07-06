@@ -71,6 +71,9 @@ type APIServer struct {
 	notifier    *notifier.Dispatcher
 	aiDiscovery *inventory.ContinuousDiscoveryService
 
+	// observabilityV8Mu protects the complete process-owned runtime capability
+	// set. Sidecar publishes or detaches all four seams atomically.
+	observabilityV8Mu sync.RWMutex
 	// observabilityV8 is process-owned by Sidecar. When present, inbound OTLP
 	// admission is emitted through the canonical collection/redaction/routing
 	// graph instead of the legacy audit/sink path.
@@ -84,6 +87,11 @@ type APIServer struct {
 	// optional destination projection. It is deliberately distinct from the
 	// ordinary OTLP-ingest emitter while that producer cutover remains gated.
 	observabilityV8LocalOnly sidecarRuntimeLocalOnlyEmitter
+	// observabilityV8Lifecycle is the process-owned request-bounded generated
+	// trace seam. Hook producers are not switched to it until P5-WP04 producer
+	// migration, but binding it here prevents construction order from selecting
+	// a different runtime generation later.
+	observabilityV8Lifecycle lifecycleV8Runtime
 
 	// cfgMu protects mutable fields in scannerCfg.Guardrail (Mode,
 	// ScannerMode) which can be changed at runtime via the PATCH
@@ -924,7 +932,8 @@ func (a *APIServer) handleTelemetryCanary(w http.ResponseWriter, r *http.Request
 		a.writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
-	if a.observabilityV8Canary == nil && (a.otel == nil || !a.otel.TracesEnabled()) {
+	canary := a.observabilityV8CanaryRuntime()
+	if canary == nil && (a.otel == nil || !a.otel.TracesEnabled()) {
 		a.writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "OTel traces are not enabled"})
 		return
 	}
@@ -940,8 +949,8 @@ func (a *APIServer) handleTelemetryCanary(w http.ResponseWriter, r *http.Request
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
-	if a.observabilityV8Canary != nil {
-		result, err := a.observabilityV8Canary.EmitTraceCanary(ctx, request.Destination)
+	if canary != nil {
+		result, err := canary.EmitTraceCanary(ctx, request.Destination)
 		destination := result.Destination
 		if destination == "" {
 			destination = request.Destination

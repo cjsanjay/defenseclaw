@@ -116,6 +116,205 @@ func TestSidecarBootstrapObservabilityV8BindsOneValidatedOwnedRuntime(t *testing
 	}
 }
 
+func lifecycleTraceBootstrapRaw(dataDir string, retentionDays int, endpoint string) []byte {
+	return []byte(fmt.Sprintf(
+		"config_version: 8\ndata_dir: %q\nobservability:\n  local:\n    retention_days: %d\n  destinations:\n    - name: lifecycle-otlp\n      kind: otlp\n      endpoint: %q\n      protocol: http/protobuf\n      tls:\n        insecure: true\n      network_safety:\n        allow_private_networks: true\n      send:\n        signals: [traces]\n        buckets: ['*']\n",
+		dataDir,
+		retentionDays,
+		endpoint,
+	))
+}
+
+func bootstrapOwnedLifecycleTraceRuntime(
+	t *testing.T,
+	fixture sidecarV8BootstrapFixture,
+) (*sidecarOwnedObservabilityV8Runtime, string) {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.WriteHeader(http.StatusNoContent)
+	}))
+	t.Cleanup(server.Close)
+	bound, err := fixture.sidecar.BootstrapObservabilityRuntime(
+		t.Context(), fixture.configPath, lifecycleTraceBootstrapRaw(fixture.dataDir, 90, server.URL),
+	)
+	if err != nil || !bound {
+		t.Fatalf("bootstrap lifecycle runtime bound=%t error=%v", bound, err)
+	}
+	fixture.sidecar.observabilityV8Mu.Lock()
+	owner, ok := fixture.sidecar.observabilityV8.(*sidecarOwnedObservabilityV8Runtime)
+	fixture.sidecar.observabilityV8Mu.Unlock()
+	if !ok || owner == nil {
+		t.Fatalf("owned lifecycle runtime=%T", fixture.sidecar.observabilityV8)
+	}
+	return owner, server.URL
+}
+
+func TestSidecarOwnedLifecycleRuntimeForwardsEveryRootOperation(t *testing.T) {
+	fixture := newSidecarV8BootstrapFixture(t, 8, "")
+	owner, endpoint := bootstrapOwnedLifecycleTraceRuntime(t, fixture)
+
+	_, agent, err := owner.StartAgentTrace(t.Context(), observability.SpanAgentInvokeInput{
+		Kind: "INTERNAL", DefenseClawAgentType: "root",
+	})
+	if err != nil || agent == nil || agent.Generation() != 1 {
+		t.Fatalf("forward root agent=%v error=%v", agent, err)
+	}
+	agent.Abort()
+
+	_, model, err := owner.StartModelTrace(t.Context(), observability.SpanModelChatInput{
+		Kind: "CLIENT", GenAIRequestModel: "reported-model",
+	})
+	if err != nil || model == nil || model.Generation() != 1 {
+		t.Fatalf("forward root model=%v error=%v", model, err)
+	}
+	model.Abort()
+
+	_, tool, err := owner.StartToolTrace(t.Context(), observability.SpanToolExecuteInput{
+		Kind: "INTERNAL", GenAIToolName: "reported-tool",
+	})
+	if err != nil || tool == nil || tool.Generation() != 1 {
+		t.Fatalf("forward root tool=%v error=%v", tool, err)
+	}
+	tool.Abort()
+
+	_, approval, err := owner.StartApprovalTrace(t.Context(), observability.SpanApprovalResolveInput{
+		Kind: "INTERNAL", DefenseClawApprovalID: observability.Present("approval-001"),
+	})
+	if err != nil || approval == nil || approval.Generation() != 1 {
+		t.Fatalf("forward root approval=%v error=%v", approval, err)
+	}
+	approval.Abort()
+
+	reload, reloadErr := fixture.sidecar.ReloadObservabilityRuntime(
+		t.Context(), fixture.configPath, lifecycleTraceBootstrapRaw(fixture.dataDir, 30, endpoint),
+	)
+	if reloadErr != nil || reload.Status() != runtimegraph.ReloadApplied ||
+		owner.runtime.Active() == nil || owner.runtime.Active().Generation() != 2 {
+		t.Fatalf("reload after forwarded aborts=%s error=%v", reload.Status(), reloadErr)
+	}
+}
+
+func TestSidecarDetachesLifecycleConsumersBeforeOwnedRuntimeCloseWaitsForLease(t *testing.T) {
+	fixture := newSidecarV8BootstrapFixture(t, 8, "")
+	owner, _ := bootstrapOwnedLifecycleTraceRuntime(t, fixture)
+	api := &APIServer{}
+	router := &EventRouter{}
+	proxy := &GuardrailProxy{}
+	fixture.sidecar.setAPIServer(api)
+	fixture.sidecar.setEventRouter(router)
+	fixture.sidecar.setGuardrailProxy(proxy)
+	if api.observabilityV8LifecycleRuntime() != owner ||
+		router.observabilityV8LifecycleRuntime() != owner ||
+		proxy.observabilityV8TraceRuntime() != owner {
+		t.Fatal("owned lifecycle runtime was not bound before close")
+	}
+
+	_, agent, err := owner.StartAgentTrace(t.Context(), observability.SpanAgentInvokeInput{
+		Kind: "INTERNAL", DefenseClawAgentType: "root",
+	})
+	if err != nil || agent == nil {
+		t.Fatalf("start close-blocking agent=%v error=%v", agent, err)
+	}
+	closeDone := make(chan error, 1)
+	go func() { closeDone <- fixture.sidecar.closeOwnedObservabilityV8Runtime() }()
+
+	deadline := time.Now().Add(5 * time.Second)
+	for fixture.sidecar.observabilityV8LifecycleRuntime() != nil ||
+		api.observabilityV8RuntimeEmitter() != nil ||
+		api.observabilityV8CanaryRuntime() != nil ||
+		api.observabilityV8LocalOnlyRuntime() != nil ||
+		api.observabilityV8LifecycleRuntime() != nil ||
+		router.observabilityV8LifecycleRuntime() != nil ||
+		proxy.observabilityV8TraceRuntime() != nil {
+		if time.Now().After(deadline) {
+			agent.Abort()
+			t.Fatal("lifecycle consumers were not detached before close wait")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	select {
+	case closeErr := <-closeDone:
+		agent.Abort()
+		t.Fatalf("owned runtime close returned before active lease release: %v", closeErr)
+	default:
+	}
+
+	agent.Abort()
+	select {
+	case closeErr := <-closeDone:
+		if closeErr != nil {
+			t.Fatal(closeErr)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("owned runtime close did not finish after lease release")
+	}
+	if fixture.sidecar.observabilityV8Emitter() != nil {
+		t.Fatal("owned emitter remained published after close")
+	}
+}
+
+func TestSidecarConcurrentConsumerConstructionCannotRepublishClosingRuntime(t *testing.T) {
+	fixture := newSidecarV8BootstrapFixture(t, 8, "")
+	owner, _ := bootstrapOwnedLifecycleTraceRuntime(t, fixture)
+	_, agent, err := owner.StartAgentTrace(t.Context(), observability.SpanAgentInvokeInput{
+		Kind: "INTERNAL", DefenseClawAgentType: "root",
+	})
+	if err != nil || agent == nil {
+		t.Fatalf("start close-blocking agent=%v error=%v", agent, err)
+	}
+
+	api := &APIServer{}
+	router := &EventRouter{}
+	proxy := &GuardrailProxy{}
+	start := make(chan struct{})
+	closeDone := make(chan error, 1)
+	constructionDone := make(chan struct{}, 1)
+	go func() {
+		<-start
+		closeDone <- fixture.sidecar.closeOwnedObservabilityV8Runtime()
+	}()
+	go func() {
+		<-start
+		fixture.sidecar.setAPIServer(api)
+		fixture.sidecar.setEventRouter(router)
+		fixture.sidecar.setGuardrailProxy(proxy)
+		constructionDone <- struct{}{}
+	}()
+	close(start)
+	<-constructionDone
+
+	deadline := time.Now().Add(5 * time.Second)
+	for fixture.sidecar.observabilityV8LifecycleRuntime() != nil ||
+		api.observabilityV8RuntimeEmitter() != nil ||
+		api.observabilityV8CanaryRuntime() != nil ||
+		api.observabilityV8LocalOnlyRuntime() != nil ||
+		api.observabilityV8LifecycleRuntime() != nil ||
+		router.observabilityV8LifecycleRuntime() != nil ||
+		proxy.observabilityV8TraceRuntime() != nil {
+		if time.Now().After(deadline) {
+			agent.Abort()
+			t.Fatal("consumer construction republished the closing runtime")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	select {
+	case closeErr := <-closeDone:
+		agent.Abort()
+		t.Fatalf("owned runtime close returned before active lease release: %v", closeErr)
+	default:
+	}
+
+	agent.Abort()
+	select {
+	case closeErr := <-closeDone:
+		if closeErr != nil {
+			t.Fatal(closeErr)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("owned runtime close did not finish after concurrent construction")
+	}
+}
+
 func TestSidecarBootstrapLocalObservabilityCanaryReachesAgent360Projection(t *testing.T) {
 	requests := make(chan *collectortracepb.ExportTraceServiceRequest, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {

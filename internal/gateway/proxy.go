@@ -96,7 +96,7 @@ type GuardrailProxy struct {
 	dataDir string
 
 	observabilityV8Mu    sync.RWMutex
-	observabilityV8Trace proxyV8TraceRuntime
+	observabilityV8Trace lifecycleV8Runtime
 
 	// connector is the active agent framework adapter. It handles
 	// authentication and request signal extraction. When nil, the

@@ -79,23 +79,26 @@ type Sidecar struct {
 	osNotifier    *notifier.Dispatcher
 	configMgr     *ConfigManager
 
-	otelMu               sync.RWMutex
-	webhooksMu           sync.RWMutex
-	aiDiscoveryMu        sync.RWMutex
-	apiMu                sync.RWMutex
-	apiServer            *APIServer
-	proxyMu              sync.RWMutex
-	guardrailProxy       *GuardrailProxy
-	apiRestartCh         chan struct{}
-	watcherRestartCh     chan struct{}
-	guardrailRestartCh   chan struct{}
-	aiRestartCh          chan struct{}
-	runCancelMu          sync.Mutex
-	runCancel            context.CancelFunc
-	observabilityV8Mu    sync.Mutex
-	observabilityV8      sidecarRuntimeEmitter
-	observabilityV8Trace proxyV8TraceRuntime
-	observabilityV8Run   bool
+	otelMu                   sync.RWMutex
+	webhooksMu               sync.RWMutex
+	aiDiscoveryMu            sync.RWMutex
+	apiMu                    sync.RWMutex
+	apiServer                *APIServer
+	proxyMu                  sync.RWMutex
+	guardrailProxy           *GuardrailProxy
+	apiRestartCh             chan struct{}
+	watcherRestartCh         chan struct{}
+	guardrailRestartCh       chan struct{}
+	aiRestartCh              chan struct{}
+	runCancelMu              sync.Mutex
+	runCancel                context.CancelFunc
+	observabilityV8Mu        sync.Mutex
+	observabilityV8          sidecarRuntimeEmitter
+	observabilityV8Lifecycle lifecycleV8Runtime
+	// observabilityV8ConsumersDetached prevents a consumer constructed during
+	// shutdown from republishing capabilities for the retiring owned runtime.
+	observabilityV8ConsumersDetached bool
+	observabilityV8Run               bool
 
 	alertCtx    context.Context
 	alertCancel context.CancelFunc
@@ -476,7 +479,6 @@ func NewSidecar(cfg *config.Config, store *audit.Store, logger *audit.Logger, sh
 	sidecar := &Sidecar{
 		cfg:                cfg,
 		client:             client,
-		router:             router,
 		store:              store,
 		logger:             logger,
 		health:             NewSidecarHealth(),
@@ -499,6 +501,7 @@ func NewSidecar(cfg *config.Config, store *audit.Store, logger *audit.Logger, sh
 		judgeStore:         judgeStore,
 		judgeBodyStore:     judgeBodyStore,
 	}
+	sidecar.setEventRouter(router)
 	sidecar.publishConfig(cfg)
 	return sidecar, nil
 }
@@ -1556,9 +1559,23 @@ func webhooksChanged(oldCfg, newCfg *config.Config) bool {
 }
 
 func (s *Sidecar) setAPIServer(api *APIServer) {
+	if s == nil {
+		return
+	}
+	// Lock order: observabilityV8Mu before apiMu. Runtime publication,
+	// shutdown detach, and API construction therefore cannot pass each other.
+	s.observabilityV8Mu.Lock()
 	s.apiMu.Lock()
+	previous := s.apiServer
+	if previous != nil && previous != api {
+		previous.bindObservabilityV8Runtimes(nil, nil, nil, nil)
+	}
+	if api != nil {
+		s.bindAPIServerObservabilityV8Locked(api)
+	}
 	s.apiServer = api
 	s.apiMu.Unlock()
+	s.observabilityV8Mu.Unlock()
 }
 
 func (s *Sidecar) apiSnapshot() *APIServer {
@@ -1568,15 +1585,50 @@ func (s *Sidecar) apiSnapshot() *APIServer {
 }
 
 func (s *Sidecar) setGuardrailProxy(proxy *GuardrailProxy) {
-	s.observabilityV8Mu.Lock()
-	traceRuntime := s.observabilityV8Trace
-	s.observabilityV8Mu.Unlock()
-	if proxy != nil {
-		proxy.bindObservabilityV8Trace(traceRuntime)
+	if s == nil {
+		return
 	}
+	// Lock order: observabilityV8Mu before proxyMu and the proxy runtime lock.
+	s.observabilityV8Mu.Lock()
 	s.proxyMu.Lock()
+	previous := s.guardrailProxy
+	if previous != nil && previous != proxy {
+		previous.bindObservabilityV8Trace(nil)
+	}
+	if proxy != nil {
+		lifecycle := s.observabilityV8Lifecycle
+		if s.observabilityV8ConsumersDetached {
+			lifecycle = nil
+		}
+		proxy.bindObservabilityV8Trace(lifecycle)
+	}
 	s.guardrailProxy = proxy
 	s.proxyMu.Unlock()
+	s.observabilityV8Mu.Unlock()
+}
+
+// setEventRouter is construction-time wiring. Keeping the lifecycle binding in
+// this seam makes runtime-first and router-first assembly equivalent without
+// changing the legacy provider or migrating producers prematurely.
+func (s *Sidecar) setEventRouter(router *EventRouter) {
+	if s == nil {
+		return
+	}
+	// Lock order: observabilityV8Mu before the router lifecycle lock.
+	s.observabilityV8Mu.Lock()
+	previous := s.router
+	if previous != nil && previous != router {
+		previous.bindObservabilityV8Lifecycle(nil)
+	}
+	if router != nil {
+		lifecycle := s.observabilityV8Lifecycle
+		if s.observabilityV8ConsumersDetached {
+			lifecycle = nil
+		}
+		router.bindObservabilityV8Lifecycle(lifecycle)
+	}
+	s.router = router
+	s.observabilityV8Mu.Unlock()
 }
 
 func (s *Sidecar) proxySnapshot() *GuardrailProxy {
@@ -3718,10 +3770,6 @@ func (s *Sidecar) runAPI(ctx context.Context) error {
 	}
 	addr := fmt.Sprintf("%s:%d", bind, s.currentConfig().Gateway.APIPort)
 	api := NewAPIServer(addr, s.health, s.client, s.store, s.logger, cloneConfig(s.currentConfig()))
-	// The v8 canary uses the process-owned Runtime rather than the mutable
-	// legacy provider snapshot, so one graph lease covers construction, flush,
-	// acknowledgement, and reload-safe release.
-	s.bindAPIServerObservabilityV8(api)
 	if s.configMgr != nil {
 		api.SetConfigRuntime(s.configMgr.Reload, s.currentConfig)
 	}

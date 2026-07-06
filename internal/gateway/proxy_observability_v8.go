@@ -18,13 +18,18 @@ import (
 
 const proxyV8Producer = "gateway.proxy.chat"
 
-type proxyV8TraceRuntime interface {
+// lifecycleV8Runtime is the single process-owned generated trace seam shared by
+// the proxy, hook API, and EventRouter. It exposes only request-bounded root
+// operations; producers must never retain returned handles across deliveries.
+type lifecycleV8Runtime interface {
 	StartAgentTrace(context.Context, observability.SpanAgentInvokeInput) (context.Context, *observabilityruntime.AgentTrace, error)
 	StartModelTrace(context.Context, observability.SpanModelChatInput) (context.Context, *observabilityruntime.ModelTrace, error)
+	StartToolTrace(context.Context, observability.SpanToolExecuteInput) (context.Context, *observabilityruntime.ToolTrace, error)
+	StartApprovalTrace(context.Context, observability.SpanApprovalResolveInput) (context.Context, *observabilityruntime.ApprovalTrace, error)
 }
 
 type proxyV8RequestTrace struct {
-	runtime    proxyV8TraceRuntime
+	runtime    lifecycleV8Runtime
 	agent      *observabilityruntime.AgentTrace
 	agentInput observability.SpanAgentInvokeInput
 }
@@ -58,7 +63,7 @@ func proxyV8DefaultResult(streaming bool) proxyV8TraceResult {
 	}
 }
 
-func (p *GuardrailProxy) bindObservabilityV8Trace(runtime proxyV8TraceRuntime) {
+func (p *GuardrailProxy) bindObservabilityV8Trace(runtime lifecycleV8Runtime) {
 	if p == nil {
 		return
 	}
@@ -67,7 +72,7 @@ func (p *GuardrailProxy) bindObservabilityV8Trace(runtime proxyV8TraceRuntime) {
 	p.observabilityV8Mu.Unlock()
 }
 
-func (p *GuardrailProxy) observabilityV8TraceRuntime() proxyV8TraceRuntime {
+func (p *GuardrailProxy) observabilityV8TraceRuntime() lifecycleV8Runtime {
 	if p == nil {
 		return nil
 	}

@@ -211,27 +211,127 @@ func TestSidecarCanonicalLifecyclePersistsExactlyOnceWithGraphProvenance(t *test
 	}
 }
 
-func TestSidecarBindsCanonicalTraceRuntimeToProxyInEitherConstructionOrder(t *testing.T) {
+func TestSidecarBindsLifecycleRuntimeToEveryConsumerInEitherConstructionOrder(t *testing.T) {
 	for _, bindFirst := range []bool{false, true} {
 		t.Run(fmt.Sprintf("bind-first-%t", bindFirst), func(t *testing.T) {
 			fixture := newSidecarRuntimeFixture(t, true)
 			sidecar := &Sidecar{}
+			api := &APIServer{}
+			router := &EventRouter{}
 			proxy := &GuardrailProxy{}
 			if bindFirst {
 				if err := sidecar.BindObservabilityRuntime(fixture.runtime); err != nil {
 					t.Fatal(err)
 				}
+				sidecar.setAPIServer(api)
+				sidecar.setEventRouter(router)
 				sidecar.setGuardrailProxy(proxy)
 			} else {
+				sidecar.setAPIServer(api)
+				sidecar.setEventRouter(router)
 				sidecar.setGuardrailProxy(proxy)
 				if err := sidecar.BindObservabilityRuntime(fixture.runtime); err != nil {
 					t.Fatal(err)
 				}
 			}
-			if proxy.observabilityV8TraceRuntime() != fixture.runtime {
-				t.Fatal("proxy did not receive the process-owned v8 trace runtime")
+			if sidecar.observabilityV8LifecycleRuntime() != fixture.runtime ||
+				api.observabilityV8RuntimeEmitter() != fixture.runtime ||
+				api.observabilityV8CanaryRuntime() != fixture.runtime ||
+				api.observabilityV8LocalOnlyRuntime() != fixture.runtime ||
+				api.observabilityV8LifecycleRuntime() != fixture.runtime ||
+				router.observabilityV8LifecycleRuntime() != fixture.runtime ||
+				proxy.observabilityV8TraceRuntime() != fixture.runtime {
+				t.Fatalf(
+					"lifecycle bindings sidecar=%T api=%T router=%T proxy=%T",
+					sidecar.observabilityV8LifecycleRuntime(), api.observabilityV8LifecycleRuntime(),
+					router.observabilityV8LifecycleRuntime(), proxy.observabilityV8TraceRuntime(),
+				)
 			}
 		})
+	}
+}
+
+func TestSidecarConcurrentConsumerConstructionAndRuntimeBindIsAtomic(t *testing.T) {
+	fixture := newSidecarRuntimeFixture(t, true)
+	for iteration := 0; iteration < 64; iteration++ {
+		sidecar := &Sidecar{}
+		api := &APIServer{}
+		router := &EventRouter{}
+		proxy := &GuardrailProxy{}
+		start := make(chan struct{})
+		errCh := make(chan error, 1)
+		done := make(chan struct{}, 1)
+		go func() {
+			<-start
+			sidecar.setAPIServer(api)
+			sidecar.setEventRouter(router)
+			sidecar.setGuardrailProxy(proxy)
+			done <- struct{}{}
+		}()
+		go func() {
+			<-start
+			errCh <- sidecar.BindObservabilityRuntime(fixture.runtime)
+		}()
+		close(start)
+		<-done
+		if err := <-errCh; err != nil {
+			t.Fatal(err)
+		}
+		if sidecar.observabilityV8LifecycleRuntime() != fixture.runtime ||
+			api.observabilityV8RuntimeEmitter() != fixture.runtime ||
+			api.observabilityV8CanaryRuntime() != fixture.runtime ||
+			api.observabilityV8LocalOnlyRuntime() != fixture.runtime ||
+			api.observabilityV8LifecycleRuntime() != fixture.runtime ||
+			router.observabilityV8LifecycleRuntime() != fixture.runtime ||
+			proxy.observabilityV8TraceRuntime() != fixture.runtime {
+			t.Fatalf("iteration %d observed a partially published runtime", iteration)
+		}
+	}
+}
+
+func TestSidecarReplacementDetachesEveryRuntimeSeamFromOldConsumer(t *testing.T) {
+	fixture := newSidecarRuntimeFixture(t, true)
+	sidecar := &Sidecar{}
+	if err := sidecar.BindObservabilityRuntime(fixture.runtime); err != nil {
+		t.Fatal(err)
+	}
+	oldAPI, nextAPI := &APIServer{}, &APIServer{}
+	oldRouter, nextRouter := &EventRouter{}, &EventRouter{}
+	oldProxy, nextProxy := &GuardrailProxy{}, &GuardrailProxy{}
+	sidecar.setAPIServer(oldAPI)
+	sidecar.setEventRouter(oldRouter)
+	sidecar.setGuardrailProxy(oldProxy)
+	sidecar.setAPIServer(nextAPI)
+	sidecar.setEventRouter(nextRouter)
+	sidecar.setGuardrailProxy(nextProxy)
+
+	if oldAPI.observabilityV8RuntimeEmitter() != nil ||
+		oldAPI.observabilityV8CanaryRuntime() != nil ||
+		oldAPI.observabilityV8LocalOnlyRuntime() != nil ||
+		oldAPI.observabilityV8LifecycleRuntime() != nil ||
+		oldRouter.observabilityV8LifecycleRuntime() != nil ||
+		oldProxy.observabilityV8TraceRuntime() != nil {
+		t.Fatal("replaced consumer retained a runtime acquisition seam")
+	}
+	if nextAPI.observabilityV8RuntimeEmitter() != fixture.runtime ||
+		nextAPI.observabilityV8CanaryRuntime() != fixture.runtime ||
+		nextAPI.observabilityV8LocalOnlyRuntime() != fixture.runtime ||
+		nextAPI.observabilityV8LifecycleRuntime() != fixture.runtime ||
+		nextRouter.observabilityV8LifecycleRuntime() != fixture.runtime ||
+		nextProxy.observabilityV8TraceRuntime() != fixture.runtime {
+		t.Fatal("replacement consumer did not receive the active runtime")
+	}
+
+	sidecar.setAPIServer(nil)
+	sidecar.setEventRouter(nil)
+	sidecar.setGuardrailProxy(nil)
+	if nextAPI.observabilityV8RuntimeEmitter() != nil ||
+		nextAPI.observabilityV8CanaryRuntime() != nil ||
+		nextAPI.observabilityV8LocalOnlyRuntime() != nil ||
+		nextAPI.observabilityV8LifecycleRuntime() != nil ||
+		nextRouter.observabilityV8LifecycleRuntime() != nil ||
+		nextProxy.observabilityV8TraceRuntime() != nil {
+		t.Fatal("cleared consumer retained a runtime acquisition seam")
 	}
 }
 
@@ -243,15 +343,18 @@ func TestSidecarBindsProcessOwnedRuntimeToEveryAPIV8Seam(t *testing.T) {
 	}
 	api := &APIServer{}
 	sidecar.bindAPIServerObservabilityV8(api)
-	if api.observabilityV8 != fixture.runtime ||
-		api.observabilityV8Canary != fixture.runtime ||
-		api.observabilityV8LocalOnly != fixture.runtime {
+	if api.observabilityV8RuntimeEmitter() != fixture.runtime ||
+		api.observabilityV8CanaryRuntime() != fixture.runtime ||
+		api.observabilityV8LocalOnlyRuntime() != fixture.runtime ||
+		api.observabilityV8LifecycleRuntime() != fixture.runtime {
 		t.Fatalf(
-			"api bindings ordinary=%T canary=%T local=%T",
-			api.observabilityV8, api.observabilityV8Canary, api.observabilityV8LocalOnly,
+			"api bindings ordinary=%T canary=%T local=%T lifecycle=%T",
+			api.observabilityV8RuntimeEmitter(), api.observabilityV8CanaryRuntime(),
+			api.observabilityV8LocalOnlyRuntime(),
+			api.observabilityV8LifecycleRuntime(),
 		)
 	}
-	if _, metricCapable := api.observabilityV8.(otlpGeneratedMetricRuntime); !metricCapable {
+	if _, metricCapable := api.observabilityV8RuntimeEmitter().(otlpGeneratedMetricRuntime); !metricCapable {
 		t.Fatal("production API v8 binding lost generated metric capability")
 	}
 }

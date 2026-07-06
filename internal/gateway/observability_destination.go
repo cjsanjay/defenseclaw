@@ -144,7 +144,11 @@ func (a *APIServer) emitDestinationTestActivity(
 	ctx context.Context,
 	activity destinationtest.Activity,
 ) (pipeline.LocalLogOutcome, error) {
-	if a == nil || a.observabilityV8LocalOnly == nil || ctx == nil {
+	if a == nil || ctx == nil {
+		return pipeline.LocalLogOutcome{}, &destinationTestActivityError{code: destinationTestInvalidGraph}
+	}
+	localOnly := a.observabilityV8LocalOnlyRuntime()
+	if localOnly == nil {
 		return pipeline.LocalLogOutcome{}, &destinationTestActivityError{code: destinationTestInvalidGraph}
 	}
 	eventName, phase, outcome := destinationTestActivitySemantics(activity)
@@ -171,7 +175,7 @@ func (a *APIServer) emitDestinationTestActivity(
 		return pipeline.LocalLogOutcome{}, &destinationTestActivityError{code: destinationTestInvalidMetadata}
 	}
 
-	result, emitErr := a.observabilityV8LocalOnly.EmitLocalOnly(ctx, metadata, func(
+	result, emitErr := localOnly.EmitLocalOnly(ctx, metadata, func(
 		snapshot observabilityruntime.EmitContext,
 		admission router.Admission,
 	) (observability.Record, error) {

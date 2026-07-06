@@ -626,6 +626,118 @@ func TestGeneratedRootModelDoesNotFabricateAgentAndAbortReleasesRequestLease(t *
 	}
 }
 
+func TestGeneratedRootApprovalDoesNotFabricateAgentAndEndReleasesLease(t *testing.T) {
+	dependencies := newRuntimeTestDependencies(t)
+	pipelines := &generatedTracePipelines{consumers: make(map[uint64]*generatedTraceConsumer)}
+	initial := generatedTracePlan(t, dependencies, 90, "always_on", []observability.Bucket{"*"})
+	runtime := newGeneratedTraceRuntime(t, dependencies, pipelines, initial)
+	base := time.Now().UTC().Add(-time.Second)
+	input := generatedApprovalInput(base, base.Add(100*time.Millisecond))
+	input.Envelope.Correlation.AgentID = ""
+	input.GenAIAgentID = observability.Absent[string]()
+	input.GenAIAgentName = observability.Absent[string]()
+	input.DefenseClawAgentType = observability.Absent[string]()
+	input.DefenseClawAgentInstanceID = observability.Absent[string]()
+	input.DefenseClawAgentRootID = observability.Absent[string]()
+	input.DefenseClawAgentParentID = observability.Absent[string]()
+	input.DefenseClawAgentLineageProvenance = observability.Absent[string]()
+	input.DefenseClawSessionRootID = observability.Absent[string]()
+	input.DefenseClawSessionParentID = observability.Absent[string]()
+	input.DefenseClawAgentLifecycleID = observability.Absent[string]()
+	input.DefenseClawAgentExecutionID = observability.Absent[string]()
+	input.DefenseClawAgentDepth = observability.Absent[int64]()
+	input.DefenseClawAgentLifecycleEvent = observability.Absent[string]()
+	input.DefenseClawAgentLifecycleState = observability.Absent[string]()
+	input.DefenseClawAgentPhase = observability.Absent[string]()
+	input.DefenseClawAgentPhasePrevious = observability.Absent[string]()
+	input.DefenseClawAgentPhaseCode = observability.Absent[int64]()
+	input.DefenseClawAgentSequence = observability.Absent[int64]()
+
+	_, approval, err := runtime.StartApprovalTrace(t.Context(), input)
+	if err != nil || approval == nil {
+		t.Fatalf("start root approval=%v error=%v", approval, err)
+	}
+	if err := approval.End(input); err != nil {
+		t.Fatal(err)
+	}
+	spans := pipelines.consumer(t, 1).snapshot()
+	if len(spans) != 1 || spans[0].Record().EventName() != observability.EventName(observability.TelemetryFamilyApprovalResolve) ||
+		spans[0].Name() != "exec.approval" {
+		t.Fatalf("root-approval spans=%v", spans)
+	}
+	if parent, present := spans[0].ParentSpanID(); present || parent.IsValid() {
+		t.Fatalf("root approval acquired synthetic parent=%s/%t", parent, present)
+	}
+	attributes := generatedTraceRecordAttributes(t, spans[0].Record())
+	for _, key := range []string{
+		"gen_ai.agent.id", "gen_ai.agent.name", "defenseclaw.agent.type",
+		"defenseclaw.agent.root.id", "defenseclaw.agent.parent.id",
+		"defenseclaw.agent.lifecycle.id", "defenseclaw.agent.execution.id",
+	} {
+		if _, fabricated := attributes[key]; fabricated {
+			t.Fatalf("root approval fabricated %s", key)
+		}
+	}
+
+	candidate := generatedTracePlan(t, dependencies, 30, "always_on", []observability.Bucket{"*"})
+	reload, reloadErr := runtime.Reload(t.Context(), runtimegraph.ConfigFromPlan(candidate, false))
+	if reloadErr != nil || reload.Status() != runtimegraph.ReloadApplied {
+		t.Fatalf("reload after root approval End=%s error=%v", reload.Status(), reloadErr)
+	}
+	if pipelines.consumer(t, 1).closed.Load() == 0 {
+		t.Fatal("root approval End did not release the generation lease")
+	}
+}
+
+func TestGeneratedRootApprovalSamplingDropAndInvalidInputReleaseLease(t *testing.T) {
+	dependencies := newRuntimeTestDependencies(t)
+	pipelines := &generatedTracePipelines{consumers: make(map[uint64]*generatedTraceConsumer)}
+	initial := generatedTracePlan(t, dependencies, 90, "always_on", []observability.Bucket{"*"})
+	runtime := newGeneratedTraceRuntime(t, dependencies, pipelines, initial)
+	base := time.Now().UTC().Add(-time.Second)
+	input := generatedApprovalInput(base, base.Add(100*time.Millisecond))
+	_, approval, err := runtime.StartApprovalTrace(t.Context(), input)
+	if err != nil || approval == nil {
+		t.Fatalf("start build-rejected root approval=%v error=%v", approval, err)
+	}
+	rejected := input
+	rejected.Envelope.Provenance.Producer = ""
+	if err := approval.End(rejected); generatedTraceErrorCode(err) != GeneratedTraceBuildRejected {
+		t.Fatalf("root approval build rejection error=%v", err)
+	}
+
+	dropPlan := generatedTracePlan(t, dependencies, 30, "always_off", []observability.Bucket{"*"})
+	reload, reloadErr := runtime.Reload(t.Context(), runtimegraph.ConfigFromPlan(dropPlan, false))
+	if reloadErr != nil || reload.Status() != runtimegraph.ReloadApplied {
+		t.Fatalf("reload after root approval build rejection=%s error=%v", reload.Status(), reloadErr)
+	}
+	if pipelines.consumer(t, 1).closed.Load() == 0 {
+		t.Fatal("root approval build rejection retained the generation lease")
+	}
+
+	invalid := input
+	invalid.DefenseClawApprovalID = observability.Absent[string]()
+	if _, invalidApproval, err := runtime.StartApprovalTrace(t.Context(), invalid); invalidApproval != nil ||
+		generatedTraceErrorCode(err) != GeneratedTraceInvalidInput {
+		t.Fatalf("invalid root approval=%v error=%v", invalidApproval, err)
+	}
+	if _, sampledApproval, err := runtime.StartApprovalTrace(t.Context(), input); err != nil || sampledApproval != nil {
+		t.Fatalf("sampled root approval=%v error=%v", sampledApproval, err)
+	}
+	if got := len(pipelines.consumer(t, 2).snapshot()); got != 0 {
+		t.Fatalf("sampling drop produced %d canonical approval spans", got)
+	}
+
+	resumePlan := generatedTracePlan(t, dependencies, 15, "always_on", []observability.Bucket{"*"})
+	resume, resumeErr := runtime.Reload(t.Context(), runtimegraph.ConfigFromPlan(resumePlan, false))
+	if resumeErr != nil || resume.Status() != runtimegraph.ReloadApplied {
+		t.Fatalf("reload after root approval drop=%s error=%v", resume.Status(), resumeErr)
+	}
+	if pipelines.consumer(t, 2).closed.Load() == 0 {
+		t.Fatal("root approval sampling drop retained the generation lease")
+	}
+}
+
 func TestGeneratedTraceSessionSupportsRealNestedSubagent(t *testing.T) {
 	dependencies := newRuntimeTestDependencies(t)
 	pipelines := &generatedTracePipelines{consumers: make(map[uint64]*generatedTraceConsumer)}

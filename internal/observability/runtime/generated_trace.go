@@ -200,6 +200,28 @@ func (runtime *Runtime) StartToolTrace(
 	return startedContext, &ToolTrace{session: session, node: node}, nil
 }
 
+// StartApprovalTrace starts a request-bounded root span.approval.resolve when
+// the producer observed an approval operation but no exact active agent or tool
+// parent is available. Agent and session fields remain optional producer facts;
+// this API never creates an agent anchor solely to complete the trace shape.
+func (runtime *Runtime) StartApprovalTrace(
+	ctx context.Context,
+	input observability.SpanApprovalResolveInput,
+) (context.Context, *ApprovalTrace, error) {
+	approvalID, reported := input.DefenseClawApprovalID.Get()
+	if !reported || approvalID == "" {
+		return ctx, nil, generatedTraceError(GeneratedTraceInvalidInput)
+	}
+	startedContext, session, node, err := runtime.startGeneratedTrace(
+		ctx, observability.BucketEnforcementAction, observability.TelemetryFamilyApprovalResolve,
+		input.Kind, "approval", input.StartTimeUnixNano,
+	)
+	if err != nil || node == nil {
+		return startedContext, nil, err
+	}
+	return startedContext, &ApprovalTrace{session: session, node: node}, nil
+}
+
 func (runtime *Runtime) startGeneratedTrace(
 	ctx context.Context,
 	bucket observability.Bucket,
