@@ -8,6 +8,252 @@ imports:
 dependency_lock: schemas/telemetry/v8/semconv.lock.yaml
 examples: examples.yaml
 public_views: schemas/telemetry/v8/public-views.yaml
+inbound_bindings:
+  version: 1
+  max_forward_hops: 4
+  unknown_fields: drop_and_count
+  semantic_resource_instance_key: defenseclaw.instance.id
+  forward_instance_key: defenseclaw.telemetry.forward.instance_id
+  forward_destination_key: defenseclaw.telemetry.forward.destination
+  forward_hop_count_key: defenseclaw.telemetry.forward.hop_count
+  record_id_key: defenseclaw.record.id
+  scope_name: defenseclaw.telemetry
+  scope_schema_url: https://defenseclaw.io/schemas/telemetry/v8
+  resource_schema_url: https://opentelemetry.io/schemas/1.42.0
+  alias_sets:
+    - id: conversation-id-v1
+      target: gen_ai.conversation.id
+      value_type: string
+      normalization: identifier-v1
+      sources: [gen_ai.conversation.id, conversation.id, session.id, session_id]
+    - id: request-id-v1
+      target: defenseclaw.request.id
+      value_type: string
+      normalization: identifier-v1
+      sources: [gen_ai.request.id, request.id, codex.turn.id, turn.id, turn_id]
+    - id: provider-v1
+      target: gen_ai.provider.name
+      value_type: string
+      normalization: bounded-v1
+      sources: [gen_ai.provider.name, $authenticated_source]
+    - id: request-model-v1
+      target: gen_ai.request.model
+      value_type: string
+      normalization: identifier-v1
+      sources: [gen_ai.request.model, gen_ai.response.model, model]
+    - id: input-content-v1
+      target: gen_ai.input.messages
+      value_type: structured
+      normalization: structured-genai-v1
+      sources: [gen_ai.input.messages, prompt, user_prompt, gen_ai.prompt, llm.prompt, codex.prompt, message, content, $scalar_log_body]
+    - id: output-content-v1
+      target: gen_ai.output.messages
+      value_type: structured
+      normalization: structured-genai-v1
+      sources: [gen_ai.output.messages, response, output, $scalar_log_body]
+    - id: input-tokens-v1
+      target: gen_ai.usage.input_tokens
+      value_type: int64
+      normalization: nonnegative-int64-v1
+      sources: [gen_ai.usage.input_tokens, input_token_count, input_tokens, prompt_token_count, prompt_tokens, codex.turn.token_usage.input_tokens, codex.turn.token_usage.prompt_tokens]
+    - id: output-tokens-v1
+      target: gen_ai.usage.output_tokens
+      value_type: int64
+      normalization: nonnegative-int64-v1
+      sources: [gen_ai.usage.output_tokens, output_token_count, output_tokens, completion_token_count, completion_tokens, generated_token_count, generated_tokens, codex.turn.token_usage.output_tokens, codex.turn.token_usage.completion_tokens]
+    - id: log-duration-seconds-v1
+      target: $derived_duration_seconds
+      value_type: double
+      normalization: duration-seconds-v1
+      sources: [gen_ai.client.operation.duration, gen_ai.operation.duration, duration_seconds, duration_s, elapsed_seconds, elapsed_s, latency_seconds, latency_s, response.duration, codex.turn.duration_seconds, duration_ms, duration_milliseconds, elapsed_ms, latency_ms, response.duration_ms, codex.turn.duration_ms, gen_ai.client.operation.duration_ms, gen_ai.operation.duration_ms, duration_ns, duration_nanos, elapsed_ns, latency_ns, gen_ai.client.operation.duration_ns, gen_ai.operation.duration_ns]
+  binding_classes:
+    - id: otlp.native.log.v8
+      signal: logs
+      sources: [any_authenticated]
+      mode: import
+      expansion: {kind: all_signal_families}
+      discriminator:
+        kind: native-v8-log
+        predicates:
+          - {location: resource_attribute, key: defenseclaw.instance.id, operator: present, value_type: string}
+          - {location: leaf_attribute, key: defenseclaw.record.id, operator: present, value_type: string}
+          - {location: leaf_attribute, key: defenseclaw.bucket, operator: equals_target_bucket, value_type: string}
+          - {location: leaf_attribute, key: defenseclaw.signal, operator: equals, values: [logs], value_type: string}
+          - {location: leaf_attribute, key: defenseclaw.event.name, operator: equals_target_event, value_type: string}
+          - {location: leaf_attribute, key: defenseclaw.telemetry.forward.instance_id, operator: present, value_type: string}
+          - {location: leaf_attribute, key: defenseclaw.telemetry.forward.destination, operator: present, value_type: string}
+          - {location: leaf_attribute, key: defenseclaw.telemetry.forward.hop_count, operator: uint32_max, values: [4], value_type: int64}
+          - {location: log_body, key: $body, operator: projected_record_json, value_type: string}
+      mapping: {strategy: native-projected-log-v1, alias_sets: []}
+      derived_targets: []
+      time_rule: log-time-observed-receipt-v1
+      outcome_rule: projected-record-v1
+      native_round_trip: true
+    - id: otlp.native.span.v8
+      signal: traces
+      sources: [any_authenticated]
+      mode: import
+      expansion: {kind: all_signal_families}
+      discriminator:
+        kind: native-v8-span
+        predicates:
+          - {location: resource_schema_url, key: $resource_schema_url, operator: equals_contract, value_type: string}
+          - {location: resource_attribute, key: defenseclaw.instance.id, operator: present, value_type: string}
+          - {location: scope_name, key: $scope_name, operator: equals_contract, value_type: string}
+          - {location: scope_schema_url, key: $scope_schema_url, operator: equals_contract, value_type: string}
+          - {location: leaf_attribute, key: defenseclaw.bucket, operator: equals_target_bucket, value_type: string}
+          - {location: leaf_attribute, key: defenseclaw.span.family, operator: equals_target_family, value_type: string}
+          - {location: leaf_attribute, key: defenseclaw.span.family_schema_version, operator: equals_target_schema_version, value_type: int64}
+          - {location: leaf_attribute, key: defenseclaw.telemetry.forward.instance_id, operator: present, value_type: string}
+          - {location: leaf_attribute, key: defenseclaw.telemetry.forward.destination, operator: present, value_type: string}
+          - {location: leaf_attribute, key: defenseclaw.telemetry.forward.hop_count, operator: uint32_max, values: [4], value_type: int64}
+      mapping: {strategy: generated-reverse-span-v1, alias_sets: []}
+      derived_targets: []
+      time_rule: span-end-v1
+      outcome_rule: native-span-v1
+      native_round_trip: true
+    - id: otlp.native.metric.v8
+      signal: metrics
+      sources: [any_authenticated]
+      mode: import
+      expansion: {kind: reversible_metric_families, instrument_types: [counter, gauge, updowncounter]}
+      discriminator:
+        kind: native-v8-metric
+        predicates:
+          - {location: resource_schema_url, key: $resource_schema_url, operator: equals_contract, value_type: string}
+          - {location: resource_attribute, key: defenseclaw.instance.id, operator: present, value_type: string}
+          - {location: resource_attribute, key: defenseclaw.telemetry.forward.instance_id, operator: present, value_type: string}
+          - {location: resource_attribute, key: defenseclaw.telemetry.forward.destination, operator: present, value_type: string}
+          - {location: resource_attribute, key: defenseclaw.telemetry.forward.hop_count, operator: uint32_max, values: [4], value_type: int64}
+          - {location: scope_name, key: $scope_name, operator: equals_contract, value_type: string}
+          - {location: scope_schema_url, key: $scope_schema_url, operator: equals_contract, value_type: string}
+          - {location: instrument_name, key: $instrument_name, operator: equals_target_instrument, value_type: string}
+          - {location: metric_point, key: $point_shape, operator: reversible_target_shape, value_type: string}
+      mapping: {strategy: generated-reverse-metric-v1, alias_sets: []}
+      derived_targets: []
+      time_rule: metric-point-receipt-v1
+      outcome_rule: forbidden
+      native_round_trip: true
+    - id: otlp.genai.span.operation.v1
+      signal: traces
+      sources: [any_authenticated]
+      mode: import_and_derive
+      expansion:
+        kind: cases
+        cases:
+          - {id_suffix: invoke-agent, primary_family: span.agent.invoke, operation: invoke_agent, required_key: defenseclaw.agent.type}
+          - {id_suffix: chat, primary_family: span.model.chat, operation: chat, required_key: gen_ai.request.model}
+          - {id_suffix: embeddings, primary_family: span.model.embeddings, operation: embeddings, required_key: gen_ai.request.model}
+          - {id_suffix: execute-tool, primary_family: span.tool.execute, operation: execute_tool, required_key: gen_ai.tool.name}
+          - {id_suffix: retrieval, primary_family: span.retrieval.search, operation: retrieval, required_key: defenseclaw.retrieval.source.id}
+          - {id_suffix: invoke-workflow, primary_family: span.workflow.run, operation: invoke_workflow, required_key: gen_ai.workflow.name, target_key: defenseclaw.workflow.name, normalization: identifier-v1}
+      discriminator:
+        kind: genai-operation-span-v1
+        predicates:
+          - {location: leaf_attribute, key: defenseclaw.span.family, operator: absent, value_type: string}
+          - {location: leaf_attribute, key: gen_ai.operation.name, operator: equals_expansion_operation, value_type: string}
+          - {location: leaf_attribute, key: $expansion_required_key, operator: present, value_type: target}
+          - {location: span, key: $ended, operator: valid_ended_span, value_type: structural}
+      mapping: {strategy: standard-genai-span-v1, alias_sets: [conversation-id-v1, request-id-v1, provider-v1, request-model-v1]}
+      derived_targets: []
+      time_rule: span-end-v1
+      outcome_rule: otel-status-v1
+      native_round_trip: false
+    - id: otlp.codex.user_prompt.v1
+      signal: logs
+      sources: [codex]
+      mode: import
+      expansion: {kind: singleton, primary_family: log.model.request}
+      discriminator:
+        kind: connector-log-v1
+        predicates:
+          - {location: leaf_attribute, key: defenseclaw.signal, operator: absent, value_type: string}
+          - {location: leaf_attribute, key: event.name, operator: equals, values: [codex.user_prompt], value_type: string}
+      mapping: {strategy: connector-model-log-v1, alias_sets: [conversation-id-v1, request-id-v1, provider-v1, request-model-v1, input-content-v1]}
+      derived_targets: []
+      time_rule: log-time-observed-receipt-v1
+      outcome_rule: {fixed: attempted}
+      native_round_trip: false
+    - id: otlp.claudecode.user_prompt.v1
+      signal: logs
+      sources: [claudecode]
+      mode: import
+      expansion: {kind: singleton, primary_family: log.model.request}
+      discriminator:
+        kind: connector-log-v1
+        predicates:
+          - {location: leaf_attribute, key: defenseclaw.signal, operator: absent, value_type: string}
+          - {location: leaf_attribute, key: event.name, operator: equals, values: [claude_code.user_prompt], value_type: string}
+      mapping: {strategy: connector-model-log-v1, alias_sets: [conversation-id-v1, request-id-v1, provider-v1, request-model-v1, input-content-v1]}
+      derived_targets: []
+      time_rule: log-time-observed-receipt-v1
+      outcome_rule: {fixed: attempted}
+      native_round_trip: false
+    - id: otlp.codex.response_completed.v1
+      signal: logs
+      sources: [codex]
+      mode: import_and_derive
+      expansion: {kind: singleton, primary_family: log.model.response}
+      discriminator:
+        kind: connector-log-v1
+        predicates:
+          - {location: leaf_attribute, key: defenseclaw.signal, operator: absent, value_type: string}
+          - {location: leaf_attribute, key: event.name, operator: equals, values: [codex.sse_event], value_type: string}
+          - {location: leaf_attribute, key: event.kind, operator: equals, values: [response.completed], value_type: string}
+      mapping: {strategy: connector-model-log-v1, alias_sets: [conversation-id-v1, request-id-v1, provider-v1, request-model-v1, output-content-v1, input-tokens-v1, output-tokens-v1, log-duration-seconds-v1]}
+      derived_targets:
+        - {family: metric.gen_ai.client.token.usage, strategy: codex-token-fields-v1}
+        - {family: metric.gen_ai.client.operation.duration, strategy: field-value-v1}
+      time_rule: log-time-observed-receipt-v1
+      outcome_rule: {fixed: completed}
+      native_round_trip: false
+    - id: otlp.claudecode.token_usage.v1
+      signal: metrics
+      sources: [claudecode]
+      mode: derive
+      expansion: {kind: singleton, primary_family: metric.gen_ai.client.token.usage}
+      discriminator:
+        kind: connector-metric-v1
+        predicates:
+          - {location: resource_attribute, key: defenseclaw.telemetry.forward.instance_id, operator: absent, value_type: string}
+          - {location: instrument_name, key: $instrument_name, operator: equals, values: [claude_code.token.usage], value_type: string}
+          - {location: metric_point_attribute, key: type, operator: one_of, values: [input, output, cacheRead, cacheCreation], value_type: string}
+          - {location: metric_point, key: $point_shape, operator: one_of, values: [sum, gauge], value_type: string}
+      mapping: {strategy: claude-token-usage-v1, alias_sets: [conversation-id-v1, provider-v1, request-model-v1]}
+      derived_targets: []
+      time_rule: metric-point-receipt-v1
+      outcome_rule: forbidden
+      native_round_trip: false
+    - id: otlp.genai.duration.metric.v1
+      signal: metrics
+      sources: [any_authenticated]
+      mode: derive
+      expansion:
+        kind: source_cases
+        primary_family: metric.gen_ai.client.operation.duration
+        cases:
+          - {id_suffix: gen-ai-client, instrument_name: gen_ai.client.operation.duration}
+          - {id_suffix: gen-ai, instrument_name: gen_ai.operation.duration}
+          - {id_suffix: llm, instrument_name: llm.operation.duration}
+          - {id_suffix: claude-code, instrument_name: claude_code.operation.duration}
+          - {id_suffix: codex, instrument_name: codex.operation.duration}
+      discriminator:
+        kind: duration-metric-v1
+        predicates:
+          - {location: resource_attribute, key: defenseclaw.telemetry.forward.instance_id, operator: absent, value_type: string}
+          - {location: instrument_name, key: $instrument_name, operator: equals_expansion_instrument, value_type: string}
+          - {location: metric_point, key: $point_shape, operator: one_of, values: [gauge, sum, histogram], value_type: string}
+      mapping: {strategy: duration-metric-v1, alias_sets: [conversation-id-v1, provider-v1, request-model-v1]}
+      derived_targets: []
+      time_rule: metric-point-receipt-v1
+      outcome_rule: forbidden
+      native_round_trip: false
+  derivation_attachments:
+    - {id: otlp.genai.duration.span.v1, parent_class: otlp.genai.span.operation.v1, family: metric.gen_ai.client.operation.duration, strategy: elapsed-time-v1}
+  fixture_policy:
+    encodings: [json, protobuf]
+    classes: [positive, negative, single_fault]
+    protobuf_representation: canonical_protojson
 semantic_profiles:
   - id: defenseclaw-genai-rich-v1
     trace_schema_version: defenseclaw-trace-v1

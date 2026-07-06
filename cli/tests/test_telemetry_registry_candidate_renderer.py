@@ -744,7 +744,7 @@ def test_candidate_renderer_is_deterministic_complete_and_in_memory(
     assert {path: artifact.payload for path, artifact in from_index.items()} == {
         path: artifact.payload for path, artifact in artifacts.items()
     }
-    assert len(artifacts) == 61
+    assert len(artifacts) == 62
     assert {
         f"{PREFIX}/telemetry.schema.json",
         f"{PREFIX}/catalog.json",
@@ -753,6 +753,7 @@ def test_candidate_renderer_is_deterministic_complete_and_in_memory(
         f"{PREFIX}/compatibility/local-observability-v1.json",
         f"{PREFIX}/compatibility/openinference-v1.json",
         f"{PREFIX}/compatibility/v7-exporter-selection.json",
+        f"{PREFIX}/compatibility/inbound-otlp.json",
         f"{PREFIX}/examples/manifest.json",
         f"{PREFIX}/otlp-fixtures/manifest.json",
     }.issubset(artifacts)
@@ -827,6 +828,107 @@ def test_v7_exporter_selection_is_schema_valid_exact_and_non_wildcard(
     assert {family["bucket"] for family in metric_families} == set(metric_buckets)
 
 
+def test_inbound_otlp_catalog_is_closed_two_level_and_shape_safe(
+    renderer: ModuleType,
+    render_index: Any,
+) -> None:
+    inbound = render_index.inbound_otlp
+    marker = renderer._authority_marker(
+        registry_version=render_index.registry_version,
+        digest=render_index.digest,
+        artifact="compatibility/inbound-otlp.json",
+    )
+    document = renderer._inbound_otlp_document(render_index, marker)
+
+    assert len(inbound.binding_classes) + len(inbound.derivation_attachments) == 10
+    assert len(inbound.match_descriptors) == 237
+    assert len(inbound.target_descriptors) == 245
+    assert len(inbound.native_markers) == 24
+    assert len(inbound.echo_recognizers) == 249
+    assert len(inbound.import_contexts) == 93
+    assert document["support"] == {
+        "logical_binding_classes": 10,
+        "match_descriptors": 237,
+        "target_descriptors": 245,
+        "native_markers": 24,
+        "self_echo_recognizers": 249,
+        "import_contexts": 93,
+        "fixture_descriptors": 237,
+        "fixture_cases": 711,
+        "signals": ["logs", "traces", "metrics"],
+        "encodings": ["json", "protobuf"],
+    }
+    assert document["runtime_activation"] == "compiler_descriptors_only"
+    assert document["contract"]["shape_policy"] == {
+        "classes": ["native_exact", "native_malformed", "external"],
+        "native_marker_rule": "any_declared_native_marker_selects_native_candidate",
+        "structural_marker_rule": "exact_declared_structure_only",
+        "native_malformed_disposition": "invalid_record",
+        "native_malformed_external_fallback": "forbidden",
+    }
+    assert {item["shape"] for item in document["match_descriptors"]} == {"native_exact", "external"}
+    assert all(item["shape"] != "native_malformed" for item in document["match_descriptors"])
+    assert len(document["native_markers"]) == 24
+    assert {item["signal"] for item in document["native_markers"]} == {"logs", "traces", "metrics"}
+    assert all(
+        item["marker_kind"] in {"reserved_key_presence", "exact_structural_value", "projected_record_structure"}
+        for item in document["native_markers"]
+    )
+    targets_by_id = {item["id"]: item for item in document["target_descriptors"]}
+    for match in document["match_descriptors"]:
+        targets = [targets_by_id[target_id] for target_id in match["target_ids"]]
+        assert sum(target["target_kind"] == "primary" for target in targets) == 1
+        assert all(target["match_id"] == match["id"] for target in targets)
+    assert all("mandatory" not in item and "floor" not in item for item in document["import_contexts"])
+
+
+def test_inbound_otlp_exact_genai_codex_claude_and_fixture_matrix(
+    renderer: ModuleType,
+    render_index: Any,
+) -> None:
+    marker = renderer._authority_marker(
+        registry_version=render_index.registry_version,
+        digest=render_index.digest,
+        artifact="compatibility/inbound-otlp.json",
+    )
+    document = renderer._inbound_otlp_document(render_index, marker)
+    matches = {item["id"]: item for item in document["match_descriptors"]}
+    duration_ids = {
+        "otlp.genai.duration.metric.v1.gen-ai-client",
+        "otlp.genai.duration.metric.v1.gen-ai",
+        "otlp.genai.duration.metric.v1.llm",
+        "otlp.genai.duration.metric.v1.claude-code",
+        "otlp.genai.duration.metric.v1.codex",
+    }
+    assert duration_ids <= set(matches)
+    assert {
+        "otlp.genai.span.operation.v1.span.agent.invoke",
+        "otlp.genai.span.operation.v1.span.model.chat",
+        "otlp.genai.span.operation.v1.span.model.embeddings",
+        "otlp.genai.span.operation.v1.span.tool.execute",
+        "otlp.genai.span.operation.v1.span.retrieval.search",
+        "otlp.genai.span.operation.v1.span.workflow.run",
+    } <= set(matches)
+    assert "otlp.codex.user_prompt.v1.log.model.request" in matches
+    assert "otlp.claudecode.user_prompt.v1.log.model.request" in matches
+    assert "otlp.codex.response_completed.v1.log.model.response" in matches
+    assert "otlp.claudecode.token_usage.v1.metric.gen_ai.client.token.usage" in matches
+
+    corpus = document["fixture_corpus"]
+    assert set(corpus["encodings"]) == {"json", "protobuf"}
+    assert corpus["encodings"]["protobuf"]["representation"] == "canonical_protojson"
+    assert len(corpus["descriptors"]) == 237
+    for fixture in corpus["descriptors"]:
+        assert [case["fixture_class"] for case in fixture["cases"]] == [
+            "positive",
+            "negative",
+            "single_fault",
+        ]
+        assert fixture["cases"][0]["expected_match_id"] == fixture["match_id"]
+        assert fixture["cases"][1]["expected_match_id"] is None
+        assert fixture["cases"][2]["expected_match_id"] is None
+
+
 def test_candidate_renderer_rejects_rehashed_v7_selector_drift(
     renderer: ModuleType,
     view: Any,
@@ -872,7 +974,7 @@ def test_candidate_index_consumes_reviewed_go_symbol_contract_immutably_and_pres
     assert rows[("span_event", "model.retry")].symbol == "TelemetrySpanEventModelRetry"
     assert rows[("structured_type", "gen_ai.canonical_json")].declaration_form == "exported_type"
     assert rows[("span_link_constructor", "span.model.chat#caused_by")].symbol == ("NewSpanModelChatCausedByLink")
-    assert len(artifacts) == 61
+    assert len(artifacts) == 62
     with pytest.raises(TypeError):
         index.go_symbol_policy.brand_spellings["otel"] = "Otel"  # type: ignore[index]
     with pytest.raises(TypeError):
@@ -1243,7 +1345,7 @@ def test_public_views_have_exact_live_portable_inventory_and_no_staged_paths(
     planned_paths = tuple(path for entry in plan.views for path in entry.target_paths)
     staged_paths = {f"{PREFIX}/public-views/{path}" for path in public_paths}
 
-    assert len(artifacts) == 61
+    assert len(artifacts) == 62
     assert len(plan.views) == 21
     assert renderer.PUBLIC_VIEW_GENERATED_AUTHORITY == "generated"
     assert len(public_paths) == 26

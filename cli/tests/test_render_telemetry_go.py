@@ -39,6 +39,7 @@ def _load(name: str, path: Path) -> Any:
 
 
 _load("telemetry_canonical_record", SCRIPTS / "telemetry_canonical_record.py")
+_load("telemetry_go_inbound_plan", SCRIPTS / "telemetry_go_inbound_plan.py")
 _load("telemetry_go_api_plan", SCRIPTS / "telemetry_go_api_plan.py")
 coordinator = _load("telemetry_go_output_coordinator", SCRIPTS / "telemetry_go_output_coordinator.py")
 _load("telemetry_go_producer_plan", SCRIPTS / "telemetry_go_producer_plan.py")
@@ -91,6 +92,21 @@ def test_real_candidate_renders_exact_complete_deterministic_outputs(
     assert catalog.count(b" familyMetricContract() familyMetricContract {") == 131
     producer = payloads[coordinator.EXACT_GO_OUTPUT_PATHS[2]]
     assert producer.count(b"generatedProducerIdentity{") >= 8077
+    assert b"var generatedInboundMatches = []generatedInboundMatch{" in producer
+    assert b"var generatedInboundTargets = []generatedInboundTarget{" in producer
+    assert b"var generatedInboundNativeMarkers = []generatedInboundNativeMarker{" in producer
+    assert b"var generatedInboundEchoRecognizers = []generatedInboundEchoRecognizer{" in producer
+    assert b"var generatedInboundImportContexts = []generatedInboundImportContext{" in producer
+    assert b"generatedInboundSemanticInstanceKey" in producer and b'"defenseclaw.instance.id"' in producer
+    assert (
+        b"generatedInboundForwardInstanceKey" in producer and b'"defenseclaw.telemetry.forward.instance_id"' in producer
+    )
+    assert b"generatedInboundUnknownFields" in producer and b'"drop_and_count"' in producer
+    assert b"generatedInboundNativeMarkerRule" in producer
+    assert b"generatedInboundStructuralMarkerRule" in producer
+    assert b"generatedInboundNativeMalformedDisposition" in producer
+    assert b"TargetOverride: &generatedInboundTargetOverride{" in producer
+    assert b"FieldRefs: []string{" in producer
     domains = b"".join(payloads[path] for path in coordinator.EXACT_GO_OUTPUT_PATHS[3:6])
     assert domains.count(b"func (builder *FamilyBuilder) Build") == 249
     assert domains.count(b"func New") == 179

@@ -149,6 +149,7 @@ _SCHEMA_OUTPUT_PATH: Final = f"{GENERATED_PREFIX}/telemetry.schema.json"
 _CATALOG_OUTPUT_PATH: Final = f"{GENERATED_PREFIX}/catalog.json"
 _CATALOG_MARKDOWN_OUTPUT_PATH: Final = f"{GENERATED_PREFIX}/catalog.md"
 _V7_EXPORTER_SELECTION_OUTPUT_PATH: Final = f"{GENERATED_PREFIX}/compatibility/v7-exporter-selection.json"
+_INBOUND_OTLP_OUTPUT_PATH: Final = f"{GENERATED_PREFIX}/compatibility/inbound-otlp.json"
 _COMPATIBILITY_PROFILE_OUTPUT_PATHS: Final = {
     profile: f"{GENERATED_PREFIX}/compatibility/{profile}.json"
     for profile in (
@@ -164,6 +165,7 @@ _BASE_CANDIDATE_OUTPUT_PATHS: Final = (
     _CATALOG_OUTPUT_PATH,
     _CATALOG_MARKDOWN_OUTPUT_PATH,
     _V7_EXPORTER_SELECTION_OUTPUT_PATH,
+    _INBOUND_OTLP_OUTPUT_PATH,
     *_COMPATIBILITY_PROFILE_OUTPUT_PATHS.values(),
     _EXAMPLE_MANIFEST_OUTPUT_PATH,
     _OTLP_MANIFEST_OUTPUT_PATH,
@@ -581,6 +583,7 @@ _TOP_LEVEL_FIELDS: Final = frozenset(
         "metric_compatibility_profile",
         "v7_exporter_selection",
         "v7_exporter_selection_schema",
+        "inbound_bindings",
         "domains",
         "group_resolution_order",
         "resolved_group_uses",
@@ -2842,6 +2845,34 @@ class GoDeclarationValue:
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
+class CandidateInboundOTLP:
+    """Closed, compiler-expanded inbound OTLP binding authority."""
+
+    version: int
+    max_forward_hops: int
+    unknown_fields: str
+    semantic_resource_instance_key: str
+    forward_instance_key: str
+    forward_destination_key: str
+    forward_hop_count_key: str
+    record_id_key: str
+    scope_name: str
+    scope_schema_url: str
+    resource_schema_url: str
+    shape_policy: Mapping[str, FrozenJSON]
+    alias_sets: tuple[Mapping[str, FrozenJSON], ...]
+    binding_classes: tuple[Mapping[str, FrozenJSON], ...]
+    match_descriptors: tuple[Mapping[str, FrozenJSON], ...]
+    target_descriptors: tuple[Mapping[str, FrozenJSON], ...]
+    native_markers: tuple[Mapping[str, FrozenJSON], ...]
+    echo_recognizers: tuple[Mapping[str, FrozenJSON], ...]
+    import_contexts: tuple[Mapping[str, FrozenJSON], ...]
+    derivation_attachments: tuple[Mapping[str, FrozenJSON], ...]
+    fixture_policy: Mapping[str, FrozenJSON]
+    __hash__ = None
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
 class CandidateRenderIndex:
     """Recursively immutable, renderer-ready join of one materialized view."""
 
@@ -2873,6 +2904,7 @@ class CandidateRenderIndex:
     enriched_metrics: Mapping[str, EnrichedMetricDescriptor]
     mandatory_programs: Mapping[str, ResolvedMandatoryProgramIR]
     expanded_producer_mappings: tuple[ExpandedProducerMappingDescriptor, ...]
+    inbound_otlp: CandidateInboundOTLP
     go_declaration_values: tuple[GoDeclarationValue, ...]
     go_api_plan: GoAPIPlanIR
     api_plan_sha256: str
@@ -2889,6 +2921,7 @@ class CandidateRenderIndex:
             enriched_metrics=self.enriched_metrics,
             mandatory_programs=self.mandatory_programs,
             expanded_producer_mappings=self.expanded_producer_mappings,
+            inbound_otlp=self.inbound_otlp,
             go_declaration_values=self.go_declaration_values,
             go_api_plan=self.go_api_plan,
             api_plan_sha256=self.api_plan_sha256,
@@ -2918,6 +2951,7 @@ class _ProvisionalCandidateEnrichment:
     enriched_metrics: Mapping[str, EnrichedMetricDescriptor]
     mandatory_programs: Mapping[str, ResolvedMandatoryProgramIR]
     expanded_producer_mappings: tuple[ExpandedProducerMappingDescriptor, ...]
+    inbound_otlp: CandidateInboundOTLP
     go_declaration_values: tuple[GoDeclarationValue, ...]
 
 
@@ -3667,6 +3701,68 @@ def _descriptor_payload(value: Any) -> Any:
     raise CandidateRenderError("candidate render index digest contains an unsupported value")
 
 
+def _stream_typed_materialized_hash(hasher: Any, value: Any) -> None:
+    """Hash the existing typed-node canonical JSON without building its full tree."""
+
+    def write(text: str) -> None:
+        hasher.update(text.encode("utf-8"))
+
+    if dataclasses.is_dataclass(value) and not isinstance(value, type):
+        fields = {field.name: getattr(value, field.name) for field in dataclasses.fields(value)}
+        _stream_typed_materialized_hash(hasher, fields)
+        return
+    if value is None:
+        write('["null"]')
+        return
+    if type(value) is bool:
+        write('["boolean",true]' if value else '["boolean",false]')
+        return
+    if type(value) is int:
+        write('["int",')
+        write(_canonical_json_string(str(value)))
+        write("]")
+        return
+    if type(value) is float:
+        number = _canonical_json_number(repr(value)) if value != 0 else "0"
+        write('["double",')
+        write(_canonical_json_string(number))
+        write("]")
+        return
+    if isinstance(value, bytes):
+        write('["bytes",')
+        write(_canonical_json_string(value.hex()))
+        write("]")
+        return
+    if isinstance(value, str):
+        write('["string",')
+        write(_canonical_json_string(value))
+        write("]")
+        return
+    if isinstance(value, Mapping):
+        if any(not isinstance(key, str) for key in value):
+            raise CandidateRenderError("candidate render index digest contains a non-string key")
+        write('["object",[')
+        for position, key in enumerate(sorted(value)):
+            if position:
+                write(",")
+            write("[")
+            write(_canonical_json_string(key))
+            write(",")
+            _stream_typed_materialized_hash(hasher, value[key])
+            write("]")
+        write("]]")
+        return
+    if isinstance(value, tuple):
+        write('["array",[')
+        for position, item in enumerate(value):
+            if position:
+                write(",")
+            _stream_typed_materialized_hash(hasher, item)
+        write("]]")
+        return
+    raise CandidateRenderError("candidate render index digest contains an unsupported value")
+
+
 def _go_declaration_values(
     table: CandidateGoSymbolTable,
     fields: Mapping[str, FrozenJSON],
@@ -3721,6 +3817,7 @@ def _candidate_render_index_digest(
     enriched_metrics: Mapping[str, EnrichedMetricDescriptor],
     mandatory_programs: Mapping[str, ResolvedMandatoryProgramIR],
     expanded_producer_mappings: tuple[ExpandedProducerMappingDescriptor, ...],
+    inbound_otlp: CandidateInboundOTLP,
     go_declaration_values: tuple[GoDeclarationValue, ...],
     go_api_plan: GoAPIPlanIR,
     api_plan_sha256: str,
@@ -3735,12 +3832,15 @@ def _candidate_render_index_digest(
         "enriched_metrics": enriched_metrics,
         "mandatory_programs": mandatory_programs,
         "expanded_producer_mappings": expanded_producer_mappings,
+        "inbound_otlp": inbound_otlp,
         "go_declaration_values": go_declaration_values,
         "go_api_plan": go_api_plan,
         "api_plan_sha256": api_plan_sha256,
     }
-    typed = _typed_materialized_node(_freeze(_descriptor_payload(payload)))
-    return hashlib.sha256(CANDIDATE_RENDER_INDEX_DIGEST_DOMAIN + _canonical_json_bytes(typed)).hexdigest()
+    hasher = hashlib.sha256()
+    hasher.update(CANDIDATE_RENDER_INDEX_DIGEST_DOMAIN)
+    _stream_typed_materialized_hash(hasher, payload)
+    return hasher.hexdigest()
 
 
 def _condition_contracts(fields: Mapping[str, FrozenJSON]) -> Mapping[str, tuple[str, str]]:
@@ -5156,6 +5256,308 @@ def _validate_public_views(
     )
 
 
+_INBOUND_CLASS_IDS: Final = (
+    "otlp.native.log.v8",
+    "otlp.native.span.v8",
+    "otlp.native.metric.v8",
+    "otlp.genai.span.operation.v1",
+    "otlp.codex.user_prompt.v1",
+    "otlp.claudecode.user_prompt.v1",
+    "otlp.codex.response_completed.v1",
+    "otlp.claudecode.token_usage.v1",
+    "otlp.genai.duration.metric.v1",
+)
+_INBOUND_IR_FIELDS: Final = frozenset(
+    {
+        "version",
+        "max_forward_hops",
+        "unknown_fields",
+        "semantic_resource_instance_key",
+        "forward_instance_key",
+        "forward_destination_key",
+        "forward_hop_count_key",
+        "record_id_key",
+        "scope_name",
+        "scope_schema_url",
+        "resource_schema_url",
+        "shape_policy",
+        "alias_sets",
+        "binding_classes",
+        "match_descriptors",
+        "target_descriptors",
+        "native_markers",
+        "echo_recognizers",
+        "import_contexts",
+        "derivation_attachments",
+        "fixture_policy",
+    }
+)
+
+
+def _candidate_inbound_otlp(
+    raw: FrozenJSON,
+    *,
+    attributes: Mapping[str, CandidateAttribute],
+    families: Mapping[str, EnrichedFamilyDescriptor],
+    enriched_fields: Mapping[str, EnrichedFieldDescriptor],
+) -> CandidateInboundOTLP:
+    source = _tagged(raw, "InboundOTLPIR", _INBOUND_IR_FIELDS)
+    if (
+        _integer(source["version"], "inbound binding version", minimum=1) != 1
+        or _integer(source["max_forward_hops"], "inbound max forward hops", minimum=1) != 4
+        or source["unknown_fields"] != "drop_and_count"
+        or source["semantic_resource_instance_key"] != "defenseclaw.instance.id"
+        or source["forward_instance_key"] != "defenseclaw.telemetry.forward.instance_id"
+        or source["forward_destination_key"] != "defenseclaw.telemetry.forward.destination"
+        or source["forward_hop_count_key"] != "defenseclaw.telemetry.forward.hop_count"
+        or source["record_id_key"] != "defenseclaw.record.id"
+        or source["scope_name"] != "defenseclaw.telemetry"
+        or source["scope_schema_url"] != "https://defenseclaw.io/schemas/telemetry/v8"
+        or source["resource_schema_url"] != "https://opentelemetry.io/schemas/1.42.0"
+    ):
+        raise CandidateRenderError("materialized inbound OTLP constants drifted")
+    expected_shape_policy = {
+        "classes": ["native_exact", "native_malformed", "external"],
+        "native_marker_rule": "any_declared_native_marker_selects_native_candidate",
+        "structural_marker_rule": "exact_declared_structure_only",
+        "native_malformed_disposition": "invalid_record",
+        "native_malformed_external_fallback": "forbidden",
+    }
+    if _plain(source["shape_policy"]) != expected_shape_policy:
+        raise CandidateRenderError("materialized inbound native-shape policy is invalid")
+
+    raw_aliases = source["alias_sets"]
+    if not isinstance(raw_aliases, tuple):
+        raise CandidateRenderError("materialized inbound alias-set inventory is invalid")
+    aliases: list[Mapping[str, FrozenJSON]] = []
+    alias_ids: set[str] = set()
+    for raw_alias in raw_aliases:
+        if not isinstance(raw_alias, Mapping) or set(raw_alias) != {
+            "id",
+            "target",
+            "value_type",
+            "normalization",
+            "sources",
+            "conflict_policy",
+            "absence_policy",
+        }:
+            raise CandidateRenderError("materialized inbound alias set is invalid")
+        alias_id = _string(raw_alias["id"], "inbound alias ID")
+        target = _string(raw_alias["target"], "inbound alias target")
+        if alias_id in alias_ids:
+            raise CandidateRenderError("materialized inbound alias ID is duplicated")
+        alias_ids.add(alias_id)
+        if target == "$derived_duration_seconds":
+            field_contract: JSONObject = {"field_class": "metadata", "sensitivity": "internal"}
+        else:
+            attribute = attributes.get(target)
+            if attribute is None:
+                raise CandidateRenderError("materialized inbound alias target is not registered")
+            field_contract = {
+                "field_class": attribute.metadata["field_class"],
+                "sensitivity": attribute.metadata["sensitivity"],
+            }
+        alias = dict(_plain(raw_alias))
+        alias["target_field_contract"] = field_contract
+        aliases.append(_freeze(alias))
+
+    raw_classes = source["binding_classes"]
+    if not isinstance(raw_classes, tuple):
+        raise CandidateRenderError("materialized inbound class inventory is invalid")
+    classes = tuple(_freeze(_plain(item)) for item in raw_classes)
+    if tuple(item["id"] for item in classes) != _INBOUND_CLASS_IDS:
+        raise CandidateRenderError("materialized inbound class inventory or order drifted")
+    native_class_ids = set(_INBOUND_CLASS_IDS[:3])
+
+    raw_matches = source["match_descriptors"]
+    if not isinstance(raw_matches, tuple):
+        raise CandidateRenderError("materialized inbound match inventory is invalid")
+    matches: list[Mapping[str, FrozenJSON]] = []
+    matches_by_id: dict[str, Mapping[str, FrozenJSON]] = {}
+    for raw_match in raw_matches:
+        if not isinstance(raw_match, Mapping) or set(raw_match) != {
+            "id",
+            "class_id",
+            "signal",
+            "sources",
+            "shape",
+            "discriminator",
+            "mapping",
+            "derived_targets",
+            "time_rule",
+            "outcome_rule",
+            "unknown_fields",
+            "native_round_trip",
+            "target_ids",
+        }:
+            raise CandidateRenderError("materialized inbound match descriptor is invalid")
+        match = _freeze(_plain(raw_match))
+        match_id = _string(match["id"], "inbound match ID")
+        class_id = _string(match["class_id"], "inbound match class ID")
+        expected_shape = "native_exact" if class_id in native_class_ids else "external"
+        if (
+            class_id not in _INBOUND_CLASS_IDS
+            or match["shape"] != expected_shape
+            or match["unknown_fields"] != "drop_and_count"
+            or type(match["native_round_trip"]) is not bool
+            or match["native_round_trip"] != (expected_shape == "native_exact")
+            or match_id in matches_by_id
+        ):
+            raise CandidateRenderError("materialized inbound match shape or identity is invalid")
+        matches_by_id[match_id] = match
+        matches.append(match)
+    if any(match["shape"] == "native_malformed" for match in matches):
+        raise CandidateRenderError("native-malformed shape acquired a constructible inbound match")
+
+    raw_targets = source["target_descriptors"]
+    if not isinstance(raw_targets, tuple):
+        raise CandidateRenderError("materialized inbound target inventory is invalid")
+    targets: list[Mapping[str, FrozenJSON]] = []
+    targets_by_match: dict[str, list[str]] = {match_id: [] for match_id in matches_by_id}
+    target_ids: set[str] = set()
+    primary_counts: Counter[str] = Counter()
+    for raw_target in raw_targets:
+        if not isinstance(raw_target, Mapping) or set(raw_target) != {
+            "id",
+            "match_id",
+            "class_id",
+            "signal",
+            "role",
+            "target_kind",
+            "family",
+            "bucket",
+            "event_name",
+            "family_schema_version",
+            "instrument_name",
+            "instrument_type",
+            "field_refs",
+            "mapping_strategy",
+            "derivation_strategy",
+            "time_rule",
+            "outcome_rule",
+            "import_context_id",
+        }:
+            raise CandidateRenderError("materialized inbound target descriptor is invalid")
+        target = dict(_plain(raw_target))
+        target_id = _string(target["id"], "inbound target ID")
+        match_id = _string(target["match_id"], "inbound target match ID")
+        family_id = _string(target["family"], "inbound target family ID")
+        family = families.get(family_id)
+        if match_id not in matches_by_id or family is None or target_id in target_ids:
+            raise CandidateRenderError("materialized inbound target identity is unknown or duplicated")
+        if (
+            target_id != f"{match_id}.{family_id}"
+            or target["signal"] != family.signal
+            or target["bucket"] != family.bucket
+            or target["family_schema_version"] != family.family_schema_version
+            or target["target_kind"] not in {"primary", "derived"}
+            or target["role"] not in {"import", "derive"}
+            or (target["target_kind"] == "derived" and target["role"] != "derive")
+        ):
+            raise CandidateRenderError("materialized inbound target disagrees with its generated family")
+        if target["target_kind"] == "primary":
+            primary_counts[match_id] += 1
+        raw_field_refs = target["field_refs"]
+        if not isinstance(raw_field_refs, list) or len(raw_field_refs) != len(set(raw_field_refs)):
+            raise CandidateRenderError("materialized inbound target field references are invalid")
+        for reference in raw_field_refs:
+            attribute = attributes.get(reference)
+            if attribute is None:
+                raise CandidateRenderError("materialized inbound target field is not registered")
+        target["field_descriptor_ids"] = list(family.field_descriptor_ids)
+        if len(target["field_refs"]) != len(target["field_descriptor_ids"]) or any(
+            enriched_fields[descriptor_id].attribute_id != reference
+            for reference, descriptor_id in zip(target["field_refs"], target["field_descriptor_ids"], strict=True)
+        ):
+            raise CandidateRenderError("inbound target field references and descriptors disagree")
+        target_ids.add(target_id)
+        targets_by_match[match_id].append(target_id)
+        targets.append(_freeze(target))
+    if set(primary_counts) != set(matches_by_id) or any(count != 1 for count in primary_counts.values()):
+        raise CandidateRenderError("each inbound match must own exactly one primary target")
+    for match_id, match in matches_by_id.items():
+        if tuple(match["target_ids"]) != tuple(sorted(targets_by_match[match_id], key=str.encode)):
+            raise CandidateRenderError("materialized inbound match target references disagree")
+
+    raw_markers = source["native_markers"]
+    if not isinstance(raw_markers, tuple):
+        raise CandidateRenderError("materialized native marker inventory is invalid")
+    native_markers = tuple(_freeze(_plain(item)) for item in raw_markers)
+    expected_markers: dict[tuple[str, str, str], JSONObject] = {}
+    for match in matches:
+        if match["shape"] != "native_exact":
+            continue
+        for predicate in match["discriminator"]["predicates"]:
+            location = predicate["location"]
+            key = predicate["key"]
+            if key.startswith("defenseclaw."):
+                marker_kind = "reserved_key_presence"
+                values: list[Any] = []
+            elif location in {"scope_name", "scope_schema_url"}:
+                marker_kind = "exact_structural_value"
+                values = _plain(predicate["values"])
+            elif location == "log_body" and predicate["operator"] == "projected_record_json":
+                marker_kind = "projected_record_structure"
+                values = []
+            else:
+                continue
+            expected_markers[(match["signal"], location, key)] = {
+                "id": f"otlp.native.marker.{match['signal']}.{location}.{key}",
+                "signal": match["signal"],
+                "location": location,
+                "key": key,
+                "marker_kind": marker_kind,
+                "values": values,
+                "value_type": predicate["value_type"],
+            }
+    if [_plain(item) for item in native_markers] != sorted(
+        expected_markers.values(), key=lambda item: item["id"].encode("ascii")
+    ):
+        raise CandidateRenderError("materialized native marker inventory disagrees with native matches")
+
+    raw_recognizers = source["echo_recognizers"]
+    raw_contexts = source["import_contexts"]
+    if not isinstance(raw_recognizers, tuple) or not isinstance(raw_contexts, tuple):
+        raise CandidateRenderError("materialized inbound recognizer/context inventory is invalid")
+    recognizers = tuple(_freeze(_plain(item)) for item in raw_recognizers)
+    contexts = tuple(_freeze(_plain(item)) for item in raw_contexts)
+    if {item["family"] for item in recognizers} != set(families):
+        raise CandidateRenderError("materialized inbound self-echo coverage is incomplete")
+    log_families = {family.id for family in families.values() if family.signal == "logs"}
+    if {item["family_descriptor_id"] for item in contexts} != log_families:
+        raise CandidateRenderError("materialized inbound import-context coverage is incomplete")
+    if any("mandatory" in item or "floor" in item for item in contexts):
+        raise CandidateRenderError("materialized inbound import context exposes floor authority")
+
+    attachments = source["derivation_attachments"]
+    fixture_policy = source["fixture_policy"]
+    if not isinstance(attachments, tuple) or len(attachments) != 1 or not isinstance(fixture_policy, Mapping):
+        raise CandidateRenderError("materialized inbound attachment/fixture contract is invalid")
+    return CandidateInboundOTLP(
+        version=1,
+        max_forward_hops=4,
+        unknown_fields="drop_and_count",
+        semantic_resource_instance_key="defenseclaw.instance.id",
+        forward_instance_key="defenseclaw.telemetry.forward.instance_id",
+        forward_destination_key="defenseclaw.telemetry.forward.destination",
+        forward_hop_count_key="defenseclaw.telemetry.forward.hop_count",
+        record_id_key="defenseclaw.record.id",
+        scope_name="defenseclaw.telemetry",
+        scope_schema_url="https://defenseclaw.io/schemas/telemetry/v8",
+        resource_schema_url="https://opentelemetry.io/schemas/1.42.0",
+        shape_policy=_freeze(_plain(source["shape_policy"])),
+        alias_sets=tuple(aliases),
+        binding_classes=classes,
+        match_descriptors=tuple(sorted(matches, key=lambda item: item["id"].encode("ascii"))),
+        target_descriptors=tuple(sorted(targets, key=lambda item: item["id"].encode("ascii"))),
+        native_markers=native_markers,
+        echo_recognizers=tuple(sorted(recognizers, key=lambda item: item["id"].encode("ascii"))),
+        import_contexts=tuple(sorted(contexts, key=lambda item: item["id"].encode("ascii"))),
+        derivation_attachments=tuple(_freeze(_plain(item)) for item in attachments),
+        fixture_policy=_freeze(_plain(fixture_policy)),
+    )
+
+
 def build_candidate_render_index(view: object) -> CandidateRenderIndex:
     if type(view).__name__ != "MaterializedRegistryView":
         raise CandidateRenderError("renderer requires MaterializedRegistryView")
@@ -5950,8 +6352,17 @@ def build_candidate_render_index(view: object) -> CandidateRenderIndex:
         mandatory_programs,
         mandatory_rule_contracts,
     )
+    inbound_otlp = _candidate_inbound_otlp(
+        fields["inbound_bindings"],
+        attributes=attributes,
+        families=enriched_families,
+        enriched_fields=enriched_fields,
+    )
     go_declaration_values = _go_declaration_values(go_symbol_table, fields)
-    frozen_fields = _freeze(fields)
+    # Inbound rows are carried once in the typed ``inbound_otlp`` index below.
+    # Retaining the materialized tagged copy here would duplicate several
+    # hundred expanded descriptors in every render and Go-plan process.
+    frozen_fields = _freeze({key: value for key, value in fields.items() if key != "inbound_bindings"})
     frozen_structured_types = MappingProxyType(
         {key: _freeze(_plain_ir(structured_types[key])) for key in structured_types}
     )
@@ -5971,6 +6382,7 @@ def build_candidate_render_index(view: object) -> CandidateRenderIndex:
         enriched_metrics=enriched_metrics,
         mandatory_programs=mandatory_programs,
         expanded_producer_mappings=expanded_producer_mappings,
+        inbound_otlp=inbound_otlp,
         go_declaration_values=go_declaration_values,
     )
     try:
@@ -5986,6 +6398,7 @@ def build_candidate_render_index(view: object) -> CandidateRenderIndex:
         enriched_metrics=enriched_metrics,
         mandatory_programs=mandatory_programs,
         expanded_producer_mappings=expanded_producer_mappings,
+        inbound_otlp=inbound_otlp,
         go_declaration_values=go_declaration_values,
         go_api_plan=go_api_plan,
         api_plan_sha256=go_api_plan.api_plan_sha256,
@@ -6035,6 +6448,7 @@ def build_candidate_render_index(view: object) -> CandidateRenderIndex:
         enriched_metrics=enriched_metrics,
         mandatory_programs=mandatory_programs,
         expanded_producer_mappings=expanded_producer_mappings,
+        inbound_otlp=inbound_otlp,
         go_declaration_values=go_declaration_values,
         go_api_plan=go_api_plan,
         api_plan_sha256=go_api_plan.api_plan_sha256,
@@ -6793,6 +7207,7 @@ def _render_catalog(
     model: CandidateRenderIndex,
     marker: JSONObject,
     compatibility_metadata: Mapping[str, JSONObject],
+    inbound_metadata: JSONObject,
 ) -> JSONObject:
     contract = _tagged(model.fields["structural_contract"], "StructuralContractIR")
     resource_group = model.groups["resource.core"]
@@ -6851,6 +7266,7 @@ def _render_catalog(
         "compatibility_manifests": [
             {"id": profile, **compatibility_metadata[profile]} for profile in sorted(_COMPATIBILITY_PROFILES)
         ],
+        "inbound_otlp": inbound_metadata,
     }
 
 
@@ -6899,6 +7315,20 @@ def _render_catalog_markdown(model: CandidateRenderIndex, catalog: Mapping[str, 
             f"| `{profile}` | {manifest['availability']}; `{manifest['path']}`; "
             f"runtime projection `{manifest['runtime_projection']}` |"
         )
+    inbound = catalog["inbound_otlp"]
+    lines.extend(
+        [
+            "",
+            "## Inbound OTLP support",
+            "",
+            f"Compiler-only closed catalog: `{inbound['path']}` (`{inbound['sha256']}`).",
+            "",
+            f"- {inbound['logical_binding_classes']} logical classes, {inbound['match_descriptors']} exact matches, "
+            f"{inbound['target_descriptors']} one-target rows.",
+            f"- {inbound['self_echo_recognizers']} self-echo recognizers and "
+            f"{inbound['import_contexts']} ordinary import-only log contexts.",
+        ]
+    )
     lines.extend(
         [
             "",
@@ -7224,6 +7654,140 @@ def _render_public_view_artifacts(
     return _preflight_candidate_artifacts(artifacts)
 
 
+def _inbound_fixture_descriptors(model: CandidateRenderIndex) -> list[JSONObject]:
+    fixtures: list[JSONObject] = []
+    for match in model.inbound_otlp.match_descriptors:
+        predicates = _plain(match["discriminator"]["predicates"])
+        finite = next(
+            (
+                predicate
+                for predicate in predicates
+                if predicate["operator"] in {"equals", "one_of"} and predicate["values"]
+            ),
+            None,
+        )
+        required = next(
+            (predicate for predicate in predicates if predicate["operator"] not in {"absent"}),
+            predicates[0],
+        )
+        cases: list[JSONObject] = [
+            {"fixture_class": "positive", "mutation": None, "expected_match_id": match["id"]},
+            {
+                "fixture_class": "negative",
+                "mutation": {
+                    "operation": "replace_predicate_value",
+                    "location": finite["location"] if finite is not None else required["location"],
+                    "key": finite["key"] if finite is not None else required["key"],
+                    "value": "__unsupported__",
+                },
+                "expected_match_id": None,
+            },
+            {
+                "fixture_class": "single_fault",
+                "mutation": {"operation": "set_shape", "value": "native_malformed"}
+                if match["shape"] == "native_exact"
+                else {
+                    "operation": "remove_predicate",
+                    "location": required["location"],
+                    "key": required["key"],
+                },
+                "expected_match_id": None,
+            },
+        ]
+        fixtures.append(
+            {
+                "id": match["id"],
+                "match_id": match["id"],
+                "target_ids": _plain(match["target_ids"]),
+                "signal": match["signal"],
+                "shape": match["shape"],
+                "authenticated_source": _plain(match["sources"])[0],
+                "source_match_descriptor": match["id"],
+                "cases": cases,
+            }
+        )
+    return fixtures
+
+
+def _inbound_otlp_document(model: CandidateRenderIndex, marker: JSONObject) -> JSONObject:
+    inbound = model.inbound_otlp
+    fixtures = _inbound_fixture_descriptors(model)
+    target_documents = [_plain(descriptor) for descriptor in inbound.target_descriptors]
+    referenced_fields = sorted(
+        {reference for target in target_documents for reference in target["field_refs"]},
+        key=str.encode,
+    )
+    return {
+        "x-defenseclaw-generated": marker,
+        "format": "defenseclaw-inbound-otlp-bindings-v1",
+        "schema_version": model.schema_version,
+        "registry_version": model.registry_version,
+        "bucket_catalog_version": model.bucket_catalog_version,
+        "materialized_view_sha256": model.materialized_view_sha256,
+        "candidate_render_index_sha256": model.candidate_render_index_sha256,
+        "runtime_activation": "compiler_descriptors_only",
+        "contract": {
+            "version": inbound.version,
+            "max_forward_hops": inbound.max_forward_hops,
+            "unknown_fields": inbound.unknown_fields,
+            "semantic_resource_instance_key": inbound.semantic_resource_instance_key,
+            "forward_instance_key": inbound.forward_instance_key,
+            "forward_destination_key": inbound.forward_destination_key,
+            "forward_hop_count_key": inbound.forward_hop_count_key,
+            "record_id_key": inbound.record_id_key,
+            "scope_name": inbound.scope_name,
+            "scope_schema_url": inbound.scope_schema_url,
+            "resource_schema_url": inbound.resource_schema_url,
+            "shape_policy": _plain(inbound.shape_policy),
+        },
+        "support": {
+            "logical_binding_classes": len(inbound.binding_classes) + len(inbound.derivation_attachments),
+            "match_descriptors": len(inbound.match_descriptors),
+            "target_descriptors": len(inbound.target_descriptors),
+            "native_markers": len(inbound.native_markers),
+            "self_echo_recognizers": len(inbound.echo_recognizers),
+            "import_contexts": len(inbound.import_contexts),
+            "fixture_descriptors": len(fixtures),
+            "fixture_cases": sum(len(item["cases"]) for item in fixtures),
+            "signals": ["logs", "traces", "metrics"],
+            "encodings": ["json", "protobuf"],
+        },
+        "alias_sets": [_plain(item) for item in inbound.alias_sets],
+        "binding_classes": [_plain(item) for item in inbound.binding_classes],
+        "derivation_attachments": [_plain(item) for item in inbound.derivation_attachments],
+        "match_descriptors": [_plain(item) for item in inbound.match_descriptors],
+        "target_descriptors": target_documents,
+        "native_markers": [_plain(item) for item in inbound.native_markers],
+        "field_contracts": [
+            {
+                "attribute": reference,
+                "field_class": model.attributes[reference].metadata["field_class"],
+                "sensitivity": model.attributes[reference].metadata["sensitivity"],
+                "normalization": model.attributes[reference].metadata["normalization"],
+            }
+            for reference in referenced_fields
+        ],
+        "self_echo_recognizers": [_plain(item) for item in inbound.echo_recognizers],
+        "import_contexts": [_plain(item) for item in inbound.import_contexts],
+        "fixture_policy": _plain(inbound.fixture_policy),
+        "fixture_corpus": {
+            "encodings": {
+                "json": {"media_type": "application/json", "representation": "canonical_otlp_json"},
+                "protobuf": {
+                    "media_type": "application/x-protobuf",
+                    "representation": "canonical_protojson",
+                    "message_types": {
+                        "logs": "opentelemetry.proto.collector.logs.v1.ExportLogsServiceRequest",
+                        "traces": "opentelemetry.proto.collector.trace.v1.ExportTraceServiceRequest",
+                        "metrics": "opentelemetry.proto.collector.metrics.v1.ExportMetricsServiceRequest",
+                    },
+                },
+            },
+            "descriptors": fixtures,
+        },
+    }
+
+
 def render_candidate_artifacts_from_index(model: CandidateRenderIndex) -> Mapping[str, CandidateArtifact]:
     """Return the complete immutable candidate artifact set for ``model``.
 
@@ -7259,10 +7823,39 @@ def render_candidate_artifacts_from_index(model: CandidateRenderIndex) -> Mappin
     for artifact in compatibility_artifacts.values():
         _add_candidate_artifact(artifacts, artifact)
 
+    inbound_marker = _authority_marker(
+        registry_version=model.registry_version,
+        digest=model.digest,
+        artifact="compatibility/inbound-otlp.json",
+    )
+    inbound_document = _inbound_otlp_document(model, inbound_marker)
+    inbound_payload = _json_payload(inbound_document)
+    _add_candidate_artifact(
+        artifacts,
+        CandidateArtifact(
+            _INBOUND_OTLP_OUTPUT_PATH,
+            inbound_payload,
+            "application/json",
+            JSON_OWNERSHIP_MARKER,
+        ),
+    )
+    inbound_metadata: JSONObject = {
+        "availability": "compiler_only",
+        "path": "compatibility/inbound-otlp.json",
+        "sha256": hashlib.sha256(inbound_payload).hexdigest(),
+        "logical_binding_classes": len(model.inbound_otlp.binding_classes)
+        + len(model.inbound_otlp.derivation_attachments),
+        "match_descriptors": len(model.inbound_otlp.match_descriptors),
+        "target_descriptors": len(model.inbound_otlp.target_descriptors),
+        "native_markers": len(model.inbound_otlp.native_markers),
+        "self_echo_recognizers": len(model.inbound_otlp.echo_recognizers),
+        "import_contexts": len(model.inbound_otlp.import_contexts),
+    }
+
     catalog_marker = _authority_marker(
         registry_version=model.registry_version, digest=model.digest, artifact="catalog.json"
     )
-    catalog = _render_catalog(model, catalog_marker, compatibility_metadata)
+    catalog = _render_catalog(model, catalog_marker, compatibility_metadata, inbound_metadata)
     add_json(_CATALOG_OUTPUT_PATH, catalog)
     _add_candidate_artifact(
         artifacts,

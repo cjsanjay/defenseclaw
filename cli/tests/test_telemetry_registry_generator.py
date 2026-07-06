@@ -1705,9 +1705,9 @@ def test_real_candidate_outputs_validate_as_one_complete_manifest_inventory(
     records = manifest["ownership_inventory"]["artifacts"]
     record_by_path = {record["path"]: record for record in records}
 
-    assert len(outputs) - len(module.GO_CANDIDATE_OUTPUT_PATHS) - 1 == 61
-    assert len(records) == 68
-    assert len(desired) == len(manifest["outputs"]) == 69
+    assert len(outputs) - len(module.GO_CANDIDATE_OUTPUT_PATHS) - 1 == 62
+    assert len(records) == 69
+    assert len(desired) == len(manifest["outputs"]) == 70
     assert live_outputs == tuple(sorted(expected_live))
     assert not any(path.startswith(module.PUBLIC_VIEW_STAGED_PREFIX) for path in manifest["outputs"])
     assert expected_live <= set(record_by_path)
@@ -2161,7 +2161,7 @@ def test_write_check_is_deterministic_and_offline(tmp_path: Path) -> None:
     assert manifest.read_bytes() == first_bytes
     parsed = json.loads(first_bytes)
     assert parsed["format_version"] == 2
-    assert parsed["generator_version"] == 3
+    assert parsed["generator_version"] == 4
     assert parsed["outputs"] == ["schemas/telemetry/generated/output-manifest.json"]
     assert parsed["ownership_inventory"] == {
         "format_version": 1,
@@ -9491,6 +9491,65 @@ def test_updater_transaction_bootstrap_failure_removes_exact_created_inode(
 def canonical_go_symbol_compilation() -> tuple[Any, Any]:
     module = _load_generator_module("telemetry_registry_go_symbol_canonical")
     return module, module.compile_registry(ROOT)
+
+
+def test_inbound_otlp_ir_expands_closed_match_target_and_echo_inventories(
+    canonical_go_symbol_compilation: tuple[Any, Any],
+) -> None:
+    _module, ir = canonical_go_symbol_compilation
+    inbound = ir.inbound_bindings
+
+    assert len(inbound.binding_classes) == 9
+    assert len(inbound.derivation_attachments) == 1
+    assert len(inbound.match_descriptors) == 237
+    assert len(inbound.target_descriptors) == 245
+    assert len(inbound.native_markers) == 24
+    assert len(inbound.echo_recognizers) == 249
+    assert len(inbound.import_contexts) == 93
+    assert inbound.semantic_resource_instance_key == "defenseclaw.instance.id"
+    assert inbound.forward_instance_key == "defenseclaw.telemetry.forward.instance_id"
+    assert inbound.semantic_resource_instance_key != inbound.forward_instance_key
+    assert inbound.scope_schema_url == "https://defenseclaw.io/schemas/telemetry/v8"
+    assert inbound.resource_schema_url == "https://opentelemetry.io/schemas/1.42.0"
+    assert inbound.shape_policy["native_malformed_external_fallback"] == "forbidden"
+    assert {item["signal"] for item in inbound.native_markers} == {"logs", "traces", "metrics"}
+    assert {item["shape"] for item in inbound.match_descriptors} == {"native_exact", "external"}
+    assert {item["family"] for item in inbound.echo_recognizers} == {
+        group.id for domain in ir.domains for group in domain.groups if group.type in {"log", "span", "metric"}
+    }
+    assert all("mandatory" not in item and "floor" not in item for item in inbound.import_contexts)
+
+
+def test_inbound_otlp_duration_aliases_have_unique_matches_and_one_target_rows(
+    canonical_go_symbol_compilation: tuple[Any, Any],
+) -> None:
+    _module, ir = canonical_go_symbol_compilation
+    inbound = ir.inbound_bindings
+    matches = {
+        item["id"]: item for item in inbound.match_descriptors if item["class_id"] == "otlp.genai.duration.metric.v1"
+    }
+    assert set(matches) == {
+        "otlp.genai.duration.metric.v1.gen-ai-client",
+        "otlp.genai.duration.metric.v1.gen-ai",
+        "otlp.genai.duration.metric.v1.llm",
+        "otlp.genai.duration.metric.v1.claude-code",
+        "otlp.genai.duration.metric.v1.codex",
+    }
+    assert all(len(item["target_ids"]) == 1 for item in matches.values())
+    assert {
+        next(
+            predicate["values"][0]
+            for predicate in item["discriminator"]["predicates"]
+            if predicate["location"] == "instrument_name"
+        )
+        for item in matches.values()
+    } == {
+        "gen_ai.client.operation.duration",
+        "gen_ai.operation.duration",
+        "llm.operation.duration",
+        "claude_code.operation.duration",
+        "codex.operation.duration",
+    }
 
 
 def test_go_symbol_policy_tokenization_is_exact_and_strict() -> None:

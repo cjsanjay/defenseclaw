@@ -35,6 +35,7 @@ from typing import Any, Final
 if __package__ == "scripts":  # pragma: no cover - package import exercised by subprocess tests
     from .telemetry_go_api_plan import MAX_CROSS_FIELD_RELATION_ENTRIES
     from .telemetry_go_fixture_plan import compile_go_fixture_plan
+    from .telemetry_go_inbound_plan import compile_go_inbound_plan
     from .telemetry_go_output_coordinator import (
         EXACT_GO_OUTPUT_PATHS,
         OUTPUT_MODE,
@@ -48,6 +49,7 @@ if __package__ == "scripts":  # pragma: no cover - package import exercised by s
 else:
     from telemetry_go_api_plan import MAX_CROSS_FIELD_RELATION_ENTRIES
     from telemetry_go_fixture_plan import compile_go_fixture_plan
+    from telemetry_go_inbound_plan import compile_go_inbound_plan
     from telemetry_go_output_coordinator import (
         EXACT_GO_OUTPUT_PATHS,
         OUTPUT_MODE,
@@ -1753,7 +1755,357 @@ def _producer_identity_literal(value: Any, path: str) -> str:
     )
 
 
-def _render_producer_body(producer: Any, expected_path: str) -> bytes:
+def _inbound_string_slice(values: Any, path: str) -> str:
+    return "[]string{" + ", ".join(_go_string(item, path) for item in _sequence(values, path, maximum=4096)) + "}"
+
+
+def _render_inbound_descriptors(lines: list[str], inbound: Any) -> None:
+    if _read(inbound, "version", "GoInboundPlanIR") != 1:
+        raise GoRenderError("GoInboundPlanIR.version: only version 1 is supported")
+    if _read(inbound, "native_malformed_external_fallback", "GoInboundPlanIR") != "forbidden":
+        raise GoRenderError("GoInboundPlanIR: native malformed fallback must be forbidden")
+    if (
+        _read(inbound, "unknown_fields", "GoInboundPlanIR") != "drop_and_count"
+        or _read(inbound, "native_marker_rule", "GoInboundPlanIR")
+        != "any_declared_native_marker_selects_native_candidate"
+        or _read(inbound, "structural_marker_rule", "GoInboundPlanIR") != "exact_declared_structure_only"
+        or _read(inbound, "native_malformed_disposition", "GoInboundPlanIR") != "invalid_record"
+    ):
+        raise GoRenderError("GoInboundPlanIR: generated shape/unknown-field policy is invalid")
+    max_hops = _read(inbound, "max_forward_hops", "GoInboundPlanIR")
+    if type(max_hops) is not int or max_hops != 4:
+        raise GoRenderError("GoInboundPlanIR.max_forward_hops: must be 4")
+    lines.extend(
+        (
+            "type generatedInboundPredicate struct {",
+            "\tLocation string",
+            "\tKey string",
+            "\tOperator string",
+            "\tValuesJSON string",
+            "\tValueType string",
+            "}",
+            "",
+            "type generatedInboundAlias struct {",
+            "\tID string",
+            "\tTarget string",
+            "\tValueType string",
+            "\tNormalization string",
+            "\tSources []string",
+            "\tConflictPolicy string",
+            "\tAbsencePolicy string",
+            "\tFieldClass string",
+            "\tSensitivity string",
+            "}",
+            "",
+            "type generatedInboundTargetOverride struct {",
+            "\tSource string",
+            "\tTarget string",
+            "\tNormalization string",
+            "}",
+            "",
+            "type generatedInboundMatch struct {",
+            "\tID string",
+            "\tClassID string",
+            "\tSignal string",
+            "\tSources []string",
+            "\tShape string",
+            "\tDiscriminatorKind string",
+            "\tPredicates []generatedInboundPredicate",
+            "\tMappingStrategy string",
+            "\tAliasIDs []string",
+            "\tTargetOverride *generatedInboundTargetOverride",
+            "\tTargetIDs []string",
+            "\tTimeRuleJSON string",
+            "\tOutcomeRuleJSON string",
+            "\tNativeRoundTrip bool",
+            "}",
+            "",
+            "type generatedInboundTarget struct {",
+            "\tID string",
+            "\tMatchID string",
+            "\tClassID string",
+            "\tSignal string",
+            "\tRole string",
+            "\tTargetKind string",
+            "\tFamily string",
+            "\tBucket string",
+            "\tEventName string",
+            "\tFamilySchemaVersion int",
+            "\tInstrumentName string",
+            "\tInstrumentType string",
+            "\tFieldRefs []string",
+            "\tFieldDescriptorIDs []string",
+            "\tDescriptor familyDescriptor",
+            "\tMappingStrategy string",
+            "\tDerivationStrategy string",
+            "\tTimeRuleJSON string",
+            "\tOutcomeRuleJSON string",
+            "\tImportContextID string",
+            "}",
+            "",
+            "type generatedInboundNativeMarker struct {",
+            "\tID string",
+            "\tSignal string",
+            "\tLocation string",
+            "\tKey string",
+            "\tMarkerKind string",
+            "\tValuesJSON string",
+            "\tValueType string",
+            "}",
+            "",
+            "type generatedInboundEchoRecognizer struct {",
+            "\tID string",
+            "\tSignal string",
+            "\tFamily string",
+            "\tBucket string",
+            "\tEventName string",
+            "\tInstrumentName string",
+            "\tForwardPlacement string",
+            "\tCompareSelfWith string",
+            "}",
+            "",
+            "type generatedInboundImportContext struct {",
+            "\tID string",
+            "\tFamilyDescriptorID string",
+            "\tBucket string",
+            "\tEventName string",
+            "\tConstructionMode string",
+            "\tCapabilities []string",
+            "\tDescriptor familyDescriptor",
+            "}",
+            "",
+        )
+    )
+    constants = (
+        ("generatedInboundScopeName", _go_string(_read(inbound, "scope_name", "inbound"), "scope name")),
+        (
+            "generatedInboundScopeSchemaURL",
+            _go_string(_read(inbound, "scope_schema_url", "inbound"), "scope schema URL"),
+        ),
+        (
+            "generatedInboundResourceSchemaURL",
+            _go_string(_read(inbound, "resource_schema_url", "inbound"), "resource schema URL"),
+        ),
+        (
+            "generatedInboundSemanticInstanceKey",
+            _go_string(_read(inbound, "semantic_resource_instance_key", "inbound"), "semantic instance key"),
+        ),
+        (
+            "generatedInboundForwardInstanceKey",
+            _go_string(_read(inbound, "forward_instance_key", "inbound"), "forward instance key"),
+        ),
+        (
+            "generatedInboundForwardDestinationKey",
+            _go_string(_read(inbound, "forward_destination_key", "inbound"), "forward destination key"),
+        ),
+        (
+            "generatedInboundForwardHopCountKey",
+            _go_string(_read(inbound, "forward_hop_count_key", "inbound"), "forward hop key"),
+        ),
+        ("generatedInboundRecordIDKey", _go_string(_read(inbound, "record_id_key", "inbound"), "record ID key")),
+        ("generatedInboundMaxForwardHops", str(max_hops)),
+        (
+            "generatedInboundUnknownFields",
+            _go_string(_read(inbound, "unknown_fields", "inbound"), "unknown field policy"),
+        ),
+        (
+            "generatedInboundNativeMarkerRule",
+            _go_string(_read(inbound, "native_marker_rule", "inbound"), "native marker rule"),
+        ),
+        (
+            "generatedInboundStructuralMarkerRule",
+            _go_string(_read(inbound, "structural_marker_rule", "inbound"), "structural marker rule"),
+        ),
+        (
+            "generatedInboundNativeMalformedDisposition",
+            _go_string(_read(inbound, "native_malformed_disposition", "inbound"), "native malformed disposition"),
+        ),
+        (
+            "generatedInboundNativeMalformedExternalFallback",
+            _go_string(
+                _read(inbound, "native_malformed_external_fallback", "inbound"),
+                "native malformed fallback",
+            ),
+        ),
+    )
+    width = max(len(name) for name, _value in constants)
+    lines.append("const (")
+    lines.extend(f"\t{name:<{width}} = {value}" for name, value in constants)
+    lines.extend((")", ""))
+    aliases = _sequence(_read(inbound, "aliases", "inbound"), "inbound aliases", maximum=256)
+    lines.append("var generatedInboundAliases = []generatedInboundAlias{")
+    for alias in aliases:
+        lines.append("\t{")
+        for field, name in (
+            ("id", "ID"),
+            ("target", "Target"),
+            ("value_type", "ValueType"),
+            ("normalization", "Normalization"),
+            ("conflict_policy", "ConflictPolicy"),
+            ("absence_policy", "AbsencePolicy"),
+            ("field_class", "FieldClass"),
+            ("sensitivity", "Sensitivity"),
+        ):
+            lines.append(f"\t\t{name}: {_go_string(_read(alias, field, 'alias'), 'alias')},")
+        lines.append(f"\t\tSources: {_inbound_string_slice(_read(alias, 'sources', 'alias'), 'alias sources')},")
+        lines.append("\t},")
+    lines.extend(("}", ""))
+
+    matches = _sequence(_read(inbound, "matches", "inbound"), "inbound matches", maximum=4096)
+    lines.append("var generatedInboundMatches = []generatedInboundMatch{")
+    for match in matches:
+        lines.extend(("\t{", f"\t\tID: {_go_string(_read(match, 'id', 'match'), 'match')},"))
+        for field, name in (
+            ("class_id", "ClassID"),
+            ("signal", "Signal"),
+            ("shape", "Shape"),
+            ("discriminator_kind", "DiscriminatorKind"),
+            ("mapping_strategy", "MappingStrategy"),
+            ("time_rule_json", "TimeRuleJSON"),
+            ("outcome_rule_json", "OutcomeRuleJSON"),
+        ):
+            lines.append(f"\t\t{name}: {_go_string(_read(match, field, 'match'), 'match')},")
+        lines.append(f"\t\tSources: {_inbound_string_slice(_read(match, 'sources', 'match'), 'match sources')},")
+        lines.append("\t\tPredicates: []generatedInboundPredicate{")
+        for predicate in _sequence(_read(match, "predicates", "match"), "match predicates", maximum=64):
+            lines.append(
+                "\t\t\t{"
+                + ", ".join(
+                    f"{name}: {_go_string(_read(predicate, field, 'predicate'), 'predicate')}"
+                    for field, name in (
+                        ("location", "Location"),
+                        ("key", "Key"),
+                        ("operator", "Operator"),
+                        ("values_json", "ValuesJSON"),
+                        ("value_type", "ValueType"),
+                    )
+                )
+                + "},"
+            )
+        lines.append("\t\t},")
+        lines.append(f"\t\tAliasIDs: {_inbound_string_slice(_read(match, 'alias_ids', 'match'), 'match aliases')},")
+        target_override = _read(match, "target_override", "match")
+        if target_override is None:
+            lines.append("\t\tTargetOverride: nil,")
+        else:
+            lines.append(
+                "\t\tTargetOverride: &generatedInboundTargetOverride{"
+                + ", ".join(
+                    f"{name}: {_go_string(_read(target_override, field, 'target override'), 'target override')}"
+                    for field, name in (("source", "Source"), ("target", "Target"), ("normalization", "Normalization"))
+                )
+                + "},"
+            )
+        lines.append(f"\t\tTargetIDs: {_inbound_string_slice(_read(match, 'target_ids', 'match'), 'match targets')},")
+        lines.append(f"\t\tNativeRoundTrip: {_bool(_read(match, 'native_round_trip', 'match'), 'match native')},")
+        lines.append("\t},")
+    lines.extend(("}", ""))
+
+    targets = _sequence(_read(inbound, "targets", "inbound"), "inbound targets", maximum=4096)
+    lines.append("var generatedInboundTargets = []generatedInboundTarget{")
+    for target in targets:
+        lines.append("\t{")
+        for field, name in (
+            ("id", "ID"),
+            ("match_id", "MatchID"),
+            ("class_id", "ClassID"),
+            ("signal", "Signal"),
+            ("role", "Role"),
+            ("target_kind", "TargetKind"),
+            ("family", "Family"),
+            ("bucket", "Bucket"),
+            ("event_name", "EventName"),
+            ("instrument_name", "InstrumentName"),
+            ("instrument_type", "InstrumentType"),
+            ("mapping_strategy", "MappingStrategy"),
+            ("derivation_strategy", "DerivationStrategy"),
+            ("time_rule_json", "TimeRuleJSON"),
+            ("outcome_rule_json", "OutcomeRuleJSON"),
+            ("import_context_id", "ImportContextID"),
+        ):
+            lines.append(f"\t\t{name}: {_go_string(_read(target, field, 'target'), 'target')},")
+        lines.append(f"\t\tFamilySchemaVersion: {_read(target, 'family_schema_version', 'target')},")
+        lines.append(
+            f"\t\tFieldRefs: {_inbound_string_slice(_read(target, 'field_refs', 'target'), 'target field refs')},"
+        )
+        lines.append(
+            f"\t\tFieldDescriptorIDs: {_inbound_string_slice(_read(target, 'field_descriptor_ids', 'target'), 'target fields')},"
+        )
+        descriptor_symbol = _identifier(_read(target, "descriptor_symbol", "target"), "target descriptor symbol")
+        lines.append(f"\t\tDescriptor: {descriptor_symbol}{{}},")
+        lines.append("\t},")
+    lines.extend(("}", ""))
+
+    markers = _sequence(_read(inbound, "native_markers", "inbound"), "inbound native markers", maximum=256)
+    lines.append("var generatedInboundNativeMarkers = []generatedInboundNativeMarker{")
+    for marker in markers:
+        lines.append(
+            "\t{"
+            + ", ".join(
+                f"{name}: {_go_string(_read(marker, field, 'native marker'), 'native marker')}"
+                for field, name in (
+                    ("id", "ID"),
+                    ("signal", "Signal"),
+                    ("location", "Location"),
+                    ("key", "Key"),
+                    ("marker_kind", "MarkerKind"),
+                    ("values_json", "ValuesJSON"),
+                    ("value_type", "ValueType"),
+                )
+            )
+            + "},"
+        )
+    lines.extend(("}", ""))
+
+    echoes = _sequence(_read(inbound, "echo_recognizers", "inbound"), "inbound echoes", maximum=4096)
+    lines.append("var generatedInboundEchoRecognizers = []generatedInboundEchoRecognizer{")
+    for echo in echoes:
+        lines.append(
+            "\t{"
+            + ", ".join(
+                f"{name}: {_go_string(_read(echo, field, 'echo'), 'echo')}"
+                for field, name in (
+                    ("id", "ID"),
+                    ("signal", "Signal"),
+                    ("family", "Family"),
+                    ("bucket", "Bucket"),
+                    ("event_name", "EventName"),
+                    ("instrument_name", "InstrumentName"),
+                    ("forward_placement", "ForwardPlacement"),
+                    ("compare_self_with", "CompareSelfWith"),
+                )
+            )
+            + "},"
+        )
+    lines.extend(("}", ""))
+
+    contexts = _sequence(_read(inbound, "import_contexts", "inbound"), "inbound contexts", maximum=4096)
+    lines.append("var generatedInboundImportContexts = []generatedInboundImportContext{")
+    for context in contexts:
+        descriptor_symbol = _identifier(
+            _read(context, "descriptor_symbol", "context"),
+            "context descriptor symbol",
+        )
+        lines.append(
+            "\t{"
+            + ", ".join(
+                f"{name}: {_go_string(_read(context, field, 'context'), 'context')}"
+                for field, name in (
+                    ("id", "ID"),
+                    ("family_descriptor_id", "FamilyDescriptorID"),
+                    ("bucket", "Bucket"),
+                    ("event_name", "EventName"),
+                    ("construction_mode", "ConstructionMode"),
+                )
+            )
+            + f", Capabilities: {_inbound_string_slice(_read(context, 'capabilities', 'context'), 'context capabilities')}"
+            + f", Descriptor: {descriptor_symbol}{{}}"
+            + "},"
+        )
+    lines.extend(("}", ""))
+
+
+def _render_producer_body(producer: Any, inbound: Any, expected_path: str) -> bytes:
     if _read(producer, "version", "GoProducerPlanIR") != 1:
         raise GoRenderError("GoProducerPlanIR.version: only version 1 is supported")
     file_plan = _read(producer, "file", "GoProducerPlanIR")
@@ -2051,6 +2403,7 @@ def _render_producer_body(producer: Any, expected_path: str) -> bytes:
             "",
         )
     )
+    _render_inbound_descriptors(lines, inbound)
     return _go_source(lines)
 
 
@@ -2621,9 +2974,11 @@ def render_go_candidate(index: Any, plan: Any | None = None) -> GoRenderCandidat
     if len(_sequence(_read(plan, "private_declarations", "GoAPIPlanIR"), "private declarations", maximum=4096)) != 753:
         raise GoRenderError("GoAPIPlanIR.private_declarations: exact 753-declaration inventory is required")
     producer = compile_go_producer_plan(index)
+    inbound = compile_go_inbound_plan(index)
     fixture = compile_go_fixture_plan(index)
     expected_projections = {
-        EXACT_GO_OUTPUT_PATHS[2]: tuple(_read(row, "row_id", "producer row") for row in producer.rows),
+        EXACT_GO_OUTPUT_PATHS[2]: tuple(_read(row, "row_id", "producer row") for row in producer.rows)
+        + tuple(_read(inbound, "projection_ids", "GoInboundPlanIR")),
         EXACT_GO_OUTPUT_PATHS[6]: tuple(
             _read(item, "example_id", "fixture") for item in _read(plan, "fixtures", "plan")
         ),
@@ -2638,7 +2993,11 @@ def render_go_candidate(index: Any, plan: Any | None = None) -> GoRenderCandidat
         )
         if observed != expected_projections.get(path, ()):
             raise GoRenderError(f"GoFilePlanIR[{path}]: private projection rendering coverage is incomplete")
-    for compiled, owner in ((producer, "GoProducerPlanIR"), (fixture, "GoFixturePlanIR")):
+    for compiled, owner in (
+        (producer, "GoProducerPlanIR"),
+        (inbound, "GoInboundPlanIR"),
+        (fixture, "GoFixturePlanIR"),
+    ):
         if (
             _digest(_read(compiled, "materialized_view_sha256", owner), f"{owner}.materialized_view_sha256")
             != materialized
@@ -2651,7 +3010,9 @@ def render_go_candidate(index: Any, plan: Any | None = None) -> GoRenderCandidat
             raise GoRenderError(f"{owner}: candidate-render-index digest disagrees")
 
     header = canonical_go_header(materialized, candidate, symbol_table)
-    rendered_files: list[tuple[str, bytes, tuple[GoDeclarationKey, ...]]] = []
+    rendered_outputs: list[RenderedGoOutput] = []
+    inventories: list[GoFileDeclarationInventory] = []
+    expected_keys: list[GoDeclarationKey] = []
     for file_plan, path in zip(files, EXACT_GO_OUTPUT_PATHS):
         file_declarations = _sequence(
             _read(file_plan, "declarations", f"GoFilePlanIR[{path}]"),
@@ -2663,7 +3024,7 @@ def render_go_candidate(index: Any, plan: Any | None = None) -> GoRenderCandidat
         elif path == EXACT_GO_OUTPUT_PATHS[1]:
             body = _render_catalog_body(plan)
         elif path == EXACT_GO_OUTPUT_PATHS[2]:
-            body = _render_producer_body(producer, path)
+            body = _render_producer_body(producer, inbound, path)
         elif path in EXACT_GO_OUTPUT_PATHS[3:6]:
             body = _render_domain_body(plan, file_plan, path)
         elif path == EXACT_GO_OUTPUT_PATHS[6]:
@@ -2671,16 +3032,13 @@ def render_go_candidate(index: Any, plan: Any | None = None) -> GoRenderCandidat
         else:
             raise AssertionError("validated exact output path was not rendered")
         keys = tuple(_declaration_key(item, position) for position, item in enumerate(file_declarations))
-        rendered_files.append((path, body, keys))
-    outputs = tuple(
-        RenderedGoOutput(path, header + body, OWNERSHIP_MARKER, OUTPUT_MODE) for path, body, _ in rendered_files
-    )
-    inventories = tuple(GoFileDeclarationInventory(path, keys) for path, _, keys in rendered_files)
-    expected_keys = tuple(key for _, _, keys in rendered_files for key in keys)
+        rendered_outputs.append(RenderedGoOutput(path, header + body, OWNERSHIP_MARKER, OUTPUT_MODE))
+        inventories.append(GoFileDeclarationInventory(path, keys))
+        expected_keys.extend(keys)
     return GoRenderCandidate(
-        outputs,
-        inventories,
-        expected_keys,
+        tuple(rendered_outputs),
+        tuple(inventories),
+        tuple(expected_keys),
         materialized,
         candidate,
         symbol_table,

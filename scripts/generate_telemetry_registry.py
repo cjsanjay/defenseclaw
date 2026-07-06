@@ -147,6 +147,7 @@ def _load_candidate_renderers():  # type: ignore[no-untyped-def]
     # under competing module identities.
     _load_sibling_module("telemetry_canonical_record")
     coordinator = _load_sibling_module("telemetry_go_output_coordinator")
+    _load_sibling_module("telemetry_go_inbound_plan")
     _load_sibling_module("telemetry_go_api_plan")
     _load_sibling_module("telemetry_go_producer_plan")
     _load_sibling_module("telemetry_go_fixture_plan")
@@ -155,7 +156,7 @@ def _load_candidate_renderers():  # type: ignore[no-untyped-def]
     return portable, go_renderer, coordinator
 
 
-GENERATOR_VERSION: Final = 3
+GENERATOR_VERSION: Final = 4
 NORMALIZED_SNAPSHOT_FORMAT: Final = "defenseclaw-normalized-semconv-v1"
 MAX_AUTHORED_JSON_NESTING: Final = 256
 EXPECTED_IMPORTS: Final = ("genai.yaml", "security.yaml", "operations.yaml")
@@ -730,6 +731,7 @@ PORTABLE_STATIC_OUTPUT_PATHS: Final = (
     "schemas/telemetry/generated/compatibility/local-observability-v1.json",
     "schemas/telemetry/generated/compatibility/openinference-v1.json",
     "schemas/telemetry/generated/compatibility/v7-exporter-selection.json",
+    "schemas/telemetry/generated/compatibility/inbound-otlp.json",
     "schemas/telemetry/generated/examples/manifest.json",
     "schemas/telemetry/generated/otlp-fixtures/manifest.json",
 )
@@ -2255,6 +2257,32 @@ class MaterializedRegistryView:
 
 
 @dataclass(frozen=True, slots=True)
+class InboundOTLPIR:
+    version: int
+    max_forward_hops: int
+    unknown_fields: str
+    semantic_resource_instance_key: str
+    forward_instance_key: str
+    forward_destination_key: str
+    forward_hop_count_key: str
+    record_id_key: str
+    scope_name: str
+    scope_schema_url: str
+    resource_schema_url: str
+    shape_policy: Mapping[str, FrozenJSON]
+    alias_sets: tuple[Mapping[str, FrozenJSON], ...]
+    binding_classes: tuple[Mapping[str, FrozenJSON], ...]
+    match_descriptors: tuple[Mapping[str, FrozenJSON], ...]
+    target_descriptors: tuple[Mapping[str, FrozenJSON], ...]
+    native_markers: tuple[Mapping[str, FrozenJSON], ...]
+    echo_recognizers: tuple[Mapping[str, FrozenJSON], ...]
+    import_contexts: tuple[Mapping[str, FrozenJSON], ...]
+    derivation_attachments: tuple[Mapping[str, FrozenJSON], ...]
+    fixture_policy: Mapping[str, FrozenJSON]
+    __hash__ = None
+
+
+@dataclass(frozen=True, slots=True)
 class RegistryIR:
     registry_path: str
     schema_version: int
@@ -2283,6 +2311,7 @@ class RegistryIR:
     metric_compatibility_profile: MetricCompatibilityProfileIR
     v7_exporter_selection: Mapping[str, FrozenJSON]
     v7_exporter_selection_schema: Mapping[str, FrozenJSON]
+    inbound_bindings: InboundOTLPIR
     domains: tuple[DomainIR, ...]
     group_resolution_order: tuple[str, ...]
     resolved_group_uses: Mapping[str, tuple[ResolvedAttributeUseIR, ...]]
@@ -9829,6 +9858,643 @@ def _build_materialized_registry_view(registry_values: Mapping[str, Any]) -> Mat
     )
 
 
+_INBOUND_ALIAS_IDS: Final = (
+    "conversation-id-v1",
+    "request-id-v1",
+    "provider-v1",
+    "request-model-v1",
+    "input-content-v1",
+    "output-content-v1",
+    "input-tokens-v1",
+    "output-tokens-v1",
+    "log-duration-seconds-v1",
+)
+_INBOUND_CLASS_IDS: Final = (
+    "otlp.native.log.v8",
+    "otlp.native.span.v8",
+    "otlp.native.metric.v8",
+    "otlp.genai.span.operation.v1",
+    "otlp.codex.user_prompt.v1",
+    "otlp.claudecode.user_prompt.v1",
+    "otlp.codex.response_completed.v1",
+    "otlp.claudecode.token_usage.v1",
+    "otlp.genai.duration.metric.v1",
+)
+_INBOUND_SIGNALS: Final = frozenset({"logs", "traces", "metrics"})
+_INBOUND_MODES: Final = frozenset({"import", "derive", "import_and_derive"})
+
+
+def _inbound_mapping(value: Any, path: str) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise RegistryError(f"{path}: expected mapping")
+    return value
+
+
+def _inbound_sequence(value: Any, path: str, *, allow_empty: bool = False) -> list[Any]:
+    if not isinstance(value, list) or (not allow_empty and not value):
+        raise RegistryError(f"{path}: expected {'possibly empty ' if allow_empty else 'nonempty '}sequence")
+    return value
+
+
+def _inbound_predicates(
+    raw: Any,
+    *,
+    path: str,
+    target: GroupIR,
+    case: Mapping[str, Any] | None,
+    constants: Mapping[str, Any],
+) -> tuple[dict[str, Any], ...]:
+    predicates: list[dict[str, Any]] = []
+    for index, value in enumerate(_inbound_sequence(raw, path)):
+        item_path = f"{path}[{index}]"
+        item = _inbound_mapping(value, item_path)
+        _exact_keys(item, {"location", "key", "operator", "value_type"}, {"values"}, item_path)
+        location = _string(item["location"], f"{item_path}.location", pattern=_ID)
+        key = _string(item["key"], f"{item_path}.key")
+        operator = _string(item["operator"], f"{item_path}.operator", pattern=_ID)
+        value_type = _string(item["value_type"], f"{item_path}.value_type", pattern=_ID)
+        values = list(item.get("values", ()))
+        if key == "$expansion_required_key":
+            if case is None:
+                raise RegistryError(f"{item_path}.key: expansion key outside case expansion")
+            key = _string(case["required_key"], f"{item_path}.key", pattern=_ID)
+            value_type = "string"
+        if operator == "equals_target_bucket":
+            operator, values = "equals", [target.bucket]
+        elif operator == "equals_target_event":
+            operator, values = "equals", [target.event_name]
+        elif operator == "equals_target_family":
+            operator, values = "equals", [target.id]
+        elif operator == "equals_target_schema_version":
+            operator, values = "equals", [target.family_schema_version]
+        elif operator == "equals_target_instrument":
+            operator, values = "equals", [target.instrument_name]
+        elif operator == "equals_expansion_operation":
+            if case is None:
+                raise RegistryError(f"{item_path}.operator: operation outside case expansion")
+            operator, values = "equals", [_string(case["operation"], f"{item_path}.operation", pattern=_ID)]
+        elif operator == "equals_expansion_instrument":
+            if case is None:
+                raise RegistryError(f"{item_path}.operator: instrument outside source-case expansion")
+            operator, values = "equals", [_string(case["instrument_name"], f"{item_path}.instrument_name", pattern=_ID)]
+        elif operator == "equals_contract":
+            contract_key = key.removeprefix("$")
+            if contract_key not in constants:
+                raise RegistryError(f"{item_path}.key: unknown inbound contract constant")
+            operator, values = "equals", [constants[contract_key]]
+        elif operator == "reversible_target_shape":
+            shapes = {
+                "counter": ("sum_delta_monotonic",),
+                "gauge": ("gauge",),
+                "updowncounter": ("sum_delta",),
+            }.get(target.instrument_type or "")
+            if shapes is None:
+                raise RegistryError(f"{item_path}.operator: target metric shape is not reversible")
+            operator, values = "one_of", list(shapes)
+        if operator in {"equals", "one_of", "uint32_max"} and not values:
+            raise RegistryError(f"{item_path}.values: required for {operator}")
+        if operator in {"present", "absent", "projected_record_json", "valid_ended_span"} and values:
+            raise RegistryError(f"{item_path}.values: forbidden for {operator}")
+        if operator not in {
+            "equals",
+            "one_of",
+            "present",
+            "absent",
+            "uint32_max",
+            "projected_record_json",
+            "valid_ended_span",
+        }:
+            raise RegistryError(f"{item_path}.operator: unsupported inbound predicate")
+        predicates.append(
+            {
+                "location": location,
+                "key": key,
+                "operator": operator,
+                "values": values,
+                "value_type": value_type,
+            }
+        )
+    identities = [(item["location"], item["key"]) for item in predicates]
+    if len(identities) != len(set(identities)):
+        raise RegistryError(f"{path}: duplicate predicate location/key")
+    return tuple(predicates)
+
+
+def _inbound_disjoint(left: Mapping[str, Any], right: Mapping[str, Any]) -> bool:
+    if left["shape"] != right["shape"]:
+        return True
+    left_by_key = {(item["location"], item["key"]): item for item in left["discriminator"]["predicates"]}
+    right_by_key = {(item["location"], item["key"]): item for item in right["discriminator"]["predicates"]}
+    for identity in set(left_by_key) & set(right_by_key):
+        first, second = left_by_key[identity], right_by_key[identity]
+        if {first["operator"], second["operator"]} == {"present", "absent"}:
+            return True
+        if first["operator"] == "absent" and second["operator"] in {"equals", "one_of", "present"}:
+            return True
+        if second["operator"] == "absent" and first["operator"] in {"equals", "one_of", "present"}:
+            return True
+        if first["operator"] in {"equals", "one_of"} and second["operator"] in {"equals", "one_of"}:
+            if set(first["values"]).isdisjoint(second["values"]):
+                return True
+    return False
+
+
+def _parse_inbound_otlp(
+    value: Any,
+    *,
+    groups: Mapping[str, GroupIR],
+) -> InboundOTLPIR:
+    path = "registry.inbound_bindings"
+    source = _inbound_mapping(value, path)
+    _exact_keys(
+        source,
+        {
+            "version",
+            "max_forward_hops",
+            "unknown_fields",
+            "semantic_resource_instance_key",
+            "forward_instance_key",
+            "forward_destination_key",
+            "forward_hop_count_key",
+            "record_id_key",
+            "scope_name",
+            "scope_schema_url",
+            "resource_schema_url",
+            "alias_sets",
+            "binding_classes",
+            "derivation_attachments",
+            "fixture_policy",
+        },
+        set(),
+        path,
+    )
+    if _integer(source["version"], f"{path}.version") != 1:
+        raise RegistryError(f"{path}.version: unsupported version")
+    if _integer(source["max_forward_hops"], f"{path}.max_forward_hops") != 4:
+        raise RegistryError(f"{path}.max_forward_hops: must be 4")
+    expected_constants = {
+        "unknown_fields": "drop_and_count",
+        "semantic_resource_instance_key": "defenseclaw.instance.id",
+        "forward_instance_key": "defenseclaw.telemetry.forward.instance_id",
+        "forward_destination_key": "defenseclaw.telemetry.forward.destination",
+        "forward_hop_count_key": "defenseclaw.telemetry.forward.hop_count",
+        "record_id_key": "defenseclaw.record.id",
+        "scope_name": "defenseclaw.telemetry",
+        "scope_schema_url": "https://defenseclaw.io/schemas/telemetry/v8",
+        "resource_schema_url": "https://opentelemetry.io/schemas/1.42.0",
+    }
+    for key, expected in expected_constants.items():
+        if _string(source[key], f"{path}.{key}") != expected:
+            raise RegistryError(f"{path}.{key}: contract drift")
+    constants = {
+        "scope_name": expected_constants["scope_name"],
+        "scope_schema_url": expected_constants["scope_schema_url"],
+        "resource_schema_url": expected_constants["resource_schema_url"],
+    }
+
+    alias_sets: list[dict[str, Any]] = []
+    aliases_by_id: dict[str, dict[str, Any]] = {}
+    for index, raw_alias in enumerate(_inbound_sequence(source["alias_sets"], f"{path}.alias_sets")):
+        alias_path = f"{path}.alias_sets[{index}]"
+        alias = _inbound_mapping(raw_alias, alias_path)
+        _exact_keys(alias, {"id", "target", "value_type", "normalization", "sources"}, set(), alias_path)
+        alias_id = _string(alias["id"], f"{alias_path}.id", pattern=_ID)
+        target = _string(alias["target"], f"{alias_path}.target")
+        sources = _string_list(alias["sources"], f"{alias_path}.sources", allow_empty=False)
+        parsed = {
+            "id": alias_id,
+            "target": target,
+            "value_type": _string(alias["value_type"], f"{alias_path}.value_type", pattern=_ID),
+            "normalization": _string(alias["normalization"], f"{alias_path}.normalization", pattern=_ID),
+            "sources": list(sources),
+            "conflict_policy": "reject",
+            "absence_policy": "omit",
+        }
+        if alias_id in aliases_by_id:
+            raise RegistryError(f"{alias_path}.id: duplicate alias set")
+        aliases_by_id[alias_id] = parsed
+        alias_sets.append(parsed)
+    if tuple(item["id"] for item in alias_sets) != _INBOUND_ALIAS_IDS:
+        raise RegistryError(f"{path}.alias_sets: canonical inventory/order mismatch")
+
+    classes: list[dict[str, Any]] = []
+    for index, raw_class in enumerate(_inbound_sequence(source["binding_classes"], f"{path}.binding_classes")):
+        class_path = f"{path}.binding_classes[{index}]"
+        item = _inbound_mapping(raw_class, class_path)
+        _exact_keys(
+            item,
+            {
+                "id",
+                "signal",
+                "sources",
+                "mode",
+                "expansion",
+                "discriminator",
+                "mapping",
+                "derived_targets",
+                "time_rule",
+                "outcome_rule",
+                "native_round_trip",
+            },
+            set(),
+            class_path,
+        )
+        class_id = _string(item["id"], f"{class_path}.id", pattern=_ID)
+        signal = _string(item["signal"], f"{class_path}.signal", pattern=_ID)
+        mode = _string(item["mode"], f"{class_path}.mode", pattern=_ID)
+        if signal not in _INBOUND_SIGNALS or mode not in _INBOUND_MODES:
+            raise RegistryError(f"{class_path}: invalid signal or mode")
+        mapping = _inbound_mapping(item["mapping"], f"{class_path}.mapping")
+        _exact_keys(mapping, {"strategy", "alias_sets"}, set(), f"{class_path}.mapping")
+        alias_ids = _string_list(mapping["alias_sets"], f"{class_path}.mapping.alias_sets")
+        if any(alias_id not in aliases_by_id for alias_id in alias_ids):
+            raise RegistryError(f"{class_path}.mapping.alias_sets: unknown alias set")
+        discriminator = _inbound_mapping(item["discriminator"], f"{class_path}.discriminator")
+        _exact_keys(discriminator, {"kind", "predicates"}, set(), f"{class_path}.discriminator")
+        derived_targets = _inbound_sequence(item["derived_targets"], f"{class_path}.derived_targets", allow_empty=True)
+        for derived_index, raw_target in enumerate(derived_targets):
+            target_path = f"{class_path}.derived_targets[{derived_index}]"
+            target = _inbound_mapping(raw_target, target_path)
+            _exact_keys(target, {"family", "strategy"}, set(), target_path)
+            family_id = _string(target["family"], f"{target_path}.family", pattern=_ID)
+            if family_id not in groups or groups[family_id].type != "metric":
+                raise RegistryError(f"{target_path}.family: expected metric family")
+        classes.append(
+            {
+                "id": class_id,
+                "signal": signal,
+                "sources": list(_string_list(item["sources"], f"{class_path}.sources", allow_empty=False)),
+                "mode": mode,
+                "expansion": item["expansion"],
+                "discriminator": discriminator,
+                "mapping": {
+                    "strategy": _string(mapping["strategy"], f"{class_path}.mapping.strategy", pattern=_ID),
+                    "alias_sets": list(alias_ids),
+                },
+                "derived_targets": derived_targets,
+                "time_rule": item["time_rule"],
+                "outcome_rule": item["outcome_rule"],
+                "native_round_trip": item["native_round_trip"],
+            }
+        )
+    if tuple(item["id"] for item in classes) != _INBOUND_CLASS_IDS:
+        raise RegistryError(f"{path}.binding_classes: canonical inventory/order mismatch")
+
+    matches: list[dict[str, Any]] = []
+    targets_by_match: dict[str, list[dict[str, Any]]] = {}
+    for class_index, item in enumerate(classes):
+        class_path = f"{path}.binding_classes[{class_index}]"
+        expansion = _inbound_mapping(item["expansion"], f"{class_path}.expansion")
+        kind = _string(expansion.get("kind"), f"{class_path}.expansion.kind", pattern=_ID)
+        expanded_cases: list[tuple[GroupIR, Mapping[str, Any] | None, str]] = []
+        if kind == "all_signal_families":
+            _exact_keys(expansion, {"kind"}, set(), f"{class_path}.expansion")
+            group_type = {"logs": "log", "traces": "span"}.get(item["signal"])
+            if group_type is None:
+                raise RegistryError(f"{class_path}.expansion: all families requires logs/traces")
+            expanded_cases = [(group, None, group.id) for group in groups.values() if group.type == group_type]
+        elif kind == "reversible_metric_families":
+            _exact_keys(expansion, {"kind", "instrument_types"}, set(), f"{class_path}.expansion")
+            instruments = _string_list(
+                expansion["instrument_types"], f"{class_path}.expansion.instrument_types", allow_empty=False
+            )
+            if instruments != ("counter", "gauge", "updowncounter"):
+                raise RegistryError(f"{class_path}.expansion.instrument_types: contract drift")
+            expanded_cases = [
+                (group, None, group.id)
+                for group in groups.values()
+                if group.type == "metric" and group.instrument_type in instruments
+            ]
+        elif kind == "singleton":
+            _exact_keys(expansion, {"kind", "primary_family"}, set(), f"{class_path}.expansion")
+            family_id = _string(expansion["primary_family"], f"{class_path}.expansion.primary_family", pattern=_ID)
+            target = groups.get(family_id)
+            if target is None:
+                raise RegistryError(f"{class_path}.expansion.primary_family: unknown family")
+            expanded_cases = [(target, None, target.id)]
+        elif kind == "cases":
+            _exact_keys(expansion, {"kind", "cases"}, set(), f"{class_path}.expansion")
+            for case_index, raw_case in enumerate(
+                _inbound_sequence(expansion["cases"], f"{class_path}.expansion.cases")
+            ):
+                case_path = f"{class_path}.expansion.cases[{case_index}]"
+                case = _inbound_mapping(raw_case, case_path)
+                _exact_keys(
+                    case,
+                    {"id_suffix", "primary_family", "operation", "required_key"},
+                    {"target_key", "normalization"},
+                    case_path,
+                )
+                target = groups.get(_string(case["primary_family"], f"{case_path}.primary_family", pattern=_ID))
+                if target is None or target.type != "span":
+                    raise RegistryError(f"{case_path}.primary_family: expected span family")
+                expanded_cases.append((target, case, target.id))
+        elif kind == "source_cases":
+            _exact_keys(expansion, {"kind", "primary_family", "cases"}, set(), f"{class_path}.expansion")
+            family_id = _string(expansion["primary_family"], f"{class_path}.expansion.primary_family", pattern=_ID)
+            target = groups.get(family_id)
+            if target is None or target.type != "metric":
+                raise RegistryError(f"{class_path}.expansion.primary_family: expected metric family")
+            for case_index, raw_case in enumerate(
+                _inbound_sequence(expansion["cases"], f"{class_path}.expansion.cases")
+            ):
+                case_path = f"{class_path}.expansion.cases[{case_index}]"
+                case = _inbound_mapping(raw_case, case_path)
+                _exact_keys(case, {"id_suffix", "instrument_name"}, set(), case_path)
+                suffix = _string(case["id_suffix"], f"{case_path}.id_suffix", pattern=_ID)
+                _string(case["instrument_name"], f"{case_path}.instrument_name", pattern=_ID)
+                expanded_cases.append((target, case, suffix))
+        else:
+            raise RegistryError(f"{class_path}.expansion.kind: unsupported kind")
+        expanded_cases.sort(key=lambda pair: pair[2].encode("ascii"))
+        for target, case, variant_id in expanded_cases:
+            match_id = f"{item['id']}.{variant_id}"
+            predicates = _inbound_predicates(
+                item["discriminator"]["predicates"],
+                path=f"{class_path}.discriminator.predicates",
+                target=target,
+                case=case,
+                constants=constants,
+            )
+            target_override: dict[str, Any] | None = None
+            if case is not None and "target_key" in case:
+                target_override = {
+                    "source": case["required_key"],
+                    "target": case["target_key"],
+                    "normalization": case["normalization"],
+                }
+            shape = "native_exact" if item["native_round_trip"] else "external"
+            matches.append(
+                {
+                    "id": match_id,
+                    "class_id": item["id"],
+                    "signal": item["signal"],
+                    "sources": item["sources"],
+                    "shape": shape,
+                    "discriminator": {
+                        "kind": item["discriminator"]["kind"],
+                        "predicates": list(predicates),
+                    },
+                    "mapping": {
+                        "strategy": item["mapping"]["strategy"],
+                        "alias_sets": [aliases_by_id[alias_id] for alias_id in item["mapping"]["alias_sets"]],
+                        "target_override": target_override,
+                    },
+                    "derived_targets": item["derived_targets"],
+                    "time_rule": item["time_rule"],
+                    "outcome_rule": item["outcome_rule"],
+                    "unknown_fields": "drop_and_count",
+                    "native_round_trip": item["native_round_trip"],
+                    "target_ids": [],
+                }
+            )
+            role = "import" if item["mode"] in {"import", "import_and_derive"} else "derive"
+            primary_target = {
+                "id": f"{match_id}.{target.id}",
+                "match_id": match_id,
+                "class_id": item["id"],
+                "signal": item["signal"],
+                "role": role,
+                "target_kind": "primary",
+                "family": target.id,
+                "bucket": target.bucket,
+                "event_name": target.event_name
+                if target.type == "log"
+                else target.instrument_name
+                if target.type == "metric"
+                else target.id,
+                "family_schema_version": target.family_schema_version,
+                "instrument_name": target.instrument_name,
+                "instrument_type": target.instrument_type,
+                "field_refs": sorted(use.ref for use in target.resolved_uses),
+                "mapping_strategy": item["mapping"]["strategy"],
+                "derivation_strategy": item["mapping"]["strategy"] if role == "derive" else None,
+                "time_rule": item["time_rule"],
+                "outcome_rule": item["outcome_rule"],
+                "import_context_id": f"otlp.import.{target.id}" if target.type == "log" and role == "import" else None,
+            }
+            targets_by_match[match_id] = [primary_target]
+            for raw_derived in item["derived_targets"]:
+                derived = _inbound_mapping(raw_derived, f"{class_path}.derived_targets")
+                family = groups[_string(derived["family"], f"{class_path}.derived_targets.family", pattern=_ID)]
+                targets_by_match[match_id].append(
+                    {
+                        "id": f"{match_id}.{family.id}",
+                        "match_id": match_id,
+                        "class_id": item["id"],
+                        "signal": "metrics",
+                        "role": "derive",
+                        "target_kind": "derived",
+                        "family": family.id,
+                        "bucket": family.bucket,
+                        "event_name": family.instrument_name,
+                        "family_schema_version": family.family_schema_version,
+                        "instrument_name": family.instrument_name,
+                        "instrument_type": family.instrument_type,
+                        "field_refs": sorted(use.ref for use in family.resolved_uses),
+                        "mapping_strategy": item["mapping"]["strategy"],
+                        "derivation_strategy": derived["strategy"],
+                        "time_rule": item["time_rule"],
+                        "outcome_rule": "forbidden",
+                        "import_context_id": None,
+                    }
+                )
+    matches.sort(key=lambda item: item["id"].encode("ascii"))
+    if len({item["id"] for item in matches}) != len(matches):
+        raise RegistryError(f"{path}.binding_classes: duplicate expanded match ID")
+    for left_index, left in enumerate(matches):
+        for right in matches[left_index + 1 :]:
+            if left["signal"] != right["signal"]:
+                continue
+            left_sources, right_sources = set(left["sources"]), set(right["sources"])
+            if (
+                "any_authenticated" not in left_sources
+                and "any_authenticated" not in right_sources
+                and left_sources.isdisjoint(right_sources)
+            ):
+                continue
+            if not _inbound_disjoint(left, right):
+                raise RegistryError(
+                    f"{path}.binding_classes: expanded discriminators overlap: {left['id']} and {right['id']}"
+                )
+
+    attachments = _inbound_sequence(source["derivation_attachments"], f"{path}.derivation_attachments")
+    if attachments != [
+        {
+            "id": "otlp.genai.duration.span.v1",
+            "parent_class": "otlp.genai.span.operation.v1",
+            "family": "metric.gen_ai.client.operation.duration",
+            "strategy": "elapsed-time-v1",
+        }
+    ]:
+        raise RegistryError(f"{path}.derivation_attachments: contract drift")
+    attachment = attachments[0]
+    attachment_family = groups[attachment["family"]]
+    for match in matches:
+        if match["class_id"] != attachment["parent_class"]:
+            continue
+        targets_by_match[match["id"]].append(
+            {
+                "id": f"{match['id']}.{attachment_family.id}",
+                "match_id": match["id"],
+                "class_id": attachment["id"],
+                "signal": "metrics",
+                "role": "derive",
+                "target_kind": "derived",
+                "family": attachment_family.id,
+                "bucket": attachment_family.bucket,
+                "event_name": attachment_family.instrument_name,
+                "family_schema_version": attachment_family.family_schema_version,
+                "instrument_name": attachment_family.instrument_name,
+                "instrument_type": attachment_family.instrument_type,
+                "field_refs": sorted(use.ref for use in attachment_family.resolved_uses),
+                "mapping_strategy": match["mapping"]["strategy"],
+                "derivation_strategy": attachment["strategy"],
+                "time_rule": "span-elapsed-v1",
+                "outcome_rule": "forbidden",
+                "import_context_id": None,
+            }
+        )
+    target_descriptors: list[dict[str, Any]] = []
+    for match in matches:
+        match_targets = sorted(targets_by_match[match["id"]], key=lambda item: item["id"].encode("ascii"))
+        target_ids = [item["id"] for item in match_targets]
+        if len(target_ids) != len(set(target_ids)):
+            raise RegistryError(f"{path}: duplicate one-target descriptor for {match['id']}")
+        match["target_ids"] = target_ids
+        target_descriptors.extend(match_targets)
+    target_descriptors.sort(key=lambda item: item["id"].encode("ascii"))
+    if len({item["id"] for item in target_descriptors}) != len(target_descriptors):
+        raise RegistryError(f"{path}: duplicate target descriptor ID")
+
+    native_markers_by_identity: dict[tuple[str, str, str], dict[str, Any]] = {}
+    for match in matches:
+        if match["shape"] != "native_exact":
+            continue
+        for predicate in match["discriminator"]["predicates"]:
+            location = predicate["location"]
+            key = predicate["key"]
+            if key.startswith("defenseclaw."):
+                marker_kind = "reserved_key_presence"
+                marker_values: list[Any] = []
+            elif location in {"scope_name", "scope_schema_url"}:
+                marker_kind = "exact_structural_value"
+                marker_values = list(predicate["values"])
+            elif location == "log_body" and predicate["operator"] == "projected_record_json":
+                marker_kind = "projected_record_structure"
+                marker_values = []
+            else:
+                continue
+            identity = (match["signal"], location, key)
+            descriptor = {
+                "id": f"otlp.native.marker.{match['signal']}.{location}.{key}",
+                "signal": match["signal"],
+                "location": location,
+                "key": key,
+                "marker_kind": marker_kind,
+                "values": marker_values,
+                "value_type": predicate["value_type"],
+            }
+            prior = native_markers_by_identity.setdefault(identity, descriptor)
+            if prior != descriptor:
+                raise RegistryError(f"{path}: inconsistent native marker descriptor {identity}")
+    native_markers = sorted(native_markers_by_identity.values(), key=lambda item: item["id"].encode("ascii"))
+    if {item["signal"] for item in native_markers} != {"logs", "traces", "metrics"}:
+        raise RegistryError(f"{path}: native marker signal coverage is incomplete")
+
+    echo_recognizers: list[dict[str, Any]] = []
+    for group in sorted(groups.values(), key=lambda item: item.id.encode("ascii")):
+        signal = {"log": "logs", "span": "traces", "metric": "metrics"}.get(group.type)
+        if signal is None:
+            continue
+        echo_recognizers.append(
+            {
+                "id": f"otlp.echo.{group.id}",
+                "signal": signal,
+                "family": group.id,
+                "bucket": group.bucket,
+                "event_name": group.event_name if group.type == "log" else group.id,
+                "instrument_name": group.instrument_name,
+                "semantic_instance_key": expected_constants["semantic_resource_instance_key"],
+                "forward_instance_key": expected_constants["forward_instance_key"],
+                "forward_destination_key": expected_constants["forward_destination_key"],
+                "forward_hop_count_key": expected_constants["forward_hop_count_key"],
+                "forward_placement": "resource" if signal == "metrics" else "leaf",
+                "compare_self_with": expected_constants["forward_instance_key"],
+                "semantic_instance_is_transport_authority": False,
+                "constructs_record": False,
+                "mandatory": False,
+                "floor": False,
+            }
+        )
+    expected_echo_families = {group.id for group in groups.values() if group.type in {"log", "span", "metric"}}
+    if {item["family"] for item in echo_recognizers} != expected_echo_families:
+        raise RegistryError(f"{path}: native self-echo recognizer coverage mismatch")
+
+    import_contexts = [
+        {
+            "id": f"otlp.import.{group.id}",
+            "signal": "logs",
+            "family_descriptor_id": group.id,
+            "bucket": group.bucket,
+            "event_name": group.event_name,
+            "construction_mode": "ordinary_import_only",
+            "capabilities": ["validate", "construct_ordinary"],
+        }
+        for group in sorted(groups.values(), key=lambda item: item.id.encode("ascii"))
+        if group.type == "log"
+    ]
+    expected_log_families = {group.id for group in groups.values() if group.type == "log"}
+    if {item["family_descriptor_id"] for item in import_contexts} != expected_log_families:
+        raise RegistryError(f"{path}: import-only log context coverage mismatch")
+    fixture_policy = _inbound_mapping(source["fixture_policy"], f"{path}.fixture_policy")
+    _exact_keys(
+        fixture_policy,
+        {"encodings", "classes", "protobuf_representation"},
+        set(),
+        f"{path}.fixture_policy",
+    )
+    if (
+        _string_list(fixture_policy["encodings"], f"{path}.fixture_policy.encodings", allow_empty=False)
+        != ("json", "protobuf")
+        or _string_list(fixture_policy["classes"], f"{path}.fixture_policy.classes", allow_empty=False)
+        != ("positive", "negative", "single_fault")
+        or fixture_policy["protobuf_representation"] != "canonical_protojson"
+    ):
+        raise RegistryError(f"{path}.fixture_policy: contract drift")
+    return InboundOTLPIR(
+        version=1,
+        max_forward_hops=4,
+        unknown_fields="drop_and_count",
+        semantic_resource_instance_key=expected_constants["semantic_resource_instance_key"],
+        forward_instance_key=expected_constants["forward_instance_key"],
+        forward_destination_key=expected_constants["forward_destination_key"],
+        forward_hop_count_key=expected_constants["forward_hop_count_key"],
+        record_id_key=expected_constants["record_id_key"],
+        scope_name=expected_constants["scope_name"],
+        scope_schema_url=expected_constants["scope_schema_url"],
+        resource_schema_url=expected_constants["resource_schema_url"],
+        shape_policy=_freeze_mapping(
+            {
+                "classes": ["native_exact", "native_malformed", "external"],
+                "native_marker_rule": "any_declared_native_marker_selects_native_candidate",
+                "structural_marker_rule": "exact_declared_structure_only",
+                "native_malformed_disposition": "invalid_record",
+                "native_malformed_external_fallback": "forbidden",
+            }
+        ),
+        alias_sets=tuple(_freeze_mapping(item) for item in alias_sets),
+        binding_classes=tuple(_freeze_mapping(item) for item in classes),
+        match_descriptors=tuple(_freeze_mapping(item) for item in matches),
+        target_descriptors=tuple(_freeze_mapping(item) for item in target_descriptors),
+        native_markers=tuple(_freeze_mapping(item) for item in native_markers),
+        echo_recognizers=tuple(_freeze_mapping(item) for item in echo_recognizers),
+        import_contexts=tuple(_freeze_mapping(item) for item in import_contexts),
+        derivation_attachments=tuple(_freeze_mapping(item) for item in attachments),
+        fixture_policy=_freeze_mapping(fixture_policy),
+    )
+
+
 def _validate_entity_lifecycle(
     *,
     entity: str,
@@ -9875,6 +10541,7 @@ def compile_registry(root: Path) -> RegistryIR:
             "dependency_lock",
             "examples",
             "public_views",
+            "inbound_bindings",
             "semantic_profiles",
             "normalizers",
             "conditions",
@@ -10252,6 +10919,7 @@ def compile_registry(root: Path) -> RegistryIR:
     resolved_domains, group_resolution_order, resolved_group_uses = _resolve_group_uses(tuple(domains))
     domains = list(resolved_domains)
     group_owners = {group.id: group for domain in domains for group in domain.groups}
+    inbound_bindings = _parse_inbound_otlp(registry["inbound_bindings"], groups=group_owners)
     v7_exporter_selection = _materialize_v7_exporter_selection(
         v7_exporter_selection,
         domains,
@@ -10374,6 +11042,7 @@ def compile_registry(root: Path) -> RegistryIR:
         "metric_compatibility_profile": metric_compatibility_profile,
         "v7_exporter_selection": v7_exporter_selection,
         "v7_exporter_selection_schema": v7_exporter_selection_schema,
+        "inbound_bindings": inbound_bindings,
         "domains": tuple(domains),
         "group_resolution_order": group_resolution_order,
         "resolved_group_uses": resolved_group_uses,

@@ -4028,6 +4028,24 @@ def compile_go_api_plan(index: Any) -> GoAPIPlanIR:
     )
     if len(producer_ids) != len(set(producer_ids)):
         raise GoAPIPlanError("expanded_producer_mappings: duplicate row ID")
+    inbound = getattr(index, "inbound_otlp", None)
+    inbound_projection_ids: tuple[str, ...] = ()
+    if inbound is not None:
+        projection_rows = (
+            ("alias", getattr(inbound, "alias_sets", ())),
+            ("match", getattr(inbound, "match_descriptors", ())),
+            ("target", getattr(inbound, "target_descriptors", ())),
+            ("marker", getattr(inbound, "native_markers", ())),
+            ("echo", getattr(inbound, "echo_recognizers", ())),
+            ("context", getattr(inbound, "import_contexts", ())),
+        )
+        inbound_projection_ids = tuple(
+            f"inbound:{kind}:{_string(_read(row, 'id', f'inbound {kind} row'), f'inbound {kind} ID')}"
+            for kind, rows in projection_rows
+            for row in rows
+        )
+        if len(inbound_projection_ids) != len(set(inbound_projection_ids)):
+            raise GoAPIPlanError("inbound Go projection IDs are duplicated")
     inputs = tuple(
         sorted(structured_inputs + family_inputs, key=lambda item: (item.declaration_kind, item.declaration_source_id))
     )
@@ -4060,7 +4078,7 @@ def compile_go_api_plan(index: Any) -> GoAPIPlanIR:
             ),
             private_descriptor_ids=(catalog_descriptor_ids if path == _CATALOG_FILE else ()),
             private_projection_ids=(
-                producer_ids
+                producer_ids + inbound_projection_ids
                 if path == _PRODUCERS_FILE
                 else tuple(fixture.example_id for fixture in fixtures)
                 if path == _FIXTURES_FILE
