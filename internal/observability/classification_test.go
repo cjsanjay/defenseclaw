@@ -304,10 +304,19 @@ func TestEveryClassificationResolvesOnlyRegisteredLogIdentity(t *testing.T) {
 			if bucket == "" {
 				bucket = classification.AllowedContextBuckets[0]
 			}
-			eventName := classification.DefaultEventName
 			if classification.EventNamePolicy == observability.EventNameContextRequired {
-				eventName = representativeLogEvent(bucket)
+				// Every generated context-required identity is exercised by the
+				// package-internal generated-row conformance test. This external
+				// API test has no authority to invent a representative identity for
+				// an exact generated producer context.
+				if _, err := classification.Resolve(observability.ClassificationContext{
+					Bucket: bucket, EventName: "plausible.but.unregistered", RawSeverity: "HIGH",
+				}); err == nil {
+					t.Errorf("%s/%s accepted an unregistered contextual event name", test.kind, key)
+				}
+				continue
 			}
+			eventName := classification.DefaultEventName
 			resolved, err := classification.Resolve(observability.ClassificationContext{
 				Bucket:      bucket,
 				EventName:   eventName,
@@ -332,41 +341,6 @@ func TestEveryClassificationResolvesOnlyRegisteredLogIdentity(t *testing.T) {
 				t.Errorf("%s/%s accepted an unregistered contextual event name", test.kind, key)
 			}
 		}
-	}
-}
-
-func representativeLogEvent(bucket observability.Bucket) observability.EventName {
-	switch bucket {
-	case observability.BucketComplianceActivity:
-		return "config.change.attempted"
-	case observability.BucketSecurityFinding:
-		return "finding.observed"
-	case observability.BucketGuardrailEvaluation:
-		return "guardrail.evaluation.completed"
-	case observability.BucketEnforcementAction:
-		return "enforcement.block.requested"
-	case observability.BucketModelIO:
-		return "model.request"
-	case observability.BucketToolActivity:
-		return "tool.invocation.requested"
-	case observability.BucketAssetScan:
-		return "scan.started"
-	case observability.BucketAssetLifecycle:
-		return "asset.discovered"
-	case observability.BucketNetworkEgress:
-		return "egress.requested"
-	case observability.BucketAgentLifecycle:
-		return "session_start"
-	case observability.BucketAIDiscovery:
-		return "ai_component.discovered"
-	case observability.BucketTelemetryIngest:
-		return "telemetry.batch.accepted"
-	case observability.BucketPlatformHealth:
-		return "subsystem.ready"
-	case observability.BucketDiagnostic:
-		return "diagnostic.message"
-	default:
-		return ""
 	}
 }
 

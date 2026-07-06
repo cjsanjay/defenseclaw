@@ -231,6 +231,74 @@ func TestGeneratedProducerIdentitiesMatchFamilyAuthorityOrExplicitCompatibility(
 	}
 }
 
+func TestClassificationsResolveEveryGeneratedIdentityWithGeneratedRules(t *testing.T) {
+	t.Parallel()
+
+	allFacts := MandatoryFacts{
+		ControlPlaneMutation: true, ApprovalResolution: true, AlertMutation: true,
+		ProtectedBoundaryAuthFailure: true, EnforcedOutcome: true,
+		EnforcementStateChange: true, SchemaValidationFailure: true,
+		SQLiteFailure: true, ExporterInitializationFailure: true,
+		DurableHealthTransition: true, DestinationTestActivity: true,
+	}
+	for _, group := range generatedProducerGroups {
+		var (
+			classification Classification
+			found          bool
+		)
+		switch group.Kind {
+		case ProducerGatewayEvent:
+			classification, found = GatewayEventClassification(group.Key)
+		case ProducerAuditAction:
+			classification, found = AuditActionClassification(group.Key)
+		default:
+			t.Fatalf("generated producer %s/%s has unknown kind", group.Kind, group.Key)
+		}
+		if !found {
+			t.Fatalf("generated producer %s/%s has no public classification", group.Kind, group.Key)
+		}
+		if classification.EventNamePolicy != group.EventNamePolicy ||
+			classification.SeverityPolicy != group.SeverityPolicy {
+			t.Fatalf("producer %s/%s public and generated policies disagree", group.Kind, group.Key)
+		}
+		for _, identity := range group.Identities {
+			context := ClassificationContext{
+				Bucket: identity.Bucket, EventName: identity.EventName, RawSeverity: "HIGH",
+				MandatoryFacts: allFacts, Enforced: true, StateChanged: true, FindingCount: 1,
+			}
+			resolved, err := classification.Resolve(context)
+			if err != nil {
+				t.Fatalf("resolve generated row %s: %v", identity.RowID, err)
+			}
+			wantIdentity := EventIdentity{
+				Bucket: identity.Bucket, Signal: SignalLogs, Name: identity.EventName,
+			}
+			if resolved.Identity != wantIdentity {
+				t.Fatalf("generated row %s resolved identity=%+v want=%+v", identity.RowID, resolved.Identity, wantIdentity)
+			}
+			if resolved.Mandatory != (len(identity.LegacyMandatoryRules) != 0) {
+				t.Fatalf("generated row %s mandatory=%t rules=%v", identity.RowID, resolved.Mandatory, identity.LegacyMandatoryRules)
+			}
+			wantCompanions := make([]CompanionRule, 0, len(identity.CompanionRules))
+			for _, rule := range identity.CompanionRules {
+				switch rule {
+				case CompanionEnforcementWhenEnforced:
+					if identity.Bucket != BucketEnforcementAction {
+						wantCompanions = append(wantCompanions, rule)
+					}
+				case CompanionAssetLifecycleOnChange, CompanionFindingPerObservation:
+					wantCompanions = append(wantCompanions, rule)
+				default:
+					t.Fatalf("generated row %s has unknown companion %q", identity.RowID, rule)
+				}
+			}
+			if !reflect.DeepEqual(resolved.RequiredCompanions, wantCompanions) {
+				t.Fatalf("generated row %s companions=%v want=%v", identity.RowID, resolved.RequiredCompanions, wantCompanions)
+			}
+		}
+	}
+}
+
 func TestClassifiedDefaultEventNamesMatchReviewedSnapshot(t *testing.T) {
 	t.Parallel()
 

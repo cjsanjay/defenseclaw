@@ -177,12 +177,50 @@ func (classification Classification) Resolve(context ClassificationContext) (Res
 	if err := identity.Validate(); err != nil {
 		return ResolvedClassification{}, err
 	}
+	// The handwritten Classification value remains the compatibility-facing
+	// description of each producer key, but the generated registry is the
+	// runtime authority for the exact selected identity, mandatory rules, and
+	// companion rules. This prevents a producer cutover from silently retaining
+	// stale floor semantics after the structural registry changes.
+	runtimeMandatoryRules := classification.MandatoryRules
+	runtimeCompanionRules := classification.CompanionRules
+	if group, found := lookupGeneratedProducerGroup(classification.Kind, classification.Key); found {
+		if group.EventNamePolicy != classification.EventNamePolicy ||
+			group.SeverityPolicy != classification.SeverityPolicy {
+			return ResolvedClassification{}, fmt.Errorf(
+				"classification %s/%s disagrees with generated producer policy",
+				classification.Kind,
+				classification.Key,
+			)
+		}
+		generatedIdentity, err := resolveGeneratedProducerIdentity(
+			classification.Kind,
+			classification.Key,
+			ClassificationContext{Bucket: bucket, EventName: eventName},
+		)
+		if err != nil || generatedIdentity.Bucket != bucket ||
+			generatedIdentity.EventName != eventName {
+			return ResolvedClassification{}, fmt.Errorf(
+				"classification %s/%s identity disagrees with generated producer registry",
+				classification.Kind,
+				classification.Key,
+			)
+		}
+		runtimeMandatoryRules = generatedIdentity.LegacyMandatoryRules
+		runtimeCompanionRules = generatedIdentity.CompanionRules
+	} else if classification.Kind == ProducerGatewayEvent || classification.Kind == ProducerAuditAction {
+		return ResolvedClassification{}, fmt.Errorf(
+			"classification %s/%s is absent from the generated producer registry",
+			classification.Kind,
+			classification.Key,
+		)
+	}
 	severity, err := classification.resolveSeverity(context.RawSeverity)
 	if err != nil {
 		return ResolvedClassification{}, err
 	}
-	companions := make([]CompanionRule, 0, len(classification.CompanionRules))
-	for _, rule := range classification.CompanionRules {
+	companions := make([]CompanionRule, 0, len(runtimeCompanionRules))
+	for _, rule := range runtimeCompanionRules {
 		switch rule {
 		case CompanionEnforcementWhenEnforced:
 			if context.Enforced && bucket != BucketEnforcementAction {
@@ -199,9 +237,11 @@ func (classification Classification) Resolve(context ClassificationContext) (Res
 		}
 	}
 	return ResolvedClassification{
-		Identity:           identity,
-		Severity:           severity,
-		Mandatory:          classification.isMandatory(context.MandatoryFacts),
+		Identity: identity,
+		Severity: severity,
+		Mandatory: Classification{
+			MandatoryRules: runtimeMandatoryRules,
+		}.isMandatory(context.MandatoryFacts),
 		RequiredCompanions: companions,
 	}, nil
 }
