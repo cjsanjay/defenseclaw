@@ -201,6 +201,24 @@ func validateV8MetricDescriptor(descriptor V8MetricDescriptor, mode, profile str
 		}
 		canonical[mapping.Canonical], local[mapping.Local] = struct{}{}, struct{}{}
 	}
+	// A canonical label omitted from the compatibility mapping projects
+	// unchanged. Validate the complete projected set so an alias cannot collide
+	// with one of those unchanged labels.
+	projected := make(map[string]struct{}, len(descriptor.AllowedLabels))
+	aliases := make(map[string]string, len(descriptor.LocalLabelMapping))
+	for _, mapping := range descriptor.LocalLabelMapping {
+		aliases[mapping.Canonical] = mapping.Local
+	}
+	for _, label := range descriptor.AllowedLabels {
+		projectedLabel := label
+		if alias, exists := aliases[label]; exists {
+			projectedLabel = alias
+		}
+		if _, duplicate := projected[projectedLabel]; duplicate {
+			return errors.New("telemetry: duplicate generated projected metric label")
+		}
+		projected[projectedLabel] = struct{}{}
+	}
 	return nil
 }
 

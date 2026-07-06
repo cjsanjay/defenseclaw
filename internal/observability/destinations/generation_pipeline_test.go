@@ -221,6 +221,36 @@ func TestGenerationPipelineFactoryRuntimeGraphFanoutRestartRequiredAndGlobalIsol
 		t.Fatalf("first provider binding=%q/%d/%v", firstDigest, firstGeneration, bound)
 	}
 	firstProvider.RecordAgentDiscovery(t.Context(), "cli", false, "ok", 1, 1, 1)
+	metricBuilder, err := observability.NewFamilyBuilder(
+		observability.ClockFunc(func() time.Time { return time.Unix(100, 0).UTC() }),
+		observability.OccurrenceIDGeneratorFunc(func() (string, error) {
+			return "composite-generated-metric", nil
+		}),
+	)
+	if err != nil {
+		firstLease.Release()
+		t.Fatal(err)
+	}
+	generatedMetric, err := metricBuilder.BuildMetricDefenseClawConnectorHookLatency(
+		observability.MetricDefenseClawConnectorHookLatencyInput{
+			Envelope: observability.FamilyEnvelopeInput{
+				Source: "gateway", Provenance: observability.FamilyProvenanceInput{
+					Producer: "defenseclaw", BinaryVersion: "8.0.0",
+					ConfigGeneration: int64(firstGeneration), ConfigDigest: firstDigest,
+				},
+			},
+			Value: 7.5, DefenseClawConnectorSource: observability.Present("codex"),
+		},
+	)
+	if err != nil {
+		firstLease.Release()
+		t.Fatal(err)
+	}
+	generatedResult, err := firstProvider.RecordGeneratedMetric(t.Context(), generatedMetric)
+	if err != nil || generatedResult != (telemetry.V8MetricRecordResult{Matched: 2, Delivered: 2}) {
+		firstLease.Release()
+		t.Fatalf("generated bridge result=%+v err=%v", generatedResult, err)
+	}
 	firstCanary, err := firstProvider.EmitV8GeneratedCanary(t.Context(), firstLease, "otlp-all")
 	firstLease.Release()
 	if err != nil {
@@ -234,8 +264,9 @@ func TestGenerationPipelineFactoryRuntimeGraphFanoutRestartRequiredAndGlobalIsol
 		t.Fatal("composite callback lost the OTLP canary acknowledgement bridge")
 	}
 	firstPromBody := scrapeCompositePrometheus(t, listeners.listener(t, 0))
-	if !strings.Contains(firstPromBody, "defenseclaw_agent_discovery_runs_total") {
-		t.Fatalf("Prometheus did not independently collect the v8 metric:\n%s", firstPromBody)
+	if !strings.Contains(firstPromBody, "defenseclaw_agent_discovery_runs_total") ||
+		!strings.Contains(firstPromBody, "defenseclaw_connector_hook_latency_milliseconds_count") {
+		t.Fatalf("Prometheus did not expose legacy and generated records on its single reader:\n%s", firstPromBody)
 	}
 	firstTraces, _, _ := firstCapture.snapshot()
 	if len(firstTraces) == 0 {

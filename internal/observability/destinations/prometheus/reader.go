@@ -54,6 +54,7 @@ type Reader struct {
 	path         string
 	listener     net.Listener
 	server       *http.Server
+	gatherers    *generationGatherer
 	observer     *boundedObserver
 	drainTimeout time.Duration
 
@@ -122,10 +123,11 @@ func (factory *Factory) PrepareContext(
 		_ = exporter.Shutdown(context.Background())
 		return nil, newError(ErrorUnsafeListen, nil)
 	}
-	filtered := &filteredGatherer{source: registry, matcher: factory.matcher, labels: cloneSet(factory.labels)}
+	gatherers := newGenerationGatherer(registry, factory.matcher)
+	filtered := &filteredGatherer{source: gatherers, matcher: factory.matcher, labels: cloneSet(factory.labels)}
 	reader := &Reader{
 		Reader: exporter, destination: factory.destination, generation: generation,
-		path: factory.path, listener: listener, observer: factory.observer,
+		path: factory.path, listener: listener, gatherers: gatherers, observer: factory.observer,
 		drainTimeout: factory.drainTimeout,
 		serveDone:    make(chan struct{}), shutdownDone: make(chan struct{}),
 		health: delivery.HealthInitializing,

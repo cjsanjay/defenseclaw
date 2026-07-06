@@ -419,15 +419,19 @@ func projectV8MetricAttributes(
 	if projection != V8MetricProjectionLocal {
 		return nil, "", errors.New("telemetry: unknown generated metric projection")
 	}
+	aliases := make(map[string]string, len(descriptor.LocalLabelMapping))
 	for _, mapping := range descriptor.LocalLabelMapping {
-		value, present := canonical[mapping.Canonical]
-		if !present {
-			continue
+		aliases[mapping.Canonical] = mapping.Local
+	}
+	for canonicalKey, value := range canonical {
+		projectedKey := canonicalKey
+		if alias, exists := aliases[canonicalKey]; exists {
+			projectedKey = alias
 		}
-		if _, conflict := result[mapping.Local]; conflict {
+		if _, conflict := result[projectedKey]; conflict {
 			return nil, "", errors.New("telemetry: generated local metric alias conflict")
 		}
-		result[mapping.Local] = value
+		result[projectedKey] = value
 	}
 	return result, observability.RuntimeLocalObservabilityProfile, nil
 }

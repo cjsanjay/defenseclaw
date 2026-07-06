@@ -113,6 +113,19 @@ func TestGeneratedMetricCatalogPreservesExact131ContractsAndBoundaryNull(t *test
 	}
 }
 
+func TestGeneratedMetricDescriptorRejectsAliasCollisionWithUnchangedLabel(t *testing.T) {
+	descriptor, ok := v8MetricDescriptorByName("defenseclaw.activity.total")
+	if !ok || len(descriptor.LocalLabelMapping) == 0 {
+		t.Fatal("activity descriptor or aliases missing")
+	}
+	descriptor.AllowedLabels = append(descriptor.AllowedLabels, descriptor.LocalLabelMapping[0].Local)
+	if err := validateV8MetricDescriptor(
+		descriptor, "otel_sdk_metric_v1", observability.RuntimeLocalObservabilityProfile,
+	); err == nil {
+		t.Fatal("metric descriptor accepted an alias collision with an unchanged canonical label")
+	}
+}
+
 func TestGeneratedMetricRecorderProjectsCanonicalAndLocalIndependently(t *testing.T) {
 	canonical, local := &v8MetricCaptureSink{}, &v8MetricCaptureSink{}
 	family := observability.EventName("defenseclaw.connector.hook.latency")
@@ -163,6 +176,31 @@ func TestGeneratedMetricRecorderProjectsCanonicalAndLocalIndependently(t *testin
 	}
 	if _, err := recorder.record(context.Background(), buildV8HookLatencyMetric(t, 7, "abc123")); err == nil {
 		t.Fatal("retired metric recorder accepted a record")
+	}
+}
+
+func TestGeneratedMetricLocalProjectionPreservesUnmappedCanonicalLabels(t *testing.T) {
+	descriptor, ok := v8MetricDescriptorByName("defenseclaw.agent.last_seen")
+	if !ok {
+		t.Fatal("agent last-seen descriptor missing")
+	}
+	projected, profile, err := projectV8MetricAttributes(descriptor, map[string]any{
+		"defenseclaw.connector.source":   "codex",
+		"defenseclaw.agent.type":         "root",
+		"defenseclaw.agent.lifecycle.id": "lifecycle-1",
+		"gen_ai.agent.id":                "agent-1",
+	}, V8MetricProjectionLocal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]any{
+		"connector":                      "codex",
+		"gen_ai.agent.type":              "root",
+		"defenseclaw.agent.lifecycle.id": "lifecycle-1",
+		"gen_ai.agent.id":                "agent-1",
+	}
+	if profile != observability.RuntimeLocalObservabilityProfile || !reflect.DeepEqual(projected, want) {
+		t.Fatalf("local projection profile=%q got=%v want=%v", profile, projected, want)
 	}
 }
 

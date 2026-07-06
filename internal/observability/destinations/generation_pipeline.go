@@ -20,9 +20,10 @@ import (
 
 // GenerationPipelineFactory returns the one process-stable signal-pipeline
 // callback installed on telemetry.V8ProviderOptions. Each invocation prepares
-// independent OTLP processors/readers and native Prometheus readers from the
-// exact candidate plan, generation, context, and metric policy supplied by the
-// runtime graph. It never installs an OTel or Prometheus process global.
+// independent OTLP processors/readers and native Prometheus legacy/generated
+// bridge pipelines from the exact candidate plan, generation, context, and
+// metric policy supplied by the runtime graph. It never installs an OTel or
+// Prometheus process global.
 func (factory *Factory) GenerationPipelineFactory(
 	prometheusOptions prometheus.Options,
 ) telemetry.V8GenerationPipelineFactory {
@@ -45,8 +46,8 @@ func (factory *Factory) GenerationPipelineFactory(
 // metric destination transports into one generation-owned set. OTLP is
 // prepared first because it owns the canary acknowledgement callback. If
 // Prometheus preparation or a final context check fails, every prepared OTLP
-// processor and reader and every prepared Prometheus reader is released before
-// the rejected candidate returns.
+// processor/reader and every prepared Prometheus reader/generated sink is
+// released before the rejected candidate returns.
 func (factory *Factory) PrepareGenerationPipelines(
 	ctx context.Context,
 	plan *config.ObservabilityV8Plan,
@@ -63,13 +64,14 @@ func (factory *Factory) PrepareGenerationPipelines(
 		return telemetry.V8GenerationPipelines{}, err
 	}
 
-	readers, err := prometheus.PreparePlanReaders(
+	prometheusPipelines, err := prometheus.PreparePlanPipelines(
 		ctx, plan, generation, metricSpec, prometheusOptions,
 	)
 	if err != nil {
 		return fail(err)
 	}
-	pipelines.MetricReaders = append(pipelines.MetricReaders, readers...)
+	pipelines.MetricReaders = append(pipelines.MetricReaders, prometheusPipelines.MetricReaders...)
+	pipelines.MetricPipelines = append(pipelines.MetricPipelines, prometheusPipelines.MetricPipelines...)
 	if err := ctx.Err(); err != nil {
 		return fail(err)
 	}

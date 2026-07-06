@@ -57,6 +57,8 @@ const (
 	ErrorGatherFailed   ErrorCode = "gather_failed"
 	ErrorUnknownFamily  ErrorCode = "unknown_metric_family"
 	ErrorUnknownLabel   ErrorCode = "unknown_metric_label"
+	ErrorRecordFailed   ErrorCode = "metric_record_failed"
+	ErrorFlushFailed    ErrorCode = "metric_flush_failed"
 	ErrorServerFailed   ErrorCode = "server_failed"
 	ErrorShutdownFailed ErrorCode = "shutdown_failed"
 )
@@ -271,9 +273,10 @@ func containsEventName(names []observability.EventName, name observability.Event
 }
 
 type familyMatch struct {
-	original string
-	base     string
-	selected bool
+	original       string
+	base           string
+	instrumentType string
+	selected       bool
 }
 
 type familyMatcher struct{ entries []familyMatch }
@@ -282,6 +285,14 @@ func newFamilyMatcher(
 	catalog []telemetry.V8MetricDefinition,
 	selected map[string]struct{},
 ) (familyMatcher, error) {
+	descriptors, err := telemetry.V8MetricDescriptorCatalog()
+	if err != nil {
+		return familyMatcher{}, newError(ErrorInvalidConfig, nil)
+	}
+	instrumentTypes := make(map[string]string, len(descriptors))
+	for _, descriptor := range descriptors {
+		instrumentTypes[descriptor.Name] = descriptor.InstrumentType
+	}
 	entries := make([]familyMatch, 0, len(catalog))
 	seen := make(map[string]struct{}, len(catalog))
 	for _, metric := range catalog {
@@ -289,12 +300,19 @@ func newFamilyMatcher(
 		if err != nil {
 			return familyMatcher{}, newError(ErrorInvalidConfig, nil)
 		}
+		instrumentType := instrumentTypes[metric.Name]
+		if instrumentType == "" {
+			return familyMatcher{}, newError(ErrorInvalidConfig, nil)
+		}
 		if _, duplicate := seen[base]; duplicate {
 			return familyMatcher{}, newError(ErrorInvalidConfig, nil)
 		}
 		seen[base] = struct{}{}
 		_, enabled := selected[metric.Name]
-		entries = append(entries, familyMatch{original: metric.Name, base: base, selected: enabled})
+		entries = append(entries, familyMatch{
+			original: metric.Name, base: base,
+			instrumentType: instrumentType, selected: enabled,
+		})
 	}
 	sort.Slice(entries, func(left, right int) bool {
 		if len(entries[left].base) == len(entries[right].base) {
@@ -303,6 +321,15 @@ func newFamilyMatcher(
 		return len(entries[left].base) > len(entries[right].base)
 	})
 	return familyMatcher{entries: entries}, nil
+}
+
+func (matcher familyMatcher) instrumentType(name string, metricType dto.MetricType) (string, bool) {
+	for _, entry := range matcher.entries {
+		if officialFamilyShape(name, entry.base, metricType) {
+			return entry.instrumentType, true
+		}
+	}
+	return "", false
 }
 
 func (matcher familyMatcher) selectedFamily(name string, metricType dto.MetricType) (selected, known bool) {
