@@ -162,6 +162,180 @@ func TestInboundPrivateTraceAndMetricUsePinnedCanonicalPipelinesWithoutSQLite(t 
 	}
 }
 
+func TestInboundPrivateSignalsSuppressOnlyAuthenticatedOriginAndSealTerminalHop(t *testing.T) {
+	traceTarget, metricTarget := inboundRuntimeSignalTargets(t)
+	dependencies := newRuntimeTestDependencies(t)
+	originTrace, siblingTrace := &generatedTraceConsumer{}, &generatedTraceConsumer{}
+	originMetric := &runtimeMetricSink{started: make(chan struct{}), release: make(chan struct{})}
+	siblingMetric := &runtimeMetricSink{started: make(chan struct{}), release: make(chan struct{})}
+	options := dependencies.options()
+	options.TelemetryProviderFactory = telemetry.NewV8ProviderFactory(telemetry.V8ProviderOptions{
+		Version: "8.0.0", Environment: "test", ServiceInstanceID: "inbound-origin-signals",
+		GenerationPipelines: func(
+			context.Context,
+			*config.ObservabilityV8Plan,
+			uint64,
+			telemetry.V8MetricReaderSpec,
+		) (telemetry.V8GenerationPipelines, error) {
+			return telemetry.V8GenerationPipelines{
+				SpanPipelines: []telemetry.V8GenerationSpanPipeline{
+					{Destination: "upstream-otlp", Canonical: originTrace},
+					{Destination: "sibling", Canonical: siblingTrace},
+				},
+				MetricPipelines: []telemetry.V8GenerationMetricPipeline{
+					{Destination: "upstream-otlp", Projection: telemetry.V8MetricProjectionCanonical,
+						SelectedFamilies: []observability.EventName{metricTarget.EventName()}, Sink: originMetric},
+					{Destination: "sibling", Projection: telemetry.V8MetricProjectionCanonical,
+						SelectedFamilies: []observability.EventName{metricTarget.EventName()}, Sink: siblingMetric},
+				},
+			}, nil
+		},
+	})
+	yes, no := true, false
+	plan := runtimeTestPlan(t, dependencies.storePath, dependencies.judgePath, 30,
+		func(source *config.ObservabilityV8Source) {
+			source.Defaults.Collect.Traces = &no
+			source.Defaults.Collect.Metrics = &no
+			source.Buckets = map[observability.Bucket]config.ObservabilityV8BucketPolicySource{
+				observability.BucketPlatformHealth: {
+					Collect: config.ObservabilityV8CollectSource{Traces: &yes, Metrics: &yes},
+				},
+			}
+			signals := []observability.Signal{observability.SignalTraces, observability.SignalMetrics}
+			buckets := []observability.Bucket{observability.BucketPlatformHealth}
+			source.Destinations = []config.ObservabilityV8DestinationSource{
+				{Name: "upstream-otlp", Kind: config.ObservabilityV8DestinationOTLP,
+					Protocol: "http/protobuf", Endpoint: "https://origin.example.test",
+					Send: &config.ObservabilityV8SendSource{Signals: signals, Buckets: buckets}},
+				{Name: "sibling", Kind: config.ObservabilityV8DestinationOTLP,
+					Protocol: "http/protobuf", Endpoint: "https://sibling.example.test",
+					Send: &config.ObservabilityV8SendSource{Signals: signals, Buckets: buckets}},
+			}
+		})
+	runtime, err := New(t.Context(), runtimegraph.ConfigFromPlan(plan, false), options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if closeErr := runtime.Close(ctx); closeErr != nil {
+			t.Errorf("close runtime: %v", closeErr)
+		}
+	})
+	batch, err := runtime.BeginInboundImportBatch(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer batch.Close()
+	originPolicy, err := NewInboundOriginDestination("upstream-otlp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ids atomic.Int64
+
+	traceResult, err := batch.ImportTraceWithPolicy(
+		t.Context(), traceTarget, "codex", originPolicy,
+		func(snapshot EmitContext) (observability.Record, error) {
+			return inboundRuntimeTraceRecord(t, snapshot, traceTarget, &ids)
+		},
+	)
+	if err != nil || traceResult != (telemetry.V8ImportedSpanResult{
+		Matched: 1, Delivered: 1, Suppressed: 1,
+	}) {
+		t.Fatalf("origin trace=%+v err=%v", traceResult, err)
+	}
+	metricResult, err := batch.RecordMetricWithPolicy(
+		t.Context(), metricTarget, "codex", originPolicy,
+		func(snapshot EmitContext) (observability.Record, error) {
+			return inboundRuntimeMetricRecord(t, snapshot, metricTarget, &ids)
+		},
+	)
+	if err != nil || metricResult != (telemetry.V8MetricRecordResult{
+		Matched: 1, Delivered: 1, Suppressed: 1,
+	}) {
+		t.Fatalf("origin metric=%+v err=%v", metricResult, err)
+	}
+	if len(originTrace.snapshot()) != 0 || len(siblingTrace.snapshot()) != 1 ||
+		originMetric.records.Load() != 0 || siblingMetric.records.Load() != 1 {
+		t.Fatalf("origin fanout traces=%d/%d metrics=%d/%d",
+			len(originTrace.snapshot()), len(siblingTrace.snapshot()),
+			originMetric.records.Load(), siblingMetric.records.Load())
+	}
+
+	// Identical last_hop_destination provenance is foreign input and cannot
+	// suppress anything without the local authenticated policy.
+	traceResult, err = batch.ImportTrace(
+		t.Context(), traceTarget, "codex",
+		func(snapshot EmitContext) (observability.Record, error) {
+			return inboundRuntimeTraceRecord(t, snapshot, traceTarget, &ids)
+		},
+	)
+	if err != nil || traceResult != (telemetry.V8ImportedSpanResult{Matched: 2, Delivered: 2}) {
+		t.Fatalf("foreign trace=%+v err=%v", traceResult, err)
+	}
+	metricResult, err = batch.RecordMetric(
+		t.Context(), metricTarget, "codex",
+		func(snapshot EmitContext) (observability.Record, error) {
+			return inboundRuntimeMetricRecord(t, snapshot, metricTarget, &ids)
+		},
+	)
+	if err != nil || metricResult != (telemetry.V8MetricRecordResult{Matched: 2, Delivered: 2}) {
+		t.Fatalf("foreign metric=%+v err=%v", metricResult, err)
+	}
+
+	beforeTerminal := ids.Load()
+	traceResult, err = batch.ImportTraceWithPolicy(
+		t.Context(), traceTarget, "codex", SuppressAllInboundOptionalExport(),
+		func(snapshot EmitContext) (observability.Record, error) {
+			return inboundRuntimeTraceRecord(t, snapshot, traceTarget, &ids)
+		},
+	)
+	if err != nil || traceResult != (telemetry.V8ImportedSpanResult{Suppressed: 2}) {
+		t.Fatalf("terminal trace=%+v err=%v", traceResult, err)
+	}
+	metricResult, err = batch.RecordMetricWithPolicy(
+		t.Context(), metricTarget, "codex", SuppressAllInboundOptionalExport(),
+		func(snapshot EmitContext) (observability.Record, error) {
+			return inboundRuntimeMetricRecord(t, snapshot, metricTarget, &ids)
+		},
+	)
+	if err != nil || metricResult != (telemetry.V8MetricRecordResult{Suppressed: 2}) ||
+		ids.Load() != beforeTerminal+2 {
+		t.Fatalf("terminal metric=%+v ids=%d before=%d err=%v",
+			metricResult, ids.Load(), beforeTerminal, err)
+	}
+	if len(originTrace.snapshot()) != 1 || len(siblingTrace.snapshot()) != 2 ||
+		originMetric.records.Load() != 1 || siblingMetric.records.Load() != 2 {
+		t.Fatalf("terminal leaked traces=%d/%d metrics=%d/%d",
+			len(originTrace.snapshot()), len(siblingTrace.snapshot()),
+			originMetric.records.Load(), siblingMetric.records.Load())
+	}
+
+	beforeInvalid := ids.Load()
+	invalid := InboundOptionalExportPolicy{originDestination: "not a stable token"}
+	if _, err := batch.ImportTraceWithPolicy(
+		t.Context(), traceTarget, "codex", invalid,
+		func(snapshot EmitContext) (observability.Record, error) {
+			return inboundRuntimeTraceRecord(t, snapshot, traceTarget, &ids)
+		},
+	); err == nil || ids.Load() != beforeInvalid {
+		t.Fatalf("invalid trace ids=%d before=%d err=%v", ids.Load(), beforeInvalid, err)
+	}
+	if _, err := batch.RecordMetricWithPolicy(
+		t.Context(), metricTarget, "codex", invalid,
+		func(snapshot EmitContext) (observability.Record, error) {
+			return inboundRuntimeMetricRecord(t, snapshot, metricTarget, &ids)
+		},
+	); err == nil || ids.Load() != beforeInvalid {
+		t.Fatalf("invalid metric ids=%d before=%d err=%v", ids.Load(), beforeInvalid, err)
+	}
+	events, err := dependencies.store.ListEvents(16)
+	if err != nil || len(events) != 0 {
+		t.Fatalf("signal policies created SQLite rows=%#v err=%v", events, err)
+	}
+}
+
 func inboundRuntimeSignalTargets(t *testing.T) (observability.InboundTarget, observability.InboundTarget) {
 	t.Helper()
 	catalog, err := observability.LoadInboundCatalog()

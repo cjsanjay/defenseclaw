@@ -147,6 +147,20 @@ func (component *localLogComponent) ProcessLocalOnly(
 	return component.pipeline.ProcessLocalOnly(ctx, metadata, builder)
 }
 
+func (component *localLogComponent) ProcessImported(
+	ctx context.Context,
+	metadata router.Metadata,
+	originDestination string,
+	suppressAll bool,
+	builder router.RecordBuilder,
+) (pipeline.LocalLogOutcome, error) {
+	if component == nil || component.pipeline == nil || component.store == nil ||
+		!component.active.Load() || component.closed.Load() {
+		return pipeline.LocalLogOutcome{}, &localFactoryError{}
+	}
+	return component.pipeline.ProcessImported(ctx, metadata, originDestination, suppressAll, builder)
+}
+
 func (component *localLogComponent) StopIntake(context.Context) error {
 	if component == nil {
 		return errors.New("observability local runtime component is unavailable")

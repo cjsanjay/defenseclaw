@@ -4,8 +4,10 @@
 package runtime
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
+	"errors"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -254,6 +256,137 @@ func TestInboundPrivateMandatoryFamilySQLiteFailureExportsNowhere(t *testing.T) 
 	case delivery := <-recording.delivered:
 		t.Fatalf("SQLite-failed import reached remote adapter: %+v", delivery)
 	case <-time.After(250 * time.Millisecond):
+	}
+}
+
+func TestInboundPrivateLogOriginAndTerminalPoliciesStayOutsideCanonicalRecord(t *testing.T) {
+	dependencies := newRuntimeTestDependencies(t)
+	logs := true
+	plan := runtimeTestPlan(t, dependencies.storePath, dependencies.judgePath, 30,
+		func(source *config.ObservabilityV8Source) {
+			source.Defaults.Collect.Logs = &logs
+			source.Destinations = []config.ObservabilityV8DestinationSource{
+				runtimeConsoleDestination("upstream-otlp", "none", 0),
+				runtimeConsoleDestination("sibling", "none", 0),
+			}
+		},
+	)
+	adapters := map[string]*runtimeRecordingAdapter{
+		"upstream-otlp": newRuntimeRecordingAdapter(4),
+		"sibling":       newRuntimeRecordingAdapter(4),
+	}
+	factory := runtimeAdapterFactoryFunc(func(
+		_ context.Context,
+		destination config.ObservabilityV8EffectiveDestination,
+		_ telemetry.V8ResourceContext,
+	) (delivery.Adapter, DestinationAdapterCleanup, error) {
+		return adapters[destination.Name], func(context.Context) error { return nil }, nil
+	})
+	runtime := runtimeWithAdapterFactory(t, dependencies, plan, factory, nil)
+	batch, err := runtime.BeginInboundImportBatch(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer batch.Close()
+	target, importContext, metadata, operation := inboundRuntimeConfigChangeFixture(t)
+	originPolicy, err := NewInboundOriginDestination("upstream-otlp")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var calls atomic.Int64
+	var originRecord observability.Record
+	originOutcome, err := batch.EmitImportedLog(
+		t.Context(), metadata, originPolicy,
+		inboundRuntimeConfigChangeBuilder(
+			t, target, importContext, operation, "inbound-origin-log", &calls, &originRecord,
+		),
+	)
+	if err != nil || !originOutcome.LocalPersisted() || calls.Load() != 1 {
+		t.Fatalf("origin outcome=%+v calls=%d err=%v", originOutcome, calls.Load(), err)
+	}
+	sibling := receiveRuntimeDelivery(t, adapters["sibling"])
+	if sibling.identity.RecordID != originRecord.RecordID() {
+		t.Fatalf("sibling delivery=%+v record=%s", sibling, originRecord.RecordID())
+	}
+	select {
+	case delivered := <-adapters["upstream-otlp"].delivered:
+		t.Fatalf("origin received recursive import: %+v", delivered)
+	case <-time.After(200 * time.Millisecond):
+	}
+	encoded, err := originRecord.Bytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(encoded, []byte(`"origin_destination"`)) {
+		t.Fatal("private origin was serialized into the canonical record")
+	}
+
+	// The canonical last_hop_destination intentionally contains the same text.
+	// Without the authenticated local policy it cannot suppress either sibling.
+	var foreignRecord observability.Record
+	foreignOutcome, err := batch.EmitLog(
+		t.Context(), metadata,
+		inboundRuntimeConfigChangeBuilder(
+			t, target, importContext, operation, "inbound-foreign-log", &calls, &foreignRecord,
+		),
+	)
+	if err != nil || !foreignOutcome.LocalPersisted() {
+		t.Fatalf("foreign outcome=%+v err=%v", foreignOutcome, err)
+	}
+	for name, adapter := range adapters {
+		delivered := receiveRuntimeDelivery(t, adapter)
+		if delivered.identity.RecordID != foreignRecord.RecordID() || delivered.destination != name {
+			t.Fatalf("foreign delivery %s=%+v", name, delivered)
+		}
+	}
+
+	terminalOutcome, err := batch.EmitImportedLog(
+		t.Context(), metadata, SuppressAllInboundOptionalExport(),
+		inboundRuntimeConfigChangeBuilder(
+			t, target, importContext, operation, "inbound-terminal-log", &calls, nil,
+		),
+	)
+	if err != nil || !terminalOutcome.LocalPersisted() || len(terminalOutcome.OptionalWork()) != 0 {
+		t.Fatalf("terminal outcome=%+v err=%v", terminalOutcome, err)
+	}
+	for name, adapter := range adapters {
+		select {
+		case delivered := <-adapter.delivered:
+			t.Fatalf("terminal import reached %s: %+v", name, delivered)
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+
+	beforeInvalid := calls.Load()
+	invalidOutcome, err := batch.EmitImportedLog(
+		t.Context(), metadata,
+		InboundOptionalExportPolicy{originDestination: "not a stable token"},
+		inboundRuntimeConfigChangeBuilder(
+			t, target, importContext, operation, "invalid-origin-log", &calls, nil,
+		),
+	)
+	var importErr *InboundImportError
+	if !errors.As(err, &importErr) || importErr.Code() != InboundImportInvalidInput ||
+		invalidOutcome.LocalPersisted() || calls.Load() != beforeInvalid {
+		t.Fatalf("invalid outcome=%+v calls=%d err=%v", invalidOutcome, calls.Load(), err)
+	}
+
+	events, err := dependencies.store.ListEvents(16)
+	if err != nil {
+		t.Fatal(err)
+	}
+	counts := map[string]int{}
+	for _, event := range events {
+		counts[event.ID]++
+	}
+	for _, id := range []string{"inbound-origin-log", "inbound-foreign-log", "inbound-terminal-log"} {
+		if counts[id] != 1 {
+			t.Fatalf("SQLite count[%s]=%d", id, counts[id])
+		}
+	}
+	if counts["invalid-origin-log"] != 0 {
+		t.Fatal("invalid origin constructed or persisted a log")
 	}
 }
 

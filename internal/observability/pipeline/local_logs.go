@@ -246,7 +246,7 @@ func (pipeline *LocalLogPipeline) Process(
 	metadata router.Metadata,
 	builder router.RecordBuilder,
 ) (LocalLogOutcome, error) {
-	return pipeline.process(ctx, metadata, builder, false)
+	return pipeline.process(ctx, metadata, builder, false, "")
 }
 
 // ProcessLocalOnly applies the same collection, mandatory-floor, generated
@@ -258,7 +258,27 @@ func (pipeline *LocalLogPipeline) ProcessLocalOnly(
 	metadata router.Metadata,
 	builder router.RecordBuilder,
 ) (LocalLogOutcome, error) {
-	return pipeline.process(ctx, metadata, builder, true)
+	return pipeline.process(ctx, metadata, builder, true, "")
+}
+
+// ProcessImported applies the ordinary collection, construction, local
+// persistence, and projection contracts to one normalized inbound log. A
+// validated origin is carried only in the private delivery identity so the
+// matching dispatcher can reject a recursive export after SQLite succeeds.
+// suppressAll preserves the local durable leg while declining to construct any
+// optional projections (the four-hop terminal behavior).
+func (pipeline *LocalLogPipeline) ProcessImported(
+	ctx context.Context,
+	metadata router.Metadata,
+	originDestination string,
+	suppressAll bool,
+	builder router.RecordBuilder,
+) (LocalLogOutcome, error) {
+	if (originDestination != "" && !observability.IsStableToken(originDestination)) ||
+		(suppressAll && originDestination != "") {
+		return LocalLogOutcome{}, &Error{code: ErrorInvalidInput}
+	}
+	return pipeline.process(ctx, metadata, builder, suppressAll, originDestination)
 }
 
 func (pipeline *LocalLogPipeline) process(
@@ -266,6 +286,7 @@ func (pipeline *LocalLogPipeline) process(
 	metadata router.Metadata,
 	builder router.RecordBuilder,
 	localOnly bool,
+	originDestination string,
 ) (LocalLogOutcome, error) {
 	if pipeline == nil || pipeline.evaluator == nil || pipeline.projector == nil ||
 		pipeline.appender == nil || pipeline.failures == nil {
@@ -353,7 +374,7 @@ func (pipeline *LocalLogPipeline) process(
 			delivery: delivery, projection: projection,
 			identity: ProjectedDeliveryIdentity{
 				recordID: record.RecordID(), bucket: record.Bucket(), signal: record.Signal(),
-				eventName: record.EventName(),
+				eventName: record.EventName(), originDestination: originDestination,
 			},
 		})
 	}

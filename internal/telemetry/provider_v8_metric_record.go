@@ -110,9 +110,10 @@ func (metric V8ProjectedMetric) Attributes() map[string]any {
 // is counted once per unique destination; one destination can never receive a
 // record twice from one recorder call.
 type V8MetricRecordResult struct {
-	Matched   int
-	Delivered int
-	Failed    int
+	Matched    int
+	Delivered  int
+	Failed     int
+	Suppressed int
 }
 
 type v8MetricPipeline struct {
@@ -306,6 +307,25 @@ func (recorder *v8MetricRecorder) record(
 	ctx context.Context,
 	record observability.Record,
 ) (V8MetricRecordResult, error) {
+	return recorder.recordWithPolicy(ctx, record, V8ImportedExportPolicy{})
+}
+
+func (recorder *v8MetricRecorder) recordImported(
+	ctx context.Context,
+	record observability.Record,
+	policy V8ImportedExportPolicy,
+) (V8MetricRecordResult, error) {
+	if !policy.valid() {
+		return V8MetricRecordResult{}, errors.New("telemetry: invalid imported export policy")
+	}
+	return recorder.recordWithPolicy(ctx, record, policy)
+}
+
+func (recorder *v8MetricRecorder) recordWithPolicy(
+	ctx context.Context,
+	record observability.Record,
+	policy V8ImportedExportPolicy,
+) (V8MetricRecordResult, error) {
 	if recorder == nil || ctx == nil || !recorder.active.Load() || recorder.shutdown.Load() {
 		return V8MetricRecordResult{}, errors.New("telemetry: generated metric recorder is inactive")
 	}
@@ -326,6 +346,10 @@ func (recorder *v8MetricRecorder) record(
 	result := V8MetricRecordResult{}
 	for _, pipeline := range recorder.pipelines {
 		if _, selected := pipeline.selected[descriptor.Name]; !selected {
+			continue
+		}
+		if policy.suppressAll || pipeline.destination == policy.originDestination {
+			result.Suppressed++
 			continue
 		}
 		result.Matched++

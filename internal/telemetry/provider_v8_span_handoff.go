@@ -147,10 +147,40 @@ const (
 // already-ended imported canonical span. Imported spans never enter the local
 // SDK processor or SQLite log pipeline.
 type V8ImportedSpanResult struct {
-	Matched   int
-	Delivered int
-	Dropped   int
-	Failed    int
+	Matched    int
+	Delivered  int
+	Dropped    int
+	Failed     int
+	Suppressed int
+}
+
+// V8ImportedExportPolicy is private routing state for already-normalized
+// inbound signals. The zero value performs ordinary fan-out. It is never
+// copied into canonical records, span attributes, metric labels, or resource
+// identity.
+type V8ImportedExportPolicy struct {
+	originDestination string
+	suppressAll       bool
+}
+
+// NewV8ImportedExportPolicy validates an optional exact local destination.
+// Empty selects ordinary fan-out and is valid for wrapper APIs.
+func NewV8ImportedExportPolicy(originDestination string) (V8ImportedExportPolicy, error) {
+	if originDestination != "" && !observability.IsStableToken(originDestination) {
+		return V8ImportedExportPolicy{}, errors.New("telemetry: invalid imported export policy")
+	}
+	return V8ImportedExportPolicy{originDestination: originDestination}, nil
+}
+
+// SuppressAllV8ImportedExport returns the terminal-hop routing state without
+// inventing a destination identity.
+func SuppressAllV8ImportedExport() V8ImportedExportPolicy {
+	return V8ImportedExportPolicy{suppressAll: true}
+}
+
+func (policy V8ImportedExportPolicy) valid() bool {
+	return (!policy.suppressAll || policy.originDestination == "") &&
+		(policy.originDestination == "" || observability.IsStableToken(policy.originDestination))
 }
 
 type v8SpanHandoffKey struct {
@@ -385,6 +415,19 @@ func (p *Provider) EndV8CanonicalSpan(span trace.Span, record observability.Reco
 // collection admission through this call. There is deliberately no legacy SDK
 // fallback because an SDK processor cannot preserve sender-owned trace/span IDs.
 func (p *Provider) ImportV8CanonicalSpan(record observability.Record) (V8ImportedSpanResult, error) {
+	return p.ImportV8CanonicalSpanWithPolicy(record, V8ImportedExportPolicy{})
+}
+
+// ImportV8CanonicalSpanWithPolicy is the imported-only fan-out path. Exact
+// origin and terminal suppression happen before a destination consumer sees
+// the span and do not mutate its canonical representation.
+func (p *Provider) ImportV8CanonicalSpanWithPolicy(
+	record observability.Record,
+	policy V8ImportedExportPolicy,
+) (V8ImportedSpanResult, error) {
+	if !policy.valid() {
+		return V8ImportedSpanResult{}, errors.New("telemetry: invalid imported export policy")
+	}
 	if p == nil || p.v8 == nil || p.v8.spanProcessor == nil ||
 		!p.v8.active.Load() || p.shutdown.Load() {
 		return V8ImportedSpanResult{}, errors.New("telemetry: imported canonical span provider is unavailable")
@@ -401,7 +444,7 @@ func (p *Provider) ImportV8CanonicalSpan(record observability.Record) (V8Importe
 		uint64(record.Provenance().ConfigGeneration) != p.v8.generation {
 		return V8ImportedSpanResult{}, errors.New("telemetry: imported canonical span generation mismatch")
 	}
-	return p.v8.spanProcessor.importCanonical(canonical), nil
+	return p.v8.spanProcessor.importCanonical(canonical, policy), nil
 }
 
 func nilV8TraceSpan(span trace.Span) bool {
@@ -511,6 +554,7 @@ func (processor *v8CompositeSpanProcessor) OnEnd(span sdktrace.ReadOnlySpan) {
 
 func (processor *v8CompositeSpanProcessor) importCanonical(
 	span V8CanonicalEndedSpan,
+	policy V8ImportedExportPolicy,
 ) V8ImportedSpanResult {
 	if !processor.beginCallback() {
 		return V8ImportedSpanResult{Failed: 1}
@@ -518,8 +562,13 @@ func (processor *v8CompositeSpanProcessor) importCanonical(
 	defer processor.endCallback()
 	result := V8ImportedSpanResult{}
 	for index := range processor.pipelines {
-		consumer := processor.pipelines[index].Canonical
+		pipeline := processor.pipelines[index]
+		consumer := pipeline.Canonical
 		if consumer == nil {
+			continue
+		}
+		if policy.suppressAll || pipeline.Destination == policy.originDestination {
+			result.Suppressed++
 			continue
 		}
 		result.Matched++

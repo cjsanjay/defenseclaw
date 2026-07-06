@@ -376,6 +376,23 @@ func (p *Provider) RecordGeneratedMetric(
 	return p.v8.metricRecorder.record(ctx, record)
 }
 
+// RecordImportedMetric validates and projects one normalized inbound metric
+// while applying private origin/terminal routing controls. Locally generated
+// producers continue to use RecordGeneratedMetric and cannot select them.
+func (p *Provider) RecordImportedMetric(
+	ctx context.Context,
+	record observability.Record,
+	policy V8ImportedExportPolicy,
+) (V8MetricRecordResult, error) {
+	if !policy.valid() {
+		return V8MetricRecordResult{}, errors.New("telemetry: invalid imported export policy")
+	}
+	if p == nil || p.v8 == nil || p.v8.metricRecorder == nil {
+		return V8MetricRecordResult{}, errors.New("telemetry: generated metric recorder is unavailable")
+	}
+	return p.v8.metricRecorder.recordImported(ctx, record, policy)
+}
+
 // TraceLimits returns the effective complete v8 limits. The OTel SDK enforces
 // the native span/event/link limits; projection-specific byte/message limits
 // are retained here for producer adapters that enforce them before export.

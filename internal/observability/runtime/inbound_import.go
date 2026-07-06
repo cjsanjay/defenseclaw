@@ -51,6 +51,36 @@ func (err *InboundImportError) Code() InboundImportErrorCode {
 	return err.code
 }
 
+// InboundOptionalExportPolicy is a sealed, request-derived routing control for
+// normalized inbound telemetry. Its zero value performs ordinary fan-out. An
+// origin suppresses only that exact local destination; the terminal policy
+// suppresses every optional export. Neither state is canonical record data.
+type InboundOptionalExportPolicy struct {
+	originDestination string
+	suppressAll       bool
+}
+
+// NewInboundOriginDestination validates the local destination selected by the
+// authenticated receiver decision. Empty or otherwise unbounded values fail
+// before any imported builder can run.
+func NewInboundOriginDestination(originDestination string) (InboundOptionalExportPolicy, error) {
+	if !observability.IsStableToken(originDestination) {
+		return InboundOptionalExportPolicy{}, &InboundImportError{code: InboundImportInvalidInput}
+	}
+	return InboundOptionalExportPolicy{originDestination: originDestination}, nil
+}
+
+// SuppressAllInboundOptionalExport is the sealed four-hop terminal state. It
+// is intentionally not represented by a synthetic destination token.
+func SuppressAllInboundOptionalExport() InboundOptionalExportPolicy {
+	return InboundOptionalExportPolicy{suppressAll: true}
+}
+
+func (policy InboundOptionalExportPolicy) valid() bool {
+	return (!policy.suppressAll || policy.originDestination == "") &&
+		(policy.originDestination == "" || observability.IsStableToken(policy.originDestination))
+}
+
 // InboundImportBatch pins one immutable runtime generation for one decoded
 // receiver request. Every leaf target is processed serially through this scope,
 // so collection, generated construction, SQLite persistence, route projection,
@@ -95,7 +125,18 @@ func (batch *InboundImportBatch) EmitLog(
 	metadata router.Metadata,
 	builder EmitBuilder,
 ) (pipeline.LocalLogOutcome, error) {
-	if batch == nil || ctx == nil || builder == nil {
+	return batch.EmitImportedLog(ctx, metadata, InboundOptionalExportPolicy{}, builder)
+}
+
+// EmitImportedLog preserves the mandatory SQLite-first log path while
+// applying private inbound-only optional-export controls after persistence.
+func (batch *InboundImportBatch) EmitImportedLog(
+	ctx context.Context,
+	metadata router.Metadata,
+	policy InboundOptionalExportPolicy,
+	builder EmitBuilder,
+) (pipeline.LocalLogOutcome, error) {
+	if batch == nil || ctx == nil || builder == nil || !policy.valid() {
 		return pipeline.LocalLogOutcome{}, &InboundImportError{code: InboundImportInvalidInput}
 	}
 	batch.mu.Lock()
@@ -104,7 +145,7 @@ func (batch *InboundImportBatch) EmitLog(
 		return pipeline.LocalLogOutcome{}, &InboundImportError{code: InboundImportClosed}
 	}
 	floorRejected := false
-	outcome, err := batch.runtime.emitWithLease(ctx, batch.lease, metadata, func(
+	outcome, err := batch.runtime.emitImportedWithLease(ctx, batch.lease, metadata, func(
 		snapshot EmitContext,
 		admission router.Admission,
 	) (observability.Record, error) {
@@ -117,7 +158,7 @@ func (batch *InboundImportBatch) EmitLog(
 			return observability.Record{}, &InboundImportError{code: InboundImportFloorRejected}
 		}
 		return record, nil
-	}, false)
+	}, policy.originDestination, policy.suppressAll)
 	if floorRejected {
 		return outcome, &InboundImportError{code: InboundImportFloorRejected}
 	}

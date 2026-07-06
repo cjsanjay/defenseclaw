@@ -279,7 +279,39 @@ func (runtime *Runtime) emitWithLease(
 	builder EmitBuilder,
 	localOnly bool,
 ) (pipeline.LocalLogOutcome, error) {
+	return runtime.emitWithLeaseControls(ctx, lease, metadata, builder, localOnly, "", false)
+}
+
+// emitImportedWithLease is reserved for normalized inbound logs. The origin
+// and terminal-hop controls remain outside the canonical record and are
+// consumed only by the generation-local optional routing path.
+func (runtime *Runtime) emitImportedWithLease(
+	ctx context.Context,
+	lease *runtimegraph.Lease,
+	metadata router.Metadata,
+	builder EmitBuilder,
+	originDestination string,
+	suppressAll bool,
+) (pipeline.LocalLogOutcome, error) {
+	return runtime.emitWithLeaseControls(
+		ctx, lease, metadata, builder, false, originDestination, suppressAll,
+	)
+}
+
+func (runtime *Runtime) emitWithLeaseControls(
+	ctx context.Context,
+	lease *runtimegraph.Lease,
+	metadata router.Metadata,
+	builder EmitBuilder,
+	localOnly bool,
+	originDestination string,
+	suppressAll bool,
+) (pipeline.LocalLogOutcome, error) {
 	if runtime == nil || ctx == nil || lease == nil || builder == nil {
+		return pipeline.LocalLogOutcome{}, &Error{code: ErrorInvalidDependency}
+	}
+	if (originDestination != "" && !observability.IsStableToken(originDestination)) ||
+		(suppressAll && originDestination != "") || (localOnly && originDestination != "") {
 		return pipeline.LocalLogOutcome{}, &Error{code: ErrorInvalidDependency}
 	}
 	graph := lease.Graph()
@@ -294,11 +326,7 @@ func (runtime *Runtime) emitWithLease(
 	snapshot := EmitContext{
 		plan: graph.Plan(), digest: graph.Digest(), generation: graph.Generation(),
 	}
-	process := local.Process
-	if localOnly {
-		process = local.ProcessLocalOnly
-	}
-	outcome, processErr := process(ctx, metadata, func(admission router.Admission) (observability.Record, error) {
+	processBuilder := func(admission router.Admission) (observability.Record, error) {
 		record, err := builder(snapshot, admission)
 		if err != nil {
 			return observability.Record{}, err
@@ -309,14 +337,26 @@ func (runtime *Runtime) emitWithLease(
 			return observability.Record{}, &emitBuilderError{}
 		}
 		return record, nil
-	})
+	}
+	var outcome pipeline.LocalLogOutcome
+	var processErr error
+	switch {
+	case localOnly:
+		outcome, processErr = local.ProcessLocalOnly(ctx, metadata, processBuilder)
+	case originDestination != "" || suppressAll:
+		outcome, processErr = local.ProcessImported(
+			ctx, metadata, originDestination, suppressAll, processBuilder,
+		)
+	default:
+		outcome, processErr = local.Process(ctx, metadata, processBuilder)
+	}
 	if processErr != nil {
 		return outcome, processErr
 	}
 	if !outcome.LocalPersisted() {
 		return outcome, nil
 	}
-	if localOnly {
+	if localOnly || suppressAll {
 		return outcome, nil
 	}
 	dispatchValue, dispatchOK := lease.Component(DestinationDispatchComponentName)

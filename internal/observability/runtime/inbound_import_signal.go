@@ -31,10 +31,24 @@ func (batch *InboundImportBatch) ImportTrace(
 	authenticatedSource string,
 	builder InboundSignalBuilder,
 ) (telemetry.V8ImportedSpanResult, error) {
+	return batch.ImportTraceWithPolicy(
+		ctx, target, authenticatedSource, InboundOptionalExportPolicy{}, builder,
+	)
+}
+
+// ImportTraceWithPolicy applies imported-only loop and terminal-hop controls
+// without placing either value in the canonical span or its attributes.
+func (batch *InboundImportBatch) ImportTraceWithPolicy(
+	ctx context.Context,
+	target observability.InboundTarget,
+	authenticatedSource string,
+	policy InboundOptionalExportPolicy,
+	builder InboundSignalBuilder,
+) (telemetry.V8ImportedSpanResult, error) {
 	if batch == nil || ctx == nil || builder == nil ||
 		target.Signal() != observability.SignalTraces ||
 		target.Role() != observability.InboundTargetImport ||
-		!target.AcceptsAuthenticatedSource(authenticatedSource) {
+		!target.AcceptsAuthenticatedSource(authenticatedSource) || !policy.valid() {
 		return telemetry.V8ImportedSpanResult{}, &InboundImportError{code: InboundImportInvalidInput}
 	}
 	batch.mu.Lock()
@@ -69,7 +83,15 @@ func (batch *InboundImportBatch) ImportTrace(
 	) {
 		return telemetry.V8ImportedSpanResult{}, &InboundImportError{code: InboundImportBuildRejected}
 	}
-	result, err := provider.ImportV8CanonicalSpan(record)
+	exportPolicy := telemetry.SuppressAllV8ImportedExport()
+	var policyErr error
+	if !policy.suppressAll {
+		exportPolicy, policyErr = telemetry.NewV8ImportedExportPolicy(policy.originDestination)
+		if policyErr != nil {
+			return telemetry.V8ImportedSpanResult{}, &InboundImportError{code: InboundImportInvalidInput}
+		}
+	}
+	result, err := provider.ImportV8CanonicalSpanWithPolicy(record, exportPolicy)
 	if err != nil {
 		return result, &InboundImportError{code: InboundImportDeliveryFailed}
 	}
@@ -84,10 +106,24 @@ func (batch *InboundImportBatch) RecordMetric(
 	authenticatedSource string,
 	builder InboundSignalBuilder,
 ) (telemetry.V8MetricRecordResult, error) {
+	return batch.RecordMetricWithPolicy(
+		ctx, target, authenticatedSource, InboundOptionalExportPolicy{}, builder,
+	)
+}
+
+// RecordMetricWithPolicy applies imported-only loop and terminal-hop controls
+// without adding them to the metric record or projected labels.
+func (batch *InboundImportBatch) RecordMetricWithPolicy(
+	ctx context.Context,
+	target observability.InboundTarget,
+	authenticatedSource string,
+	policy InboundOptionalExportPolicy,
+	builder InboundSignalBuilder,
+) (telemetry.V8MetricRecordResult, error) {
 	if batch == nil || ctx == nil || builder == nil ||
 		target.Signal() != observability.SignalMetrics ||
 		(target.Role() != observability.InboundTargetImport && target.Role() != observability.InboundTargetDerive) ||
-		!target.AcceptsAuthenticatedSource(authenticatedSource) {
+		!target.AcceptsAuthenticatedSource(authenticatedSource) || !policy.valid() {
 		return telemetry.V8MetricRecordResult{}, &InboundImportError{code: InboundImportInvalidInput}
 	}
 	batch.mu.Lock()
@@ -124,7 +160,15 @@ func (batch *InboundImportBatch) RecordMetric(
 	) {
 		return telemetry.V8MetricRecordResult{}, &InboundImportError{code: InboundImportBuildRejected}
 	}
-	result, err := provider.RecordGeneratedMetric(ctx, record)
+	exportPolicy := telemetry.SuppressAllV8ImportedExport()
+	var policyErr error
+	if !policy.suppressAll {
+		exportPolicy, policyErr = telemetry.NewV8ImportedExportPolicy(policy.originDestination)
+		if policyErr != nil {
+			return telemetry.V8MetricRecordResult{}, &InboundImportError{code: InboundImportInvalidInput}
+		}
+	}
+	result, err := provider.RecordImportedMetric(ctx, record, exportPolicy)
 	if err != nil {
 		return result, &InboundImportError{code: InboundImportDeliveryFailed}
 	}
