@@ -80,6 +80,17 @@ allowed outcome, field type, and field-class authority. Payload attributes named
 `defenseclaw.span.family` are consistency assertions only in a native binding and
 MUST equal the generated target. They never classify a non-native leaf.
 
+The compiler emits a separate private `import_context` capability exactly for
+imported log targets. That extra capability exists to remove the local
+mandatory/floor program from an otherwise identical log-family descriptor. Trace
+and metric families have no mandatory-floor or SQLite construction path, so their
+exact sealed generated target descriptor is itself the private construction
+capability. A trace/metric constructor MUST still require an import-role target,
+validate its concrete descriptor and authenticated-source match, and remain
+incapable of accepting an arbitrary family ID, descriptor, field-class map, or raw
+payload. The absence of trace/metric `import_context_id` rows is therefore
+intentional and MUST NOT be filled by a handwritten parallel context registry.
+
 An authored row described as a **binding class** below is compiler shorthand, not
 one wildcard runtime binding. The compiler MUST expand it into exact generated
 match and target entries in `inbound-otlp.json`. For native expansions the exact
@@ -209,11 +220,14 @@ step IDs are acceptance-test references.
    mappings. Unknown attributes/body members are dropped and counted. No unknown
    value is retained in a hidden raw field.
 6. **`OTLP-I06 validate`**: run the generated family validator and the private
-   import-only construction context, including required/conditional fields, types,
-   bounds, outcome, correlation, field classes, trace topology, metric descriptor,
-   and canonical serialization limits. The import context reuses the exact family
-   descriptor but has no mandatory/floor fact input and constructs imported logs
-   with `mandatory=false` and the unexported floor-only marker false.
+   construction capability: the separate import-only context for logs, or the
+   sealed exact target descriptor for traces and metrics. Validate
+   required/conditional fields, types, bounds, outcome, correlation, field
+   classes, trace topology, metric descriptor, and canonical serialization limits.
+   The log import context reuses the exact family descriptor but has no
+   mandatory/floor fact input and constructs imported logs with `mandatory=false`
+   and the unexported floor-only marker false. Trace/metric target constructors have
+   no SQLite or floor path and cannot accept caller-selected descriptor authority.
 7. **`OTLP-I07 persist`**: for a collected imported log, commit the ordinary local
    SQLite projection before any optional log export. Traces and metrics do not gain
    a new SQLite persistence claim.
