@@ -66,6 +66,210 @@ inbound_bindings:
       value_type: double
       normalization: duration-seconds-v1
       sources: [gen_ai.client.operation.duration, gen_ai.operation.duration, duration_seconds, duration_s, elapsed_seconds, elapsed_s, latency_seconds, latency_s, response.duration, codex.turn.duration_seconds, duration_ms, duration_milliseconds, elapsed_ms, latency_ms, response.duration_ms, codex.turn.duration_ms, gen_ai.client.operation.duration_ms, gen_ai.operation.duration_ms, duration_ns, duration_nanos, elapsed_ns, latency_ns, gen_ai.client.operation.duration_ns, gen_ai.operation.duration_ns]
+  source_normalizers:
+    - id: bounded-label-v1
+      kind: bounded
+      trim: unicode-space
+      case: preserve
+      max_utf8_bytes: 256
+      empty: reject
+      overflow: reject
+    - id: identifier-label-v1
+      kind: identifier
+      trim: unicode-space
+      case: preserve
+      max_utf8_bytes: 256
+      pattern: '^[A-Za-z0-9][A-Za-z0-9._:/-]*$'
+      empty: reject
+      overflow: reject
+    - id: genai-provider-label-v1
+      kind: ordered-exact-contains
+      trim: unicode-space
+      case: lowercase
+      max_utf8_bytes: 64
+      empty: unknown
+      overflow: other
+      unmatched: other
+      rules:
+        - {output: openai, exact: [openai, codex], contains: [openai]}
+        - {output: anthropic, exact: [anthropic], contains: [anthropic, claude]}
+        - {output: google, exact: [google], contains: [google, gemini]}
+        - {output: azure, exact: [azure], contains: [azure]}
+        - {output: bedrock, exact: [bedrock], contains: [bedrock]}
+        - {output: ollama, exact: [ollama], contains: [ollama]}
+        - {output: local, exact: [local], contains: []}
+        - {output: unknown, exact: [unknown], contains: []}
+    - id: genai-model-label-v1
+      kind: ordered-prefix-family
+      trim: unicode-space
+      case: lowercase
+      max_utf8_bytes: 64
+      empty: unknown
+      overflow: other
+      unmatched: other
+      separators: ['-', '.', ':']
+      prefixes: [gpt-5, gpt-4o, gpt-4, gpt-3.5, o1, o3, claude-3.5, claude-3-7, claude-3, claude-4, claude-opus, claude-sonnet, claude-haiku, gemini-1.5, gemini-2, gemini, llama-3, llama-4, mistral, deepseek, qwen, grok, command-r, phi-3, phi-4]
+    - id: genai-operation-label-v1
+      kind: exact-map
+      trim: unicode-space
+      case: lowercase
+      empty: reject
+      unmatched: reject
+      rules:
+        - {output: chat, inputs: [chat, completion, completions, responses, response, generate, generation, chat.completions]}
+        - {output: embeddings, inputs: [embedding, embeddings, embed]}
+        - {output: execute_tool, inputs: [tool, tool-call, tool_call, tool-result, tool_result, execute-tool, execute_tool]}
+        - {output: create_agent, inputs: [create_agent]}
+        - {output: create_memory, inputs: [create_memory]}
+        - {output: create_memory_store, inputs: [create_memory_store]}
+        - {output: delete_memory, inputs: [delete_memory]}
+        - {output: delete_memory_store, inputs: [delete_memory_store]}
+        - {output: generate_content, inputs: [generate_content]}
+        - {output: invoke_agent, inputs: [invoke_agent]}
+        - {output: invoke_workflow, inputs: [invoke_workflow]}
+        - {output: plan, inputs: [plan]}
+        - {output: retrieval, inputs: [retrieval]}
+        - {output: search_memory, inputs: [search_memory]}
+        - {output: text_completion, inputs: [text_completion]}
+        - {output: update_memory, inputs: [update_memory]}
+        - {output: upsert_memory, inputs: [upsert_memory]}
+    - id: token-type-label-v1
+      kind: enum
+      trim: none
+      case: preserve
+      values: [input, output, cacheRead, cacheCreation]
+      empty: reject
+      unmatched: reject
+  source_projection_plans:
+    - id: genai-token-metric-v1
+      target_family: metric.gen_ai.client.token.usage
+      field_rules:
+        - {target: gen_ai.agent.id, disposition: omit}
+        - target: gen_ai.agent.name
+          disposition: project
+          requirement: required
+          normalization: bounded-label-v1
+          source_groups:
+            - {placement: authenticated_source, keys: [$authenticated_source]}
+            - {placement: resource_attribute, keys: [service.name]}
+        - target: gen_ai.conversation.id
+          disposition: project
+          requirement: optional
+          normalization: identifier-label-v1
+          source_groups:
+            - {placement: metric_point_attribute, keys: [gen_ai.conversation.id, conversation.id, session.id, session_id]}
+            - {placement: resource_attribute, keys: [gen_ai.conversation.id, conversation.id, session.id, session_id]}
+        - target: gen_ai.operation.name
+          disposition: project
+          requirement: required
+          normalization: genai-operation-label-v1
+          source_groups:
+            - {placement: fixed, keys: [chat]}
+        - target: gen_ai.provider.name
+          disposition: project
+          requirement: required
+          normalization: genai-provider-label-v1
+          source_groups:
+            - {placement: metric_point_attribute, keys: [gen_ai.provider.name]}
+            - {placement: authenticated_source, keys: [$authenticated_source]}
+            - {placement: resource_attribute, keys: [service.name]}
+        - target: gen_ai.request.model
+          disposition: project
+          requirement: required
+          normalization: genai-model-label-v1
+          source_groups:
+            - {placement: metric_point_attribute, keys: [gen_ai.request.model, gen_ai.response.model, model]}
+            - {placement: fixed, keys: [unknown]}
+        - target: gen_ai.token.type
+          disposition: project
+          requirement: required
+          normalization: token-type-label-v1
+          allowed_values: [input, output, cacheRead, cacheCreation]
+          source_groups:
+            - {placement: metric_point_attribute, keys: [type]}
+      cumulative_series:
+        applicability: monotonic-cumulative-sum
+        framing: length-prefixed-presence-v1
+        normalization_stage: before_framing
+        components:
+          - id: authenticated_source
+            requirement: required
+            normalization: bounded-label-v1
+            source_groups:
+              - {placement: authenticated_source, keys: [$authenticated_source]}
+          - id: resource_service_name
+            requirement: optional
+            normalization: bounded-label-v1
+            source_groups:
+              - {placement: resource_attribute, keys: [service.name]}
+          - id: resource_service_instance_id
+            requirement: optional
+            normalization: identifier-label-v1
+            source_groups:
+              - {placement: resource_attribute, keys: [service.instance.id]}
+          - id: instrument_name
+            requirement: required
+            normalization: identifier-label-v1
+            source_groups:
+              - {placement: instrument_name, keys: [$instrument_name]}
+          - id: normalized_model
+            requirement: required
+            normalization: genai-model-label-v1
+            source_groups:
+              - {placement: metric_point_attribute, keys: [gen_ai.request.model, gen_ai.response.model, model]}
+              - {placement: fixed, keys: [unknown]}
+          - id: token_type
+            requirement: required
+            normalization: token-type-label-v1
+            allowed_values: [input, output, cacheRead, cacheCreation]
+            source_groups:
+              - {placement: metric_point_attribute, keys: [type]}
+          - id: normalized_conversation
+            requirement: optional
+            normalization: identifier-label-v1
+            source_groups:
+              - {placement: metric_point_attribute, keys: [gen_ai.conversation.id, conversation.id, session.id, session_id]}
+              - {placement: resource_attribute, keys: [gen_ai.conversation.id, conversation.id, session.id, session_id]}
+        reset_epoch:
+          role: reset_only
+          identity: false
+          placement: metric_point_start_time
+          key: $start_time_unix_nano
+          normalization: unsigned-epoch-nanos-v1
+    - id: genai-duration-metric-v1
+      target_family: metric.gen_ai.client.operation.duration
+      field_rules:
+        - {target: gen_ai.agent.id, disposition: omit}
+        - target: gen_ai.agent.name
+          disposition: project
+          requirement: required
+          normalization: bounded-label-v1
+          source_groups:
+            - {placement: authenticated_source, keys: [$authenticated_source]}
+            - {placement: resource_attribute, keys: [service.name]}
+        - target: gen_ai.operation.name
+          disposition: project
+          requirement: required
+          normalization: genai-operation-label-v1
+          source_groups:
+            - {placement: metric_point_attribute, keys: [gen_ai.operation.name]}
+            - {placement: fixed, keys: [chat]}
+        - target: gen_ai.provider.name
+          disposition: project
+          requirement: required
+          normalization: genai-provider-label-v1
+          source_groups:
+            - {placement: metric_point_attribute, keys: [gen_ai.provider.name]}
+            - {placement: authenticated_source, keys: [$authenticated_source]}
+            - {placement: resource_attribute, keys: [service.name]}
+        - target: gen_ai.request.model
+          disposition: project
+          requirement: required
+          normalization: genai-model-label-v1
+          source_groups:
+            - {placement: metric_point_attribute, keys: [gen_ai.request.model, gen_ai.response.model, model]}
+            - {placement: fixed, keys: [unknown]}
+      cumulative_series: null
   binding_classes:
     - id: otlp.native.log.v8
       signal: logs
@@ -224,7 +428,8 @@ inbound_bindings:
           - {location: metric_point, key: $point_shape, operator: one_of, values: [sum, gauge], value_type: string}
       mapping:
         strategy: claude-token-usage-v1
-        alias_sets: [conversation-id-v1, provider-v1, request-model-v1]
+        alias_sets: []
+        source_projection_plan: genai-token-metric-v1
         unit_rule:
           kind: scale-table-v1
           accepted:
@@ -257,7 +462,8 @@ inbound_bindings:
           - {location: metric_point, key: $point_shape, operator: one_of, values: [gauge, sum, histogram], value_type: string}
       mapping:
         strategy: duration-metric-v1
-        alias_sets: [conversation-id-v1, provider-v1, request-model-v1]
+        alias_sets: []
+        source_projection_plan: genai-duration-metric-v1
         unit_rule:
           kind: scale-table-v1
           accepted:

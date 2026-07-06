@@ -873,10 +873,13 @@ def _fixture_inbound_bindings() -> dict[str, Any]:
         native: bool = False,
         strategy: str = "fixture-mapping-v1",
         unit_rule: dict[str, Any] | None = None,
+        source_projection_plan: str | None = None,
     ) -> dict[str, Any]:
         mapping: dict[str, Any] = {"strategy": strategy, "alias_sets": aliases or []}
         if unit_rule is not None:
             mapping["unit_rule"] = unit_rule
+        if source_projection_plan is not None:
+            mapping["source_projection_plan"] = source_projection_plan
         return {
             "id": binding_id,
             "signal": signal,
@@ -1046,8 +1049,9 @@ def _fixture_inbound_bindings() -> dict[str, Any]:
                     values=["claude_code.token.usage"],
                 )
             ],
-            aliases=["conversation-id-v1"],
+            aliases=[],
             strategy="claude-token-usage-v1",
+            source_projection_plan="genai-token-metric-v1",
             unit_rule={
                 "kind": "scale-table-v1",
                 "accepted": [
@@ -1078,8 +1082,9 @@ def _fixture_inbound_bindings() -> dict[str, Any]:
                 ],
             },
             [predicate("instrument_name", "$instrument_name", "equals_expansion_instrument")],
-            aliases=["provider-v1", "request-model-v1"],
+            aliases=[],
             strategy="duration-metric-v1",
+            source_projection_plan="genai-duration-metric-v1",
             unit_rule={
                 "kind": "scale-table-v1",
                 "accepted": [
@@ -1115,6 +1120,28 @@ def _fixture_inbound_bindings() -> dict[str, Any]:
         "otlp.claudecode.token_usage.v1",
         "otlp.genai.duration.metric.v1",
     ]
+    canonical_inbound = yaml.safe_load(
+        (ROOT / "schemas/telemetry/v8/registry.yaml").read_text(encoding="utf-8")
+    )["inbound_bindings"]
+    fixture_projection_plans = copy.deepcopy(canonical_inbound["source_projection_plans"])
+    fixture_projection_plans[0]["field_rules"] = [
+        {
+            "target": "defenseclaw.test.high",
+            "disposition": "project",
+            "requirement": "required",
+            "normalization": "genai-operation-label-v1",
+            "source_groups": [{"placement": "fixed", "keys": ["chat"]}],
+        }
+    ]
+    fixture_projection_plans[1]["field_rules"] = [
+        {
+            "target": "defenseclaw.test.high",
+            "disposition": "project",
+            "requirement": "required",
+            "normalization": "genai-provider-label-v1",
+            "source_groups": [{"placement": "authenticated_source", "keys": ["$authenticated_source"]}],
+        }
+    ]
     return {
         "version": 1,
         "max_forward_hops": 4,
@@ -1128,6 +1155,8 @@ def _fixture_inbound_bindings() -> dict[str, Any]:
         "scope_schema_url": "https://defenseclaw.io/schemas/telemetry/v8",
         "resource_schema_url": "https://opentelemetry.io/schemas/1.42.0",
         "alias_sets": aliases,
+        "source_normalizers": copy.deepcopy(canonical_inbound["source_normalizers"]),
+        "source_projection_plans": fixture_projection_plans,
         "binding_classes": binding_classes,
         "derivation_attachments": [
             {
@@ -10118,6 +10147,152 @@ def test_inbound_source_unit_grammar_rejects_any_table_drift(
     groups = {group.id: group for domain in ir.domains for group in domain.groups}
     with pytest.raises(module.RegistryError, match=message):
         module._parse_inbound_otlp(registry["inbound_bindings"], groups=groups)
+
+
+def test_inbound_metric_source_projection_contract_is_closed_and_complete(
+    canonical_go_symbol_compilation: tuple[Any, Any],
+) -> None:
+    module, ir = canonical_go_symbol_compilation
+    registry = yaml.safe_load((ROOT / "schemas/telemetry/v8/registry.yaml").read_text(encoding="utf-8"))
+    inbound = module._parse_inbound_otlp(
+        registry["inbound_bindings"],
+        groups={group.id: group for domain in ir.domains for group in domain.groups},
+    )
+    assert tuple(item["id"] for item in inbound.source_normalizers) == (
+        "bounded-label-v1",
+        "identifier-label-v1",
+        "genai-provider-label-v1",
+        "genai-model-label-v1",
+        "genai-operation-label-v1",
+        "token-type-label-v1",
+    )
+    assert tuple(item["id"] for item in inbound.source_projection_plans) == (
+        "genai-token-metric-v1",
+        "genai-duration-metric-v1",
+    )
+    token, duration = inbound.source_projection_plans
+    assert tuple(rule["target"] for rule in token["field_rules"]) == (
+        "gen_ai.agent.id",
+        "gen_ai.agent.name",
+        "gen_ai.conversation.id",
+        "gen_ai.operation.name",
+        "gen_ai.provider.name",
+        "gen_ai.request.model",
+        "gen_ai.token.type",
+    )
+    assert token["field_rules"][0] == {"target": "gen_ai.agent.id", "disposition": "omit"}
+    assert token["field_rules"][4]["source_groups"] == (
+        {"placement": "metric_point_attribute", "keys": ("gen_ai.provider.name",)},
+        {"placement": "authenticated_source", "keys": ("$authenticated_source",)},
+        {"placement": "resource_attribute", "keys": ("service.name",)},
+    )
+    assert token["field_rules"][5]["requirement"] == "required"
+    assert token["field_rules"][5]["source_groups"][-1] == {"placement": "fixed", "keys": ("unknown",)}
+    assert tuple(item["id"] for item in token["cumulative_series"]["components"]) == (
+        "authenticated_source",
+        "resource_service_name",
+        "resource_service_instance_id",
+        "instrument_name",
+        "normalized_model",
+        "token_type",
+        "normalized_conversation",
+    )
+    assert token["cumulative_series"]["framing"] == "length-prefixed-presence-v1"
+    assert token["cumulative_series"]["normalization_stage"] == "before_framing"
+    assert token["cumulative_series"]["reset_epoch"] == {
+        "role": "reset_only",
+        "identity": False,
+        "placement": "metric_point_start_time",
+        "key": "$start_time_unix_nano",
+        "normalization": "unsigned-epoch-nanos-v1",
+    }
+    assert duration["cumulative_series"] is None
+    assert duration["field_rules"][2]["source_groups"] == (
+        {"placement": "metric_point_attribute", "keys": ("gen_ai.operation.name",)},
+        {"placement": "fixed", "keys": ("chat",)},
+    )
+    assert tuple(
+        match["id"]
+        for match in inbound.match_descriptors
+        if match["mapping"]["source_projection_plan"] is not None
+    ) == (
+        "otlp.claudecode.token_usage.v1.metric.gen_ai.client.token.usage",
+        "otlp.genai.duration.metric.v1.claude-code",
+        "otlp.genai.duration.metric.v1.codex",
+        "otlp.genai.duration.metric.v1.gen-ai",
+        "otlp.genai.duration.metric.v1.gen-ai-client",
+        "otlp.genai.duration.metric.v1.llm",
+    )
+
+
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    (
+        ("duplicate_normalizer", "duplicate source normalizer|inventory/order mismatch"),
+        ("colliding_normalizer_input", "colliding exact-map input"),
+        ("duplicate_plan", "duplicate source projection plan|inventory/order mismatch"),
+        ("unused_plan", "required for claude-token-usage-v1|declarations must each be referenced exactly once"),
+        ("unknown_plan", "unknown plan"),
+        ("missing_field", "cover target fields exactly"),
+        ("duplicate_field", "duplicate field disposition"),
+        ("unknown_normalizer", "unsupported source normalization"),
+        ("duplicate_source", "colliding source declaration|duplicate source key|duplicate value"),
+        ("unknown_placement", "unknown source placement"),
+        ("component_order", "canonical series identity/order mismatch"),
+        ("start_time_identity", "start time is reset metadata only"),
+        ("aliases_and_plan", "cannot both own fields"),
+        ("plan_family", "cover target fields exactly|target family does not match expanded primary|projection.*incomplete"),
+    ),
+)
+def test_inbound_metric_source_projection_rejects_every_contract_drift(
+    canonical_go_symbol_compilation: tuple[Any, Any],
+    mutation: str,
+    message: str,
+) -> None:
+    module, ir = canonical_go_symbol_compilation
+    registry = yaml.safe_load((ROOT / "schemas/telemetry/v8/registry.yaml").read_text(encoding="utf-8"))
+    inbound = registry["inbound_bindings"]
+    normalizers = inbound["source_normalizers"]
+    plans = inbound["source_projection_plans"]
+    token_class = next(item for item in inbound["binding_classes"] if item["id"] == "otlp.claudecode.token_usage.v1")
+    if mutation == "duplicate_normalizer":
+        normalizers[1]["id"] = normalizers[0]["id"]
+    elif mutation == "colliding_normalizer_input":
+        operation = next(item for item in normalizers if item["id"] == "genai-operation-label-v1")
+        operation["rules"][1]["inputs"].append(operation["rules"][0]["inputs"][0])
+    elif mutation == "duplicate_plan":
+        plans[1]["id"] = plans[0]["id"]
+    elif mutation == "unused_plan":
+        token_class["mapping"]["source_projection_plan"] = "genai-duration-metric-v1"
+    elif mutation == "unknown_plan":
+        token_class["mapping"]["source_projection_plan"] = "future-plan-v1"
+    elif mutation == "missing_field":
+        plans[0]["field_rules"].pop()
+    elif mutation == "duplicate_field":
+        plans[0]["field_rules"][1]["target"] = plans[0]["field_rules"][0]["target"]
+    elif mutation == "unknown_normalizer":
+        plans[0]["field_rules"][1]["normalization"] = "future-normalizer-v1"
+    elif mutation == "duplicate_source":
+        group = plans[0]["field_rules"][2]["source_groups"][0]
+        group["keys"].append(group["keys"][0])
+    elif mutation == "unknown_placement":
+        plans[0]["field_rules"][1]["source_groups"][0]["placement"] = "scope_attribute"
+    elif mutation == "component_order":
+        components = plans[0]["cumulative_series"]["components"]
+        components[0], components[1] = components[1], components[0]
+    elif mutation == "start_time_identity":
+        plans[0]["cumulative_series"]["reset_epoch"]["identity"] = True
+    elif mutation == "aliases_and_plan":
+        token_class["mapping"]["alias_sets"] = ["request-model-v1"]
+    elif mutation == "plan_family":
+        plans[0]["target_family"] = "metric.gen_ai.client.operation.duration"
+    else:
+        raise AssertionError(mutation)
+    with pytest.raises(module.RegistryError, match=message):
+        module._parse_inbound_otlp(
+            inbound,
+            groups={group.id: group for domain in ir.domains for group in domain.groups},
+        )
 
 
 def test_go_symbol_policy_tokenization_is_exact_and_strict() -> None:

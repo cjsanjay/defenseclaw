@@ -26,6 +26,12 @@ func TestInboundCatalogGeneratedInventoryAndCrossReferences(t *testing.T) {
 	if got, want := len(catalog.Aliases()), 9; got != want {
 		t.Fatalf("aliases = %d, want %d", got, want)
 	}
+	if got, want := len(catalog.snapshot.normalizers), 6; got != want {
+		t.Fatalf("source normalizers = %d, want %d", got, want)
+	}
+	if got, want := len(catalog.snapshot.projections), 2; got != want {
+		t.Fatalf("source projection plans = %d, want %d", got, want)
+	}
 	if got, want := len(catalog.snapshot.matches), 237; got != want {
 		t.Fatalf("matches = %d, want %d", got, want)
 	}
@@ -450,6 +456,243 @@ func TestInboundCatalogGeneratedSourceUnitAuthorityIsExact(t *testing.T) {
 	}
 }
 
+func TestInboundCatalogGeneratedMetricSourceProjectionAuthority(t *testing.T) {
+	catalog := mustInboundCatalog(t)
+	tokenMatch, ok := catalog.Match("otlp.claudecode.token_usage.v1.metric.gen_ai.client.token.usage")
+	if !ok {
+		t.Fatal("Claude token match missing")
+	}
+	tokenPlan, ok := tokenMatch.SourceProjectionPlan()
+	if !ok || tokenPlan.ID() != "genai-token-metric-v1" || tokenPlan.TargetFamily() != "metric.gen_ai.client.token.usage" {
+		t.Fatalf("token source projection = %q/%q/%v", tokenPlan.ID(), tokenPlan.TargetFamily(), ok)
+	}
+	if targetPlan, present := tokenMatch.Targets()[0].SourceProjectionPlan(); !present || targetPlan.ID() != tokenPlan.ID() {
+		t.Fatalf("token target source projection = %q/%v", targetPlan.ID(), present)
+	}
+	fields := tokenPlan.FieldRules()
+	wantTargets := []string{
+		"gen_ai.agent.id", "gen_ai.agent.name", "gen_ai.conversation.id", "gen_ai.operation.name",
+		"gen_ai.provider.name", "gen_ai.request.model", "gen_ai.token.type",
+	}
+	if got := projectionFieldTargets(fields); !reflect.DeepEqual(got, wantTargets) {
+		t.Fatalf("token projection fields = %v, want %v", got, wantTargets)
+	}
+	if fields[0].Disposition() != InboundProjectionOmit || len(fields[0].SourceGroups()) != 0 {
+		t.Fatalf("agent ID disposition = %q/%v", fields[0].Disposition(), fields[0].SourceGroups())
+	}
+	provider := fields[4]
+	if got := sourceGroupPlacements(provider.SourceGroups()); !reflect.DeepEqual(got, []InboundSourcePlacement{
+		InboundSourceMetricPointAttribute, InboundSourceAuthenticated, InboundSourceResourceAttribute,
+	}) {
+		t.Fatalf("provider source precedence = %v", got)
+	}
+	model := fields[5]
+	if model.Requirement() != InboundSourceRequired ||
+		!reflect.DeepEqual(sourceGroupPlacements(model.SourceGroups()), []InboundSourcePlacement{
+			InboundSourceMetricPointAttribute, InboundSourceFixed,
+		}) || !reflect.DeepEqual(model.SourceGroups()[1].Keys(), []string{"unknown"}) {
+		t.Fatalf("model source/fallback = %q/%v", model.Requirement(), model.SourceGroups())
+	}
+	if got, valid := model.Normalizer().Normalize("unknown"); !valid || got != "other" {
+		t.Fatalf("absent-model fallback normalizes to %q/%v, want other/true", got, valid)
+	}
+	conversation := fields[2]
+	if conversation.Requirement() != InboundSourceOptional ||
+		!reflect.DeepEqual(sourceGroupPlacements(conversation.SourceGroups()), []InboundSourcePlacement{
+			InboundSourceMetricPointAttribute, InboundSourceResourceAttribute,
+		}) {
+		t.Fatalf("conversation source projection = %q/%v", conversation.Requirement(), conversation.SourceGroups())
+	}
+
+	series, ok := tokenPlan.CumulativeSeries()
+	if !ok || series.Applicability() != "monotonic-cumulative-sum" ||
+		series.Framing() != "length-prefixed-presence-v1" || series.NormalizationStage() != "before_framing" {
+		t.Fatalf("token cumulative series = %#v/%v", series, ok)
+	}
+	components := series.Components()
+	wantComponents := []string{
+		"authenticated_source", "resource_service_name", "resource_service_instance_id", "instrument_name",
+		"normalized_model", "token_type", "normalized_conversation",
+	}
+	gotComponents := make([]string, len(components))
+	for index, component := range components {
+		gotComponents[index] = component.ID()
+	}
+	if !reflect.DeepEqual(gotComponents, wantComponents) {
+		t.Fatalf("cumulative components = %v, want %v", gotComponents, wantComponents)
+	}
+	epoch := series.ResetEpoch()
+	if epoch.IsIdentity() || epoch.Role() != "reset_only" || epoch.Placement() != "metric_point_start_time" ||
+		epoch.Key() != "$start_time_unix_nano" || epoch.Normalization() != "unsigned-epoch-nanos-v1" {
+		t.Fatalf("reset epoch escaped reset-only role: %#v", epoch)
+	}
+	base := []Optional[string]{
+		Present("claudecode"), Present("agent-service"), Present("instance-a"),
+		Present("claude_code.token.usage"), Present("claude-4"), Present("input"), Absent[string](),
+	}
+	first, err := series.FrameNormalized(base)
+	if err != nil {
+		t.Fatalf("FrameNormalized(base) error = %v", err)
+	}
+	changedService := append([]Optional[string](nil), base...)
+	changedService[1] = Present("other-service")
+	second, err := series.FrameNormalized(changedService)
+	if err != nil || first == second {
+		t.Fatalf("service identity collision: equal=%v err=%v", first == second, err)
+	}
+	changedInstance := append([]Optional[string](nil), base...)
+	changedInstance[2] = Present("instance-b")
+	third, err := series.FrameNormalized(changedInstance)
+	if err != nil || first == third {
+		t.Fatalf("service-instance identity collision: equal=%v err=%v", first == third, err)
+	}
+	withConversation := append([]Optional[string](nil), base...)
+	withConversation[6] = Present("session-a")
+	fourth, err := series.FrameNormalized(withConversation)
+	if err != nil || first == fourth {
+		t.Fatalf("absent/present conversation framing collision: equal=%v err=%v", first == fourth, err)
+	}
+	delimitedA := append([]Optional[string](nil), base...)
+	delimitedA[0], delimitedA[1] = Present("a:b;c"), Present("d")
+	delimitedB := append([]Optional[string](nil), base...)
+	delimitedB[0], delimitedB[1] = Present("a"), Present("b;c:d")
+	frameA, errA := series.FrameNormalized(delimitedA)
+	frameB, errB := series.FrameNormalized(delimitedB)
+	if errA != nil || errB != nil || frameA == frameB || !strings.Contains(frameA, "a:b;c") || !strings.Contains(frameB, "b;c:d") {
+		t.Fatalf("length-framed delimiter collision: equal=%v errA=%v errB=%v", frameA == frameB, errA, errB)
+	}
+	rawModel := append([]Optional[string](nil), base...)
+	rawModel[4] = Present(" Claude-4-Sonnet ")
+	if _, err := series.FrameNormalized(rawModel); !errors.Is(err, ErrInboundCatalogInvalid) {
+		t.Fatalf("FrameNormalized(raw model) error = %v, want invalid", err)
+	}
+	if normalized, valid := components[4].Normalizer().Normalize(" Claude-4-Sonnet "); !valid || normalized != "claude-4" {
+		t.Fatalf("model normalizer = %q/%v, want claude-4/true", normalized, valid)
+	}
+
+	for _, suffix := range []string{"gen-ai-client", "gen-ai", "llm", "claude-code", "codex"} {
+		match, found := catalog.Match("otlp.genai.duration.metric.v1." + suffix)
+		if !found {
+			t.Fatalf("duration match %q missing", suffix)
+		}
+		plan, present := match.SourceProjectionPlan()
+		if !present || plan.ID() != "genai-duration-metric-v1" || plan.TargetFamily() != "metric.gen_ai.client.operation.duration" {
+			t.Fatalf("duration plan %q = %q/%q/%v", suffix, plan.ID(), plan.TargetFamily(), present)
+		}
+		durationFields := plan.FieldRules()
+		if got := projectionFieldTargets(durationFields); !reflect.DeepEqual(got, []string{
+			"gen_ai.agent.id", "gen_ai.agent.name", "gen_ai.operation.name", "gen_ai.provider.name", "gen_ai.request.model",
+		}) {
+			t.Fatalf("duration fields %q = %v", suffix, got)
+		}
+		operationGroups := durationFields[2].SourceGroups()
+		if !reflect.DeepEqual(sourceGroupPlacements(operationGroups), []InboundSourcePlacement{
+			InboundSourceMetricPointAttribute, InboundSourceFixed,
+		}) || !reflect.DeepEqual(operationGroups[0].Keys(), []string{"gen_ai.operation.name"}) ||
+			!reflect.DeepEqual(operationGroups[1].Keys(), []string{"chat"}) {
+			t.Fatalf("duration operation precedence %q = %v", suffix, operationGroups)
+		}
+		if got, valid := durationFields[2].Normalizer().Normalize("Embeddings"); !valid || got != "embeddings" {
+			t.Fatalf("duration operation normalizer %q = %q/%v", suffix, got, valid)
+		}
+		if _, present := plan.CumulativeSeries(); present {
+			t.Fatalf("duration plan %q acquired cumulative series identity", suffix)
+		}
+	}
+
+	for _, match := range catalog.snapshot.matches {
+		view := InboundMatch{snapshot: catalog.snapshot, index: catalog.snapshot.matchByID[match.id]}
+		_, present := view.SourceProjectionPlan()
+		want := match.classID == "otlp.claudecode.token_usage.v1" || match.classID == "otlp.genai.duration.metric.v1"
+		if present != want {
+			t.Fatalf("match %q source projection presence=%v, want %v", match.id, present, want)
+		}
+	}
+}
+
+func TestInboundCatalogGeneratedMetricNormalizerParity(t *testing.T) {
+	catalog := mustInboundCatalog(t)
+	tests := []struct {
+		normalizer string
+		cases      map[string]string
+		rejected   []string
+	}{
+		{
+			normalizer: "genai-provider-label-v1",
+			cases: map[string]string{
+				"": "unknown", "Anthropic": "anthropic", "claudecode": "anthropic", "codex": "openai",
+				"gemini-cli": "google", "openai-with-random-suffix": "openai", "attacker-provider": "other",
+			},
+		},
+		{
+			normalizer: "genai-model-label-v1",
+			cases: map[string]string{
+				"": "unknown", "unknown": "other", "some-future-model-9000": "other", "GPT-5": "gpt-5",
+				"gpt-4o-mini-2024-07-18": "gpt-4o", "claude-3-7-sonnet-20250219": "claude-3-7",
+				"Claude-Opus-4-5": "claude-opus", "gemini-2.0-flash": "gemini-2", "llama-3.1-405b": "llama-3",
+			},
+		},
+		{
+			normalizer: "genai-operation-label-v1",
+			cases: map[string]string{
+				"chat": "chat", "completion": "chat", "completions": "chat", "responses": "chat",
+				"response": "chat", "generate": "chat", "generation": "chat", "chat.completions": "chat",
+				"embedding": "embeddings", "Embeddings": "embeddings", "embed": "embeddings",
+				"tool": "execute_tool", "tool-call": "execute_tool", "tool_call": "execute_tool",
+				"tool-result": "execute_tool", "tool_result": "execute_tool", "execute-tool": "execute_tool",
+				"execute_tool": "execute_tool", "create_agent": "create_agent", "create_memory": "create_memory",
+				"create_memory_store": "create_memory_store", "delete_memory": "delete_memory",
+				"delete_memory_store": "delete_memory_store", "generate_content": "generate_content",
+				"invoke_agent": "invoke_agent", "invoke_workflow": "invoke_workflow", "plan": "plan",
+				"retrieval": "retrieval", "search_memory": "search_memory", "text_completion": "text_completion",
+				"update_memory": "update_memory", "upsert_memory": "upsert_memory",
+			},
+			rejected: []string{"", "unknown", "freeform-operation"},
+		},
+		{
+			normalizer: "token-type-label-v1",
+			cases: map[string]string{
+				"input": "input", "output": "output", "cacheRead": "cacheRead", "cacheCreation": "cacheCreation",
+			},
+			rejected: []string{"", "Input", "cache_read", "total"},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.normalizer, func(t *testing.T) {
+			normalizer, ok := catalog.SourceNormalizer(test.normalizer)
+			if !ok {
+				t.Fatalf("source normalizer %q missing", test.normalizer)
+			}
+			for input, want := range test.cases {
+				if got, valid := normalizer.Normalize(input); !valid || got != want {
+					t.Errorf("Normalize(%q) = %q/%v, want %q/true", input, got, valid, want)
+				}
+			}
+			for _, input := range test.rejected {
+				if got, valid := normalizer.Normalize(input); valid {
+					t.Errorf("Normalize(%q) = %q/true, want rejection", input, got)
+				}
+			}
+		})
+	}
+}
+
+func projectionFieldTargets(fields []InboundProjectionField) []string {
+	result := make([]string, len(fields))
+	for index, field := range fields {
+		result[index] = field.Target()
+	}
+	return result
+}
+
+func sourceGroupPlacements(groups []InboundSourceGroup) []InboundSourcePlacement {
+	result := make([]InboundSourcePlacement, len(groups))
+	for index, group := range groups {
+		result[index] = group.Placement()
+	}
+	return result
+}
+
 func TestInboundCatalogConcurrentReads(t *testing.T) {
 	catalog := mustInboundCatalog(t)
 	const readers = 64
@@ -487,6 +730,56 @@ func TestInboundCatalogRejectsMalformedOrDuplicateGeneratedData(t *testing.T) {
 			name: "duplicate alias",
 			mutate: func(source *generatedInboundCatalogSource) {
 				source.aliases[1].ID = source.aliases[0].ID
+			},
+		},
+		{
+			name: "duplicate source normalizer",
+			mutate: func(source *generatedInboundCatalogSource) {
+				source.normalizers[1].ID = source.normalizers[0].ID
+			},
+		},
+		{
+			name: "source normalizer vocabulary drift",
+			mutate: func(source *generatedInboundCatalogSource) {
+				source.normalizers[3].Prefixes = source.normalizers[3].Prefixes[:len(source.normalizers[3].Prefixes)-1]
+			},
+		},
+		{
+			name: "duplicate source projection",
+			mutate: func(source *generatedInboundCatalogSource) {
+				source.projections[1].ID = source.projections[0].ID
+			},
+		},
+		{
+			name: "source projection incomplete target coverage",
+			mutate: func(source *generatedInboundCatalogSource) {
+				source.projections[0].FieldRules = source.projections[0].FieldRules[:len(source.projections[0].FieldRules)-1]
+			},
+		},
+		{
+			name: "source projection unknown normalizer",
+			mutate: func(source *generatedInboundCatalogSource) {
+				source.projections[0].FieldRules[1].Normalization = "unknown-normalizer-v1"
+			},
+		},
+		{
+			name: "source projection same-group collision",
+			mutate: func(source *generatedInboundCatalogSource) {
+				group := &source.projections[0].FieldRules[2].SourceGroups[0]
+				group.Keys = append(group.Keys, group.Keys[0])
+			},
+		},
+		{
+			name: "cumulative reset epoch became identity",
+			mutate: func(source *generatedInboundCatalogSource) {
+				source.projections[0].CumulativeSeries.ResetEpoch.Identity = true
+			},
+		},
+		{
+			name: "cumulative series component order drift",
+			mutate: func(source *generatedInboundCatalogSource) {
+				source.projections[0].CumulativeSeries.Components[0], source.projections[0].CumulativeSeries.Components[1] =
+					source.projections[0].CumulativeSeries.Components[1], source.projections[0].CumulativeSeries.Components[0]
 			},
 		},
 		{
@@ -556,6 +849,17 @@ func TestInboundCatalogRejectsMalformedOrDuplicateGeneratedData(t *testing.T) {
 			},
 		},
 		{
+			name: "match target source projection mismatch",
+			mutate: func(source *generatedInboundCatalogSource) {
+				for index := range source.matches {
+					if source.matches[index].SourceProjectionPlanID == "genai-token-metric-v1" {
+						source.matches[index].SourceProjectionPlanID = "genai-duration-metric-v1"
+						return
+					}
+				}
+			},
+		},
+		{
 			name: "duplicate native marker",
 			mutate: func(source *generatedInboundCatalogSource) {
 				source.markers[1].ID = source.markers[0].ID
@@ -613,6 +917,40 @@ func cloneGeneratedInboundCatalogSource(input generatedInboundCatalogSource) gen
 	for index := range output.aliases {
 		output.aliases[index].Sources = append([]string(nil), input.aliases[index].Sources...)
 	}
+	output.normalizers = append([]generatedInboundSourceNormalizer(nil), input.normalizers...)
+	for index := range output.normalizers {
+		output.normalizers[index].Values = append([]string(nil), input.normalizers[index].Values...)
+		output.normalizers[index].Separators = append([]string(nil), input.normalizers[index].Separators...)
+		output.normalizers[index].Prefixes = append([]string(nil), input.normalizers[index].Prefixes...)
+		output.normalizers[index].Rules = append([]generatedInboundNormalizerRule(nil), input.normalizers[index].Rules...)
+		for ruleIndex := range output.normalizers[index].Rules {
+			output.normalizers[index].Rules[ruleIndex].Exact = append([]string(nil), input.normalizers[index].Rules[ruleIndex].Exact...)
+			output.normalizers[index].Rules[ruleIndex].Contains = append([]string(nil), input.normalizers[index].Rules[ruleIndex].Contains...)
+			output.normalizers[index].Rules[ruleIndex].Inputs = append([]string(nil), input.normalizers[index].Rules[ruleIndex].Inputs...)
+		}
+	}
+	output.projections = append([]generatedInboundSourceProjectionPlan(nil), input.projections...)
+	for index := range output.projections {
+		output.projections[index].FieldRules = append([]generatedInboundProjectionField(nil), input.projections[index].FieldRules...)
+		for fieldIndex := range output.projections[index].FieldRules {
+			field := &output.projections[index].FieldRules[fieldIndex]
+			field.AllowedValues = append([]string(nil), input.projections[index].FieldRules[fieldIndex].AllowedValues...)
+			field.SourceGroups = cloneGeneratedInboundSourceGroups(input.projections[index].FieldRules[fieldIndex].SourceGroups)
+		}
+		if input.projections[index].CumulativeSeries != nil {
+			series := *input.projections[index].CumulativeSeries
+			series.Components = append([]generatedInboundSeriesComponent(nil), input.projections[index].CumulativeSeries.Components...)
+			for componentIndex := range series.Components {
+				series.Components[componentIndex].AllowedValues = append(
+					[]string(nil), input.projections[index].CumulativeSeries.Components[componentIndex].AllowedValues...,
+				)
+				series.Components[componentIndex].SourceGroups = cloneGeneratedInboundSourceGroups(
+					input.projections[index].CumulativeSeries.Components[componentIndex].SourceGroups,
+				)
+			}
+			output.projections[index].CumulativeSeries = &series
+		}
+	}
 	output.matches = append([]generatedInboundMatch(nil), input.matches...)
 	for index := range output.matches {
 		output.matches[index].Sources = append([]string(nil), input.matches[index].Sources...)
@@ -640,6 +978,14 @@ func cloneGeneratedInboundCatalogSource(input generatedInboundCatalogSource) gen
 	output.contexts = append([]generatedInboundImportContext(nil), input.contexts...)
 	for index := range output.contexts {
 		output.contexts[index].Capabilities = append([]string(nil), input.contexts[index].Capabilities...)
+	}
+	return output
+}
+
+func cloneGeneratedInboundSourceGroups(input []generatedInboundSourceGroup) []generatedInboundSourceGroup {
+	output := append([]generatedInboundSourceGroup(nil), input...)
+	for index := range output {
+		output[index].Keys = append([]string(nil), input[index].Keys...)
 	}
 	return output
 }

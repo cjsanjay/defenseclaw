@@ -1846,6 +1846,18 @@ def _inbound_unit_rule_literal(value: Any, path: str) -> str:
     )
 
 
+def _inbound_source_groups_literal(value: Any, path: str) -> str:
+    groups = _sequence(value, path, maximum=64)
+    return "[]generatedInboundSourceGroup{" + ", ".join(
+        "{Placement: "
+        + _go_string(_read(group, "placement", path), path)
+        + ", Keys: "
+        + _inbound_string_slice(_read(group, "keys", path), path)
+        + "}"
+        for group in groups
+    ) + "}"
+
+
 def _render_inbound_descriptors(lines: list[str], inbound: Any) -> None:
     if _read(inbound, "version", "GoInboundPlanIR") != 1:
         raise GoRenderError("GoInboundPlanIR.version: only version 1 is supported")
@@ -1884,6 +1896,74 @@ def _render_inbound_descriptors(lines: list[str], inbound: Any) -> None:
             "\tSensitivity string",
             "}",
             "",
+            "type generatedInboundNormalizerRule struct {",
+            "\tOutput string",
+            "\tExact []string",
+            "\tContains []string",
+            "\tInputs []string",
+            "}",
+            "",
+            "type generatedInboundSourceNormalizer struct {",
+            "\tID string",
+            "\tKind string",
+            "\tTrim string",
+            "\tCase string",
+            "\tMaxUTF8Bytes int",
+            "\tEmpty string",
+            "\tOverflow string",
+            "\tUnmatched string",
+            "\tPattern string",
+            "\tValues []string",
+            "\tSeparators []string",
+            "\tPrefixes []string",
+            "\tRules []generatedInboundNormalizerRule",
+            "}",
+            "",
+            "type generatedInboundSourceGroup struct {",
+            "\tPlacement string",
+            "\tKeys []string",
+            "}",
+            "",
+            "type generatedInboundProjectionField struct {",
+            "\tTarget string",
+            "\tDisposition string",
+            "\tRequirement string",
+            "\tNormalization string",
+            "\tAllowedValues []string",
+            "\tSourceGroups []generatedInboundSourceGroup",
+            "}",
+            "",
+            "type generatedInboundSeriesComponent struct {",
+            "\tID string",
+            "\tRequirement string",
+            "\tNormalization string",
+            "\tAllowedValues []string",
+            "\tSourceGroups []generatedInboundSourceGroup",
+            "}",
+            "",
+            "type generatedInboundResetEpoch struct {",
+            "\tRole string",
+            "\tIdentity bool",
+            "\tPlacement string",
+            "\tKey string",
+            "\tNormalization string",
+            "}",
+            "",
+            "type generatedInboundCumulativeSeries struct {",
+            "\tApplicability string",
+            "\tFraming string",
+            "\tNormalizationStage string",
+            "\tComponents []generatedInboundSeriesComponent",
+            "\tResetEpoch generatedInboundResetEpoch",
+            "}",
+            "",
+            "type generatedInboundSourceProjectionPlan struct {",
+            "\tID string",
+            "\tTargetFamily string",
+            "\tFieldRules []generatedInboundProjectionField",
+            "\tCumulativeSeries *generatedInboundCumulativeSeries",
+            "}",
+            "",
             "type generatedInboundTargetOverride struct {",
             "\tSource string",
             "\tTarget string",
@@ -1911,6 +1991,7 @@ def _render_inbound_descriptors(lines: list[str], inbound: Any) -> None:
             "\tPredicates []generatedInboundPredicate",
             "\tMappingStrategy string",
             "\tAliasIDs []string",
+            "\tSourceProjectionPlanID string",
             "\tTargetOverride *generatedInboundTargetOverride",
             "\tSourceUnitRule generatedInboundUnitRule",
             "\tTargetIDs []string",
@@ -1942,6 +2023,7 @@ def _render_inbound_descriptors(lines: list[str], inbound: Any) -> None:
             "\tOutcomeRuleJSON string",
             "\tImportContextID string",
             "\tSourceUnitRule generatedInboundUnitRule",
+            "\tSourceProjectionPlanID string",
             "}",
             "",
             "type generatedInboundNativeMarker struct {",
@@ -2052,6 +2134,145 @@ def _render_inbound_descriptors(lines: list[str], inbound: Any) -> None:
         lines.append("\t},")
     lines.extend(("}", ""))
 
+    normalizers = _sequence(
+        _read(inbound, "source_normalizers", "inbound"),
+        "inbound source normalizers",
+        maximum=64,
+    )
+    lines.append("var generatedInboundSourceNormalizers = []generatedInboundSourceNormalizer{")
+    for normalizer in normalizers:
+        lines.append("\t{")
+        for field, name in (
+            ("id", "ID"),
+            ("kind", "Kind"),
+            ("trim", "Trim"),
+            ("case", "Case"),
+            ("empty", "Empty"),
+            ("overflow", "Overflow"),
+            ("unmatched", "Unmatched"),
+            ("pattern", "Pattern"),
+        ):
+            lines.append(f"\t\t{name}: {_go_string(_read(normalizer, field, 'normalizer'), 'normalizer')},")
+        maximum = _read(normalizer, "max_utf8_bytes", "normalizer")
+        if type(maximum) is not int or maximum < 0:
+            raise GoRenderError("normalizer max_utf8_bytes is invalid")
+        lines.append(f"\t\tMaxUTF8Bytes: {maximum},")
+        for field, name in (("values", "Values"), ("separators", "Separators"), ("prefixes", "Prefixes")):
+            lines.append(
+                f"\t\t{name}: {_inbound_string_slice(_read(normalizer, field, 'normalizer'), 'normalizer')},"
+            )
+        lines.append("\t\tRules: []generatedInboundNormalizerRule{")
+        for rule in _sequence(_read(normalizer, "rules", "normalizer"), "normalizer rules", maximum=64):
+            lines.append(
+                "\t\t\t{Output: "
+                + _go_string(_read(rule, "output", "normalizer rule"), "normalizer rule")
+                + ", Exact: "
+                + _inbound_string_slice(_read(rule, "exact", "normalizer rule"), "normalizer rule")
+                + ", Contains: "
+                + _inbound_string_slice(_read(rule, "contains", "normalizer rule"), "normalizer rule")
+                + ", Inputs: "
+                + _inbound_string_slice(_read(rule, "inputs", "normalizer rule"), "normalizer rule")
+                + "},"
+            )
+        lines.extend(("\t\t},", "\t},"))
+    lines.extend(("}", ""))
+
+    projection_plans = _sequence(
+        _read(inbound, "source_projection_plans", "inbound"),
+        "inbound source projection plans",
+        maximum=64,
+    )
+    lines.append("var generatedInboundSourceProjectionPlans = []generatedInboundSourceProjectionPlan{")
+    for plan in projection_plans:
+        lines.extend(
+            (
+                "\t{",
+                "\t\tID: " + _go_string(_read(plan, "id", "source projection plan"), "source projection plan") + ",",
+                "\t\tTargetFamily: "
+                + _go_string(_read(plan, "target_family", "source projection plan"), "source projection plan")
+                + ",",
+                "\t\tFieldRules: []generatedInboundProjectionField{",
+            )
+        )
+        for field in _sequence(_read(plan, "field_rules", "source projection plan"), "projection fields", maximum=64):
+            lines.append(
+                "\t\t\t{Target: "
+                + _go_string(_read(field, "target", "projection field"), "projection field")
+                + ", Disposition: "
+                + _go_string(_read(field, "disposition", "projection field"), "projection field")
+                + ", Requirement: "
+                + _go_string(_read(field, "requirement", "projection field"), "projection field")
+                + ", Normalization: "
+                + _go_string(_read(field, "normalization", "projection field"), "projection field")
+                + ", AllowedValues: "
+                + _inbound_string_slice(_read(field, "allowed_values", "projection field"), "projection field")
+                + ", SourceGroups: "
+                + _inbound_source_groups_literal(_read(field, "source_groups", "projection field"), "projection field")
+                + "},"
+            )
+        lines.append("\t\t},")
+        cumulative = _read(plan, "cumulative_series", "source projection plan")
+        if cumulative is None:
+            lines.append("\t\tCumulativeSeries: nil,")
+        else:
+            lines.extend(
+                (
+                    "\t\tCumulativeSeries: &generatedInboundCumulativeSeries{",
+                    "\t\t\tApplicability: "
+                    + _go_string(_read(cumulative, "applicability", "cumulative series"), "cumulative series")
+                    + ",",
+                    "\t\t\tFraming: "
+                    + _go_string(_read(cumulative, "framing", "cumulative series"), "cumulative series")
+                    + ",",
+                    "\t\t\tNormalizationStage: "
+                    + _go_string(
+                        _read(cumulative, "normalization_stage", "cumulative series"), "cumulative series"
+                    )
+                    + ",",
+                    "\t\t\tComponents: []generatedInboundSeriesComponent{",
+                )
+            )
+            for component in _sequence(
+                _read(cumulative, "components", "cumulative series"), "cumulative components", maximum=64
+            ):
+                lines.append(
+                    "\t\t\t\t{ID: "
+                    + _go_string(_read(component, "id", "series component"), "series component")
+                    + ", Requirement: "
+                    + _go_string(_read(component, "requirement", "series component"), "series component")
+                    + ", Normalization: "
+                    + _go_string(_read(component, "normalization", "series component"), "series component")
+                    + ", AllowedValues: "
+                    + _inbound_string_slice(
+                        _read(component, "allowed_values", "series component"), "series component"
+                    )
+                    + ", SourceGroups: "
+                    + _inbound_source_groups_literal(
+                        _read(component, "source_groups", "series component"), "series component"
+                    )
+                    + "},"
+                )
+            reset = _read(cumulative, "reset_epoch", "cumulative series")
+            lines.extend(
+                (
+                    "\t\t\t},",
+                    "\t\t\tResetEpoch: generatedInboundResetEpoch{Role: "
+                    + _go_string(_read(reset, "role", "reset epoch"), "reset epoch")
+                    + ", Identity: "
+                    + _bool(_read(reset, "identity", "reset epoch"), "reset epoch")
+                    + ", Placement: "
+                    + _go_string(_read(reset, "placement", "reset epoch"), "reset epoch")
+                    + ", Key: "
+                    + _go_string(_read(reset, "key", "reset epoch"), "reset epoch")
+                    + ", Normalization: "
+                    + _go_string(_read(reset, "normalization", "reset epoch"), "reset epoch")
+                    + "},",
+                    "\t\t},",
+                )
+            )
+        lines.append("\t},")
+    lines.extend(("}", ""))
+
     matches = _sequence(_read(inbound, "matches", "inbound"), "inbound matches", maximum=4096)
     lines.append("var generatedInboundMatches = []generatedInboundMatch{")
     for match in matches:
@@ -2085,6 +2306,11 @@ def _render_inbound_descriptors(lines: list[str], inbound: Any) -> None:
             )
         lines.append("\t\t},")
         lines.append(f"\t\tAliasIDs: {_inbound_string_slice(_read(match, 'alias_ids', 'match'), 'match aliases')},")
+        lines.append(
+            "\t\tSourceProjectionPlanID: "
+            + _go_string(_read(match, "source_projection_plan_id", "match"), "match source projection")
+            + ","
+        )
         target_override = _read(match, "target_override", "match")
         if target_override is None:
             lines.append("\t\tTargetOverride: nil,")
@@ -2141,6 +2367,11 @@ def _render_inbound_descriptors(lines: list[str], inbound: Any) -> None:
         lines.append(
             "\t\tSourceUnitRule: "
             + _inbound_unit_rule_literal(_read(target, "source_unit_rule", "target"), "target source-unit rule")
+            + ","
+        )
+        lines.append(
+            "\t\tSourceProjectionPlanID: "
+            + _go_string(_read(target, "source_projection_plan_id", "target"), "target source projection")
             + ","
         )
         descriptor_symbol = _identifier(_read(target, "descriptor_symbol", "target"), "target descriptor symbol")

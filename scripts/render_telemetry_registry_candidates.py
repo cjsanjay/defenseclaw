@@ -2873,6 +2873,8 @@ class CandidateInboundOTLP:
     resource_schema_url: str
     shape_policy: Mapping[str, FrozenJSON]
     alias_sets: tuple[Mapping[str, FrozenJSON], ...]
+    source_normalizers: tuple[Mapping[str, FrozenJSON], ...]
+    source_projection_plans: tuple[Mapping[str, FrozenJSON], ...]
     binding_classes: tuple[Mapping[str, FrozenJSON], ...]
     match_descriptors: tuple[Mapping[str, FrozenJSON], ...]
     target_descriptors: tuple[Mapping[str, FrozenJSON], ...]
@@ -5280,6 +5282,31 @@ _INBOUND_CLASS_IDS: Final = (
     "otlp.claudecode.token_usage.v1",
     "otlp.genai.duration.metric.v1",
 )
+_INBOUND_SOURCE_PROJECTION_PLAN_IDS: Final = (
+    "genai-token-metric-v1",
+    "genai-duration-metric-v1",
+)
+_INBOUND_SOURCE_NORMALIZER_IDS: Final = (
+    "bounded-label-v1",
+    "identifier-label-v1",
+    "genai-provider-label-v1",
+    "genai-model-label-v1",
+    "genai-operation-label-v1",
+    "token-type-label-v1",
+)
+_INBOUND_SOURCE_PLACEMENTS: Final = frozenset(
+    {"metric_point_attribute", "resource_attribute", "authenticated_source", "fixed", "instrument_name"}
+)
+_INBOUND_TOKEN_TYPES: Final = ["input", "output", "cacheRead", "cacheCreation"]
+_INBOUND_CUMULATIVE_COMPONENT_IDS: Final = [
+    "authenticated_source",
+    "resource_service_name",
+    "resource_service_instance_id",
+    "instrument_name",
+    "normalized_model",
+    "token_type",
+    "normalized_conversation",
+]
 _INBOUND_SOURCE_UNIT_TABLES: Final = {
     "duration-metric-v1": (
         ("", 1.0),
@@ -5313,6 +5340,8 @@ _INBOUND_IR_FIELDS: Final = frozenset(
         "resource_schema_url",
         "shape_policy",
         "alias_sets",
+        "source_normalizers",
+        "source_projection_plans",
         "binding_classes",
         "match_descriptors",
         "target_descriptors",
@@ -5376,6 +5405,146 @@ def _candidate_inbound_source_unit_rule(
     else:
         raise CandidateRenderError("materialized inbound source-unit rule kind is unknown")
     return _freeze(_plain(raw))
+
+
+def _candidate_inbound_source_normalizers(raw: Any) -> tuple[Mapping[str, FrozenJSON], ...]:
+    if not isinstance(raw, tuple):
+        raise CandidateRenderError("materialized inbound source normalizer inventory is invalid")
+    expected_keys = {
+        "id", "kind", "trim", "case", "max_utf8_bytes", "empty", "overflow", "unmatched", "pattern",
+        "values", "separators", "prefixes", "rules",
+    }
+    normalizers: list[Mapping[str, FrozenJSON]] = []
+    for item in raw:
+        plain = _plain(item)
+        if not isinstance(plain, dict) or set(plain) != expected_keys:
+            raise CandidateRenderError("materialized inbound source normalizer is invalid")
+        if plain["trim"] not in {"none", "unicode-space"} or plain["case"] not in {"preserve", "lowercase"}:
+            raise CandidateRenderError("materialized inbound source normalizer transform is invalid")
+        if (
+            plain["empty"] not in {"reject", "unknown"}
+            or plain["overflow"] not in {"", "reject", "other"}
+            or plain["unmatched"] not in {"", "reject", "other"}
+        ):
+            raise CandidateRenderError("materialized inbound source normalizer terminal policy is invalid")
+        normalizers.append(_freeze(plain))
+    if tuple(item["id"] for item in normalizers) != _INBOUND_SOURCE_NORMALIZER_IDS:
+        raise CandidateRenderError("materialized inbound source normalizer inventory/order drifted")
+    if normalizers[-1]["values"] != tuple(_INBOUND_TOKEN_TYPES):
+        raise CandidateRenderError("materialized inbound source token vocabulary drifted")
+    return tuple(normalizers)
+
+
+def _candidate_inbound_source_rule(rule: Mapping[str, Any], *, identity_key: str) -> str:
+    identity = _string(rule[identity_key], "inbound source rule identity")
+    if (
+        rule["requirement"] not in {"required", "optional"}
+        or rule["normalization"] not in _INBOUND_SOURCE_NORMALIZER_IDS
+    ):
+        raise CandidateRenderError("materialized inbound source rule policy is invalid")
+    allowed = rule["allowed_values"]
+    if rule["normalization"] == "token-type-label-v1":
+        if allowed != _INBOUND_TOKEN_TYPES:
+            raise CandidateRenderError("materialized inbound token vocabulary drifted")
+    elif allowed != []:
+        raise CandidateRenderError("materialized inbound non-enum rule acquired allowed values")
+    groups = rule["source_groups"]
+    if not isinstance(groups, list) or not groups:
+        raise CandidateRenderError("materialized inbound source groups are invalid")
+    seen: set[tuple[str, str]] = set()
+    for group in groups:
+        if not isinstance(group, dict) or set(group) != {"placement", "keys"}:
+            raise CandidateRenderError("materialized inbound source group shape is invalid")
+        placement = group["placement"]
+        keys = group["keys"]
+        if placement not in _INBOUND_SOURCE_PLACEMENTS or not isinstance(keys, list) or not keys:
+            raise CandidateRenderError("materialized inbound source group placement is invalid")
+        if len(keys) != len(set(keys)):
+            raise CandidateRenderError("materialized inbound source group repeats a key")
+        for key in keys:
+            source = (placement, _string(key, "inbound source key"))
+            if source in seen:
+                raise CandidateRenderError("materialized inbound source rule contains a collision")
+            seen.add(source)
+    return identity
+
+
+def _candidate_inbound_source_projection_plans(
+    raw: Any,
+    *,
+    families: Mapping[str, EnrichedFamilyDescriptor],
+    enriched_fields: Mapping[str, EnrichedFieldDescriptor],
+) -> tuple[Mapping[str, FrozenJSON], ...]:
+    if not isinstance(raw, tuple):
+        raise CandidateRenderError("materialized inbound source projection inventory is invalid")
+    plans: list[Mapping[str, FrozenJSON]] = []
+    for raw_plan in raw:
+        plan = _plain(raw_plan)
+        if not isinstance(plan, dict) or set(plan) != {"id", "target_family", "field_rules", "cumulative_series"}:
+            raise CandidateRenderError("materialized inbound source projection plan is invalid")
+        family_id = _string(plan["target_family"], "inbound source projection target family")
+        family = families.get(family_id)
+        if family is None or family.signal != "metrics":
+            raise CandidateRenderError("materialized inbound source projection target is not a metric family")
+        field_rules = plan["field_rules"]
+        if not isinstance(field_rules, list) or not field_rules:
+            raise CandidateRenderError("materialized inbound source projection fields are invalid")
+        targets: list[str] = []
+        for rule in field_rules:
+            if not isinstance(rule, dict):
+                raise CandidateRenderError("materialized inbound source projection field is invalid")
+            target = _string(rule.get("target"), "inbound source projection field target")
+            targets.append(target)
+            if rule.get("disposition") == "omit":
+                if set(rule) != {"target", "disposition"}:
+                    raise CandidateRenderError("materialized inbound omitted projection field is invalid")
+            elif set(rule) == {
+                "target", "disposition", "requirement", "normalization", "allowed_values", "source_groups"
+            } and rule["disposition"] == "project":
+                _candidate_inbound_source_rule(rule, identity_key="target")
+            else:
+                raise CandidateRenderError("materialized inbound projected field is invalid")
+        expected_targets = [enriched_fields[field_id].attribute_id for field_id in family.field_descriptor_ids]
+        if targets != expected_targets or len(targets) != len(set(targets)):
+            raise CandidateRenderError("materialized inbound projection does not exhaust its target family")
+        cumulative = plan["cumulative_series"]
+        if cumulative is not None:
+            if not isinstance(cumulative, dict) or set(cumulative) != {
+                "applicability", "framing", "normalization_stage", "components", "reset_epoch"
+            }:
+                raise CandidateRenderError("materialized inbound cumulative identity is invalid")
+            if (
+                cumulative["applicability"] != "monotonic-cumulative-sum"
+                or cumulative["framing"] != "length-prefixed-presence-v1"
+                or cumulative["normalization_stage"] != "before_framing"
+            ):
+                raise CandidateRenderError("materialized inbound cumulative identity policy drifted")
+            components = cumulative["components"]
+            if not isinstance(components, list):
+                raise CandidateRenderError("materialized inbound cumulative components are invalid")
+            component_ids: list[str] = []
+            for component in components:
+                if not isinstance(component, dict) or set(component) != {
+                    "id", "requirement", "normalization", "allowed_values", "source_groups"
+                }:
+                    raise CandidateRenderError("materialized inbound cumulative component is invalid")
+                component_ids.append(_candidate_inbound_source_rule(component, identity_key="id"))
+            if component_ids != _INBOUND_CUMULATIVE_COMPONENT_IDS:
+                raise CandidateRenderError("materialized inbound cumulative component order drifted")
+            if cumulative["reset_epoch"] != {
+                "role": "reset_only",
+                "identity": False,
+                "placement": "metric_point_start_time",
+                "key": "$start_time_unix_nano",
+                "normalization": "unsigned-epoch-nanos-v1",
+            }:
+                raise CandidateRenderError("materialized inbound start time escaped reset-only metadata")
+        plans.append(_freeze(plan))
+    if tuple(plan["id"] for plan in plans) != _INBOUND_SOURCE_PROJECTION_PLAN_IDS:
+        raise CandidateRenderError("materialized inbound source projection inventory/order drifted")
+    if plans[0]["cumulative_series"] is None or plans[1]["cumulative_series"] is not None:
+        raise CandidateRenderError("materialized inbound cumulative source projection coverage drifted")
+    return tuple(plans)
 
 
 def _candidate_inbound_otlp(
@@ -5445,6 +5614,14 @@ def _candidate_inbound_otlp(
         alias = dict(_plain(raw_alias))
         alias["target_field_contract"] = field_contract
         aliases.append(_freeze(alias))
+
+    source_normalizers = _candidate_inbound_source_normalizers(source["source_normalizers"])
+    source_projection_plans = _candidate_inbound_source_projection_plans(
+        source["source_projection_plans"],
+        families=families,
+        enriched_fields=enriched_fields,
+    )
+    source_projection_by_id = {item["id"]: item for item in source_projection_plans}
 
     raw_classes = source["binding_classes"]
     if not isinstance(raw_classes, tuple):
@@ -5523,6 +5700,7 @@ def _candidate_inbound_otlp(
             "outcome_rule",
             "import_context_id",
             "source_unit_rule",
+            "source_projection_plan",
         }:
             raise CandidateRenderError("materialized inbound target descriptor is invalid")
         target = dict(_plain(raw_target))
@@ -5577,6 +5755,7 @@ def _candidate_inbound_otlp(
         if not isinstance(mapping, Mapping) or set(mapping) != {
             "strategy",
             "alias_sets",
+            "source_projection_plan",
             "target_override",
             "source_unit_rule",
         }:
@@ -5591,6 +5770,21 @@ def _candidate_inbound_otlp(
         )
         if _plain(match_rule) != _plain(primary["source_unit_rule"]):
             raise CandidateRenderError("materialized inbound match/target source-unit rules disagree")
+        projection = mapping["source_projection_plan"]
+        target_projection = primary["source_projection_plan"]
+        if projection is None:
+            if target_projection is not None:
+                raise CandidateRenderError("materialized inbound match/target projection plans disagree")
+        else:
+            projection_id = _string(projection.get("id"), "inbound match projection plan ID")
+            expected_projection = source_projection_by_id.get(projection_id)
+            if (
+                expected_projection is None
+                or _plain(projection) != _plain(expected_projection)
+                or _plain(target_projection) != _plain(expected_projection)
+                or primary["family"] != expected_projection["target_family"]
+            ):
+                raise CandidateRenderError("materialized inbound match/target projection plans disagree")
 
     raw_markers = source["native_markers"]
     if not isinstance(raw_markers, tuple):
@@ -5660,6 +5854,8 @@ def _candidate_inbound_otlp(
         resource_schema_url="https://opentelemetry.io/schemas/1.42.0",
         shape_policy=_freeze(_plain(source["shape_policy"])),
         alias_sets=tuple(aliases),
+        source_normalizers=source_normalizers,
+        source_projection_plans=source_projection_plans,
         binding_classes=classes,
         match_descriptors=tuple(sorted(matches, key=lambda item: item["id"].encode("ascii"))),
         target_descriptors=tuple(sorted(targets, key=lambda item: item["id"].encode("ascii"))),
@@ -7978,6 +8174,8 @@ def _inbound_otlp_document(model: CandidateRenderIndex, marker: JSONObject) -> J
             "logical_binding_classes": len(inbound.binding_classes) + len(inbound.derivation_attachments),
             "match_descriptors": len(inbound.match_descriptors),
             "target_descriptors": len(inbound.target_descriptors),
+            "source_normalizers": len(inbound.source_normalizers),
+            "source_projection_plans": len(inbound.source_projection_plans),
             "native_markers": len(inbound.native_markers),
             "self_echo_recognizers": len(inbound.echo_recognizers),
             "import_contexts": len(inbound.import_contexts),
@@ -7988,6 +8186,8 @@ def _inbound_otlp_document(model: CandidateRenderIndex, marker: JSONObject) -> J
             "encodings": ["json", "protobuf"],
         },
         "alias_sets": [_plain(item) for item in inbound.alias_sets],
+        "source_normalizers": [_plain(item) for item in inbound.source_normalizers],
+        "source_projection_plans": [_plain(item) for item in inbound.source_projection_plans],
         "binding_classes": [_plain(item) for item in inbound.binding_classes],
         "derivation_attachments": [_plain(item) for item in inbound.derivation_attachments],
         "match_descriptors": [_plain(item) for item in inbound.match_descriptors],
@@ -8082,6 +8282,8 @@ def render_candidate_artifacts_from_index(model: CandidateRenderIndex) -> Mappin
         + len(model.inbound_otlp.derivation_attachments),
         "match_descriptors": len(model.inbound_otlp.match_descriptors),
         "target_descriptors": len(model.inbound_otlp.target_descriptors),
+        "source_normalizers": len(model.inbound_otlp.source_normalizers),
+        "source_projection_plans": len(model.inbound_otlp.source_projection_plans),
         "native_markers": len(model.inbound_otlp.native_markers),
         "self_echo_recognizers": len(model.inbound_otlp.echo_recognizers),
         "import_contexts": len(model.inbound_otlp.import_contexts),

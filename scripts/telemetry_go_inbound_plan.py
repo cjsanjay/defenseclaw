@@ -48,6 +48,82 @@ class GoInboundAliasIR:
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
+class GoInboundNormalizerRuleIR:
+    output: str
+    exact: tuple[str, ...]
+    contains: tuple[str, ...]
+    inputs: tuple[str, ...]
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class GoInboundSourceNormalizerIR:
+    id: str
+    kind: str
+    trim: str
+    case: str
+    max_utf8_bytes: int
+    empty: str
+    overflow: str
+    unmatched: str
+    pattern: str
+    values: tuple[str, ...]
+    separators: tuple[str, ...]
+    prefixes: tuple[str, ...]
+    rules: tuple[GoInboundNormalizerRuleIR, ...]
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class GoInboundSourceGroupIR:
+    placement: str
+    keys: tuple[str, ...]
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class GoInboundProjectionFieldIR:
+    target: str
+    disposition: str
+    requirement: str
+    normalization: str
+    allowed_values: tuple[str, ...]
+    source_groups: tuple[GoInboundSourceGroupIR, ...]
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class GoInboundSeriesComponentIR:
+    id: str
+    requirement: str
+    normalization: str
+    allowed_values: tuple[str, ...]
+    source_groups: tuple[GoInboundSourceGroupIR, ...]
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class GoInboundResetEpochIR:
+    role: str
+    identity: bool
+    placement: str
+    key: str
+    normalization: str
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class GoInboundCumulativeSeriesIR:
+    applicability: str
+    framing: str
+    normalization_stage: str
+    components: tuple[GoInboundSeriesComponentIR, ...]
+    reset_epoch: GoInboundResetEpochIR
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class GoInboundSourceProjectionPlanIR:
+    id: str
+    target_family: str
+    field_rules: tuple[GoInboundProjectionFieldIR, ...]
+    cumulative_series: GoInboundCumulativeSeriesIR | None
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
 class GoInboundTargetOverrideIR:
     source: str
     target: str
@@ -78,6 +154,7 @@ class GoInboundMatchIR:
     predicates: tuple[GoInboundPredicateIR, ...]
     mapping_strategy: str
     alias_ids: tuple[str, ...]
+    source_projection_plan_id: str
     target_override: GoInboundTargetOverrideIR | None
     source_unit_rule: GoInboundUnitRuleIR
     target_ids: tuple[str, ...]
@@ -110,6 +187,7 @@ class GoInboundTargetIR:
     outcome_rule_json: str
     import_context_id: str
     source_unit_rule: GoInboundUnitRuleIR
+    source_projection_plan_id: str
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -166,6 +244,8 @@ class GoInboundPlanIR:
     native_malformed_disposition: str
     native_malformed_external_fallback: str
     aliases: tuple[GoInboundAliasIR, ...]
+    source_normalizers: tuple[GoInboundSourceNormalizerIR, ...]
+    source_projection_plans: tuple[GoInboundSourceProjectionPlanIR, ...]
     matches: tuple[GoInboundMatchIR, ...]
     targets: tuple[GoInboundTargetIR, ...]
     native_markers: tuple[GoInboundNativeMarkerIR, ...]
@@ -237,6 +317,144 @@ def _unit_rule(value: Any, path: str) -> GoInboundUnitRuleIR:
     )
 
 
+def _source_groups(value: Any, path: str) -> tuple[GoInboundSourceGroupIR, ...]:
+    return tuple(
+        GoInboundSourceGroupIR(
+            _string(group["placement"], f"{path}.placement"),
+            tuple(_string(key, f"{path}.key") for key in _sequence(group["keys"], f"{path}.keys")),
+        )
+        for group in (_mapping(item, path) for item in _sequence(value, path))
+    )
+
+
+def _source_normalizers(inbound: Any) -> tuple[GoInboundSourceNormalizerIR, ...]:
+    result: list[GoInboundSourceNormalizerIR] = []
+    for position, raw in enumerate(
+        _sequence(_read(inbound, "source_normalizers", "inbound"), "inbound.source_normalizers")
+    ):
+        path = f"inbound.source_normalizers[{position}]"
+        item = _mapping(raw, path)
+        rules = tuple(
+            GoInboundNormalizerRuleIR(
+                _string(rule["output"], f"{path}.rule.output"),
+                tuple(_string(value, f"{path}.rule.exact") for value in _sequence(rule["exact"], f"{path}.rule.exact")),
+                tuple(
+                    _string(value, f"{path}.rule.contains")
+                    for value in _sequence(rule["contains"], f"{path}.rule.contains")
+                ),
+                tuple(
+                    _string(value, f"{path}.rule.inputs")
+                    for value in _sequence(rule["inputs"], f"{path}.rule.inputs")
+                ),
+            )
+            for rule in (_mapping(value, f"{path}.rule") for value in _sequence(item["rules"], f"{path}.rules"))
+        )
+        maximum = item["max_utf8_bytes"]
+        if type(maximum) is not int or maximum < 0:
+            raise GoInboundPlanError(f"{path}.max_utf8_bytes: invalid")
+        result.append(
+            GoInboundSourceNormalizerIR(
+                _string(item["id"], f"{path}.id"),
+                _string(item["kind"], f"{path}.kind"),
+                _string(item["trim"], f"{path}.trim"),
+                _string(item["case"], f"{path}.case"),
+                maximum,
+                _string(item["empty"], f"{path}.empty"),
+                _string(item["overflow"], f"{path}.overflow", empty=True),
+                _string(item["unmatched"], f"{path}.unmatched", empty=True),
+                _string(item["pattern"], f"{path}.pattern", empty=True),
+                tuple(_string(value, f"{path}.value") for value in _sequence(item["values"], f"{path}.values")),
+                tuple(
+                    _string(value, f"{path}.separator")
+                    for value in _sequence(item["separators"], f"{path}.separators")
+                ),
+                tuple(_string(value, f"{path}.prefix") for value in _sequence(item["prefixes"], f"{path}.prefixes")),
+                rules,
+            )
+        )
+    return tuple(result)
+
+
+def _source_projection_plans(inbound: Any) -> tuple[GoInboundSourceProjectionPlanIR, ...]:
+    result: list[GoInboundSourceProjectionPlanIR] = []
+    for position, raw in enumerate(
+        _sequence(_read(inbound, "source_projection_plans", "inbound"), "inbound.source_projection_plans")
+    ):
+        path = f"inbound.source_projection_plans[{position}]"
+        item = _mapping(raw, path)
+        fields: list[GoInboundProjectionFieldIR] = []
+        for field_position, raw_field in enumerate(_sequence(item["field_rules"], f"{path}.field_rules")):
+            field_path = f"{path}.field_rules[{field_position}]"
+            field = _mapping(raw_field, field_path)
+            disposition = _string(field["disposition"], f"{field_path}.disposition")
+            if disposition == "omit":
+                fields.append(
+                    GoInboundProjectionFieldIR(
+                        _string(field["target"], f"{field_path}.target"), disposition, "", "", (), (),
+                    )
+                )
+            else:
+                fields.append(
+                    GoInboundProjectionFieldIR(
+                        _string(field["target"], f"{field_path}.target"),
+                        disposition,
+                        _string(field["requirement"], f"{field_path}.requirement"),
+                        _string(field["normalization"], f"{field_path}.normalization"),
+                        tuple(
+                            _string(value, f"{field_path}.allowed_values")
+                            for value in _sequence(field["allowed_values"], f"{field_path}.allowed_values")
+                        ),
+                        _source_groups(field["source_groups"], f"{field_path}.source_groups"),
+                    )
+                )
+        cumulative = None
+        raw_cumulative = item["cumulative_series"]
+        if raw_cumulative is not None:
+            cumulative_item = _mapping(raw_cumulative, f"{path}.cumulative_series")
+            components = tuple(
+                GoInboundSeriesComponentIR(
+                    _string(component["id"], f"{path}.component.id"),
+                    _string(component["requirement"], f"{path}.component.requirement"),
+                    _string(component["normalization"], f"{path}.component.normalization"),
+                    tuple(
+                        _string(value, f"{path}.component.allowed_values")
+                        for value in _sequence(component["allowed_values"], f"{path}.component.allowed_values")
+                    ),
+                    _source_groups(component["source_groups"], f"{path}.component.source_groups"),
+                )
+                for component in (
+                    _mapping(value, f"{path}.component")
+                    for value in _sequence(cumulative_item["components"], f"{path}.components")
+                )
+            )
+            reset = _mapping(cumulative_item["reset_epoch"], f"{path}.reset_epoch")
+            identity = reset["identity"]
+            if type(identity) is not bool:
+                raise GoInboundPlanError(f"{path}.reset_epoch.identity: invalid")
+            cumulative = GoInboundCumulativeSeriesIR(
+                _string(cumulative_item["applicability"], f"{path}.applicability"),
+                _string(cumulative_item["framing"], f"{path}.framing"),
+                _string(cumulative_item["normalization_stage"], f"{path}.normalization_stage"),
+                components,
+                GoInboundResetEpochIR(
+                    _string(reset["role"], f"{path}.reset_epoch.role"),
+                    identity,
+                    _string(reset["placement"], f"{path}.reset_epoch.placement"),
+                    _string(reset["key"], f"{path}.reset_epoch.key"),
+                    _string(reset["normalization"], f"{path}.reset_epoch.normalization"),
+                ),
+            )
+        result.append(
+            GoInboundSourceProjectionPlanIR(
+                _string(item["id"], f"{path}.id"),
+                _string(item["target_family"], f"{path}.target_family"),
+                tuple(fields),
+                cumulative,
+            )
+        )
+    return tuple(result)
+
+
 def _digest_payload(value: Any) -> Any:
     if dataclasses.is_dataclass(value) and not isinstance(value, type):
         return {field.name: _digest_payload(getattr(value, field.name)) for field in dataclasses.fields(value)}
@@ -290,6 +508,9 @@ def compile_go_inbound_plan(index: Any) -> GoInboundPlanIR:
             )
         )
 
+    source_normalizers = _source_normalizers(inbound)
+    source_projection_plans = _source_projection_plans(inbound)
+
     matches: list[GoInboundMatchIR] = []
     for position, raw in enumerate(_sequence(_read(inbound, "match_descriptors", "inbound"), "inbound.matches")):
         item = _mapping(raw, f"inbound.matches[{position}]")
@@ -320,6 +541,10 @@ def compile_go_inbound_plan(index: Any) -> GoInboundPlanIR:
             _string(_mapping(alias, "match alias")["id"], "match alias id")
             for alias in _sequence(mapping["alias_sets"], "match aliases")
         )
+        raw_projection = mapping["source_projection_plan"]
+        projection_id = ""
+        if raw_projection is not None:
+            projection_id = _string(_mapping(raw_projection, "match source projection")["id"], "projection ID")
         matches.append(
             GoInboundMatchIR(
                 _string(item["id"], "match id"),
@@ -331,6 +556,7 @@ def compile_go_inbound_plan(index: Any) -> GoInboundPlanIR:
                 predicates,
                 _string(mapping["strategy"], "mapping strategy"),
                 aliases_for_match,
+                projection_id,
                 target_override,
                 _unit_rule(mapping["source_unit_rule"], "match source-unit rule"),
                 tuple(_string(value, "target id") for value in _sequence(item["target_ids"], "target ids")),
@@ -401,6 +627,14 @@ def compile_go_inbound_plan(index: Any) -> GoInboundPlanIR:
                 _json(item["outcome_rule"]),
                 _string(item["import_context_id"] or "", "import context id", empty=True),
                 _unit_rule(item["source_unit_rule"], "target source-unit rule"),
+                (
+                    ""
+                    if item["source_projection_plan"] is None
+                    else _string(
+                        _mapping(item["source_projection_plan"], "target source projection")["id"],
+                        "target source projection ID",
+                    )
+                ),
             )
         )
 
@@ -468,6 +702,8 @@ def compile_go_inbound_plan(index: Any) -> GoInboundPlanIR:
     contexts = tuple(context_rows)
     projection_ids = tuple(
         [f"inbound:alias:{item.id}" for item in aliases]
+        + [f"inbound:normalizer:{item.id}" for item in source_normalizers]
+        + [f"inbound:source-projection:{item.id}" for item in source_projection_plans]
         + [f"inbound:match:{item.id}" for item in matches]
         + [f"inbound:target:{item.id}" for item in targets]
         + [f"inbound:marker:{item.id}" for item in native_markers]
@@ -496,6 +732,8 @@ def compile_go_inbound_plan(index: Any) -> GoInboundPlanIR:
         _string(shape_policy["native_malformed_disposition"], "native malformed disposition"),
         _string(shape_policy["native_malformed_external_fallback"], "native fallback policy"),
         tuple(aliases),
+        source_normalizers,
+        source_projection_plans,
         tuple(matches),
         tuple(targets),
         native_markers,

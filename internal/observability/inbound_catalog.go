@@ -12,6 +12,9 @@ package observability
 
 import (
 	"errors"
+	"regexp"
+	"strconv"
+	"strings"
 	"sync"
 )
 
@@ -260,14 +263,320 @@ func (rule InboundSourceUnitRule) ScaleFor(sourceUnit string) (float64, bool) {
 	return 0, false
 }
 
+type InboundSourcePlacement string
+
+const (
+	InboundSourceMetricPointAttribute InboundSourcePlacement = "metric_point_attribute"
+	InboundSourceResourceAttribute    InboundSourcePlacement = "resource_attribute"
+	InboundSourceAuthenticated        InboundSourcePlacement = "authenticated_source"
+	InboundSourceFixed                InboundSourcePlacement = "fixed"
+	InboundSourceInstrumentName       InboundSourcePlacement = "instrument_name"
+)
+
+type InboundProjectionDisposition string
+
+const (
+	InboundProjectionProject InboundProjectionDisposition = "project"
+	InboundProjectionOmit    InboundProjectionDisposition = "omit"
+)
+
+type InboundSourceRequirement string
+
+const (
+	InboundSourceRequired InboundSourceRequirement = "required"
+	InboundSourceOptional InboundSourceRequirement = "optional"
+)
+
+type inboundSourceNormalizerRuleEntry struct {
+	output   string
+	exact    []string
+	contains []string
+	inputs   []string
+}
+
+type inboundSourceNormalizerEntry struct {
+	id           string
+	kind         string
+	trim         string
+	casePolicy   string
+	maxUTF8Bytes int
+	empty        string
+	overflow     string
+	unmatched    string
+	pattern      string
+	compiled     *regexp.Regexp
+	values       []string
+	separators   []string
+	prefixes     []string
+	rules        []inboundSourceNormalizerRuleEntry
+}
+
+// InboundSourceNormalizer is an immutable compiler-generated label normalizer.
+// Normalize returns false only for a value the closed contract rejects.
+type InboundSourceNormalizer struct{ entry inboundSourceNormalizerEntry }
+
+func (normalizer InboundSourceNormalizer) ID() string { return normalizer.entry.id }
+
+func (normalizer InboundSourceNormalizer) Normalize(raw string) (string, bool) {
+	entry := normalizer.entry
+	value := raw
+	if entry.trim == "unicode-space" {
+		value = strings.TrimSpace(value)
+	}
+	if entry.casePolicy == "lowercase" {
+		value = strings.ToLower(value)
+	}
+	terminal := func(policy string) (string, bool) {
+		switch policy {
+		case "unknown", "other":
+			return policy, true
+		default:
+			return "", false
+		}
+	}
+	if value == "" {
+		return terminal(entry.empty)
+	}
+	if entry.maxUTF8Bytes > 0 && len(value) > entry.maxUTF8Bytes {
+		return terminal(entry.overflow)
+	}
+	switch entry.kind {
+	case "bounded":
+		return value, true
+	case "identifier":
+		if entry.compiled == nil || !entry.compiled.MatchString(value) {
+			return "", false
+		}
+		return value, true
+	case "ordered-exact-contains":
+		for _, rule := range entry.rules {
+			if containsInboundString(rule.exact, value) {
+				return rule.output, true
+			}
+			for _, token := range rule.contains {
+				if strings.Contains(value, token) {
+					return rule.output, true
+				}
+			}
+		}
+		return terminal(entry.unmatched)
+	case "ordered-prefix-family":
+		for _, prefix := range entry.prefixes {
+			if value == prefix {
+				return prefix, true
+			}
+			for _, separator := range entry.separators {
+				if strings.HasPrefix(value, prefix+separator) {
+					return prefix, true
+				}
+			}
+		}
+		return terminal(entry.unmatched)
+	case "exact-map":
+		for _, rule := range entry.rules {
+			if containsInboundString(rule.inputs, value) {
+				return rule.output, true
+			}
+		}
+		return terminal(entry.unmatched)
+	case "enum":
+		if containsInboundString(entry.values, value) {
+			return value, true
+		}
+		return terminal(entry.unmatched)
+	default:
+		return "", false
+	}
+}
+
+type InboundSourceGroup struct {
+	placement InboundSourcePlacement
+	keys      []string
+}
+
+func (group InboundSourceGroup) Placement() InboundSourcePlacement { return group.placement }
+func (group InboundSourceGroup) Keys() []string                    { return append([]string(nil), group.keys...) }
+
+type inboundProjectionFieldEntry struct {
+	target        string
+	disposition   InboundProjectionDisposition
+	requirement   InboundSourceRequirement
+	normalizer    inboundSourceNormalizerEntry
+	allowedValues []string
+	sourceGroups  []InboundSourceGroup
+}
+
+type InboundProjectionField struct{ entry inboundProjectionFieldEntry }
+
+func (field InboundProjectionField) Target() string { return field.entry.target }
+func (field InboundProjectionField) Disposition() InboundProjectionDisposition {
+	return field.entry.disposition
+}
+func (field InboundProjectionField) Requirement() InboundSourceRequirement {
+	return field.entry.requirement
+}
+func (field InboundProjectionField) Normalizer() InboundSourceNormalizer {
+	return InboundSourceNormalizer{entry: cloneInboundSourceNormalizer(field.entry.normalizer)}
+}
+func (field InboundProjectionField) AllowedValues() []string {
+	return append([]string(nil), field.entry.allowedValues...)
+}
+func (field InboundProjectionField) SourceGroups() []InboundSourceGroup {
+	return cloneInboundSourceGroups(field.entry.sourceGroups)
+}
+
+type inboundSeriesComponentEntry struct {
+	id            string
+	requirement   InboundSourceRequirement
+	normalizer    inboundSourceNormalizerEntry
+	allowedValues []string
+	sourceGroups  []InboundSourceGroup
+}
+
+type InboundSeriesComponent struct{ entry inboundSeriesComponentEntry }
+
+func (component InboundSeriesComponent) ID() string { return component.entry.id }
+func (component InboundSeriesComponent) Requirement() InboundSourceRequirement {
+	return component.entry.requirement
+}
+func (component InboundSeriesComponent) Normalizer() InboundSourceNormalizer {
+	return InboundSourceNormalizer{entry: cloneInboundSourceNormalizer(component.entry.normalizer)}
+}
+func (component InboundSeriesComponent) AllowedValues() []string {
+	return append([]string(nil), component.entry.allowedValues...)
+}
+func (component InboundSeriesComponent) SourceGroups() []InboundSourceGroup {
+	return cloneInboundSourceGroups(component.entry.sourceGroups)
+}
+
+type InboundResetEpoch struct {
+	role          string
+	identity      bool
+	placement     string
+	key           string
+	normalization string
+}
+
+func (epoch InboundResetEpoch) Role() string          { return epoch.role }
+func (epoch InboundResetEpoch) IsIdentity() bool      { return epoch.identity }
+func (epoch InboundResetEpoch) Placement() string     { return epoch.placement }
+func (epoch InboundResetEpoch) Key() string           { return epoch.key }
+func (epoch InboundResetEpoch) Normalization() string { return epoch.normalization }
+
+type inboundCumulativeSeriesEntry struct {
+	applicability      string
+	framing            string
+	normalizationStage string
+	components         []inboundSeriesComponentEntry
+	resetEpoch         InboundResetEpoch
+}
+
+type InboundCumulativeSeries struct{ entry inboundCumulativeSeriesEntry }
+
+func (series InboundCumulativeSeries) Applicability() string { return series.entry.applicability }
+func (series InboundCumulativeSeries) Framing() string       { return series.entry.framing }
+func (series InboundCumulativeSeries) NormalizationStage() string {
+	return series.entry.normalizationStage
+}
+func (series InboundCumulativeSeries) Components() []InboundSeriesComponent {
+	result := make([]InboundSeriesComponent, len(series.entry.components))
+	for index, component := range series.entry.components {
+		result[index] = InboundSeriesComponent{entry: cloneInboundSeriesComponent(component)}
+	}
+	return result
+}
+func (series InboundCumulativeSeries) ResetEpoch() InboundResetEpoch { return series.entry.resetEpoch }
+
+// FrameNormalized encodes one value per generated component with explicit
+// presence and byte-length framing. Present values must already equal their
+// generated normal form, so normalization necessarily precedes identity.
+func (series InboundCumulativeSeries) FrameNormalized(values []Optional[string]) (string, error) {
+	if series.entry.framing != "length-prefixed-presence-v1" ||
+		series.entry.normalizationStage != "before_framing" || len(values) != len(series.entry.components) {
+		return "", ErrInboundCatalogInvalid
+	}
+	var framed strings.Builder
+	for index, component := range series.entry.components {
+		identifier := component.id
+		framed.WriteString(strconv.Itoa(len(identifier)))
+		framed.WriteByte(':')
+		framed.WriteString(identifier)
+		value, present := values[index].Get()
+		if !present {
+			if component.requirement == InboundSourceRequired {
+				return "", ErrInboundCatalogInvalid
+			}
+			framed.WriteString(";0;")
+			continue
+		}
+		normalized, ok := (InboundSourceNormalizer{entry: component.normalizer}).Normalize(value)
+		if !ok || normalized != value {
+			return "", ErrInboundCatalogInvalid
+		}
+		framed.WriteString(";1:")
+		framed.WriteString(strconv.Itoa(len(value)))
+		framed.WriteByte(':')
+		framed.WriteString(value)
+		framed.WriteByte(';')
+	}
+	return framed.String(), nil
+}
+
+type inboundSourceProjectionPlanEntry struct {
+	id               string
+	targetFamily     string
+	fieldRules       []inboundProjectionFieldEntry
+	cumulativeSeries Optional[inboundCumulativeSeriesEntry]
+}
+
+type InboundSourceProjectionPlan struct {
+	snapshot *inboundCatalogSnapshot
+	index    int
+}
+
+func (plan InboundSourceProjectionPlan) entry() (inboundSourceProjectionPlanEntry, bool) {
+	if plan.snapshot == nil || plan.index < 0 || plan.index >= len(plan.snapshot.projections) {
+		return inboundSourceProjectionPlanEntry{}, false
+	}
+	return plan.snapshot.projections[plan.index], true
+}
+func (plan InboundSourceProjectionPlan) ID() string { entry, _ := plan.entry(); return entry.id }
+func (plan InboundSourceProjectionPlan) TargetFamily() string {
+	entry, _ := plan.entry()
+	return entry.targetFamily
+}
+func (plan InboundSourceProjectionPlan) FieldRules() []InboundProjectionField {
+	entry, ok := plan.entry()
+	if !ok {
+		return nil
+	}
+	result := make([]InboundProjectionField, len(entry.fieldRules))
+	for index, field := range entry.fieldRules {
+		result[index] = InboundProjectionField{entry: cloneInboundProjectionField(field)}
+	}
+	return result
+}
+func (plan InboundSourceProjectionPlan) CumulativeSeries() (InboundCumulativeSeries, bool) {
+	entry, ok := plan.entry()
+	if !ok {
+		return InboundCumulativeSeries{}, false
+	}
+	series, present := entry.cumulativeSeries.Get()
+	return InboundCumulativeSeries{entry: cloneInboundCumulativeSeries(series)}, present
+}
+
 type inboundCatalogSnapshot struct {
 	aliases         []inboundAliasEntry
+	normalizers     []inboundSourceNormalizerEntry
+	projections     []inboundSourceProjectionPlanEntry
 	matches         []inboundMatchEntry
 	targets         []inboundTargetEntry
 	markers         []inboundMarkerEntry
 	echoes          []inboundEchoEntry
 	contexts        []inboundImportContextEntry
 	aliasByID       map[string]int
+	normalizerByID  map[string]int
+	projectionByID  map[string]int
 	matchByID       map[string]int
 	targetByID      map[string]int
 	markerByKey     map[inboundMarkerLookupKey]int
@@ -307,6 +616,7 @@ type inboundMatchEntry struct {
 	timeRule          InboundTimeRule
 	outcomeRule       InboundOutcomeRule
 	nativeRoundTrip   bool
+	projectionIndex   int
 }
 
 type inboundTargetEntry struct {
@@ -332,6 +642,8 @@ type inboundTargetEntry struct {
 	timeRule            InboundTimeRule
 	outcomeRule         InboundOutcomeRule
 	importContextIndex  int
+	projectionID        string
+	projectionIndex     int
 }
 
 type inboundMarkerEntry struct {
@@ -419,6 +731,28 @@ func (catalog InboundCatalog) Alias(id string) (InboundAlias, bool) {
 		return InboundAlias{}, false
 	}
 	return InboundAlias{snapshot: catalog.snapshot, index: index}, ok
+}
+
+func (catalog InboundCatalog) SourceNormalizer(id string) (InboundSourceNormalizer, bool) {
+	if catalog.snapshot == nil {
+		return InboundSourceNormalizer{}, false
+	}
+	index, ok := catalog.snapshot.normalizerByID[id]
+	if !ok {
+		return InboundSourceNormalizer{}, false
+	}
+	return InboundSourceNormalizer{entry: cloneInboundSourceNormalizer(catalog.snapshot.normalizers[index])}, true
+}
+
+func (catalog InboundCatalog) SourceProjectionPlan(id string) (InboundSourceProjectionPlan, bool) {
+	if catalog.snapshot == nil {
+		return InboundSourceProjectionPlan{}, false
+	}
+	index, ok := catalog.snapshot.projectionByID[id]
+	if !ok {
+		return InboundSourceProjectionPlan{}, false
+	}
+	return InboundSourceProjectionPlan{snapshot: catalog.snapshot, index: index}, true
 }
 
 // Matches returns exact candidates for the signal and authenticated receiver
@@ -652,6 +986,13 @@ func (match InboundMatch) SourceUnitRule() InboundSourceUnitRule {
 	entry, _ := match.entry()
 	return InboundSourceUnitRule{entry: cloneInboundSourceUnitRule(entry.sourceUnitRule)}
 }
+func (match InboundMatch) SourceProjectionPlan() (InboundSourceProjectionPlan, bool) {
+	entry, ok := match.entry()
+	if !ok || entry.projectionIndex < 0 {
+		return InboundSourceProjectionPlan{}, false
+	}
+	return InboundSourceProjectionPlan{snapshot: match.snapshot, index: entry.projectionIndex}, true
+}
 func (match InboundMatch) Targets() []InboundTarget {
 	entry, ok := match.entry()
 	if !ok {
@@ -747,9 +1088,43 @@ func (target InboundTarget) SourceUnitRule() InboundSourceUnitRule {
 	entry, _ := target.entry()
 	return InboundSourceUnitRule{entry: cloneInboundSourceUnitRule(entry.sourceUnitRule)}
 }
+func (target InboundTarget) SourceProjectionPlan() (InboundSourceProjectionPlan, bool) {
+	entry, ok := target.entry()
+	if !ok || entry.projectionIndex < 0 {
+		return InboundSourceProjectionPlan{}, false
+	}
+	return InboundSourceProjectionPlan{snapshot: target.snapshot, index: entry.projectionIndex}, true
+}
 func (target InboundTarget) Fields() []InboundTargetField {
 	entry, _ := target.entry()
 	return append([]InboundTargetField(nil), entry.fields...)
+}
+
+// RequiredBooleanInputFields returns required generated boolean inputs for the
+// sealed target. External normalizers use this to represent honest absence as
+// false without carrying a handwritten family-field list. Native exact input
+// remains responsible for supplying its original registered values.
+func (target InboundTarget) RequiredBooleanInputFields() []InboundTargetField {
+	entry, ok := target.entry()
+	if !ok || entry.descriptor == nil {
+		return nil
+	}
+	contract := entry.descriptor.familyDescriptorContract()
+	capabilities := make(map[string]InboundTargetField, len(entry.fields))
+	for _, field := range entry.fields {
+		capabilities[field.fieldRef] = field
+	}
+	result := make([]InboundTargetField, 0)
+	for _, descriptor := range contract.fields {
+		if descriptor.source != familyValueInput || descriptor.typeOf != familyFieldBoolean ||
+			descriptor.requirement != familyRequirementRequired {
+			continue
+		}
+		if field, present := capabilities[descriptor.key]; present {
+			result = append(result, field)
+		}
+	}
+	return result
 }
 func (target InboundTarget) DescriptorID() string { entry, _ := target.entry(); return entry.family }
 func (target InboundTarget) MappingStrategy() InboundMappingStrategy {
@@ -935,5 +1310,48 @@ func cloneInboundPredicates(input []InboundPredicate) []InboundPredicate {
 
 func cloneInboundSourceUnitRule(input inboundSourceUnitRuleEntry) inboundSourceUnitRuleEntry {
 	input.accepted = append([]InboundSourceUnitScale(nil), input.accepted...)
+	return input
+}
+
+func cloneInboundSourceNormalizer(input inboundSourceNormalizerEntry) inboundSourceNormalizerEntry {
+	input.values = append([]string(nil), input.values...)
+	input.separators = append([]string(nil), input.separators...)
+	input.prefixes = append([]string(nil), input.prefixes...)
+	input.rules = append([]inboundSourceNormalizerRuleEntry(nil), input.rules...)
+	for index := range input.rules {
+		input.rules[index].exact = append([]string(nil), input.rules[index].exact...)
+		input.rules[index].contains = append([]string(nil), input.rules[index].contains...)
+		input.rules[index].inputs = append([]string(nil), input.rules[index].inputs...)
+	}
+	return input
+}
+
+func cloneInboundSourceGroups(input []InboundSourceGroup) []InboundSourceGroup {
+	output := append([]InboundSourceGroup(nil), input...)
+	for index := range output {
+		output[index].keys = append([]string(nil), input[index].keys...)
+	}
+	return output
+}
+
+func cloneInboundProjectionField(input inboundProjectionFieldEntry) inboundProjectionFieldEntry {
+	input.normalizer = cloneInboundSourceNormalizer(input.normalizer)
+	input.allowedValues = append([]string(nil), input.allowedValues...)
+	input.sourceGroups = cloneInboundSourceGroups(input.sourceGroups)
+	return input
+}
+
+func cloneInboundSeriesComponent(input inboundSeriesComponentEntry) inboundSeriesComponentEntry {
+	input.normalizer = cloneInboundSourceNormalizer(input.normalizer)
+	input.allowedValues = append([]string(nil), input.allowedValues...)
+	input.sourceGroups = cloneInboundSourceGroups(input.sourceGroups)
+	return input
+}
+
+func cloneInboundCumulativeSeries(input inboundCumulativeSeriesEntry) inboundCumulativeSeriesEntry {
+	input.components = append([]inboundSeriesComponentEntry(nil), input.components...)
+	for index := range input.components {
+		input.components[index] = cloneInboundSeriesComponent(input.components[index])
+	}
 	return input
 }

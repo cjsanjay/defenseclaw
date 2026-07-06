@@ -4033,6 +4033,8 @@ def compile_go_api_plan(index: Any) -> GoAPIPlanIR:
     if inbound is not None:
         projection_rows = (
             ("alias", getattr(inbound, "alias_sets", ())),
+            ("normalizer", getattr(inbound, "source_normalizers", ())),
+            ("source-projection", getattr(inbound, "source_projection_plans", ())),
             ("match", getattr(inbound, "match_descriptors", ())),
             ("target", getattr(inbound, "target_descriptors", ())),
             ("marker", getattr(inbound, "native_markers", ())),

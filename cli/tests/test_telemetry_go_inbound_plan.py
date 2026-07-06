@@ -50,12 +50,14 @@ def test_go_inbound_plan_is_digest_bound_complete_and_private(candidate: Any) ->
     assert compiled.materialized_view_sha256 == candidate.materialized_view_sha256
     assert compiled.candidate_render_index_sha256 == candidate.candidate_render_index_sha256
     assert len(compiled.aliases) == 9
+    assert len(compiled.source_normalizers) == 6
+    assert len(compiled.source_projection_plans) == 2
     assert len(compiled.matches) == 237
     assert len(compiled.targets) == 245
     assert len(compiled.native_markers) == 24
     assert len(compiled.echo_recognizers) == 249
     assert len(compiled.import_contexts) == 93
-    assert len(compiled.projection_ids) == 857
+    assert len(compiled.projection_ids) == 865
     assert len(set(compiled.projection_ids)) == len(compiled.projection_ids)
     assert compiled.native_malformed_external_fallback == "forbidden"
     assert compiled.unknown_fields == "drop_and_count"
@@ -106,6 +108,9 @@ def test_go_inbound_plan_preserves_match_target_separation(candidate: Any) -> No
         source = candidate_matches[match.id]
         assert match.mapping_strategy == source["mapping"]["strategy"]
         assert match.alias_ids == tuple(item["id"] for item in source["mapping"]["alias_sets"])
+        assert match.source_projection_plan_id == (
+            "" if source["mapping"]["source_projection_plan"] is None else source["mapping"]["source_projection_plan"]["id"]
+        )
         assert match.target_ids == tuple(source["target_ids"])
         assert [
             (item.location, item.key, item.operator, json.loads(item.values_json), item.value_type)
@@ -161,6 +166,13 @@ def test_go_inbound_plan_preserves_match_target_separation(candidate: Any) -> No
     assert token_match.source_unit_rule == token_rule
     assert targets[token_match.target_ids[0]].instrument_unit == "{token}"
     assert targets[token_match.target_ids[0]].source_unit_rule == token_rule
+    assert token_match.source_projection_plan_id == "genai-token-metric-v1"
+    assert targets[token_match.target_ids[0]].source_projection_plan_id == "genai-token-metric-v1"
+    assert all(match.source_projection_plan_id == "genai-duration-metric-v1" for match in duration_matches)
+    assert all(
+        targets[match.target_ids[0]].source_projection_plan_id == "genai-duration-metric-v1"
+        for match in duration_matches
+    )
 
     for native in (match for match in compiled.matches if match.class_id == "otlp.native.metric.v8"):
         target = targets[native.target_ids[0]]
@@ -171,6 +183,55 @@ def test_go_inbound_plan_preserves_match_target_separation(candidate: Any) -> No
         )
         assert native.source_unit_rule == equality_rule
         assert target.source_unit_rule == equality_rule
+
+
+def test_go_inbound_plan_preserves_generated_pr412_projection_and_series_contract(candidate: Any) -> None:
+    compiled = plan.compile_go_inbound_plan(candidate)
+    normalizers = {item.id: item for item in compiled.source_normalizers}
+    projections = {item.id: item for item in compiled.source_projection_plans}
+
+    assert tuple(normalizers) == (
+        "bounded-label-v1",
+        "identifier-label-v1",
+        "genai-provider-label-v1",
+        "genai-model-label-v1",
+        "genai-operation-label-v1",
+        "token-type-label-v1",
+    )
+    assert normalizers["genai-model-label-v1"].prefixes == (
+        "gpt-5", "gpt-4o", "gpt-4", "gpt-3.5", "o1", "o3", "claude-3.5", "claude-3-7",
+        "claude-3", "claude-4", "claude-opus", "claude-sonnet", "claude-haiku", "gemini-1.5",
+        "gemini-2", "gemini", "llama-3", "llama-4", "mistral", "deepseek", "qwen", "grok",
+        "command-r", "phi-3", "phi-4",
+    )
+    token = projections["genai-token-metric-v1"]
+    assert tuple(field.target for field in token.field_rules) == (
+        "gen_ai.agent.id", "gen_ai.agent.name", "gen_ai.conversation.id", "gen_ai.operation.name",
+        "gen_ai.provider.name", "gen_ai.request.model", "gen_ai.token.type",
+    )
+    assert token.field_rules[0].disposition == "omit"
+    assert tuple(group.placement for group in token.field_rules[4].source_groups) == (
+        "metric_point_attribute", "authenticated_source", "resource_attribute",
+    )
+    assert token.field_rules[5].requirement == "required"
+    assert token.field_rules[5].source_groups[-1].keys == ("unknown",)
+    series = token.cumulative_series
+    assert series is not None
+    assert series.framing == "length-prefixed-presence-v1"
+    assert series.normalization_stage == "before_framing"
+    assert tuple(component.id for component in series.components) == (
+        "authenticated_source", "resource_service_name", "resource_service_instance_id", "instrument_name",
+        "normalized_model", "token_type", "normalized_conversation",
+    )
+    assert series.reset_epoch.identity is False
+    assert series.reset_epoch.role == "reset_only"
+    assert series.reset_epoch.key == "$start_time_unix_nano"
+
+    duration = projections["genai-duration-metric-v1"]
+    assert duration.cumulative_series is None
+    operation = next(field for field in duration.field_rules if field.target == "gen_ai.operation.name")
+    assert tuple(group.placement for group in operation.source_groups) == ("metric_point_attribute", "fixed")
+    assert operation.source_groups[-1].keys == ("chat",)
 
 
 def test_go_inbound_plan_rejects_untyped_or_mutable_input(candidate: Any) -> None:

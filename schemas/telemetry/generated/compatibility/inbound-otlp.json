@@ -3,7 +3,7 @@
     "artifact": "compatibility/inbound-otlp.json",
     "authority": "candidate-not-public-authority",
     "generator": "defenseclaw-telemetry-candidate-renderer-v1",
-    "materialized_view_sha256": "31071ab791d29577646cbafa728c7fb69ffcbd2ea181e8f3dc7891ae3356c7f4",
+    "materialized_view_sha256": "91345ae4991155ba8bebaf2d21bb96b1a6e61b5659c677829a0aa5d8b0b46566",
     "registry_version": 1
   },
   "alias_sets": [
@@ -275,6 +275,7 @@
       "id": "otlp.native.log.v8",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "strategy": "native-projected-log-v1",
         "unit_rule": null
       },
@@ -363,6 +364,7 @@
       "id": "otlp.native.span.v8",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "strategy": "generated-reverse-span-v1",
         "unit_rule": null
       },
@@ -450,6 +452,7 @@
       "id": "otlp.native.metric.v8",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "strategy": "generated-reverse-metric-v1",
         "unit_rule": {
           "accepted": [],
@@ -547,6 +550,7 @@
           "provider-v1",
           "request-model-v1"
         ],
+        "source_projection_plan": null,
         "strategy": "standard-genai-span-v1",
         "unit_rule": null
       },
@@ -594,6 +598,7 @@
           "request-model-v1",
           "input-content-v1"
         ],
+        "source_projection_plan": null,
         "strategy": "connector-model-log-v1",
         "unit_rule": null
       },
@@ -643,6 +648,7 @@
           "request-model-v1",
           "input-content-v1"
         ],
+        "source_projection_plan": null,
         "strategy": "connector-model-log-v1",
         "unit_rule": null
       },
@@ -713,6 +719,7 @@
           "output-tokens-v1",
           "log-duration-seconds-v1"
         ],
+        "source_projection_plan": null,
         "strategy": "connector-model-log-v1",
         "unit_rule": null
       },
@@ -777,11 +784,8 @@
       },
       "id": "otlp.claudecode.token_usage.v1",
       "mapping": {
-        "alias_sets": [
-          "conversation-id-v1",
-          "provider-v1",
-          "request-model-v1"
-        ],
+        "alias_sets": [],
+        "source_projection_plan": "genai-token-metric-v1",
         "strategy": "claude-token-usage-v1",
         "unit_rule": {
           "accepted": [
@@ -872,11 +876,8 @@
       },
       "id": "otlp.genai.duration.metric.v1",
       "mapping": {
-        "alias_sets": [
-          "conversation-id-v1",
-          "provider-v1",
-          "request-model-v1"
-        ],
+        "alias_sets": [],
+        "source_projection_plan": "genai-duration-metric-v1",
         "strategy": "duration-metric-v1",
         "unit_rule": {
           "accepted": [
@@ -947,7 +948,7 @@
     }
   ],
   "bucket_catalog_version": 1,
-  "candidate_render_index_sha256": "f423494abc9b4b0467fa8a51e378962597c3c8d4814e3cafdc391dac26fdf03e",
+  "candidate_render_index_sha256": "0e715921388286b32a90397c853c91311a594c6329dafd3651bfb924bf47e694",
   "contract": {
     "forward_destination_key": "defenseclaw.telemetry.forward.destination",
     "forward_hop_count_key": "defenseclaw.telemetry.forward.hop_count",
@@ -21831,47 +21832,287 @@
       },
       "id": "otlp.claudecode.token_usage.v1.metric.gen_ai.client.token.usage",
       "mapping": {
-        "alias_sets": [
-          {
-            "absence_policy": "omit",
-            "conflict_policy": "reject",
-            "id": "conversation-id-v1",
-            "normalization": "identifier-v1",
-            "sources": [
-              "gen_ai.conversation.id",
-              "conversation.id",
-              "session.id",
-              "session_id"
+        "alias_sets": [],
+        "source_projection_plan": {
+          "cumulative_series": {
+            "applicability": "monotonic-cumulative-sum",
+            "components": [
+              {
+                "allowed_values": [],
+                "id": "authenticated_source",
+                "normalization": "bounded-label-v1",
+                "requirement": "required",
+                "source_groups": [
+                  {
+                    "keys": [
+                      "$authenticated_source"
+                    ],
+                    "placement": "authenticated_source"
+                  }
+                ]
+              },
+              {
+                "allowed_values": [],
+                "id": "resource_service_name",
+                "normalization": "bounded-label-v1",
+                "requirement": "optional",
+                "source_groups": [
+                  {
+                    "keys": [
+                      "service.name"
+                    ],
+                    "placement": "resource_attribute"
+                  }
+                ]
+              },
+              {
+                "allowed_values": [],
+                "id": "resource_service_instance_id",
+                "normalization": "identifier-label-v1",
+                "requirement": "optional",
+                "source_groups": [
+                  {
+                    "keys": [
+                      "service.instance.id"
+                    ],
+                    "placement": "resource_attribute"
+                  }
+                ]
+              },
+              {
+                "allowed_values": [],
+                "id": "instrument_name",
+                "normalization": "identifier-label-v1",
+                "requirement": "required",
+                "source_groups": [
+                  {
+                    "keys": [
+                      "$instrument_name"
+                    ],
+                    "placement": "instrument_name"
+                  }
+                ]
+              },
+              {
+                "allowed_values": [],
+                "id": "normalized_model",
+                "normalization": "genai-model-label-v1",
+                "requirement": "required",
+                "source_groups": [
+                  {
+                    "keys": [
+                      "gen_ai.request.model",
+                      "gen_ai.response.model",
+                      "model"
+                    ],
+                    "placement": "metric_point_attribute"
+                  },
+                  {
+                    "keys": [
+                      "unknown"
+                    ],
+                    "placement": "fixed"
+                  }
+                ]
+              },
+              {
+                "allowed_values": [
+                  "input",
+                  "output",
+                  "cacheRead",
+                  "cacheCreation"
+                ],
+                "id": "token_type",
+                "normalization": "token-type-label-v1",
+                "requirement": "required",
+                "source_groups": [
+                  {
+                    "keys": [
+                      "type"
+                    ],
+                    "placement": "metric_point_attribute"
+                  }
+                ]
+              },
+              {
+                "allowed_values": [],
+                "id": "normalized_conversation",
+                "normalization": "identifier-label-v1",
+                "requirement": "optional",
+                "source_groups": [
+                  {
+                    "keys": [
+                      "gen_ai.conversation.id",
+                      "conversation.id",
+                      "session.id",
+                      "session_id"
+                    ],
+                    "placement": "metric_point_attribute"
+                  },
+                  {
+                    "keys": [
+                      "gen_ai.conversation.id",
+                      "conversation.id",
+                      "session.id",
+                      "session_id"
+                    ],
+                    "placement": "resource_attribute"
+                  }
+                ]
+              }
             ],
-            "target": "gen_ai.conversation.id",
-            "value_type": "string"
+            "framing": "length-prefixed-presence-v1",
+            "normalization_stage": "before_framing",
+            "reset_epoch": {
+              "identity": false,
+              "key": "$start_time_unix_nano",
+              "normalization": "unsigned-epoch-nanos-v1",
+              "placement": "metric_point_start_time",
+              "role": "reset_only"
+            }
           },
-          {
-            "absence_policy": "omit",
-            "conflict_policy": "reject",
-            "id": "provider-v1",
-            "normalization": "bounded-v1",
-            "sources": [
-              "gen_ai.provider.name",
-              "$authenticated_source"
-            ],
-            "target": "gen_ai.provider.name",
-            "value_type": "string"
-          },
-          {
-            "absence_policy": "omit",
-            "conflict_policy": "reject",
-            "id": "request-model-v1",
-            "normalization": "identifier-v1",
-            "sources": [
-              "gen_ai.request.model",
-              "gen_ai.response.model",
-              "model"
-            ],
-            "target": "gen_ai.request.model",
-            "value_type": "string"
-          }
-        ],
+          "field_rules": [
+            {
+              "disposition": "omit",
+              "target": "gen_ai.agent.id"
+            },
+            {
+              "allowed_values": [],
+              "disposition": "project",
+              "normalization": "bounded-label-v1",
+              "requirement": "required",
+              "source_groups": [
+                {
+                  "keys": [
+                    "$authenticated_source"
+                  ],
+                  "placement": "authenticated_source"
+                },
+                {
+                  "keys": [
+                    "service.name"
+                  ],
+                  "placement": "resource_attribute"
+                }
+              ],
+              "target": "gen_ai.agent.name"
+            },
+            {
+              "allowed_values": [],
+              "disposition": "project",
+              "normalization": "identifier-label-v1",
+              "requirement": "optional",
+              "source_groups": [
+                {
+                  "keys": [
+                    "gen_ai.conversation.id",
+                    "conversation.id",
+                    "session.id",
+                    "session_id"
+                  ],
+                  "placement": "metric_point_attribute"
+                },
+                {
+                  "keys": [
+                    "gen_ai.conversation.id",
+                    "conversation.id",
+                    "session.id",
+                    "session_id"
+                  ],
+                  "placement": "resource_attribute"
+                }
+              ],
+              "target": "gen_ai.conversation.id"
+            },
+            {
+              "allowed_values": [],
+              "disposition": "project",
+              "normalization": "genai-operation-label-v1",
+              "requirement": "required",
+              "source_groups": [
+                {
+                  "keys": [
+                    "chat"
+                  ],
+                  "placement": "fixed"
+                }
+              ],
+              "target": "gen_ai.operation.name"
+            },
+            {
+              "allowed_values": [],
+              "disposition": "project",
+              "normalization": "genai-provider-label-v1",
+              "requirement": "required",
+              "source_groups": [
+                {
+                  "keys": [
+                    "gen_ai.provider.name"
+                  ],
+                  "placement": "metric_point_attribute"
+                },
+                {
+                  "keys": [
+                    "$authenticated_source"
+                  ],
+                  "placement": "authenticated_source"
+                },
+                {
+                  "keys": [
+                    "service.name"
+                  ],
+                  "placement": "resource_attribute"
+                }
+              ],
+              "target": "gen_ai.provider.name"
+            },
+            {
+              "allowed_values": [],
+              "disposition": "project",
+              "normalization": "genai-model-label-v1",
+              "requirement": "required",
+              "source_groups": [
+                {
+                  "keys": [
+                    "gen_ai.request.model",
+                    "gen_ai.response.model",
+                    "model"
+                  ],
+                  "placement": "metric_point_attribute"
+                },
+                {
+                  "keys": [
+                    "unknown"
+                  ],
+                  "placement": "fixed"
+                }
+              ],
+              "target": "gen_ai.request.model"
+            },
+            {
+              "allowed_values": [
+                "input",
+                "output",
+                "cacheRead",
+                "cacheCreation"
+              ],
+              "disposition": "project",
+              "normalization": "token-type-label-v1",
+              "requirement": "required",
+              "source_groups": [
+                {
+                  "keys": [
+                    "type"
+                  ],
+                  "placement": "metric_point_attribute"
+                }
+              ],
+              "target": "gen_ai.token.type"
+            }
+          ],
+          "id": "genai-token-metric-v1",
+          "target_family": "metric.gen_ai.client.token.usage"
+        },
         "source_unit_rule": {
           "accepted": [
             {
@@ -22011,6 +22252,7 @@
             "value_type": "structured"
           }
         ],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -22218,6 +22460,7 @@
             "value_type": "double"
           }
         ],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -22344,6 +22587,7 @@
             "value_type": "structured"
           }
         ],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -22404,47 +22648,110 @@
       },
       "id": "otlp.genai.duration.metric.v1.claude-code",
       "mapping": {
-        "alias_sets": [
-          {
-            "absence_policy": "omit",
-            "conflict_policy": "reject",
-            "id": "conversation-id-v1",
-            "normalization": "identifier-v1",
-            "sources": [
-              "gen_ai.conversation.id",
-              "conversation.id",
-              "session.id",
-              "session_id"
-            ],
-            "target": "gen_ai.conversation.id",
-            "value_type": "string"
-          },
-          {
-            "absence_policy": "omit",
-            "conflict_policy": "reject",
-            "id": "provider-v1",
-            "normalization": "bounded-v1",
-            "sources": [
-              "gen_ai.provider.name",
-              "$authenticated_source"
-            ],
-            "target": "gen_ai.provider.name",
-            "value_type": "string"
-          },
-          {
-            "absence_policy": "omit",
-            "conflict_policy": "reject",
-            "id": "request-model-v1",
-            "normalization": "identifier-v1",
-            "sources": [
-              "gen_ai.request.model",
-              "gen_ai.response.model",
-              "model"
-            ],
-            "target": "gen_ai.request.model",
-            "value_type": "string"
-          }
-        ],
+        "alias_sets": [],
+        "source_projection_plan": {
+          "cumulative_series": null,
+          "field_rules": [
+            {
+              "disposition": "omit",
+              "target": "gen_ai.agent.id"
+            },
+            {
+              "allowed_values": [],
+              "disposition": "project",
+              "normalization": "bounded-label-v1",
+              "requirement": "required",
+              "source_groups": [
+                {
+                  "keys": [
+                    "$authenticated_source"
+                  ],
+                  "placement": "authenticated_source"
+                },
+                {
+                  "keys": [
+                    "service.name"
+                  ],
+                  "placement": "resource_attribute"
+                }
+              ],
+              "target": "gen_ai.agent.name"
+            },
+            {
+              "allowed_values": [],
+              "disposition": "project",
+              "normalization": "genai-operation-label-v1",
+              "requirement": "required",
+              "source_groups": [
+                {
+                  "keys": [
+                    "gen_ai.operation.name"
+                  ],
+                  "placement": "metric_point_attribute"
+                },
+                {
+                  "keys": [
+                    "chat"
+                  ],
+                  "placement": "fixed"
+                }
+              ],
+              "target": "gen_ai.operation.name"
+            },
+            {
+              "allowed_values": [],
+              "disposition": "project",
+              "normalization": "genai-provider-label-v1",
+              "requirement": "required",
+              "source_groups": [
+                {
+                  "keys": [
+                    "gen_ai.provider.name"
+                  ],
+                  "placement": "metric_point_attribute"
+                },
+                {
+                  "keys": [
+                    "$authenticated_source"
+                  ],
+                  "placement": "authenticated_source"
+                },
+                {
+                  "keys": [
+                    "service.name"
+                  ],
+                  "placement": "resource_attribute"
+                }
+              ],
+              "target": "gen_ai.provider.name"
+            },
+            {
+              "allowed_values": [],
+              "disposition": "project",
+              "normalization": "genai-model-label-v1",
+              "requirement": "required",
+              "source_groups": [
+                {
+                  "keys": [
+                    "gen_ai.request.model",
+                    "gen_ai.response.model",
+                    "model"
+                  ],
+                  "placement": "metric_point_attribute"
+                },
+                {
+                  "keys": [
+                    "unknown"
+                  ],
+                  "placement": "fixed"
+                }
+              ],
+              "target": "gen_ai.request.model"
+            }
+          ],
+          "id": "genai-duration-metric-v1",
+          "target_family": "metric.gen_ai.client.operation.duration"
+        },
         "source_unit_rule": {
           "accepted": [
             {
@@ -22556,47 +22863,110 @@
       },
       "id": "otlp.genai.duration.metric.v1.codex",
       "mapping": {
-        "alias_sets": [
-          {
-            "absence_policy": "omit",
-            "conflict_policy": "reject",
-            "id": "conversation-id-v1",
-            "normalization": "identifier-v1",
-            "sources": [
-              "gen_ai.conversation.id",
-              "conversation.id",
-              "session.id",
-              "session_id"
-            ],
-            "target": "gen_ai.conversation.id",
-            "value_type": "string"
-          },
-          {
-            "absence_policy": "omit",
-            "conflict_policy": "reject",
-            "id": "provider-v1",
-            "normalization": "bounded-v1",
-            "sources": [
-              "gen_ai.provider.name",
-              "$authenticated_source"
-            ],
-            "target": "gen_ai.provider.name",
-            "value_type": "string"
-          },
-          {
-            "absence_policy": "omit",
-            "conflict_policy": "reject",
-            "id": "request-model-v1",
-            "normalization": "identifier-v1",
-            "sources": [
-              "gen_ai.request.model",
-              "gen_ai.response.model",
-              "model"
-            ],
-            "target": "gen_ai.request.model",
-            "value_type": "string"
-          }
-        ],
+        "alias_sets": [],
+        "source_projection_plan": {
+          "cumulative_series": null,
+          "field_rules": [
+            {
+              "disposition": "omit",
+              "target": "gen_ai.agent.id"
+            },
+            {
+              "allowed_values": [],
+              "disposition": "project",
+              "normalization": "bounded-label-v1",
+              "requirement": "required",
+              "source_groups": [
+                {
+                  "keys": [
+                    "$authenticated_source"
+                  ],
+                  "placement": "authenticated_source"
+                },
+                {
+                  "keys": [
+                    "service.name"
+                  ],
+                  "placement": "resource_attribute"
+                }
+              ],
+              "target": "gen_ai.agent.name"
+            },
+            {
+              "allowed_values": [],
+              "disposition": "project",
+              "normalization": "genai-operation-label-v1",
+              "requirement": "required",
+              "source_groups": [
+                {
+                  "keys": [
+                    "gen_ai.operation.name"
+                  ],
+                  "placement": "metric_point_attribute"
+                },
+                {
+                  "keys": [
+                    "chat"
+                  ],
+                  "placement": "fixed"
+                }
+              ],
+              "target": "gen_ai.operation.name"
+            },
+            {
+              "allowed_values": [],
+              "disposition": "project",
+              "normalization": "genai-provider-label-v1",
+              "requirement": "required",
+              "source_groups": [
+                {
+                  "keys": [
+                    "gen_ai.provider.name"
+                  ],
+                  "placement": "metric_point_attribute"
+                },
+                {
+                  "keys": [
+                    "$authenticated_source"
+                  ],
+                  "placement": "authenticated_source"
+                },
+                {
+                  "keys": [
+                    "service.name"
+                  ],
+                  "placement": "resource_attribute"
+                }
+              ],
+              "target": "gen_ai.provider.name"
+            },
+            {
+              "allowed_values": [],
+              "disposition": "project",
+              "normalization": "genai-model-label-v1",
+              "requirement": "required",
+              "source_groups": [
+                {
+                  "keys": [
+                    "gen_ai.request.model",
+                    "gen_ai.response.model",
+                    "model"
+                  ],
+                  "placement": "metric_point_attribute"
+                },
+                {
+                  "keys": [
+                    "unknown"
+                  ],
+                  "placement": "fixed"
+                }
+              ],
+              "target": "gen_ai.request.model"
+            }
+          ],
+          "id": "genai-duration-metric-v1",
+          "target_family": "metric.gen_ai.client.operation.duration"
+        },
         "source_unit_rule": {
           "accepted": [
             {
@@ -22708,47 +23078,110 @@
       },
       "id": "otlp.genai.duration.metric.v1.gen-ai",
       "mapping": {
-        "alias_sets": [
-          {
-            "absence_policy": "omit",
-            "conflict_policy": "reject",
-            "id": "conversation-id-v1",
-            "normalization": "identifier-v1",
-            "sources": [
-              "gen_ai.conversation.id",
-              "conversation.id",
-              "session.id",
-              "session_id"
-            ],
-            "target": "gen_ai.conversation.id",
-            "value_type": "string"
-          },
-          {
-            "absence_policy": "omit",
-            "conflict_policy": "reject",
-            "id": "provider-v1",
-            "normalization": "bounded-v1",
-            "sources": [
-              "gen_ai.provider.name",
-              "$authenticated_source"
-            ],
-            "target": "gen_ai.provider.name",
-            "value_type": "string"
-          },
-          {
-            "absence_policy": "omit",
-            "conflict_policy": "reject",
-            "id": "request-model-v1",
-            "normalization": "identifier-v1",
-            "sources": [
-              "gen_ai.request.model",
-              "gen_ai.response.model",
-              "model"
-            ],
-            "target": "gen_ai.request.model",
-            "value_type": "string"
-          }
-        ],
+        "alias_sets": [],
+        "source_projection_plan": {
+          "cumulative_series": null,
+          "field_rules": [
+            {
+              "disposition": "omit",
+              "target": "gen_ai.agent.id"
+            },
+            {
+              "allowed_values": [],
+              "disposition": "project",
+              "normalization": "bounded-label-v1",
+              "requirement": "required",
+              "source_groups": [
+                {
+                  "keys": [
+                    "$authenticated_source"
+                  ],
+                  "placement": "authenticated_source"
+                },
+                {
+                  "keys": [
+                    "service.name"
+                  ],
+                  "placement": "resource_attribute"
+                }
+              ],
+              "target": "gen_ai.agent.name"
+            },
+            {
+              "allowed_values": [],
+              "disposition": "project",
+              "normalization": "genai-operation-label-v1",
+              "requirement": "required",
+              "source_groups": [
+                {
+                  "keys": [
+                    "gen_ai.operation.name"
+                  ],
+                  "placement": "metric_point_attribute"
+                },
+                {
+                  "keys": [
+                    "chat"
+                  ],
+                  "placement": "fixed"
+                }
+              ],
+              "target": "gen_ai.operation.name"
+            },
+            {
+              "allowed_values": [],
+              "disposition": "project",
+              "normalization": "genai-provider-label-v1",
+              "requirement": "required",
+              "source_groups": [
+                {
+                  "keys": [
+                    "gen_ai.provider.name"
+                  ],
+                  "placement": "metric_point_attribute"
+                },
+                {
+                  "keys": [
+                    "$authenticated_source"
+                  ],
+                  "placement": "authenticated_source"
+                },
+                {
+                  "keys": [
+                    "service.name"
+                  ],
+                  "placement": "resource_attribute"
+                }
+              ],
+              "target": "gen_ai.provider.name"
+            },
+            {
+              "allowed_values": [],
+              "disposition": "project",
+              "normalization": "genai-model-label-v1",
+              "requirement": "required",
+              "source_groups": [
+                {
+                  "keys": [
+                    "gen_ai.request.model",
+                    "gen_ai.response.model",
+                    "model"
+                  ],
+                  "placement": "metric_point_attribute"
+                },
+                {
+                  "keys": [
+                    "unknown"
+                  ],
+                  "placement": "fixed"
+                }
+              ],
+              "target": "gen_ai.request.model"
+            }
+          ],
+          "id": "genai-duration-metric-v1",
+          "target_family": "metric.gen_ai.client.operation.duration"
+        },
         "source_unit_rule": {
           "accepted": [
             {
@@ -22860,47 +23293,110 @@
       },
       "id": "otlp.genai.duration.metric.v1.gen-ai-client",
       "mapping": {
-        "alias_sets": [
-          {
-            "absence_policy": "omit",
-            "conflict_policy": "reject",
-            "id": "conversation-id-v1",
-            "normalization": "identifier-v1",
-            "sources": [
-              "gen_ai.conversation.id",
-              "conversation.id",
-              "session.id",
-              "session_id"
-            ],
-            "target": "gen_ai.conversation.id",
-            "value_type": "string"
-          },
-          {
-            "absence_policy": "omit",
-            "conflict_policy": "reject",
-            "id": "provider-v1",
-            "normalization": "bounded-v1",
-            "sources": [
-              "gen_ai.provider.name",
-              "$authenticated_source"
-            ],
-            "target": "gen_ai.provider.name",
-            "value_type": "string"
-          },
-          {
-            "absence_policy": "omit",
-            "conflict_policy": "reject",
-            "id": "request-model-v1",
-            "normalization": "identifier-v1",
-            "sources": [
-              "gen_ai.request.model",
-              "gen_ai.response.model",
-              "model"
-            ],
-            "target": "gen_ai.request.model",
-            "value_type": "string"
-          }
-        ],
+        "alias_sets": [],
+        "source_projection_plan": {
+          "cumulative_series": null,
+          "field_rules": [
+            {
+              "disposition": "omit",
+              "target": "gen_ai.agent.id"
+            },
+            {
+              "allowed_values": [],
+              "disposition": "project",
+              "normalization": "bounded-label-v1",
+              "requirement": "required",
+              "source_groups": [
+                {
+                  "keys": [
+                    "$authenticated_source"
+                  ],
+                  "placement": "authenticated_source"
+                },
+                {
+                  "keys": [
+                    "service.name"
+                  ],
+                  "placement": "resource_attribute"
+                }
+              ],
+              "target": "gen_ai.agent.name"
+            },
+            {
+              "allowed_values": [],
+              "disposition": "project",
+              "normalization": "genai-operation-label-v1",
+              "requirement": "required",
+              "source_groups": [
+                {
+                  "keys": [
+                    "gen_ai.operation.name"
+                  ],
+                  "placement": "metric_point_attribute"
+                },
+                {
+                  "keys": [
+                    "chat"
+                  ],
+                  "placement": "fixed"
+                }
+              ],
+              "target": "gen_ai.operation.name"
+            },
+            {
+              "allowed_values": [],
+              "disposition": "project",
+              "normalization": "genai-provider-label-v1",
+              "requirement": "required",
+              "source_groups": [
+                {
+                  "keys": [
+                    "gen_ai.provider.name"
+                  ],
+                  "placement": "metric_point_attribute"
+                },
+                {
+                  "keys": [
+                    "$authenticated_source"
+                  ],
+                  "placement": "authenticated_source"
+                },
+                {
+                  "keys": [
+                    "service.name"
+                  ],
+                  "placement": "resource_attribute"
+                }
+              ],
+              "target": "gen_ai.provider.name"
+            },
+            {
+              "allowed_values": [],
+              "disposition": "project",
+              "normalization": "genai-model-label-v1",
+              "requirement": "required",
+              "source_groups": [
+                {
+                  "keys": [
+                    "gen_ai.request.model",
+                    "gen_ai.response.model",
+                    "model"
+                  ],
+                  "placement": "metric_point_attribute"
+                },
+                {
+                  "keys": [
+                    "unknown"
+                  ],
+                  "placement": "fixed"
+                }
+              ],
+              "target": "gen_ai.request.model"
+            }
+          ],
+          "id": "genai-duration-metric-v1",
+          "target_family": "metric.gen_ai.client.operation.duration"
+        },
         "source_unit_rule": {
           "accepted": [
             {
@@ -23012,47 +23508,110 @@
       },
       "id": "otlp.genai.duration.metric.v1.llm",
       "mapping": {
-        "alias_sets": [
-          {
-            "absence_policy": "omit",
-            "conflict_policy": "reject",
-            "id": "conversation-id-v1",
-            "normalization": "identifier-v1",
-            "sources": [
-              "gen_ai.conversation.id",
-              "conversation.id",
-              "session.id",
-              "session_id"
-            ],
-            "target": "gen_ai.conversation.id",
-            "value_type": "string"
-          },
-          {
-            "absence_policy": "omit",
-            "conflict_policy": "reject",
-            "id": "provider-v1",
-            "normalization": "bounded-v1",
-            "sources": [
-              "gen_ai.provider.name",
-              "$authenticated_source"
-            ],
-            "target": "gen_ai.provider.name",
-            "value_type": "string"
-          },
-          {
-            "absence_policy": "omit",
-            "conflict_policy": "reject",
-            "id": "request-model-v1",
-            "normalization": "identifier-v1",
-            "sources": [
-              "gen_ai.request.model",
-              "gen_ai.response.model",
-              "model"
-            ],
-            "target": "gen_ai.request.model",
-            "value_type": "string"
-          }
-        ],
+        "alias_sets": [],
+        "source_projection_plan": {
+          "cumulative_series": null,
+          "field_rules": [
+            {
+              "disposition": "omit",
+              "target": "gen_ai.agent.id"
+            },
+            {
+              "allowed_values": [],
+              "disposition": "project",
+              "normalization": "bounded-label-v1",
+              "requirement": "required",
+              "source_groups": [
+                {
+                  "keys": [
+                    "$authenticated_source"
+                  ],
+                  "placement": "authenticated_source"
+                },
+                {
+                  "keys": [
+                    "service.name"
+                  ],
+                  "placement": "resource_attribute"
+                }
+              ],
+              "target": "gen_ai.agent.name"
+            },
+            {
+              "allowed_values": [],
+              "disposition": "project",
+              "normalization": "genai-operation-label-v1",
+              "requirement": "required",
+              "source_groups": [
+                {
+                  "keys": [
+                    "gen_ai.operation.name"
+                  ],
+                  "placement": "metric_point_attribute"
+                },
+                {
+                  "keys": [
+                    "chat"
+                  ],
+                  "placement": "fixed"
+                }
+              ],
+              "target": "gen_ai.operation.name"
+            },
+            {
+              "allowed_values": [],
+              "disposition": "project",
+              "normalization": "genai-provider-label-v1",
+              "requirement": "required",
+              "source_groups": [
+                {
+                  "keys": [
+                    "gen_ai.provider.name"
+                  ],
+                  "placement": "metric_point_attribute"
+                },
+                {
+                  "keys": [
+                    "$authenticated_source"
+                  ],
+                  "placement": "authenticated_source"
+                },
+                {
+                  "keys": [
+                    "service.name"
+                  ],
+                  "placement": "resource_attribute"
+                }
+              ],
+              "target": "gen_ai.provider.name"
+            },
+            {
+              "allowed_values": [],
+              "disposition": "project",
+              "normalization": "genai-model-label-v1",
+              "requirement": "required",
+              "source_groups": [
+                {
+                  "keys": [
+                    "gen_ai.request.model",
+                    "gen_ai.response.model",
+                    "model"
+                  ],
+                  "placement": "metric_point_attribute"
+                },
+                {
+                  "keys": [
+                    "unknown"
+                  ],
+                  "placement": "fixed"
+                }
+              ],
+              "target": "gen_ai.request.model"
+            }
+          ],
+          "id": "genai-duration-metric-v1",
+          "target_family": "metric.gen_ai.client.operation.duration"
+        },
         "source_unit_rule": {
           "accepted": [
             {
@@ -23223,6 +23782,7 @@
             "value_type": "string"
           }
         ],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -23341,6 +23901,7 @@
             "value_type": "string"
           }
         ],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -23459,6 +24020,7 @@
             "value_type": "string"
           }
         ],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -23577,6 +24139,7 @@
             "value_type": "string"
           }
         ],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -23695,6 +24258,7 @@
             "value_type": "string"
           }
         ],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -23813,6 +24377,7 @@
             "value_type": "string"
           }
         ],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -23921,6 +24486,7 @@
       "id": "otlp.native.log.v8.log.agent.discovery.completed",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -24024,6 +24590,7 @@
       "id": "otlp.native.log.v8.log.agent.discovery.rejected",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -24127,6 +24694,7 @@
       "id": "otlp.native.log.v8.log.agent.discovery.signal",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -24230,6 +24798,7 @@
       "id": "otlp.native.log.v8.log.ai.discovery.completed",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -24333,6 +24902,7 @@
       "id": "otlp.native.log.v8.log.ai_component.changed",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -24436,6 +25006,7 @@
       "id": "otlp.native.log.v8.log.ai_component.confidence.changed",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -24539,6 +25110,7 @@
       "id": "otlp.native.log.v8.log.ai_component.discovered",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -24642,6 +25214,7 @@
       "id": "otlp.native.log.v8.log.ai_component.removed",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -24745,6 +25318,7 @@
       "id": "otlp.native.log.v8.log.alert.acknowledgement.requested",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -24848,6 +25422,7 @@
       "id": "otlp.native.log.v8.log.alert.dismissal.requested",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -24951,6 +25526,7 @@
       "id": "otlp.native.log.v8.log.approval.resolved",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -25054,6 +25630,7 @@
       "id": "otlp.native.log.v8.log.asset.activated",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -25157,6 +25734,7 @@
       "id": "otlp.native.log.v8.log.asset.admitted",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -25260,6 +25838,7 @@
       "id": "otlp.native.log.v8.log.asset.disabled",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -25363,6 +25942,7 @@
       "id": "otlp.native.log.v8.log.asset.discovered",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -25466,6 +26046,7 @@
       "id": "otlp.native.log.v8.log.asset.quarantined",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -25569,6 +26150,7 @@
       "id": "otlp.native.log.v8.log.asset.registered",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -25672,6 +26254,7 @@
       "id": "otlp.native.log.v8.log.asset.released",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -25775,6 +26358,7 @@
       "id": "otlp.native.log.v8.log.asset.removed",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -25878,6 +26462,7 @@
       "id": "otlp.native.log.v8.log.asset.updated",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -25981,6 +26566,7 @@
       "id": "otlp.native.log.v8.log.authentication.failed",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -26084,6 +26670,7 @@
       "id": "otlp.native.log.v8.log.authorization.denied",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -26187,6 +26774,7 @@
       "id": "otlp.native.log.v8.log.compat.compact_end",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -26290,6 +26878,7 @@
       "id": "otlp.native.log.v8.log.compat.compact_start",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -26393,6 +26982,7 @@
       "id": "otlp.native.log.v8.log.compat.event",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -26496,6 +27086,7 @@
       "id": "otlp.native.log.v8.log.compat.hook_decision",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -26599,6 +27190,7 @@
       "id": "otlp.native.log.v8.log.compat.session_end",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -26702,6 +27294,7 @@
       "id": "otlp.native.log.v8.log.compat.session_start",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -26805,6 +27398,7 @@
       "id": "otlp.native.log.v8.log.compat.subagent_start",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -26908,6 +27502,7 @@
       "id": "otlp.native.log.v8.log.compat.subagent_stop",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -27011,6 +27606,7 @@
       "id": "otlp.native.log.v8.log.compat.tool_end",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -27114,6 +27710,7 @@
       "id": "otlp.native.log.v8.log.compat.tool_start",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -27217,6 +27814,7 @@
       "id": "otlp.native.log.v8.log.compat.turn_end",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -27320,6 +27918,7 @@
       "id": "otlp.native.log.v8.log.compat.turn_start",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -27423,6 +28022,7 @@
       "id": "otlp.native.log.v8.log.config.change.applied",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -27526,6 +28126,7 @@
       "id": "otlp.native.log.v8.log.config.change.attempted",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -27629,6 +28230,7 @@
       "id": "otlp.native.log.v8.log.config.reload.rejected",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -27732,6 +28334,7 @@
       "id": "otlp.native.log.v8.log.destination.authentication.failed",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -27835,6 +28438,7 @@
       "id": "otlp.native.log.v8.log.destination.authorization.denied",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -27938,6 +28542,7 @@
       "id": "otlp.native.log.v8.log.destination.export_failed",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -28041,6 +28646,7 @@
       "id": "otlp.native.log.v8.log.destination.queue_full",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -28144,6 +28750,7 @@
       "id": "otlp.native.log.v8.log.destination.test.attempted",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -28247,6 +28854,7 @@
       "id": "otlp.native.log.v8.log.destination.test.completed",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -28350,6 +28958,7 @@
       "id": "otlp.native.log.v8.log.destination.updated",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -28453,6 +29062,7 @@
       "id": "otlp.native.log.v8.log.diagnostic.message",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -28556,6 +29166,7 @@
       "id": "otlp.native.log.v8.log.diagnostic.snapshot",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -28659,6 +29270,7 @@
       "id": "otlp.native.log.v8.log.egress.allowed",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -28762,6 +29374,7 @@
       "id": "otlp.native.log.v8.log.egress.blocked",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -28865,6 +29478,7 @@
       "id": "otlp.native.log.v8.log.egress.completed",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -28968,6 +29582,7 @@
       "id": "otlp.native.log.v8.log.egress.failed",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -29071,6 +29686,7 @@
       "id": "otlp.native.log.v8.log.egress.requested",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -29174,6 +29790,7 @@
       "id": "otlp.native.log.v8.log.enforcement.access.revoked",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -29277,6 +29894,7 @@
       "id": "otlp.native.log.v8.log.enforcement.block.applied",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -29380,6 +29998,7 @@
       "id": "otlp.native.log.v8.log.enforcement.block.failed",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -29483,6 +30102,7 @@
       "id": "otlp.native.log.v8.log.enforcement.block.requested",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -29586,6 +30206,7 @@
       "id": "otlp.native.log.v8.log.enforcement.quarantine.applied",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -29689,6 +30310,7 @@
       "id": "otlp.native.log.v8.log.enforcement.redaction.applied",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -29792,6 +30414,7 @@
       "id": "otlp.native.log.v8.log.enforcement.release.applied",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -29895,6 +30518,7 @@
       "id": "otlp.native.log.v8.log.finding.correlated",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -29998,6 +30622,7 @@
       "id": "otlp.native.log.v8.log.finding.observed",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -30101,6 +30726,7 @@
       "id": "otlp.native.log.v8.log.guardrail.evaluation.completed",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -30204,6 +30830,7 @@
       "id": "otlp.native.log.v8.log.guardrail.evaluation.failed",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -30307,6 +30934,7 @@
       "id": "otlp.native.log.v8.log.guardrail.evaluation.started",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -30410,6 +31038,7 @@
       "id": "otlp.native.log.v8.log.guardrail.judge.completed",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -30513,6 +31142,7 @@
       "id": "otlp.native.log.v8.log.model.call.failed",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -30616,6 +31246,7 @@
       "id": "otlp.native.log.v8.log.model.request",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -30719,6 +31350,7 @@
       "id": "otlp.native.log.v8.log.model.response",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -30822,6 +31454,7 @@
       "id": "otlp.native.log.v8.log.model.stream.completed",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -30925,6 +31558,7 @@
       "id": "otlp.native.log.v8.log.observability.profile.changed",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -31028,6 +31662,7 @@
       "id": "otlp.native.log.v8.log.policy.updated",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -31131,6 +31766,7 @@
       "id": "otlp.native.log.v8.log.redaction.failed_closed",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -31234,6 +31870,7 @@
       "id": "otlp.native.log.v8.log.redaction.profile.updated",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -31337,6 +31974,7 @@
       "id": "otlp.native.log.v8.log.scan.cancelled",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -31440,6 +32078,7 @@
       "id": "otlp.native.log.v8.log.scan.completed",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -31543,6 +32182,7 @@
       "id": "otlp.native.log.v8.log.scan.failed",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -31646,6 +32286,7 @@
       "id": "otlp.native.log.v8.log.scan.phase.completed",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -31749,6 +32390,7 @@
       "id": "otlp.native.log.v8.log.scan.started",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -31852,6 +32494,7 @@
       "id": "otlp.native.log.v8.log.schema.validation_failed",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -31955,6 +32598,7 @@
       "id": "otlp.native.log.v8.log.sqlite.write_failed",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -32058,6 +32702,7 @@
       "id": "otlp.native.log.v8.log.subsystem.degraded",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -32161,6 +32806,7 @@
       "id": "otlp.native.log.v8.log.subsystem.ready",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -32264,6 +32910,7 @@
       "id": "otlp.native.log.v8.log.subsystem.restored",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -32367,6 +33014,7 @@
       "id": "otlp.native.log.v8.log.telemetry.authentication.failed",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -32470,6 +33118,7 @@
       "id": "otlp.native.log.v8.log.telemetry.authorization.denied",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -32573,6 +33222,7 @@
       "id": "otlp.native.log.v8.log.telemetry.batch.accepted",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -32676,6 +33326,7 @@
       "id": "otlp.native.log.v8.log.telemetry.batch.normalized",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -32779,6 +33430,7 @@
       "id": "otlp.native.log.v8.log.telemetry.batch.rejected",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -32882,6 +33534,7 @@
       "id": "otlp.native.log.v8.log.telemetry.records.dropped",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -32985,6 +33638,7 @@
       "id": "otlp.native.log.v8.log.tool.invocation.blocked",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -33088,6 +33742,7 @@
       "id": "otlp.native.log.v8.log.tool.invocation.completed",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -33191,6 +33846,7 @@
       "id": "otlp.native.log.v8.log.tool.invocation.failed",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -33294,6 +33950,7 @@
       "id": "otlp.native.log.v8.log.tool.invocation.requested",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -33397,6 +34054,7 @@
       "id": "otlp.native.log.v8.log.tool.invocation.started",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -33504,6 +34162,7 @@
       "id": "otlp.native.metric.v8.metric.defenseclaw.activity.total",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [
             {
@@ -33616,6 +34275,7 @@
       "id": "otlp.native.metric.v8.metric.defenseclaw.admission.decisions",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [
             {
@@ -33728,6 +34388,7 @@
       "id": "otlp.native.metric.v8.metric.defenseclaw.agent.discovery.errors",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [
             {
@@ -33840,6 +34501,7 @@
       "id": "otlp.native.metric.v8.metric.defenseclaw.agent.discovery.installed",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [
             {
@@ -33952,6 +34614,7 @@
       "id": "otlp.native.metric.v8.metric.defenseclaw.agent.discovery.runs",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [
             {
@@ -34064,6 +34727,7 @@
       "id": "otlp.native.metric.v8.metric.defenseclaw.agent.discovery.signals",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [
             {
@@ -34176,6 +34840,7 @@
       "id": "otlp.native.metric.v8.metric.defenseclaw.agent.last_seen",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [
             {
@@ -34288,6 +34953,7 @@
       "id": "otlp.native.metric.v8.metric.defenseclaw.agent.lifecycle.transitions",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [
             {
@@ -34400,6 +35066,7 @@
       "id": "otlp.native.metric.v8.metric.defenseclaw.agent.phase.current",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [
             {
@@ -34512,6 +35179,7 @@
       "id": "otlp.native.metric.v8.metric.defenseclaw.agent.phase.transitions",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [
             {
@@ -34624,6 +35292,7 @@
       "id": "otlp.native.metric.v8.metric.defenseclaw.agent.reported_cost",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [
             {
@@ -34736,6 +35405,7 @@
       "id": "otlp.native.metric.v8.metric.defenseclaw.agent.token.usage",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [
             {
@@ -34848,6 +35518,7 @@
       "id": "otlp.native.metric.v8.metric.defenseclaw.ai.components.installs",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [
             {
@@ -34960,6 +35631,7 @@
       "id": "otlp.native.metric.v8.metric.defenseclaw.ai.components.observations",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [
             {
@@ -35072,6 +35744,7 @@
       "id": "otlp.native.metric.v8.metric.defenseclaw.ai.components.workspaces",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [
             {
@@ -35184,6 +35857,7 @@
       "id": "otlp.native.metric.v8.metric.defenseclaw.ai.discovery.active_signals",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [
             {
@@ -35296,6 +35970,7 @@
       "id": "otlp.native.metric.v8.metric.defenseclaw.ai.discovery.dedupe_suppressed",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [
             {
@@ -35408,6 +36083,7 @@
       "id": "otlp.native.metric.v8.metric.defenseclaw.ai.discovery.errors",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [
             {
@@ -35520,6 +36196,7 @@
       "id": "otlp.native.metric.v8.metric.defenseclaw.ai.discovery.files_scanned",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [
             {
@@ -35632,6 +36309,7 @@
       "id": "otlp.native.metric.v8.metric.defenseclaw.ai.discovery.gone_signals",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [
             {
@@ -35744,6 +36422,7 @@
       "id": "otlp.native.metric.v8.metric.defenseclaw.ai.discovery.new_signals",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [
             {
@@ -35856,6 +36535,7 @@
       "id": "otlp.native.metric.v8.metric.defenseclaw.ai.discovery.runs",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [
             {
@@ -35968,6 +36648,7 @@
       "id": "otlp.native.metric.v8.metric.defenseclaw.ai.discovery.signals",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [
             {
@@ -36080,6 +36761,7 @@
       "id": "otlp.native.metric.v8.metric.defenseclaw.alert.count",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [
             {
@@ -36192,6 +36874,7 @@
       "id": "otlp.native.metric.v8.metric.defenseclaw.approval.count",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [
             {
@@ -36304,6 +36987,7 @@
       "id": "otlp.native.metric.v8.metric.defenseclaw.audit.db.errors",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [
             {
@@ -36416,6 +37100,7 @@
       "id": "otlp.native.metric.v8.metric.defenseclaw.audit.events.total",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [
             {
@@ -36528,6 +37213,7 @@
       "id": "otlp.native.metric.v8.metric.defenseclaw.audit.sink.batches.delivered",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [
             {
@@ -36640,6 +37326,7 @@
       "id": "otlp.native.metric.v8.metric.defenseclaw.audit.sink.batches.dropped",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [
             {
@@ -36752,6 +37439,7 @@
       "id": "otlp.native.metric.v8.metric.defenseclaw.audit.sink.circuit.state",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [
             {
@@ -36864,6 +37552,7 @@
       "id": "otlp.native.metric.v8.metric.defenseclaw.audit.sink.failures",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [
             {
@@ -36976,6 +37665,7 @@
       "id": "otlp.native.metric.v8.metric.defenseclaw.audit.sink.queue.depth",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [
             {
@@ -37088,6 +37778,7 @@
       "id": "otlp.native.metric.v8.metric.defenseclaw.cisco.errors",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [
             {
@@ -37200,6 +37891,7 @@
       "id": "otlp.native.metric.v8.metric.defenseclaw.codex.notify",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [
             {
@@ -37312,6 +38004,7 @@
       "id": "otlp.native.metric.v8.metric.defenseclaw.codex.notify.malformed",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [
             {
@@ -37424,6 +38117,7 @@
       "id": "otlp.native.metric.v8.metric.defenseclaw.config.load.errors",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [
             {
@@ -37536,6 +38230,7 @@
       "id": "otlp.native.metric.v8.metric.defenseclaw.connector.hook.invocations",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [
             {
@@ -37648,6 +38343,7 @@
       "id": "otlp.native.metric.v8.metric.defenseclaw.connector.hook.outcome",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [
             {
@@ -37760,6 +38456,7 @@
       "id": "otlp.native.metric.v8.metric.defenseclaw.connector.hook.tokens",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [
             {
@@ -37872,6 +38569,7 @@
       "id": "otlp.native.metric.v8.metric.defenseclaw.connector.hook.unified_dispatch",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [
             {
@@ -37984,6 +38682,7 @@
       "id": "otlp.native.metric.v8.metric.defenseclaw.egress.events",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [
             {
@@ -38096,6 +38795,7 @@
       "id": "otlp.native.metric.v8.metric.defenseclaw.gateway.errors",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [
             {
@@ -38208,6 +38908,7 @@
       "id": "otlp.native.metric.v8.metric.defenseclaw.gateway.events.emitted",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [
             {
@@ -38320,6 +39021,7 @@
       "id": "otlp.native.metric.v8.metric.defenseclaw.gateway.forwarded_headers",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [
             {
@@ -38432,6 +39134,7 @@
       "id": "otlp.native.metric.v8.metric.defenseclaw.gateway.judge.errors",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [
             {
@@ -38544,6 +39247,7 @@
       "id": "otlp.native.metric.v8.metric.defenseclaw.gateway.judge.invocations",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [
             {
@@ -38656,6 +39360,7 @@
       "id": "otlp.native.metric.v8.metric.defenseclaw.gateway.verdicts",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [
             {
@@ -38768,6 +39473,7 @@
       "id": "otlp.native.metric.v8.metric.defenseclaw.guardrail.cache.hits",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [
             {
@@ -38880,6 +39586,7 @@
       "id": "otlp.native.metric.v8.metric.defenseclaw.guardrail.cache.misses",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [
             {
@@ -38992,6 +39699,7 @@
       "id": "otlp.native.metric.v8.metric.defenseclaw.guardrail.evaluations",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [
             {
@@ -39104,6 +39812,7 @@
       "id": "otlp.native.metric.v8.metric.defenseclaw.http.auth.failures",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [
             {
@@ -39216,6 +39925,7 @@
       "id": "otlp.native.metric.v8.metric.defenseclaw.http.rate_limit.breaches",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [
             {
@@ -39328,6 +40038,7 @@
       "id": "otlp.native.metric.v8.metric.defenseclaw.http.request.count",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [
             {
@@ -39440,6 +40151,7 @@
       "id": "otlp.native.metric.v8.metric.defenseclaw.inspect.evaluations",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [
             {
@@ -39552,6 +40264,7 @@
       "id": "otlp.native.metric.v8.metric.defenseclaw.judge.persist.drops",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [
             {
@@ -39664,6 +40377,7 @@
       "id": "otlp.native.metric.v8.metric.defenseclaw.judge.persist.queue_depth",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [
             {
@@ -39776,6 +40490,7 @@
       "id": "otlp.native.metric.v8.metric.defenseclaw.judge.semaphore.depth",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [
             {
@@ -39888,6 +40603,7 @@
       "id": "otlp.native.metric.v8.metric.defenseclaw.judge.semaphore.drops",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [
             {
@@ -40000,6 +40716,7 @@
       "id": "otlp.native.metric.v8.metric.defenseclaw.openshell.exit",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [
             {
@@ -40112,6 +40829,7 @@
       "id": "otlp.native.metric.v8.metric.defenseclaw.otel.ingest.bytes",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [
             {
@@ -40224,6 +40942,7 @@
       "id": "otlp.native.metric.v8.metric.defenseclaw.otel.ingest.last_seen_ts",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [
             {
@@ -40336,6 +41055,7 @@
       "id": "otlp.native.metric.v8.metric.defenseclaw.otel.ingest.malformed",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [
             {
@@ -40448,6 +41168,7 @@
       "id": "otlp.native.metric.v8.metric.defenseclaw.otel.ingest.records",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [
             {
@@ -40560,6 +41281,7 @@
       "id": "otlp.native.metric.v8.metric.defenseclaw.otel.ingest.requests",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [
             {
@@ -40672,6 +41394,7 @@
       "id": "otlp.native.metric.v8.metric.defenseclaw.panics.total",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [
             {
@@ -40784,6 +41507,7 @@
       "id": "otlp.native.metric.v8.metric.defenseclaw.policy.evaluations",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [
             {
@@ -40896,6 +41620,7 @@
       "id": "otlp.native.metric.v8.metric.defenseclaw.policy.reloads",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [
             {
@@ -41008,6 +41733,7 @@
       "id": "otlp.native.metric.v8.metric.defenseclaw.process.uptime_seconds",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [
             {
@@ -41120,6 +41846,7 @@
       "id": "otlp.native.metric.v8.metric.defenseclaw.provenance.bumps",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [
             {
@@ -41232,6 +41959,7 @@
       "id": "otlp.native.metric.v8.metric.defenseclaw.quarantine.actions",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [
             {
@@ -41344,6 +42072,7 @@
       "id": "otlp.native.metric.v8.metric.defenseclaw.queue.depth",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [
             {
@@ -41456,6 +42185,7 @@
       "id": "otlp.native.metric.v8.metric.defenseclaw.queue.drops",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [
             {
@@ -41568,6 +42298,7 @@
       "id": "otlp.native.metric.v8.metric.defenseclaw.redaction.applied",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [
             {
@@ -41680,6 +42411,7 @@
       "id": "otlp.native.metric.v8.metric.defenseclaw.runtime.fd.in_use",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [
             {
@@ -41792,6 +42524,7 @@
       "id": "otlp.native.metric.v8.metric.defenseclaw.runtime.goroutines",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [
             {
@@ -41904,6 +42637,7 @@
       "id": "otlp.native.metric.v8.metric.defenseclaw.runtime.heap.alloc",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [
             {
@@ -42016,6 +42750,7 @@
       "id": "otlp.native.metric.v8.metric.defenseclaw.runtime.heap.objects",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [
             {
@@ -42128,6 +42863,7 @@
       "id": "otlp.native.metric.v8.metric.defenseclaw.scan.count",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [
             {
@@ -42240,6 +42976,7 @@
       "id": "otlp.native.metric.v8.metric.defenseclaw.scan.errors",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [
             {
@@ -42352,6 +43089,7 @@
       "id": "otlp.native.metric.v8.metric.defenseclaw.scan.findings",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [
             {
@@ -42464,6 +43202,7 @@
       "id": "otlp.native.metric.v8.metric.defenseclaw.scan.findings.by_rule",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [
             {
@@ -42576,6 +43315,7 @@
       "id": "otlp.native.metric.v8.metric.defenseclaw.scan.findings.gauge",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [
             {
@@ -42688,6 +43428,7 @@
       "id": "otlp.native.metric.v8.metric.defenseclaw.scanner.queue.depth",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [
             {
@@ -42800,6 +43541,7 @@
       "id": "otlp.native.metric.v8.metric.defenseclaw.schema.violations",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [
             {
@@ -42912,6 +43654,7 @@
       "id": "otlp.native.metric.v8.metric.defenseclaw.sqlite.busy_retries",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [
             {
@@ -43024,6 +43767,7 @@
       "id": "otlp.native.metric.v8.metric.defenseclaw.sqlite.db.bytes",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [
             {
@@ -43136,6 +43880,7 @@
       "id": "otlp.native.metric.v8.metric.defenseclaw.sqlite.freelist_count",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [
             {
@@ -43248,6 +43993,7 @@
       "id": "otlp.native.metric.v8.metric.defenseclaw.sqlite.page_count",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [
             {
@@ -43360,6 +44106,7 @@
       "id": "otlp.native.metric.v8.metric.defenseclaw.sqlite.wal.bytes",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [
             {
@@ -43472,6 +44219,7 @@
       "id": "otlp.native.metric.v8.metric.defenseclaw.stream.lifecycle",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [
             {
@@ -43584,6 +44332,7 @@
       "id": "otlp.native.metric.v8.metric.defenseclaw.telemetry.destination.exports",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [
             {
@@ -43696,6 +44445,7 @@
       "id": "otlp.native.metric.v8.metric.defenseclaw.telemetry.destination.spans",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [
             {
@@ -43808,6 +44558,7 @@
       "id": "otlp.native.metric.v8.metric.defenseclaw.telemetry.exporter.errors",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [
             {
@@ -43920,6 +44671,7 @@
       "id": "otlp.native.metric.v8.metric.defenseclaw.telemetry.exporter.last_export_ts",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [
             {
@@ -44032,6 +44784,7 @@
       "id": "otlp.native.metric.v8.metric.defenseclaw.tool.calls",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [
             {
@@ -44144,6 +44897,7 @@
       "id": "otlp.native.metric.v8.metric.defenseclaw.tool.errors",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [
             {
@@ -44256,6 +45010,7 @@
       "id": "otlp.native.metric.v8.metric.defenseclaw.tui.filter.applied",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [
             {
@@ -44368,6 +45123,7 @@
       "id": "otlp.native.metric.v8.metric.defenseclaw.watcher.errors",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [
             {
@@ -44480,6 +45236,7 @@
       "id": "otlp.native.metric.v8.metric.defenseclaw.watcher.events",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [
             {
@@ -44592,6 +45349,7 @@
       "id": "otlp.native.metric.v8.metric.defenseclaw.watcher.restarts",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [
             {
@@ -44704,6 +45462,7 @@
       "id": "otlp.native.metric.v8.metric.defenseclaw.webhook.circuit_breaker",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [
             {
@@ -44816,6 +45575,7 @@
       "id": "otlp.native.metric.v8.metric.defenseclaw.webhook.cooldown.suppressed",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [
             {
@@ -44928,6 +45688,7 @@
       "id": "otlp.native.metric.v8.metric.defenseclaw.webhook.dispatches",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [
             {
@@ -45040,6 +45801,7 @@
       "id": "otlp.native.metric.v8.metric.defenseclaw.webhook.failures",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [
             {
@@ -45161,6 +45923,7 @@
       "id": "otlp.native.span.v8.span.admin.operation",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -45277,6 +46040,7 @@
       "id": "otlp.native.span.v8.span.agent.invoke",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -45393,6 +46157,7 @@
       "id": "otlp.native.span.v8.span.agent.transition",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -45509,6 +46274,7 @@
       "id": "otlp.native.span.v8.span.ai.discovery",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -45625,6 +46391,7 @@
       "id": "otlp.native.span.v8.span.ai.discovery.detector",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -45741,6 +46508,7 @@
       "id": "otlp.native.span.v8.span.approval.resolve",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -45857,6 +46625,7 @@
       "id": "otlp.native.span.v8.span.asset.scan",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -45973,6 +46742,7 @@
       "id": "otlp.native.span.v8.span.asset.scan.phase",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -46089,6 +46859,7 @@
       "id": "otlp.native.span.v8.span.asset.transition",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -46205,6 +46976,7 @@
       "id": "otlp.native.span.v8.span.config.reload",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -46321,6 +47093,7 @@
       "id": "otlp.native.span.v8.span.destination.export",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -46437,6 +47210,7 @@
       "id": "otlp.native.span.v8.span.diagnostic.canary",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -46553,6 +47327,7 @@
       "id": "otlp.native.span.v8.span.enforcement.apply",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -46669,6 +47444,7 @@
       "id": "otlp.native.span.v8.span.finding.enrich",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -46785,6 +47561,7 @@
       "id": "otlp.native.span.v8.span.guardrail.apply",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -46901,6 +47678,7 @@
       "id": "otlp.native.span.v8.span.guardrail.judge",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -47017,6 +47795,7 @@
       "id": "otlp.native.span.v8.span.guardrail.phase",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -47133,6 +47912,7 @@
       "id": "otlp.native.span.v8.span.model.chat",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -47249,6 +48029,7 @@
       "id": "otlp.native.span.v8.span.model.embeddings",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -47365,6 +48146,7 @@
       "id": "otlp.native.span.v8.span.network.request",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -47481,6 +48263,7 @@
       "id": "otlp.native.span.v8.span.retrieval.search",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -47597,6 +48380,7 @@
       "id": "otlp.native.span.v8.span.telemetry.normalize",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -47713,6 +48497,7 @@
       "id": "otlp.native.span.v8.span.telemetry.receive",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -47829,6 +48614,7 @@
       "id": "otlp.native.span.v8.span.tool.execute",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -47945,6 +48731,7 @@
       "id": "otlp.native.span.v8.span.workflow.run",
       "mapping": {
         "alias_sets": [],
+        "source_projection_plan": null,
         "source_unit_rule": {
           "accepted": [],
           "kind": "none",
@@ -47967,7 +48754,7 @@
       "unknown_fields": "drop_and_count"
     }
   ],
-  "materialized_view_sha256": "31071ab791d29577646cbafa728c7fb69ffcbd2ea181e8f3dc7891ae3356c7f4",
+  "materialized_view_sha256": "91345ae4991155ba8bebaf2d21bb96b1a6e61b5659c677829a0aa5d8b0b46566",
   "native_markers": [
     {
       "id": "otlp.native.marker.logs.leaf_attribute.defenseclaw.bucket",
@@ -52681,6 +53468,750 @@
       "signal": "traces"
     }
   ],
+  "source_normalizers": [
+    {
+      "case": "preserve",
+      "empty": "reject",
+      "id": "bounded-label-v1",
+      "kind": "bounded",
+      "max_utf8_bytes": 256,
+      "overflow": "reject",
+      "pattern": "",
+      "prefixes": [],
+      "rules": [],
+      "separators": [],
+      "trim": "unicode-space",
+      "unmatched": "",
+      "values": []
+    },
+    {
+      "case": "preserve",
+      "empty": "reject",
+      "id": "identifier-label-v1",
+      "kind": "identifier",
+      "max_utf8_bytes": 256,
+      "overflow": "reject",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+      "prefixes": [],
+      "rules": [],
+      "separators": [],
+      "trim": "unicode-space",
+      "unmatched": "",
+      "values": []
+    },
+    {
+      "case": "lowercase",
+      "empty": "unknown",
+      "id": "genai-provider-label-v1",
+      "kind": "ordered-exact-contains",
+      "max_utf8_bytes": 64,
+      "overflow": "other",
+      "pattern": "",
+      "prefixes": [],
+      "rules": [
+        {
+          "contains": [
+            "openai"
+          ],
+          "exact": [
+            "openai",
+            "codex"
+          ],
+          "inputs": [],
+          "output": "openai"
+        },
+        {
+          "contains": [
+            "anthropic",
+            "claude"
+          ],
+          "exact": [
+            "anthropic"
+          ],
+          "inputs": [],
+          "output": "anthropic"
+        },
+        {
+          "contains": [
+            "google",
+            "gemini"
+          ],
+          "exact": [
+            "google"
+          ],
+          "inputs": [],
+          "output": "google"
+        },
+        {
+          "contains": [
+            "azure"
+          ],
+          "exact": [
+            "azure"
+          ],
+          "inputs": [],
+          "output": "azure"
+        },
+        {
+          "contains": [
+            "bedrock"
+          ],
+          "exact": [
+            "bedrock"
+          ],
+          "inputs": [],
+          "output": "bedrock"
+        },
+        {
+          "contains": [
+            "ollama"
+          ],
+          "exact": [
+            "ollama"
+          ],
+          "inputs": [],
+          "output": "ollama"
+        },
+        {
+          "contains": [],
+          "exact": [
+            "local"
+          ],
+          "inputs": [],
+          "output": "local"
+        },
+        {
+          "contains": [],
+          "exact": [
+            "unknown"
+          ],
+          "inputs": [],
+          "output": "unknown"
+        }
+      ],
+      "separators": [],
+      "trim": "unicode-space",
+      "unmatched": "other",
+      "values": []
+    },
+    {
+      "case": "lowercase",
+      "empty": "unknown",
+      "id": "genai-model-label-v1",
+      "kind": "ordered-prefix-family",
+      "max_utf8_bytes": 64,
+      "overflow": "other",
+      "pattern": "",
+      "prefixes": [
+        "gpt-5",
+        "gpt-4o",
+        "gpt-4",
+        "gpt-3.5",
+        "o1",
+        "o3",
+        "claude-3.5",
+        "claude-3-7",
+        "claude-3",
+        "claude-4",
+        "claude-opus",
+        "claude-sonnet",
+        "claude-haiku",
+        "gemini-1.5",
+        "gemini-2",
+        "gemini",
+        "llama-3",
+        "llama-4",
+        "mistral",
+        "deepseek",
+        "qwen",
+        "grok",
+        "command-r",
+        "phi-3",
+        "phi-4"
+      ],
+      "rules": [],
+      "separators": [
+        "-",
+        ".",
+        ":"
+      ],
+      "trim": "unicode-space",
+      "unmatched": "other",
+      "values": []
+    },
+    {
+      "case": "lowercase",
+      "empty": "reject",
+      "id": "genai-operation-label-v1",
+      "kind": "exact-map",
+      "max_utf8_bytes": 0,
+      "overflow": "",
+      "pattern": "",
+      "prefixes": [],
+      "rules": [
+        {
+          "contains": [],
+          "exact": [],
+          "inputs": [
+            "chat",
+            "completion",
+            "completions",
+            "responses",
+            "response",
+            "generate",
+            "generation",
+            "chat.completions"
+          ],
+          "output": "chat"
+        },
+        {
+          "contains": [],
+          "exact": [],
+          "inputs": [
+            "embedding",
+            "embeddings",
+            "embed"
+          ],
+          "output": "embeddings"
+        },
+        {
+          "contains": [],
+          "exact": [],
+          "inputs": [
+            "tool",
+            "tool-call",
+            "tool_call",
+            "tool-result",
+            "tool_result",
+            "execute-tool",
+            "execute_tool"
+          ],
+          "output": "execute_tool"
+        },
+        {
+          "contains": [],
+          "exact": [],
+          "inputs": [
+            "create_agent"
+          ],
+          "output": "create_agent"
+        },
+        {
+          "contains": [],
+          "exact": [],
+          "inputs": [
+            "create_memory"
+          ],
+          "output": "create_memory"
+        },
+        {
+          "contains": [],
+          "exact": [],
+          "inputs": [
+            "create_memory_store"
+          ],
+          "output": "create_memory_store"
+        },
+        {
+          "contains": [],
+          "exact": [],
+          "inputs": [
+            "delete_memory"
+          ],
+          "output": "delete_memory"
+        },
+        {
+          "contains": [],
+          "exact": [],
+          "inputs": [
+            "delete_memory_store"
+          ],
+          "output": "delete_memory_store"
+        },
+        {
+          "contains": [],
+          "exact": [],
+          "inputs": [
+            "generate_content"
+          ],
+          "output": "generate_content"
+        },
+        {
+          "contains": [],
+          "exact": [],
+          "inputs": [
+            "invoke_agent"
+          ],
+          "output": "invoke_agent"
+        },
+        {
+          "contains": [],
+          "exact": [],
+          "inputs": [
+            "invoke_workflow"
+          ],
+          "output": "invoke_workflow"
+        },
+        {
+          "contains": [],
+          "exact": [],
+          "inputs": [
+            "plan"
+          ],
+          "output": "plan"
+        },
+        {
+          "contains": [],
+          "exact": [],
+          "inputs": [
+            "retrieval"
+          ],
+          "output": "retrieval"
+        },
+        {
+          "contains": [],
+          "exact": [],
+          "inputs": [
+            "search_memory"
+          ],
+          "output": "search_memory"
+        },
+        {
+          "contains": [],
+          "exact": [],
+          "inputs": [
+            "text_completion"
+          ],
+          "output": "text_completion"
+        },
+        {
+          "contains": [],
+          "exact": [],
+          "inputs": [
+            "update_memory"
+          ],
+          "output": "update_memory"
+        },
+        {
+          "contains": [],
+          "exact": [],
+          "inputs": [
+            "upsert_memory"
+          ],
+          "output": "upsert_memory"
+        }
+      ],
+      "separators": [],
+      "trim": "unicode-space",
+      "unmatched": "reject",
+      "values": []
+    },
+    {
+      "case": "preserve",
+      "empty": "reject",
+      "id": "token-type-label-v1",
+      "kind": "enum",
+      "max_utf8_bytes": 0,
+      "overflow": "",
+      "pattern": "",
+      "prefixes": [],
+      "rules": [],
+      "separators": [],
+      "trim": "none",
+      "unmatched": "reject",
+      "values": [
+        "input",
+        "output",
+        "cacheRead",
+        "cacheCreation"
+      ]
+    }
+  ],
+  "source_projection_plans": [
+    {
+      "cumulative_series": {
+        "applicability": "monotonic-cumulative-sum",
+        "components": [
+          {
+            "allowed_values": [],
+            "id": "authenticated_source",
+            "normalization": "bounded-label-v1",
+            "requirement": "required",
+            "source_groups": [
+              {
+                "keys": [
+                  "$authenticated_source"
+                ],
+                "placement": "authenticated_source"
+              }
+            ]
+          },
+          {
+            "allowed_values": [],
+            "id": "resource_service_name",
+            "normalization": "bounded-label-v1",
+            "requirement": "optional",
+            "source_groups": [
+              {
+                "keys": [
+                  "service.name"
+                ],
+                "placement": "resource_attribute"
+              }
+            ]
+          },
+          {
+            "allowed_values": [],
+            "id": "resource_service_instance_id",
+            "normalization": "identifier-label-v1",
+            "requirement": "optional",
+            "source_groups": [
+              {
+                "keys": [
+                  "service.instance.id"
+                ],
+                "placement": "resource_attribute"
+              }
+            ]
+          },
+          {
+            "allowed_values": [],
+            "id": "instrument_name",
+            "normalization": "identifier-label-v1",
+            "requirement": "required",
+            "source_groups": [
+              {
+                "keys": [
+                  "$instrument_name"
+                ],
+                "placement": "instrument_name"
+              }
+            ]
+          },
+          {
+            "allowed_values": [],
+            "id": "normalized_model",
+            "normalization": "genai-model-label-v1",
+            "requirement": "required",
+            "source_groups": [
+              {
+                "keys": [
+                  "gen_ai.request.model",
+                  "gen_ai.response.model",
+                  "model"
+                ],
+                "placement": "metric_point_attribute"
+              },
+              {
+                "keys": [
+                  "unknown"
+                ],
+                "placement": "fixed"
+              }
+            ]
+          },
+          {
+            "allowed_values": [
+              "input",
+              "output",
+              "cacheRead",
+              "cacheCreation"
+            ],
+            "id": "token_type",
+            "normalization": "token-type-label-v1",
+            "requirement": "required",
+            "source_groups": [
+              {
+                "keys": [
+                  "type"
+                ],
+                "placement": "metric_point_attribute"
+              }
+            ]
+          },
+          {
+            "allowed_values": [],
+            "id": "normalized_conversation",
+            "normalization": "identifier-label-v1",
+            "requirement": "optional",
+            "source_groups": [
+              {
+                "keys": [
+                  "gen_ai.conversation.id",
+                  "conversation.id",
+                  "session.id",
+                  "session_id"
+                ],
+                "placement": "metric_point_attribute"
+              },
+              {
+                "keys": [
+                  "gen_ai.conversation.id",
+                  "conversation.id",
+                  "session.id",
+                  "session_id"
+                ],
+                "placement": "resource_attribute"
+              }
+            ]
+          }
+        ],
+        "framing": "length-prefixed-presence-v1",
+        "normalization_stage": "before_framing",
+        "reset_epoch": {
+          "identity": false,
+          "key": "$start_time_unix_nano",
+          "normalization": "unsigned-epoch-nanos-v1",
+          "placement": "metric_point_start_time",
+          "role": "reset_only"
+        }
+      },
+      "field_rules": [
+        {
+          "disposition": "omit",
+          "target": "gen_ai.agent.id"
+        },
+        {
+          "allowed_values": [],
+          "disposition": "project",
+          "normalization": "bounded-label-v1",
+          "requirement": "required",
+          "source_groups": [
+            {
+              "keys": [
+                "$authenticated_source"
+              ],
+              "placement": "authenticated_source"
+            },
+            {
+              "keys": [
+                "service.name"
+              ],
+              "placement": "resource_attribute"
+            }
+          ],
+          "target": "gen_ai.agent.name"
+        },
+        {
+          "allowed_values": [],
+          "disposition": "project",
+          "normalization": "identifier-label-v1",
+          "requirement": "optional",
+          "source_groups": [
+            {
+              "keys": [
+                "gen_ai.conversation.id",
+                "conversation.id",
+                "session.id",
+                "session_id"
+              ],
+              "placement": "metric_point_attribute"
+            },
+            {
+              "keys": [
+                "gen_ai.conversation.id",
+                "conversation.id",
+                "session.id",
+                "session_id"
+              ],
+              "placement": "resource_attribute"
+            }
+          ],
+          "target": "gen_ai.conversation.id"
+        },
+        {
+          "allowed_values": [],
+          "disposition": "project",
+          "normalization": "genai-operation-label-v1",
+          "requirement": "required",
+          "source_groups": [
+            {
+              "keys": [
+                "chat"
+              ],
+              "placement": "fixed"
+            }
+          ],
+          "target": "gen_ai.operation.name"
+        },
+        {
+          "allowed_values": [],
+          "disposition": "project",
+          "normalization": "genai-provider-label-v1",
+          "requirement": "required",
+          "source_groups": [
+            {
+              "keys": [
+                "gen_ai.provider.name"
+              ],
+              "placement": "metric_point_attribute"
+            },
+            {
+              "keys": [
+                "$authenticated_source"
+              ],
+              "placement": "authenticated_source"
+            },
+            {
+              "keys": [
+                "service.name"
+              ],
+              "placement": "resource_attribute"
+            }
+          ],
+          "target": "gen_ai.provider.name"
+        },
+        {
+          "allowed_values": [],
+          "disposition": "project",
+          "normalization": "genai-model-label-v1",
+          "requirement": "required",
+          "source_groups": [
+            {
+              "keys": [
+                "gen_ai.request.model",
+                "gen_ai.response.model",
+                "model"
+              ],
+              "placement": "metric_point_attribute"
+            },
+            {
+              "keys": [
+                "unknown"
+              ],
+              "placement": "fixed"
+            }
+          ],
+          "target": "gen_ai.request.model"
+        },
+        {
+          "allowed_values": [
+            "input",
+            "output",
+            "cacheRead",
+            "cacheCreation"
+          ],
+          "disposition": "project",
+          "normalization": "token-type-label-v1",
+          "requirement": "required",
+          "source_groups": [
+            {
+              "keys": [
+                "type"
+              ],
+              "placement": "metric_point_attribute"
+            }
+          ],
+          "target": "gen_ai.token.type"
+        }
+      ],
+      "id": "genai-token-metric-v1",
+      "target_family": "metric.gen_ai.client.token.usage"
+    },
+    {
+      "cumulative_series": null,
+      "field_rules": [
+        {
+          "disposition": "omit",
+          "target": "gen_ai.agent.id"
+        },
+        {
+          "allowed_values": [],
+          "disposition": "project",
+          "normalization": "bounded-label-v1",
+          "requirement": "required",
+          "source_groups": [
+            {
+              "keys": [
+                "$authenticated_source"
+              ],
+              "placement": "authenticated_source"
+            },
+            {
+              "keys": [
+                "service.name"
+              ],
+              "placement": "resource_attribute"
+            }
+          ],
+          "target": "gen_ai.agent.name"
+        },
+        {
+          "allowed_values": [],
+          "disposition": "project",
+          "normalization": "genai-operation-label-v1",
+          "requirement": "required",
+          "source_groups": [
+            {
+              "keys": [
+                "gen_ai.operation.name"
+              ],
+              "placement": "metric_point_attribute"
+            },
+            {
+              "keys": [
+                "chat"
+              ],
+              "placement": "fixed"
+            }
+          ],
+          "target": "gen_ai.operation.name"
+        },
+        {
+          "allowed_values": [],
+          "disposition": "project",
+          "normalization": "genai-provider-label-v1",
+          "requirement": "required",
+          "source_groups": [
+            {
+              "keys": [
+                "gen_ai.provider.name"
+              ],
+              "placement": "metric_point_attribute"
+            },
+            {
+              "keys": [
+                "$authenticated_source"
+              ],
+              "placement": "authenticated_source"
+            },
+            {
+              "keys": [
+                "service.name"
+              ],
+              "placement": "resource_attribute"
+            }
+          ],
+          "target": "gen_ai.provider.name"
+        },
+        {
+          "allowed_values": [],
+          "disposition": "project",
+          "normalization": "genai-model-label-v1",
+          "requirement": "required",
+          "source_groups": [
+            {
+              "keys": [
+                "gen_ai.request.model",
+                "gen_ai.response.model",
+                "model"
+              ],
+              "placement": "metric_point_attribute"
+            },
+            {
+              "keys": [
+                "unknown"
+              ],
+              "placement": "fixed"
+            }
+          ],
+          "target": "gen_ai.request.model"
+        }
+      ],
+      "id": "genai-duration-metric-v1",
+      "target_family": "metric.gen_ai.client.operation.duration"
+    }
+  ],
   "support": {
     "encodings": [
       "json",
@@ -52698,6 +54229,8 @@
       "traces",
       "metrics"
     ],
+    "source_normalizers": 6,
+    "source_projection_plans": 2,
     "target_descriptors": 245,
     "unit_fixture_cases": 393
   },
@@ -52737,6 +54270,286 @@
       "outcome_rule": "forbidden",
       "role": "derive",
       "signal": "metrics",
+      "source_projection_plan": {
+        "cumulative_series": {
+          "applicability": "monotonic-cumulative-sum",
+          "components": [
+            {
+              "allowed_values": [],
+              "id": "authenticated_source",
+              "normalization": "bounded-label-v1",
+              "requirement": "required",
+              "source_groups": [
+                {
+                  "keys": [
+                    "$authenticated_source"
+                  ],
+                  "placement": "authenticated_source"
+                }
+              ]
+            },
+            {
+              "allowed_values": [],
+              "id": "resource_service_name",
+              "normalization": "bounded-label-v1",
+              "requirement": "optional",
+              "source_groups": [
+                {
+                  "keys": [
+                    "service.name"
+                  ],
+                  "placement": "resource_attribute"
+                }
+              ]
+            },
+            {
+              "allowed_values": [],
+              "id": "resource_service_instance_id",
+              "normalization": "identifier-label-v1",
+              "requirement": "optional",
+              "source_groups": [
+                {
+                  "keys": [
+                    "service.instance.id"
+                  ],
+                  "placement": "resource_attribute"
+                }
+              ]
+            },
+            {
+              "allowed_values": [],
+              "id": "instrument_name",
+              "normalization": "identifier-label-v1",
+              "requirement": "required",
+              "source_groups": [
+                {
+                  "keys": [
+                    "$instrument_name"
+                  ],
+                  "placement": "instrument_name"
+                }
+              ]
+            },
+            {
+              "allowed_values": [],
+              "id": "normalized_model",
+              "normalization": "genai-model-label-v1",
+              "requirement": "required",
+              "source_groups": [
+                {
+                  "keys": [
+                    "gen_ai.request.model",
+                    "gen_ai.response.model",
+                    "model"
+                  ],
+                  "placement": "metric_point_attribute"
+                },
+                {
+                  "keys": [
+                    "unknown"
+                  ],
+                  "placement": "fixed"
+                }
+              ]
+            },
+            {
+              "allowed_values": [
+                "input",
+                "output",
+                "cacheRead",
+                "cacheCreation"
+              ],
+              "id": "token_type",
+              "normalization": "token-type-label-v1",
+              "requirement": "required",
+              "source_groups": [
+                {
+                  "keys": [
+                    "type"
+                  ],
+                  "placement": "metric_point_attribute"
+                }
+              ]
+            },
+            {
+              "allowed_values": [],
+              "id": "normalized_conversation",
+              "normalization": "identifier-label-v1",
+              "requirement": "optional",
+              "source_groups": [
+                {
+                  "keys": [
+                    "gen_ai.conversation.id",
+                    "conversation.id",
+                    "session.id",
+                    "session_id"
+                  ],
+                  "placement": "metric_point_attribute"
+                },
+                {
+                  "keys": [
+                    "gen_ai.conversation.id",
+                    "conversation.id",
+                    "session.id",
+                    "session_id"
+                  ],
+                  "placement": "resource_attribute"
+                }
+              ]
+            }
+          ],
+          "framing": "length-prefixed-presence-v1",
+          "normalization_stage": "before_framing",
+          "reset_epoch": {
+            "identity": false,
+            "key": "$start_time_unix_nano",
+            "normalization": "unsigned-epoch-nanos-v1",
+            "placement": "metric_point_start_time",
+            "role": "reset_only"
+          }
+        },
+        "field_rules": [
+          {
+            "disposition": "omit",
+            "target": "gen_ai.agent.id"
+          },
+          {
+            "allowed_values": [],
+            "disposition": "project",
+            "normalization": "bounded-label-v1",
+            "requirement": "required",
+            "source_groups": [
+              {
+                "keys": [
+                  "$authenticated_source"
+                ],
+                "placement": "authenticated_source"
+              },
+              {
+                "keys": [
+                  "service.name"
+                ],
+                "placement": "resource_attribute"
+              }
+            ],
+            "target": "gen_ai.agent.name"
+          },
+          {
+            "allowed_values": [],
+            "disposition": "project",
+            "normalization": "identifier-label-v1",
+            "requirement": "optional",
+            "source_groups": [
+              {
+                "keys": [
+                  "gen_ai.conversation.id",
+                  "conversation.id",
+                  "session.id",
+                  "session_id"
+                ],
+                "placement": "metric_point_attribute"
+              },
+              {
+                "keys": [
+                  "gen_ai.conversation.id",
+                  "conversation.id",
+                  "session.id",
+                  "session_id"
+                ],
+                "placement": "resource_attribute"
+              }
+            ],
+            "target": "gen_ai.conversation.id"
+          },
+          {
+            "allowed_values": [],
+            "disposition": "project",
+            "normalization": "genai-operation-label-v1",
+            "requirement": "required",
+            "source_groups": [
+              {
+                "keys": [
+                  "chat"
+                ],
+                "placement": "fixed"
+              }
+            ],
+            "target": "gen_ai.operation.name"
+          },
+          {
+            "allowed_values": [],
+            "disposition": "project",
+            "normalization": "genai-provider-label-v1",
+            "requirement": "required",
+            "source_groups": [
+              {
+                "keys": [
+                  "gen_ai.provider.name"
+                ],
+                "placement": "metric_point_attribute"
+              },
+              {
+                "keys": [
+                  "$authenticated_source"
+                ],
+                "placement": "authenticated_source"
+              },
+              {
+                "keys": [
+                  "service.name"
+                ],
+                "placement": "resource_attribute"
+              }
+            ],
+            "target": "gen_ai.provider.name"
+          },
+          {
+            "allowed_values": [],
+            "disposition": "project",
+            "normalization": "genai-model-label-v1",
+            "requirement": "required",
+            "source_groups": [
+              {
+                "keys": [
+                  "gen_ai.request.model",
+                  "gen_ai.response.model",
+                  "model"
+                ],
+                "placement": "metric_point_attribute"
+              },
+              {
+                "keys": [
+                  "unknown"
+                ],
+                "placement": "fixed"
+              }
+            ],
+            "target": "gen_ai.request.model"
+          },
+          {
+            "allowed_values": [
+              "input",
+              "output",
+              "cacheRead",
+              "cacheCreation"
+            ],
+            "disposition": "project",
+            "normalization": "token-type-label-v1",
+            "requirement": "required",
+            "source_groups": [
+              {
+                "keys": [
+                  "type"
+                ],
+                "placement": "metric_point_attribute"
+              }
+            ],
+            "target": "gen_ai.token.type"
+          }
+        ],
+        "id": "genai-token-metric-v1",
+        "target_family": "metric.gen_ai.client.token.usage"
+      },
       "source_unit_rule": {
         "accepted": [
           {
@@ -52915,6 +54728,7 @@
       },
       "role": "import",
       "signal": "logs",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -53076,6 +54890,7 @@
       },
       "role": "import",
       "signal": "logs",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -53115,6 +54930,7 @@
       "outcome_rule": "forbidden",
       "role": "derive",
       "signal": "metrics",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -53158,6 +54974,7 @@
       "outcome_rule": "forbidden",
       "role": "derive",
       "signal": "metrics",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -53319,6 +55136,7 @@
       },
       "role": "import",
       "signal": "logs",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -53358,6 +55176,109 @@
       "outcome_rule": "forbidden",
       "role": "derive",
       "signal": "metrics",
+      "source_projection_plan": {
+        "cumulative_series": null,
+        "field_rules": [
+          {
+            "disposition": "omit",
+            "target": "gen_ai.agent.id"
+          },
+          {
+            "allowed_values": [],
+            "disposition": "project",
+            "normalization": "bounded-label-v1",
+            "requirement": "required",
+            "source_groups": [
+              {
+                "keys": [
+                  "$authenticated_source"
+                ],
+                "placement": "authenticated_source"
+              },
+              {
+                "keys": [
+                  "service.name"
+                ],
+                "placement": "resource_attribute"
+              }
+            ],
+            "target": "gen_ai.agent.name"
+          },
+          {
+            "allowed_values": [],
+            "disposition": "project",
+            "normalization": "genai-operation-label-v1",
+            "requirement": "required",
+            "source_groups": [
+              {
+                "keys": [
+                  "gen_ai.operation.name"
+                ],
+                "placement": "metric_point_attribute"
+              },
+              {
+                "keys": [
+                  "chat"
+                ],
+                "placement": "fixed"
+              }
+            ],
+            "target": "gen_ai.operation.name"
+          },
+          {
+            "allowed_values": [],
+            "disposition": "project",
+            "normalization": "genai-provider-label-v1",
+            "requirement": "required",
+            "source_groups": [
+              {
+                "keys": [
+                  "gen_ai.provider.name"
+                ],
+                "placement": "metric_point_attribute"
+              },
+              {
+                "keys": [
+                  "$authenticated_source"
+                ],
+                "placement": "authenticated_source"
+              },
+              {
+                "keys": [
+                  "service.name"
+                ],
+                "placement": "resource_attribute"
+              }
+            ],
+            "target": "gen_ai.provider.name"
+          },
+          {
+            "allowed_values": [],
+            "disposition": "project",
+            "normalization": "genai-model-label-v1",
+            "requirement": "required",
+            "source_groups": [
+              {
+                "keys": [
+                  "gen_ai.request.model",
+                  "gen_ai.response.model",
+                  "model"
+                ],
+                "placement": "metric_point_attribute"
+              },
+              {
+                "keys": [
+                  "unknown"
+                ],
+                "placement": "fixed"
+              }
+            ],
+            "target": "gen_ai.request.model"
+          }
+        ],
+        "id": "genai-duration-metric-v1",
+        "target_family": "metric.gen_ai.client.operation.duration"
+      },
       "source_unit_rule": {
         "accepted": [
           {
@@ -53450,6 +55371,109 @@
       "outcome_rule": "forbidden",
       "role": "derive",
       "signal": "metrics",
+      "source_projection_plan": {
+        "cumulative_series": null,
+        "field_rules": [
+          {
+            "disposition": "omit",
+            "target": "gen_ai.agent.id"
+          },
+          {
+            "allowed_values": [],
+            "disposition": "project",
+            "normalization": "bounded-label-v1",
+            "requirement": "required",
+            "source_groups": [
+              {
+                "keys": [
+                  "$authenticated_source"
+                ],
+                "placement": "authenticated_source"
+              },
+              {
+                "keys": [
+                  "service.name"
+                ],
+                "placement": "resource_attribute"
+              }
+            ],
+            "target": "gen_ai.agent.name"
+          },
+          {
+            "allowed_values": [],
+            "disposition": "project",
+            "normalization": "genai-operation-label-v1",
+            "requirement": "required",
+            "source_groups": [
+              {
+                "keys": [
+                  "gen_ai.operation.name"
+                ],
+                "placement": "metric_point_attribute"
+              },
+              {
+                "keys": [
+                  "chat"
+                ],
+                "placement": "fixed"
+              }
+            ],
+            "target": "gen_ai.operation.name"
+          },
+          {
+            "allowed_values": [],
+            "disposition": "project",
+            "normalization": "genai-provider-label-v1",
+            "requirement": "required",
+            "source_groups": [
+              {
+                "keys": [
+                  "gen_ai.provider.name"
+                ],
+                "placement": "metric_point_attribute"
+              },
+              {
+                "keys": [
+                  "$authenticated_source"
+                ],
+                "placement": "authenticated_source"
+              },
+              {
+                "keys": [
+                  "service.name"
+                ],
+                "placement": "resource_attribute"
+              }
+            ],
+            "target": "gen_ai.provider.name"
+          },
+          {
+            "allowed_values": [],
+            "disposition": "project",
+            "normalization": "genai-model-label-v1",
+            "requirement": "required",
+            "source_groups": [
+              {
+                "keys": [
+                  "gen_ai.request.model",
+                  "gen_ai.response.model",
+                  "model"
+                ],
+                "placement": "metric_point_attribute"
+              },
+              {
+                "keys": [
+                  "unknown"
+                ],
+                "placement": "fixed"
+              }
+            ],
+            "target": "gen_ai.request.model"
+          }
+        ],
+        "id": "genai-duration-metric-v1",
+        "target_family": "metric.gen_ai.client.operation.duration"
+      },
       "source_unit_rule": {
         "accepted": [
           {
@@ -53542,6 +55566,109 @@
       "outcome_rule": "forbidden",
       "role": "derive",
       "signal": "metrics",
+      "source_projection_plan": {
+        "cumulative_series": null,
+        "field_rules": [
+          {
+            "disposition": "omit",
+            "target": "gen_ai.agent.id"
+          },
+          {
+            "allowed_values": [],
+            "disposition": "project",
+            "normalization": "bounded-label-v1",
+            "requirement": "required",
+            "source_groups": [
+              {
+                "keys": [
+                  "$authenticated_source"
+                ],
+                "placement": "authenticated_source"
+              },
+              {
+                "keys": [
+                  "service.name"
+                ],
+                "placement": "resource_attribute"
+              }
+            ],
+            "target": "gen_ai.agent.name"
+          },
+          {
+            "allowed_values": [],
+            "disposition": "project",
+            "normalization": "genai-operation-label-v1",
+            "requirement": "required",
+            "source_groups": [
+              {
+                "keys": [
+                  "gen_ai.operation.name"
+                ],
+                "placement": "metric_point_attribute"
+              },
+              {
+                "keys": [
+                  "chat"
+                ],
+                "placement": "fixed"
+              }
+            ],
+            "target": "gen_ai.operation.name"
+          },
+          {
+            "allowed_values": [],
+            "disposition": "project",
+            "normalization": "genai-provider-label-v1",
+            "requirement": "required",
+            "source_groups": [
+              {
+                "keys": [
+                  "gen_ai.provider.name"
+                ],
+                "placement": "metric_point_attribute"
+              },
+              {
+                "keys": [
+                  "$authenticated_source"
+                ],
+                "placement": "authenticated_source"
+              },
+              {
+                "keys": [
+                  "service.name"
+                ],
+                "placement": "resource_attribute"
+              }
+            ],
+            "target": "gen_ai.provider.name"
+          },
+          {
+            "allowed_values": [],
+            "disposition": "project",
+            "normalization": "genai-model-label-v1",
+            "requirement": "required",
+            "source_groups": [
+              {
+                "keys": [
+                  "gen_ai.request.model",
+                  "gen_ai.response.model",
+                  "model"
+                ],
+                "placement": "metric_point_attribute"
+              },
+              {
+                "keys": [
+                  "unknown"
+                ],
+                "placement": "fixed"
+              }
+            ],
+            "target": "gen_ai.request.model"
+          }
+        ],
+        "id": "genai-duration-metric-v1",
+        "target_family": "metric.gen_ai.client.operation.duration"
+      },
       "source_unit_rule": {
         "accepted": [
           {
@@ -53634,6 +55761,109 @@
       "outcome_rule": "forbidden",
       "role": "derive",
       "signal": "metrics",
+      "source_projection_plan": {
+        "cumulative_series": null,
+        "field_rules": [
+          {
+            "disposition": "omit",
+            "target": "gen_ai.agent.id"
+          },
+          {
+            "allowed_values": [],
+            "disposition": "project",
+            "normalization": "bounded-label-v1",
+            "requirement": "required",
+            "source_groups": [
+              {
+                "keys": [
+                  "$authenticated_source"
+                ],
+                "placement": "authenticated_source"
+              },
+              {
+                "keys": [
+                  "service.name"
+                ],
+                "placement": "resource_attribute"
+              }
+            ],
+            "target": "gen_ai.agent.name"
+          },
+          {
+            "allowed_values": [],
+            "disposition": "project",
+            "normalization": "genai-operation-label-v1",
+            "requirement": "required",
+            "source_groups": [
+              {
+                "keys": [
+                  "gen_ai.operation.name"
+                ],
+                "placement": "metric_point_attribute"
+              },
+              {
+                "keys": [
+                  "chat"
+                ],
+                "placement": "fixed"
+              }
+            ],
+            "target": "gen_ai.operation.name"
+          },
+          {
+            "allowed_values": [],
+            "disposition": "project",
+            "normalization": "genai-provider-label-v1",
+            "requirement": "required",
+            "source_groups": [
+              {
+                "keys": [
+                  "gen_ai.provider.name"
+                ],
+                "placement": "metric_point_attribute"
+              },
+              {
+                "keys": [
+                  "$authenticated_source"
+                ],
+                "placement": "authenticated_source"
+              },
+              {
+                "keys": [
+                  "service.name"
+                ],
+                "placement": "resource_attribute"
+              }
+            ],
+            "target": "gen_ai.provider.name"
+          },
+          {
+            "allowed_values": [],
+            "disposition": "project",
+            "normalization": "genai-model-label-v1",
+            "requirement": "required",
+            "source_groups": [
+              {
+                "keys": [
+                  "gen_ai.request.model",
+                  "gen_ai.response.model",
+                  "model"
+                ],
+                "placement": "metric_point_attribute"
+              },
+              {
+                "keys": [
+                  "unknown"
+                ],
+                "placement": "fixed"
+              }
+            ],
+            "target": "gen_ai.request.model"
+          }
+        ],
+        "id": "genai-duration-metric-v1",
+        "target_family": "metric.gen_ai.client.operation.duration"
+      },
       "source_unit_rule": {
         "accepted": [
           {
@@ -53726,6 +55956,109 @@
       "outcome_rule": "forbidden",
       "role": "derive",
       "signal": "metrics",
+      "source_projection_plan": {
+        "cumulative_series": null,
+        "field_rules": [
+          {
+            "disposition": "omit",
+            "target": "gen_ai.agent.id"
+          },
+          {
+            "allowed_values": [],
+            "disposition": "project",
+            "normalization": "bounded-label-v1",
+            "requirement": "required",
+            "source_groups": [
+              {
+                "keys": [
+                  "$authenticated_source"
+                ],
+                "placement": "authenticated_source"
+              },
+              {
+                "keys": [
+                  "service.name"
+                ],
+                "placement": "resource_attribute"
+              }
+            ],
+            "target": "gen_ai.agent.name"
+          },
+          {
+            "allowed_values": [],
+            "disposition": "project",
+            "normalization": "genai-operation-label-v1",
+            "requirement": "required",
+            "source_groups": [
+              {
+                "keys": [
+                  "gen_ai.operation.name"
+                ],
+                "placement": "metric_point_attribute"
+              },
+              {
+                "keys": [
+                  "chat"
+                ],
+                "placement": "fixed"
+              }
+            ],
+            "target": "gen_ai.operation.name"
+          },
+          {
+            "allowed_values": [],
+            "disposition": "project",
+            "normalization": "genai-provider-label-v1",
+            "requirement": "required",
+            "source_groups": [
+              {
+                "keys": [
+                  "gen_ai.provider.name"
+                ],
+                "placement": "metric_point_attribute"
+              },
+              {
+                "keys": [
+                  "$authenticated_source"
+                ],
+                "placement": "authenticated_source"
+              },
+              {
+                "keys": [
+                  "service.name"
+                ],
+                "placement": "resource_attribute"
+              }
+            ],
+            "target": "gen_ai.provider.name"
+          },
+          {
+            "allowed_values": [],
+            "disposition": "project",
+            "normalization": "genai-model-label-v1",
+            "requirement": "required",
+            "source_groups": [
+              {
+                "keys": [
+                  "gen_ai.request.model",
+                  "gen_ai.response.model",
+                  "model"
+                ],
+                "placement": "metric_point_attribute"
+              },
+              {
+                "keys": [
+                  "unknown"
+                ],
+                "placement": "fixed"
+              }
+            ],
+            "target": "gen_ai.request.model"
+          }
+        ],
+        "id": "genai-duration-metric-v1",
+        "target_family": "metric.gen_ai.client.operation.duration"
+      },
       "source_unit_rule": {
         "accepted": [
           {
@@ -53818,6 +56151,7 @@
       "outcome_rule": "forbidden",
       "role": "derive",
       "signal": "metrics",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -53983,6 +56317,7 @@
       "outcome_rule": "otel-status-v1",
       "role": "import",
       "signal": "traces",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -54022,6 +56357,7 @@
       "outcome_rule": "forbidden",
       "role": "derive",
       "signal": "metrics",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -54207,6 +56543,7 @@
       "outcome_rule": "otel-status-v1",
       "role": "import",
       "signal": "traces",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -54246,6 +56583,7 @@
       "outcome_rule": "forbidden",
       "role": "derive",
       "signal": "metrics",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -54411,6 +56749,7 @@
       "outcome_rule": "otel-status-v1",
       "role": "import",
       "signal": "traces",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -54450,6 +56789,7 @@
       "outcome_rule": "forbidden",
       "role": "derive",
       "signal": "metrics",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -54585,6 +56925,7 @@
       "outcome_rule": "otel-status-v1",
       "role": "import",
       "signal": "traces",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -54624,6 +56965,7 @@
       "outcome_rule": "forbidden",
       "role": "derive",
       "signal": "metrics",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -54785,6 +57127,7 @@
       "outcome_rule": "otel-status-v1",
       "role": "import",
       "signal": "traces",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -54824,6 +57167,7 @@
       "outcome_rule": "forbidden",
       "role": "derive",
       "signal": "metrics",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -54983,6 +57327,7 @@
       "outcome_rule": "otel-status-v1",
       "role": "import",
       "signal": "traces",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -55024,6 +57369,7 @@
       "outcome_rule": "projected-record-v1",
       "role": "import",
       "signal": "logs",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -55065,6 +57411,7 @@
       "outcome_rule": "projected-record-v1",
       "role": "import",
       "signal": "logs",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -55104,6 +57451,7 @@
       "outcome_rule": "projected-record-v1",
       "role": "import",
       "signal": "logs",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -55159,6 +57507,7 @@
       "outcome_rule": "projected-record-v1",
       "role": "import",
       "signal": "logs",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -55224,6 +57573,7 @@
       "outcome_rule": "projected-record-v1",
       "role": "import",
       "signal": "logs",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -55289,6 +57639,7 @@
       "outcome_rule": "projected-record-v1",
       "role": "import",
       "signal": "logs",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -55354,6 +57705,7 @@
       "outcome_rule": "projected-record-v1",
       "role": "import",
       "signal": "logs",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -55419,6 +57771,7 @@
       "outcome_rule": "projected-record-v1",
       "role": "import",
       "signal": "logs",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -55474,6 +57827,7 @@
       "outcome_rule": "projected-record-v1",
       "role": "import",
       "signal": "logs",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -55529,6 +57883,7 @@
       "outcome_rule": "projected-record-v1",
       "role": "import",
       "signal": "logs",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -55630,6 +57985,7 @@
       "outcome_rule": "projected-record-v1",
       "role": "import",
       "signal": "logs",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -55699,6 +58055,7 @@
       "outcome_rule": "projected-record-v1",
       "role": "import",
       "signal": "logs",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -55768,6 +58125,7 @@
       "outcome_rule": "projected-record-v1",
       "role": "import",
       "signal": "logs",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -55837,6 +58195,7 @@
       "outcome_rule": "projected-record-v1",
       "role": "import",
       "signal": "logs",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -55906,6 +58265,7 @@
       "outcome_rule": "projected-record-v1",
       "role": "import",
       "signal": "logs",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -55975,6 +58335,7 @@
       "outcome_rule": "projected-record-v1",
       "role": "import",
       "signal": "logs",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -56044,6 +58405,7 @@
       "outcome_rule": "projected-record-v1",
       "role": "import",
       "signal": "logs",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -56113,6 +58475,7 @@
       "outcome_rule": "projected-record-v1",
       "role": "import",
       "signal": "logs",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -56182,6 +58545,7 @@
       "outcome_rule": "projected-record-v1",
       "role": "import",
       "signal": "logs",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -56251,6 +58615,7 @@
       "outcome_rule": "projected-record-v1",
       "role": "import",
       "signal": "logs",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -56306,6 +58671,7 @@
       "outcome_rule": "projected-record-v1",
       "role": "import",
       "signal": "logs",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -56361,6 +58727,7 @@
       "outcome_rule": "projected-record-v1",
       "role": "import",
       "signal": "logs",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -56478,6 +58845,7 @@
       "outcome_rule": "projected-record-v1",
       "role": "import",
       "signal": "logs",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -56595,6 +58963,7 @@
       "outcome_rule": "projected-record-v1",
       "role": "import",
       "signal": "logs",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -56712,6 +59081,7 @@
       "outcome_rule": "projected-record-v1",
       "role": "import",
       "signal": "logs",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -56835,6 +59205,7 @@
       "outcome_rule": "projected-record-v1",
       "role": "import",
       "signal": "logs",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -56952,6 +59323,7 @@
       "outcome_rule": "projected-record-v1",
       "role": "import",
       "signal": "logs",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -57069,6 +59441,7 @@
       "outcome_rule": "projected-record-v1",
       "role": "import",
       "signal": "logs",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -57186,6 +59559,7 @@
       "outcome_rule": "projected-record-v1",
       "role": "import",
       "signal": "logs",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -57303,6 +59677,7 @@
       "outcome_rule": "projected-record-v1",
       "role": "import",
       "signal": "logs",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -57424,6 +59799,7 @@
       "outcome_rule": "projected-record-v1",
       "role": "import",
       "signal": "logs",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -57545,6 +59921,7 @@
       "outcome_rule": "projected-record-v1",
       "role": "import",
       "signal": "logs",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -57662,6 +60039,7 @@
       "outcome_rule": "projected-record-v1",
       "role": "import",
       "signal": "logs",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -57779,6 +60157,7 @@
       "outcome_rule": "projected-record-v1",
       "role": "import",
       "signal": "logs",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -57834,6 +60213,7 @@
       "outcome_rule": "projected-record-v1",
       "role": "import",
       "signal": "logs",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -57889,6 +60269,7 @@
       "outcome_rule": "projected-record-v1",
       "role": "import",
       "signal": "logs",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -57944,6 +60325,7 @@
       "outcome_rule": "projected-record-v1",
       "role": "import",
       "signal": "logs",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -57979,6 +60361,7 @@
       "outcome_rule": "projected-record-v1",
       "role": "import",
       "signal": "logs",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -58014,6 +60397,7 @@
       "outcome_rule": "projected-record-v1",
       "role": "import",
       "signal": "logs",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -58049,6 +60433,7 @@
       "outcome_rule": "projected-record-v1",
       "role": "import",
       "signal": "logs",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -58084,6 +60469,7 @@
       "outcome_rule": "projected-record-v1",
       "role": "import",
       "signal": "logs",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -58149,6 +60535,7 @@
       "outcome_rule": "projected-record-v1",
       "role": "import",
       "signal": "logs",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -58214,6 +60601,7 @@
       "outcome_rule": "projected-record-v1",
       "role": "import",
       "signal": "logs",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -58269,6 +60657,7 @@
       "outcome_rule": "projected-record-v1",
       "role": "import",
       "signal": "logs",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -58302,6 +60691,7 @@
       "outcome_rule": "projected-record-v1",
       "role": "import",
       "signal": "logs",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -58335,6 +60725,7 @@
       "outcome_rule": "projected-record-v1",
       "role": "import",
       "signal": "logs",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -58406,6 +60797,7 @@
       "outcome_rule": "projected-record-v1",
       "role": "import",
       "signal": "logs",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -58477,6 +60869,7 @@
       "outcome_rule": "projected-record-v1",
       "role": "import",
       "signal": "logs",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -58548,6 +60941,7 @@
       "outcome_rule": "projected-record-v1",
       "role": "import",
       "signal": "logs",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -58619,6 +61013,7 @@
       "outcome_rule": "projected-record-v1",
       "role": "import",
       "signal": "logs",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -58690,6 +61085,7 @@
       "outcome_rule": "projected-record-v1",
       "role": "import",
       "signal": "logs",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -58745,6 +61141,7 @@
       "outcome_rule": "projected-record-v1",
       "role": "import",
       "signal": "logs",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -58800,6 +61197,7 @@
       "outcome_rule": "projected-record-v1",
       "role": "import",
       "signal": "logs",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -58855,6 +61253,7 @@
       "outcome_rule": "projected-record-v1",
       "role": "import",
       "signal": "logs",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -58910,6 +61309,7 @@
       "outcome_rule": "projected-record-v1",
       "role": "import",
       "signal": "logs",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -58965,6 +61365,7 @@
       "outcome_rule": "projected-record-v1",
       "role": "import",
       "signal": "logs",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -59020,6 +61421,7 @@
       "outcome_rule": "projected-record-v1",
       "role": "import",
       "signal": "logs",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -59075,6 +61477,7 @@
       "outcome_rule": "projected-record-v1",
       "role": "import",
       "signal": "logs",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -59156,6 +61559,7 @@
       "outcome_rule": "projected-record-v1",
       "role": "import",
       "signal": "logs",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -59237,6 +61641,7 @@
       "outcome_rule": "projected-record-v1",
       "role": "import",
       "signal": "logs",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -59370,6 +61775,7 @@
       "outcome_rule": "projected-record-v1",
       "role": "import",
       "signal": "logs",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -59503,6 +61909,7 @@
       "outcome_rule": "projected-record-v1",
       "role": "import",
       "signal": "logs",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -59636,6 +62043,7 @@
       "outcome_rule": "projected-record-v1",
       "role": "import",
       "signal": "logs",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -59733,6 +62141,7 @@
       "outcome_rule": "projected-record-v1",
       "role": "import",
       "signal": "logs",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -59892,6 +62301,7 @@
       "outcome_rule": "projected-record-v1",
       "role": "import",
       "signal": "logs",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -60051,6 +62461,7 @@
       "outcome_rule": "projected-record-v1",
       "role": "import",
       "signal": "logs",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -60210,6 +62621,7 @@
       "outcome_rule": "projected-record-v1",
       "role": "import",
       "signal": "logs",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -60369,6 +62781,7 @@
       "outcome_rule": "projected-record-v1",
       "role": "import",
       "signal": "logs",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -60424,6 +62837,7 @@
       "outcome_rule": "projected-record-v1",
       "role": "import",
       "signal": "logs",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -60479,6 +62893,7 @@
       "outcome_rule": "projected-record-v1",
       "role": "import",
       "signal": "logs",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -60514,6 +62929,7 @@
       "outcome_rule": "projected-record-v1",
       "role": "import",
       "signal": "logs",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -60569,6 +62985,7 @@
       "outcome_rule": "projected-record-v1",
       "role": "import",
       "signal": "logs",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -60642,6 +63059,7 @@
       "outcome_rule": "projected-record-v1",
       "role": "import",
       "signal": "logs",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -60715,6 +63133,7 @@
       "outcome_rule": "projected-record-v1",
       "role": "import",
       "signal": "logs",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -60788,6 +63207,7 @@
       "outcome_rule": "projected-record-v1",
       "role": "import",
       "signal": "logs",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -60861,6 +63281,7 @@
       "outcome_rule": "projected-record-v1",
       "role": "import",
       "signal": "logs",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -60934,6 +63355,7 @@
       "outcome_rule": "projected-record-v1",
       "role": "import",
       "signal": "logs",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -60969,6 +63391,7 @@
       "outcome_rule": "projected-record-v1",
       "role": "import",
       "signal": "logs",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -61004,6 +63427,7 @@
       "outcome_rule": "projected-record-v1",
       "role": "import",
       "signal": "logs",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -61039,6 +63463,7 @@
       "outcome_rule": "projected-record-v1",
       "role": "import",
       "signal": "logs",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -61074,6 +63499,7 @@
       "outcome_rule": "projected-record-v1",
       "role": "import",
       "signal": "logs",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -61109,6 +63535,7 @@
       "outcome_rule": "projected-record-v1",
       "role": "import",
       "signal": "logs",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -61158,6 +63585,7 @@
       "outcome_rule": "projected-record-v1",
       "role": "import",
       "signal": "logs",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -61207,6 +63635,7 @@
       "outcome_rule": "projected-record-v1",
       "role": "import",
       "signal": "logs",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -61256,6 +63685,7 @@
       "outcome_rule": "projected-record-v1",
       "role": "import",
       "signal": "logs",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -61305,6 +63735,7 @@
       "outcome_rule": "projected-record-v1",
       "role": "import",
       "signal": "logs",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -61354,6 +63785,7 @@
       "outcome_rule": "projected-record-v1",
       "role": "import",
       "signal": "logs",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -61403,6 +63835,7 @@
       "outcome_rule": "projected-record-v1",
       "role": "import",
       "signal": "logs",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -61524,6 +63957,7 @@
       "outcome_rule": "projected-record-v1",
       "role": "import",
       "signal": "logs",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -61645,6 +64079,7 @@
       "outcome_rule": "projected-record-v1",
       "role": "import",
       "signal": "logs",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -61766,6 +64201,7 @@
       "outcome_rule": "projected-record-v1",
       "role": "import",
       "signal": "logs",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -61887,6 +64323,7 @@
       "outcome_rule": "projected-record-v1",
       "role": "import",
       "signal": "logs",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -62008,6 +64445,7 @@
       "outcome_rule": "projected-record-v1",
       "role": "import",
       "signal": "logs",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -62043,6 +64481,7 @@
       "outcome_rule": "forbidden",
       "role": "import",
       "signal": "metrics",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [
           {
@@ -62083,6 +64522,7 @@
       "outcome_rule": "forbidden",
       "role": "import",
       "signal": "metrics",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [
           {
@@ -62121,6 +64561,7 @@
       "outcome_rule": "forbidden",
       "role": "import",
       "signal": "metrics",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [
           {
@@ -62157,6 +64598,7 @@
       "outcome_rule": "forbidden",
       "role": "import",
       "signal": "metrics",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [
           {
@@ -62197,6 +64639,7 @@
       "outcome_rule": "forbidden",
       "role": "import",
       "signal": "metrics",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [
           {
@@ -62241,6 +64684,7 @@
       "outcome_rule": "forbidden",
       "role": "import",
       "signal": "metrics",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [
           {
@@ -62293,6 +64737,7 @@
       "outcome_rule": "forbidden",
       "role": "import",
       "signal": "metrics",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [
           {
@@ -62355,6 +64800,7 @@
       "outcome_rule": "forbidden",
       "role": "import",
       "signal": "metrics",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [
           {
@@ -62401,6 +64847,7 @@
       "outcome_rule": "forbidden",
       "role": "import",
       "signal": "metrics",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [
           {
@@ -62449,6 +64896,7 @@
       "outcome_rule": "forbidden",
       "role": "import",
       "signal": "metrics",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [
           {
@@ -62499,6 +64947,7 @@
       "outcome_rule": "forbidden",
       "role": "import",
       "signal": "metrics",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [
           {
@@ -62551,6 +65000,7 @@
       "outcome_rule": "forbidden",
       "role": "import",
       "signal": "metrics",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [
           {
@@ -62589,6 +65039,7 @@
       "outcome_rule": "forbidden",
       "role": "import",
       "signal": "metrics",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [
           {
@@ -62631,6 +65082,7 @@
       "outcome_rule": "forbidden",
       "role": "import",
       "signal": "metrics",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [
           {
@@ -62669,6 +65121,7 @@
       "outcome_rule": "forbidden",
       "role": "import",
       "signal": "metrics",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [
           {
@@ -62707,6 +65160,7 @@
       "outcome_rule": "forbidden",
       "role": "import",
       "signal": "metrics",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [
           {
@@ -62747,6 +65201,7 @@
       "outcome_rule": "forbidden",
       "role": "import",
       "signal": "metrics",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [
           {
@@ -62785,6 +65240,7 @@
       "outcome_rule": "forbidden",
       "role": "import",
       "signal": "metrics",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [
           {
@@ -62825,6 +65281,7 @@
       "outcome_rule": "forbidden",
       "role": "import",
       "signal": "metrics",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [
           {
@@ -62877,6 +65334,7 @@
       "outcome_rule": "forbidden",
       "role": "import",
       "signal": "metrics",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [
           {
@@ -62929,6 +65387,7 @@
       "outcome_rule": "forbidden",
       "role": "import",
       "signal": "metrics",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [
           {
@@ -62969,6 +65428,7 @@
       "outcome_rule": "forbidden",
       "role": "import",
       "signal": "metrics",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [
           {
@@ -63015,6 +65475,7 @@
       "outcome_rule": "forbidden",
       "role": "import",
       "signal": "metrics",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [
           {
@@ -63057,6 +65518,7 @@
       "outcome_rule": "forbidden",
       "role": "import",
       "signal": "metrics",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [
           {
@@ -63097,6 +65559,7 @@
       "outcome_rule": "forbidden",
       "role": "import",
       "signal": "metrics",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [
           {
@@ -63133,6 +65596,7 @@
       "outcome_rule": "forbidden",
       "role": "import",
       "signal": "metrics",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [
           {
@@ -63173,6 +65637,7 @@
       "outcome_rule": "forbidden",
       "role": "import",
       "signal": "metrics",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [
           {
@@ -63215,6 +65680,7 @@
       "outcome_rule": "forbidden",
       "role": "import",
       "signal": "metrics",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [
           {
@@ -63257,6 +65723,7 @@
       "outcome_rule": "forbidden",
       "role": "import",
       "signal": "metrics",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [
           {
@@ -63295,6 +65762,7 @@
       "outcome_rule": "forbidden",
       "role": "import",
       "signal": "metrics",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [
           {
@@ -63335,6 +65803,7 @@
       "outcome_rule": "forbidden",
       "role": "import",
       "signal": "metrics",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [
           {
@@ -63373,6 +65842,7 @@
       "outcome_rule": "forbidden",
       "role": "import",
       "signal": "metrics",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [
           {
@@ -63409,6 +65879,7 @@
       "outcome_rule": "forbidden",
       "role": "import",
       "signal": "metrics",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [
           {
@@ -63445,6 +65916,7 @@
       "outcome_rule": "forbidden",
       "role": "import",
       "signal": "metrics",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [
           {
@@ -63485,6 +65957,7 @@
       "outcome_rule": "forbidden",
       "role": "import",
       "signal": "metrics",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [
           {
@@ -63521,6 +65994,7 @@
       "outcome_rule": "forbidden",
       "role": "import",
       "signal": "metrics",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [
           {
@@ -63563,6 +66037,7 @@
       "outcome_rule": "forbidden",
       "role": "import",
       "signal": "metrics",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [
           {
@@ -63607,6 +66082,7 @@
       "outcome_rule": "forbidden",
       "role": "import",
       "signal": "metrics",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [
           {
@@ -63647,6 +66123,7 @@
       "outcome_rule": "forbidden",
       "role": "import",
       "signal": "metrics",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [
           {
@@ -63683,6 +66160,7 @@
       "outcome_rule": "forbidden",
       "role": "import",
       "signal": "metrics",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [
           {
@@ -63723,6 +66201,7 @@
       "outcome_rule": "forbidden",
       "role": "import",
       "signal": "metrics",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [
           {
@@ -63761,6 +66240,7 @@
       "outcome_rule": "forbidden",
       "role": "import",
       "signal": "metrics",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [
           {
@@ -63799,6 +66279,7 @@
       "outcome_rule": "forbidden",
       "role": "import",
       "signal": "metrics",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [
           {
@@ -63837,6 +66318,7 @@
       "outcome_rule": "forbidden",
       "role": "import",
       "signal": "metrics",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [
           {
@@ -63875,6 +66357,7 @@
       "outcome_rule": "forbidden",
       "role": "import",
       "signal": "metrics",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [
           {
@@ -63915,6 +66398,7 @@
       "outcome_rule": "forbidden",
       "role": "import",
       "signal": "metrics",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [
           {
@@ -63959,6 +66443,7 @@
       "outcome_rule": "forbidden",
       "role": "import",
       "signal": "metrics",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [
           {
@@ -64001,6 +66486,7 @@
       "outcome_rule": "forbidden",
       "role": "import",
       "signal": "metrics",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [
           {
@@ -64043,6 +66529,7 @@
       "outcome_rule": "forbidden",
       "role": "import",
       "signal": "metrics",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [
           {
@@ -64083,6 +66570,7 @@
       "outcome_rule": "forbidden",
       "role": "import",
       "signal": "metrics",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [
           {
@@ -64121,6 +66609,7 @@
       "outcome_rule": "forbidden",
       "role": "import",
       "signal": "metrics",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [
           {
@@ -64159,6 +66648,7 @@
       "outcome_rule": "forbidden",
       "role": "import",
       "signal": "metrics",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [
           {
@@ -64199,6 +66689,7 @@
       "outcome_rule": "forbidden",
       "role": "import",
       "signal": "metrics",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [
           {
@@ -64241,6 +66732,7 @@
       "outcome_rule": "forbidden",
       "role": "import",
       "signal": "metrics",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [
           {
@@ -64277,6 +66769,7 @@
       "outcome_rule": "forbidden",
       "role": "import",
       "signal": "metrics",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [
           {
@@ -64309,6 +66802,7 @@
       "outcome_rule": "forbidden",
       "role": "import",
       "signal": "metrics",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [
           {
@@ -64341,6 +66835,7 @@
       "outcome_rule": "forbidden",
       "role": "import",
       "signal": "metrics",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [
           {
@@ -64373,6 +66868,7 @@
       "outcome_rule": "forbidden",
       "role": "import",
       "signal": "metrics",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [
           {
@@ -64411,6 +66907,7 @@
       "outcome_rule": "forbidden",
       "role": "import",
       "signal": "metrics",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [
           {
@@ -64451,6 +66948,7 @@
       "outcome_rule": "forbidden",
       "role": "import",
       "signal": "metrics",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [
           {
@@ -64491,6 +66989,7 @@
       "outcome_rule": "forbidden",
       "role": "import",
       "signal": "metrics",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [
           {
@@ -64531,6 +67030,7 @@
       "outcome_rule": "forbidden",
       "role": "import",
       "signal": "metrics",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [
           {
@@ -64571,6 +67071,7 @@
       "outcome_rule": "forbidden",
       "role": "import",
       "signal": "metrics",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [
           {
@@ -64613,6 +67114,7 @@
       "outcome_rule": "forbidden",
       "role": "import",
       "signal": "metrics",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [
           {
@@ -64649,6 +67151,7 @@
       "outcome_rule": "forbidden",
       "role": "import",
       "signal": "metrics",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [
           {
@@ -64687,6 +67190,7 @@
       "outcome_rule": "forbidden",
       "role": "import",
       "signal": "metrics",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [
           {
@@ -64723,6 +67227,7 @@
       "outcome_rule": "forbidden",
       "role": "import",
       "signal": "metrics",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [
           {
@@ -64755,6 +67260,7 @@
       "outcome_rule": "forbidden",
       "role": "import",
       "signal": "metrics",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [
           {
@@ -64791,6 +67297,7 @@
       "outcome_rule": "forbidden",
       "role": "import",
       "signal": "metrics",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [
           {
@@ -64829,6 +67336,7 @@
       "outcome_rule": "forbidden",
       "role": "import",
       "signal": "metrics",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [
           {
@@ -64867,6 +67375,7 @@
       "outcome_rule": "forbidden",
       "role": "import",
       "signal": "metrics",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [
           {
@@ -64905,6 +67414,7 @@
       "outcome_rule": "forbidden",
       "role": "import",
       "signal": "metrics",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [
           {
@@ -64943,6 +67453,7 @@
       "outcome_rule": "forbidden",
       "role": "import",
       "signal": "metrics",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [
           {
@@ -64975,6 +67486,7 @@
       "outcome_rule": "forbidden",
       "role": "import",
       "signal": "metrics",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [
           {
@@ -65007,6 +67519,7 @@
       "outcome_rule": "forbidden",
       "role": "import",
       "signal": "metrics",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [
           {
@@ -65039,6 +67552,7 @@
       "outcome_rule": "forbidden",
       "role": "import",
       "signal": "metrics",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [
           {
@@ -65071,6 +67585,7 @@
       "outcome_rule": "forbidden",
       "role": "import",
       "signal": "metrics",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [
           {
@@ -65111,6 +67626,7 @@
       "outcome_rule": "forbidden",
       "role": "import",
       "signal": "metrics",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [
           {
@@ -65151,6 +67667,7 @@
       "outcome_rule": "forbidden",
       "role": "import",
       "signal": "metrics",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [
           {
@@ -65193,6 +67710,7 @@
       "outcome_rule": "forbidden",
       "role": "import",
       "signal": "metrics",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [
           {
@@ -65231,6 +67749,7 @@
       "outcome_rule": "forbidden",
       "role": "import",
       "signal": "metrics",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [
           {
@@ -65273,6 +67792,7 @@
       "outcome_rule": "forbidden",
       "role": "import",
       "signal": "metrics",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [
           {
@@ -65309,6 +67829,7 @@
       "outcome_rule": "forbidden",
       "role": "import",
       "signal": "metrics",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [
           {
@@ -65347,6 +67868,7 @@
       "outcome_rule": "forbidden",
       "role": "import",
       "signal": "metrics",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [
           {
@@ -65383,6 +67905,7 @@
       "outcome_rule": "forbidden",
       "role": "import",
       "signal": "metrics",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [
           {
@@ -65415,6 +67938,7 @@
       "outcome_rule": "forbidden",
       "role": "import",
       "signal": "metrics",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [
           {
@@ -65447,6 +67971,7 @@
       "outcome_rule": "forbidden",
       "role": "import",
       "signal": "metrics",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [
           {
@@ -65479,6 +68004,7 @@
       "outcome_rule": "forbidden",
       "role": "import",
       "signal": "metrics",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [
           {
@@ -65511,6 +68037,7 @@
       "outcome_rule": "forbidden",
       "role": "import",
       "signal": "metrics",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [
           {
@@ -65551,6 +68078,7 @@
       "outcome_rule": "forbidden",
       "role": "import",
       "signal": "metrics",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [
           {
@@ -65591,6 +68119,7 @@
       "outcome_rule": "forbidden",
       "role": "import",
       "signal": "metrics",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [
           {
@@ -65631,6 +68160,7 @@
       "outcome_rule": "forbidden",
       "role": "import",
       "signal": "metrics",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [
           {
@@ -65671,6 +68201,7 @@
       "outcome_rule": "forbidden",
       "role": "import",
       "signal": "metrics",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [
           {
@@ -65709,6 +68240,7 @@
       "outcome_rule": "forbidden",
       "role": "import",
       "signal": "metrics",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [
           {
@@ -65749,6 +68281,7 @@
       "outcome_rule": "forbidden",
       "role": "import",
       "signal": "metrics",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [
           {
@@ -65787,6 +68320,7 @@
       "outcome_rule": "forbidden",
       "role": "import",
       "signal": "metrics",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [
           {
@@ -65825,6 +68359,7 @@
       "outcome_rule": "forbidden",
       "role": "import",
       "signal": "metrics",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [
           {
@@ -65857,6 +68392,7 @@
       "outcome_rule": "forbidden",
       "role": "import",
       "signal": "metrics",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [
           {
@@ -65897,6 +68433,7 @@
       "outcome_rule": "forbidden",
       "role": "import",
       "signal": "metrics",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [
           {
@@ -65929,6 +68466,7 @@
       "outcome_rule": "forbidden",
       "role": "import",
       "signal": "metrics",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [
           {
@@ -65967,6 +68505,7 @@
       "outcome_rule": "forbidden",
       "role": "import",
       "signal": "metrics",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [
           {
@@ -66003,6 +68542,7 @@
       "outcome_rule": "forbidden",
       "role": "import",
       "signal": "metrics",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [
           {
@@ -66041,6 +68581,7 @@
       "outcome_rule": "forbidden",
       "role": "import",
       "signal": "metrics",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [
           {
@@ -66079,6 +68620,7 @@
       "outcome_rule": "forbidden",
       "role": "import",
       "signal": "metrics",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [
           {
@@ -66159,6 +68701,7 @@
       "outcome_rule": "native-span-v1",
       "role": "import",
       "signal": "traces",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -66324,6 +68867,7 @@
       "outcome_rule": "native-span-v1",
       "role": "import",
       "signal": "traces",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -66457,6 +69001,7 @@
       "outcome_rule": "native-span-v1",
       "role": "import",
       "signal": "traces",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -66516,6 +69061,7 @@
       "outcome_rule": "native-span-v1",
       "role": "import",
       "signal": "traces",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -66591,6 +69137,7 @@
       "outcome_rule": "native-span-v1",
       "role": "import",
       "signal": "traces",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -66712,6 +69259,7 @@
       "outcome_rule": "native-span-v1",
       "role": "import",
       "signal": "traces",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -66805,6 +69353,7 @@
       "outcome_rule": "native-span-v1",
       "role": "import",
       "signal": "traces",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -66898,6 +69447,7 @@
       "outcome_rule": "native-span-v1",
       "role": "import",
       "signal": "traces",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -66987,6 +69537,7 @@
       "outcome_rule": "native-span-v1",
       "role": "import",
       "signal": "traces",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -67036,6 +69587,7 @@
       "outcome_rule": "native-span-v1",
       "role": "import",
       "signal": "traces",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -67095,6 +69647,7 @@
       "outcome_rule": "native-span-v1",
       "role": "import",
       "signal": "traces",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -67154,6 +69707,7 @@
       "outcome_rule": "native-span-v1",
       "role": "import",
       "signal": "traces",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -67229,6 +69783,7 @@
       "outcome_rule": "native-span-v1",
       "role": "import",
       "signal": "traces",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -67330,6 +69885,7 @@
       "outcome_rule": "native-span-v1",
       "role": "import",
       "signal": "traces",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -67487,6 +70043,7 @@
       "outcome_rule": "native-span-v1",
       "role": "import",
       "signal": "traces",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -67712,6 +70269,7 @@
       "outcome_rule": "native-span-v1",
       "role": "import",
       "signal": "traces",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -67823,6 +70381,7 @@
       "outcome_rule": "native-span-v1",
       "role": "import",
       "signal": "traces",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -68008,6 +70567,7 @@
       "outcome_rule": "native-span-v1",
       "role": "import",
       "signal": "traces",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -68173,6 +70733,7 @@
       "outcome_rule": "native-span-v1",
       "role": "import",
       "signal": "traces",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -68274,6 +70835,7 @@
       "outcome_rule": "native-span-v1",
       "role": "import",
       "signal": "traces",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -68409,6 +70971,7 @@
       "outcome_rule": "native-span-v1",
       "role": "import",
       "signal": "traces",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -68478,6 +71041,7 @@
       "outcome_rule": "native-span-v1",
       "role": "import",
       "signal": "traces",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -68563,6 +71127,7 @@
       "outcome_rule": "native-span-v1",
       "role": "import",
       "signal": "traces",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -68724,6 +71289,7 @@
       "outcome_rule": "native-span-v1",
       "role": "import",
       "signal": "traces",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",
@@ -68883,6 +71449,7 @@
       "outcome_rule": "native-span-v1",
       "role": "import",
       "signal": "traces",
+      "source_projection_plan": null,
       "source_unit_rule": {
         "accepted": [],
         "kind": "none",

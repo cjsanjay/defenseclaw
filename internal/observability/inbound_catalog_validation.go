@@ -16,30 +16,35 @@ import (
 	"io"
 	"math"
 	"reflect"
+	"regexp"
 	"sort"
 	"strings"
 	"unicode/utf8"
 )
 
 type generatedInboundCatalogSource struct {
-	aliases  []generatedInboundAlias
-	matches  []generatedInboundMatch
-	targets  []generatedInboundTarget
-	markers  []generatedInboundNativeMarker
-	echoes   []generatedInboundEchoRecognizer
-	contexts []generatedInboundImportContext
-	policies InboundTerminalPolicies
-	wire     InboundWireContract
+	aliases     []generatedInboundAlias
+	normalizers []generatedInboundSourceNormalizer
+	projections []generatedInboundSourceProjectionPlan
+	matches     []generatedInboundMatch
+	targets     []generatedInboundTarget
+	markers     []generatedInboundNativeMarker
+	echoes      []generatedInboundEchoRecognizer
+	contexts    []generatedInboundImportContext
+	policies    InboundTerminalPolicies
+	wire        InboundWireContract
 }
 
 func generatedInboundCatalogSourceValue() generatedInboundCatalogSource {
 	return generatedInboundCatalogSource{
-		aliases:  generatedInboundAliases,
-		matches:  generatedInboundMatches,
-		targets:  generatedInboundTargets,
-		markers:  generatedInboundNativeMarkers,
-		echoes:   generatedInboundEchoRecognizers,
-		contexts: generatedInboundImportContexts,
+		aliases:     generatedInboundAliases,
+		normalizers: generatedInboundSourceNormalizers,
+		projections: generatedInboundSourceProjectionPlans,
+		matches:     generatedInboundMatches,
+		targets:     generatedInboundTargets,
+		markers:     generatedInboundNativeMarkers,
+		echoes:      generatedInboundEchoRecognizers,
+		contexts:    generatedInboundImportContexts,
 		policies: InboundTerminalPolicies{
 			UnknownFields:                   generatedInboundUnknownFields,
 			NativeMarkerRule:                generatedInboundNativeMarkerRule,
@@ -65,19 +70,23 @@ func buildInboundCatalog(source generatedInboundCatalogSource) (InboundCatalog, 
 	if err := validateInboundPolicies(source.policies, source.wire); err != nil {
 		return InboundCatalog{}, err
 	}
-	if len(source.aliases) == 0 || len(source.matches) == 0 || len(source.targets) == 0 ||
+	if len(source.aliases) == 0 || len(source.normalizers) == 0 || len(source.projections) == 0 || len(source.matches) == 0 || len(source.targets) == 0 ||
 		len(source.markers) == 0 || len(source.echoes) == 0 || len(source.contexts) == 0 {
 		return InboundCatalog{}, invalidInboundCatalog("one or more generated tables are empty")
 	}
 
 	snapshot := &inboundCatalogSnapshot{
 		aliases:         make([]inboundAliasEntry, 0, len(source.aliases)),
+		normalizers:     make([]inboundSourceNormalizerEntry, 0, len(source.normalizers)),
+		projections:     make([]inboundSourceProjectionPlanEntry, 0, len(source.projections)),
 		matches:         make([]inboundMatchEntry, 0, len(source.matches)),
 		targets:         make([]inboundTargetEntry, 0, len(source.targets)),
 		markers:         make([]inboundMarkerEntry, 0, len(source.markers)),
 		echoes:          make([]inboundEchoEntry, 0, len(source.echoes)),
 		contexts:        make([]inboundImportContextEntry, 0, len(source.contexts)),
 		aliasByID:       make(map[string]int, len(source.aliases)),
+		normalizerByID:  make(map[string]int, len(source.normalizers)),
+		projectionByID:  make(map[string]int, len(source.projections)),
 		matchByID:       make(map[string]int, len(source.matches)),
 		targetByID:      make(map[string]int, len(source.targets)),
 		markerByKey:     make(map[inboundMarkerLookupKey]int, len(source.markers)),
@@ -92,10 +101,16 @@ func buildInboundCatalog(source generatedInboundCatalogSource) (InboundCatalog, 
 	if err := buildInboundAliases(snapshot, source.aliases); err != nil {
 		return InboundCatalog{}, err
 	}
+	if err := buildInboundSourceNormalizers(snapshot, source.normalizers); err != nil {
+		return InboundCatalog{}, err
+	}
 	if err := buildInboundImportContexts(snapshot, source.contexts); err != nil {
 		return InboundCatalog{}, err
 	}
 	if err := buildInboundTargets(snapshot, source.targets); err != nil {
+		return InboundCatalog{}, err
+	}
+	if err := buildInboundSourceProjectionPlans(snapshot, source.projections); err != nil {
 		return InboundCatalog{}, err
 	}
 	if err := buildInboundMatches(snapshot, source.matches, source.targets); err != nil {
@@ -162,6 +177,287 @@ func buildInboundAliases(snapshot *inboundCatalogSnapshot, aliases []generatedIn
 	return nil
 }
 
+func buildInboundSourceNormalizers(snapshot *inboundCatalogSnapshot, inputs []generatedInboundSourceNormalizer) error {
+	expected := []struct{ id, kind string }{
+		{"bounded-label-v1", "bounded"},
+		{"identifier-label-v1", "identifier"},
+		{"genai-provider-label-v1", "ordered-exact-contains"},
+		{"genai-model-label-v1", "ordered-prefix-family"},
+		{"genai-operation-label-v1", "exact-map"},
+		{"token-type-label-v1", "enum"},
+	}
+	if len(inputs) != len(expected) {
+		return invalidInboundCatalog("source normalizer inventory drift")
+	}
+	for position, input := range inputs {
+		if input.ID != expected[position].id || input.Kind != expected[position].kind ||
+			!containsInboundString([]string{"none", "unicode-space"}, input.Trim) ||
+			!containsInboundString([]string{"preserve", "lowercase"}, input.Case) ||
+			!containsInboundString([]string{"reject", "unknown"}, input.Empty) ||
+			!containsInboundString([]string{"", "reject", "other"}, input.Overflow) ||
+			!containsInboundString([]string{"", "reject", "other"}, input.Unmatched) || input.MaxUTF8Bytes < 0 {
+			return invalidInboundCatalog("malformed source normalizer")
+		}
+		if _, duplicate := snapshot.normalizerByID[input.ID]; duplicate {
+			return invalidInboundCatalog("duplicate source normalizer ID")
+		}
+		entry := inboundSourceNormalizerEntry{
+			id: input.ID, kind: input.Kind, trim: input.Trim, casePolicy: input.Case,
+			maxUTF8Bytes: input.MaxUTF8Bytes, empty: input.Empty, overflow: input.Overflow,
+			unmatched: input.Unmatched, pattern: input.Pattern,
+			values: append([]string(nil), input.Values...), separators: append([]string(nil), input.Separators...),
+			prefixes: append([]string(nil), input.Prefixes...),
+		}
+		if input.Pattern != "" {
+			compiled, err := regexp.Compile(input.Pattern)
+			if err != nil {
+				return invalidInboundCatalog("invalid source normalizer pattern")
+			}
+			entry.compiled = compiled
+		}
+		seenMatchers := make(map[string]struct{})
+		for _, inputRule := range input.Rules {
+			if inputRule.Output == "" || !utf8.ValidString(inputRule.Output) {
+				return invalidInboundCatalog("malformed source normalizer rule")
+			}
+			rule := inboundSourceNormalizerRuleEntry{
+				output: inputRule.Output, exact: append([]string(nil), inputRule.Exact...),
+				contains: append([]string(nil), inputRule.Contains...), inputs: append([]string(nil), inputRule.Inputs...),
+			}
+			for kind, values := range map[string][]string{"exact": rule.exact, "contains": rule.contains, "input": rule.inputs} {
+				if err := validateInboundStrings(values, false); err != nil {
+					return invalidInboundCatalog("malformed source normalizer matcher")
+				}
+				for _, value := range values {
+					identity := kind + "\x00" + value
+					if _, duplicate := seenMatchers[identity]; duplicate {
+						return invalidInboundCatalog("colliding source normalizer matcher")
+					}
+					seenMatchers[identity] = struct{}{}
+				}
+			}
+			entry.rules = append(entry.rules, rule)
+		}
+		if err := validateInboundSourceNormalizerShape(entry); err != nil {
+			return err
+		}
+		index := len(snapshot.normalizers)
+		snapshot.normalizerByID[input.ID] = index
+		snapshot.normalizers = append(snapshot.normalizers, entry)
+	}
+	return nil
+}
+
+func validateInboundSourceNormalizerShape(entry inboundSourceNormalizerEntry) error {
+	switch entry.kind {
+	case "bounded":
+		if entry.maxUTF8Bytes != 256 || entry.trim != "unicode-space" || entry.casePolicy != "preserve" ||
+			entry.empty != "reject" || entry.overflow != "reject" || entry.unmatched != "" ||
+			entry.pattern != "" || len(entry.values)+len(entry.separators)+len(entry.prefixes)+len(entry.rules) != 0 {
+			return invalidInboundCatalog("bounded source normalizer drift")
+		}
+	case "identifier":
+		if entry.maxUTF8Bytes != 256 || entry.compiled == nil || entry.trim != "unicode-space" ||
+			entry.casePolicy != "preserve" || entry.empty != "reject" || entry.overflow != "reject" ||
+			entry.unmatched != "" || len(entry.values)+len(entry.separators)+len(entry.prefixes)+len(entry.rules) != 0 {
+			return invalidInboundCatalog("identifier source normalizer drift")
+		}
+	case "ordered-exact-contains":
+		if entry.maxUTF8Bytes != 64 || entry.trim != "unicode-space" || entry.casePolicy != "lowercase" ||
+			entry.empty != "unknown" || entry.overflow != "other" || entry.unmatched != "other" ||
+			len(entry.rules) != 8 || entry.pattern != "" || len(entry.values)+len(entry.separators)+len(entry.prefixes) != 0 {
+			return invalidInboundCatalog("provider source normalizer drift")
+		}
+	case "ordered-prefix-family":
+		if entry.maxUTF8Bytes != 64 || entry.trim != "unicode-space" || entry.casePolicy != "lowercase" ||
+			entry.empty != "unknown" || entry.overflow != "other" || entry.unmatched != "other" ||
+			len(entry.prefixes) != 25 || !reflect.DeepEqual(entry.separators, []string{"-", ".", ":"}) ||
+			entry.pattern != "" || len(entry.values)+len(entry.rules) != 0 {
+			return invalidInboundCatalog("model source normalizer drift")
+		}
+	case "exact-map":
+		if entry.maxUTF8Bytes != 0 || entry.trim != "unicode-space" || entry.casePolicy != "lowercase" ||
+			entry.empty != "reject" || entry.overflow != "" || entry.unmatched != "reject" || len(entry.rules) != 17 ||
+			entry.pattern != "" || len(entry.values)+len(entry.separators)+len(entry.prefixes) != 0 {
+			return invalidInboundCatalog("operation source normalizer drift")
+		}
+	case "enum":
+		if entry.maxUTF8Bytes != 0 || entry.trim != "none" || entry.casePolicy != "preserve" ||
+			entry.empty != "reject" || entry.overflow != "" || entry.unmatched != "reject" ||
+			!reflect.DeepEqual(entry.values, []string{"input", "output", "cacheRead", "cacheCreation"}) ||
+			entry.pattern != "" || len(entry.separators)+len(entry.prefixes)+len(entry.rules) != 0 {
+			return invalidInboundCatalog("token type source normalizer drift")
+		}
+	default:
+		return invalidInboundCatalog("unknown source normalizer kind")
+	}
+	return nil
+}
+
+func buildInboundSourceProjectionPlans(snapshot *inboundCatalogSnapshot, inputs []generatedInboundSourceProjectionPlan) error {
+	expectedIDs := []string{"genai-token-metric-v1", "genai-duration-metric-v1"}
+	expectedFamilies := []string{"metric.gen_ai.client.token.usage", "metric.gen_ai.client.operation.duration"}
+	if len(inputs) != len(expectedIDs) {
+		return invalidInboundCatalog("source projection plan inventory drift")
+	}
+	for position, input := range inputs {
+		if input.ID != expectedIDs[position] || input.TargetFamily != expectedFamilies[position] {
+			return invalidInboundCatalog("source projection plan identity drift")
+		}
+		if _, duplicate := snapshot.projectionByID[input.ID]; duplicate {
+			return invalidInboundCatalog("duplicate source projection plan ID")
+		}
+		var target *inboundTargetEntry
+		for index := range snapshot.targets {
+			if snapshot.targets[index].family == input.TargetFamily {
+				target = &snapshot.targets[index]
+				break
+			}
+		}
+		if target == nil || len(input.FieldRules) != len(target.fields) {
+			return invalidInboundCatalog("source projection does not exhaust target family")
+		}
+		entry := inboundSourceProjectionPlanEntry{id: input.ID, targetFamily: input.TargetFamily}
+		for fieldIndex, inputField := range input.FieldRules {
+			if inputField.Target != target.fields[fieldIndex].fieldRef {
+				return invalidInboundCatalog("source projection field order disagrees with target family")
+			}
+			field := inboundProjectionFieldEntry{
+				target: inputField.Target, disposition: InboundProjectionDisposition(inputField.Disposition),
+				requirement:   InboundSourceRequirement(inputField.Requirement),
+				allowedValues: append([]string(nil), inputField.AllowedValues...),
+			}
+			if field.disposition == InboundProjectionOmit {
+				if field.requirement != "" || inputField.Normalization != "" || len(field.allowedValues)+len(inputField.SourceGroups) != 0 {
+					return invalidInboundCatalog("omitted source projection field acquired mapping authority")
+				}
+			} else if field.disposition == InboundProjectionProject {
+				if field.requirement != InboundSourceRequired && field.requirement != InboundSourceOptional {
+					return invalidInboundCatalog("invalid source projection requirement")
+				}
+				normalizer, ok := snapshot.normalizerByID[inputField.Normalization]
+				if !ok {
+					return invalidInboundCatalog("source projection references unknown normalizer")
+				}
+				field.normalizer = cloneInboundSourceNormalizer(snapshot.normalizers[normalizer])
+				groups, err := buildInboundSourceGroups(inputField.SourceGroups)
+				if err != nil {
+					return err
+				}
+				field.sourceGroups = groups
+			} else {
+				return invalidInboundCatalog("invalid source projection disposition")
+			}
+			entry.fieldRules = append(entry.fieldRules, field)
+		}
+		if input.CumulativeSeries != nil {
+			series, err := buildInboundCumulativeSeries(snapshot, *input.CumulativeSeries)
+			if err != nil {
+				return err
+			}
+			entry.cumulativeSeries = Present(series)
+		}
+		if (position == 0) != entry.cumulativeSeries.IsPresent() {
+			return invalidInboundCatalog("cumulative source projection coverage drift")
+		}
+		index := len(snapshot.projections)
+		snapshot.projectionByID[input.ID] = index
+		snapshot.projections = append(snapshot.projections, entry)
+	}
+	for index := range snapshot.targets {
+		target := &snapshot.targets[index]
+		if target.projectionID == "" {
+			continue
+		}
+		projectionIndex, ok := snapshot.projectionByID[target.projectionID]
+		if !ok || snapshot.projections[projectionIndex].targetFamily != target.family {
+			return invalidInboundCatalog("target references incompatible source projection plan")
+		}
+		target.projectionIndex = projectionIndex
+	}
+	return nil
+}
+
+func buildInboundSourceGroups(inputs []generatedInboundSourceGroup) ([]InboundSourceGroup, error) {
+	if len(inputs) == 0 {
+		return nil, invalidInboundCatalog("source projection has no fallback groups")
+	}
+	result := make([]InboundSourceGroup, 0, len(inputs))
+	seen := make(map[string]struct{})
+	for _, input := range inputs {
+		placement := InboundSourcePlacement(input.Placement)
+		if !containsInboundString([]string{
+			string(InboundSourceMetricPointAttribute), string(InboundSourceResourceAttribute),
+			string(InboundSourceAuthenticated), string(InboundSourceFixed), string(InboundSourceInstrumentName),
+		}, input.Placement) || len(input.Keys) == 0 {
+			return nil, invalidInboundCatalog("malformed source projection group")
+		}
+		if err := validateInboundStrings(input.Keys, true); err != nil {
+			return nil, invalidInboundCatalog("malformed source projection key")
+		}
+		for _, key := range input.Keys {
+			identity := input.Placement + "\x00" + key
+			if _, duplicate := seen[identity]; duplicate {
+				return nil, invalidInboundCatalog("colliding source projection declaration")
+			}
+			seen[identity] = struct{}{}
+		}
+		if (placement == InboundSourceAuthenticated && !reflect.DeepEqual(input.Keys, []string{"$authenticated_source"})) ||
+			(placement == InboundSourceInstrumentName && !reflect.DeepEqual(input.Keys, []string{"$instrument_name"})) ||
+			(placement == InboundSourceFixed && len(input.Keys) != 1) {
+			return nil, invalidInboundCatalog("source projection pseudo-placement drift")
+		}
+		if placement == InboundSourceMetricPointAttribute || placement == InboundSourceResourceAttribute {
+			for _, key := range input.Keys {
+				if !IsStableToken(key) {
+					return nil, invalidInboundCatalog("source projection attribute key is invalid")
+				}
+			}
+		}
+		result = append(result, InboundSourceGroup{placement: placement, keys: append([]string(nil), input.Keys...)})
+	}
+	return result, nil
+}
+
+func buildInboundCumulativeSeries(snapshot *inboundCatalogSnapshot, input generatedInboundCumulativeSeries) (inboundCumulativeSeriesEntry, error) {
+	if input.Applicability != "monotonic-cumulative-sum" || input.Framing != "length-prefixed-presence-v1" ||
+		input.NormalizationStage != "before_framing" || len(input.Components) != 7 ||
+		input.ResetEpoch.Role != "reset_only" || input.ResetEpoch.Identity ||
+		input.ResetEpoch.Placement != "metric_point_start_time" || input.ResetEpoch.Key != "$start_time_unix_nano" ||
+		input.ResetEpoch.Normalization != "unsigned-epoch-nanos-v1" {
+		return inboundCumulativeSeriesEntry{}, invalidInboundCatalog("cumulative series policy drift")
+	}
+	expectedIDs := []string{"authenticated_source", "resource_service_name", "resource_service_instance_id", "instrument_name", "normalized_model", "token_type", "normalized_conversation"}
+	entry := inboundCumulativeSeriesEntry{
+		applicability: input.Applicability, framing: input.Framing, normalizationStage: input.NormalizationStage,
+		resetEpoch: InboundResetEpoch{role: input.ResetEpoch.Role, identity: input.ResetEpoch.Identity,
+			placement: input.ResetEpoch.Placement, key: input.ResetEpoch.Key, normalization: input.ResetEpoch.Normalization},
+	}
+	for index, inputComponent := range input.Components {
+		if inputComponent.ID != expectedIDs[index] {
+			return inboundCumulativeSeriesEntry{}, invalidInboundCatalog("cumulative series component order drift")
+		}
+		requirement := InboundSourceRequirement(inputComponent.Requirement)
+		if requirement != InboundSourceRequired && requirement != InboundSourceOptional {
+			return inboundCumulativeSeriesEntry{}, invalidInboundCatalog("invalid cumulative series requirement")
+		}
+		normalizerIndex, ok := snapshot.normalizerByID[inputComponent.Normalization]
+		if !ok {
+			return inboundCumulativeSeriesEntry{}, invalidInboundCatalog("cumulative series references unknown normalizer")
+		}
+		groups, err := buildInboundSourceGroups(inputComponent.SourceGroups)
+		if err != nil {
+			return inboundCumulativeSeriesEntry{}, err
+		}
+		entry.components = append(entry.components, inboundSeriesComponentEntry{
+			id: inputComponent.ID, requirement: requirement,
+			normalizer:    cloneInboundSourceNormalizer(snapshot.normalizers[normalizerIndex]),
+			allowedValues: append([]string(nil), inputComponent.AllowedValues...), sourceGroups: groups,
+		})
+	}
+	return entry, nil
+}
+
 func buildInboundImportContexts(snapshot *inboundCatalogSnapshot, contexts []generatedInboundImportContext) error {
 	descriptorTypes := make(map[string]reflect.Type, len(contexts))
 	for _, input := range contexts {
@@ -214,6 +510,9 @@ func buildInboundTargets(snapshot *inboundCatalogSnapshot, targets []generatedIn
 			uint64(input.FamilySchemaVersion) > uint64(^uint32(0)) ||
 			len(input.FieldRefs) != len(input.FieldDescriptorIDs) || nilInterface(input.Descriptor) {
 			return invalidInboundCatalog("malformed target descriptor")
+		}
+		if input.SourceProjectionPlanID != "" && !validInboundID(input.SourceProjectionPlanID) {
+			return invalidInboundCatalog("malformed target source projection ID")
 		}
 		if _, duplicate := snapshot.targetByID[input.ID]; duplicate {
 			return invalidInboundCatalog("duplicate target ID")
@@ -303,6 +602,7 @@ func buildInboundTargets(snapshot *inboundCatalogSnapshot, targets []generatedIn
 			fields: fields, descriptor: input.Descriptor, descriptorType: descriptorType.String(),
 			mappingStrategy: strategy, derivationStrategy: derivation,
 			timeRule: timeRule, outcomeRule: outcomeRule, importContextIndex: contextIndex,
+			projectionID: input.SourceProjectionPlanID, projectionIndex: -1,
 		})
 	}
 	return nil
@@ -379,6 +679,9 @@ func buildInboundMatches(snapshot *inboundCatalogSnapshot, matches []generatedIn
 			!validInboundDiscriminator(InboundDiscriminatorKind(input.DiscriminatorKind)) ||
 			!validInboundMappingStrategy(InboundMappingStrategy(input.MappingStrategy)) || len(input.TargetIDs) == 0 {
 			return invalidInboundCatalog("malformed match descriptor")
+		}
+		if input.SourceProjectionPlanID != "" && !validInboundID(input.SourceProjectionPlanID) {
+			return invalidInboundCatalog("malformed match source projection ID")
 		}
 		if _, duplicate := snapshot.matchByID[input.ID]; duplicate {
 			return invalidInboundCatalog("duplicate match ID")
@@ -457,6 +760,17 @@ func buildInboundMatches(snapshot *inboundCatalogSnapshot, matches []generatedIn
 		if err != nil || !reflect.DeepEqual(unitRule, primaryTarget.sourceUnitRule) {
 			return invalidInboundCatalog("match and primary target source-unit rules disagree")
 		}
+		projectionIndex := -1
+		if input.SourceProjectionPlanID != "" {
+			resolved, ok := snapshot.projectionByID[input.SourceProjectionPlanID]
+			if !ok || primaryTarget.projectionIndex != resolved ||
+				snapshot.projections[resolved].targetFamily != primaryTarget.family {
+				return invalidInboundCatalog("match and primary target source projection plans disagree")
+			}
+			projectionIndex = resolved
+		} else if primaryTarget.projectionIndex >= 0 {
+			return invalidInboundCatalog("primary target projection plan is absent from match")
+		}
 		timeRule, err := parseInboundTimeRule(input.TimeRuleJSON)
 		if err != nil {
 			return err
@@ -488,6 +802,7 @@ func buildInboundMatches(snapshot *inboundCatalogSnapshot, matches []generatedIn
 			predicates:        predicates, mappingStrategy: InboundMappingStrategy(input.MappingStrategy),
 			aliasIndexes: aliasIndexes, targetOverride: override, sourceUnitRule: unitRule, targetIndexes: targetIndexes,
 			timeRule: timeRule, outcomeRule: outcomeRule, nativeRoundTrip: input.NativeRoundTrip,
+			projectionIndex: projectionIndex,
 		})
 		for _, targetIndex := range targetIndexes {
 			if snapshot.targets[targetIndex].matchIndex >= 0 {

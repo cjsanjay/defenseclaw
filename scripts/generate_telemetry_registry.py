@@ -2319,6 +2319,8 @@ class InboundOTLPIR:
     resource_schema_url: str
     shape_policy: Mapping[str, FrozenJSON]
     alias_sets: tuple[Mapping[str, FrozenJSON], ...]
+    source_normalizers: tuple[Mapping[str, FrozenJSON], ...]
+    source_projection_plans: tuple[Mapping[str, FrozenJSON], ...]
     binding_classes: tuple[Mapping[str, FrozenJSON], ...]
     match_descriptors: tuple[Mapping[str, FrozenJSON], ...]
     target_descriptors: tuple[Mapping[str, FrozenJSON], ...]
@@ -10226,6 +10228,32 @@ _INBOUND_ALIAS_IDS: Final = (
     "output-tokens-v1",
     "log-duration-seconds-v1",
 )
+_INBOUND_SOURCE_PROJECTION_PLAN_IDS: Final = (
+    "genai-token-metric-v1",
+    "genai-duration-metric-v1",
+)
+_INBOUND_SOURCE_NORMALIZER_IDS: Final = (
+    "bounded-label-v1",
+    "identifier-label-v1",
+    "genai-provider-label-v1",
+    "genai-model-label-v1",
+    "genai-operation-label-v1",
+    "token-type-label-v1",
+)
+_INBOUND_SOURCE_PLACEMENTS: Final = frozenset(
+    {"metric_point_attribute", "resource_attribute", "authenticated_source", "fixed", "instrument_name"}
+)
+_INBOUND_SOURCE_NORMALIZATIONS: Final = frozenset(_INBOUND_SOURCE_NORMALIZER_IDS)
+_INBOUND_TOKEN_TYPES: Final = ("input", "output", "cacheRead", "cacheCreation")
+_INBOUND_CUMULATIVE_COMPONENT_IDS: Final = (
+    "authenticated_source",
+    "resource_service_name",
+    "resource_service_instance_id",
+    "instrument_name",
+    "normalized_model",
+    "token_type",
+    "normalized_conversation",
+)
 _INBOUND_CLASS_IDS: Final = (
     "otlp.native.log.v8",
     "otlp.native.span.v8",
@@ -10272,6 +10300,349 @@ def _inbound_sequence(value: Any, path: str, *, allow_empty: bool = False) -> li
     if not isinstance(value, list) or (not allow_empty and not value):
         raise RegistryError(f"{path}: expected {'possibly empty ' if allow_empty else 'nonempty '}sequence")
     return value
+
+
+def _inbound_source_normalizers(value: Any, *, path: str) -> tuple[dict[str, Any], ...]:
+    normalizers: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
+    for index, raw_normalizer in enumerate(_inbound_sequence(value, path)):
+        normalizer_path = f"{path}[{index}]"
+        item = _inbound_mapping(raw_normalizer, normalizer_path)
+        normalizer_id = _string(item.get("id"), f"{normalizer_path}.id", pattern=_ID)
+        kind = _string(item.get("kind"), f"{normalizer_path}.kind", pattern=_ID)
+        if normalizer_id in seen_ids:
+            raise RegistryError(f"{normalizer_path}.id: duplicate source normalizer")
+        seen_ids.add(normalizer_id)
+        common = {
+            "id": normalizer_id,
+            "kind": kind,
+            "trim": _string(item.get("trim"), f"{normalizer_path}.trim", pattern=_ID),
+            "case": _string(item.get("case"), f"{normalizer_path}.case", pattern=_ID),
+            "max_utf8_bytes": 0,
+            "empty": _string(item.get("empty"), f"{normalizer_path}.empty", pattern=_ID),
+            "overflow": "",
+            "unmatched": "",
+            "pattern": "",
+            "values": [],
+            "separators": [],
+            "prefixes": [],
+            "rules": [],
+        }
+        if kind == "bounded":
+            _exact_keys(
+                item,
+                {"id", "kind", "trim", "case", "max_utf8_bytes", "empty", "overflow"},
+                set(),
+                normalizer_path,
+            )
+            common["max_utf8_bytes"] = _integer(item["max_utf8_bytes"], f"{normalizer_path}.max_utf8_bytes")
+            common["overflow"] = _string(item["overflow"], f"{normalizer_path}.overflow", pattern=_ID)
+        elif kind == "identifier":
+            _exact_keys(
+                item,
+                {"id", "kind", "trim", "case", "max_utf8_bytes", "pattern", "empty", "overflow"},
+                set(),
+                normalizer_path,
+            )
+            common["max_utf8_bytes"] = _integer(item["max_utf8_bytes"], f"{normalizer_path}.max_utf8_bytes")
+            common["pattern"] = _string(item["pattern"], f"{normalizer_path}.pattern")
+            try:
+                re.compile(common["pattern"], re.ASCII)
+            except re.error as error:
+                raise RegistryError(f"{normalizer_path}.pattern: invalid regular expression") from error
+            common["overflow"] = _string(item["overflow"], f"{normalizer_path}.overflow", pattern=_ID)
+        elif kind == "ordered-exact-contains":
+            _exact_keys(
+                item,
+                {"id", "kind", "trim", "case", "max_utf8_bytes", "empty", "overflow", "unmatched", "rules"},
+                set(),
+                normalizer_path,
+            )
+            common["max_utf8_bytes"] = _integer(item["max_utf8_bytes"], f"{normalizer_path}.max_utf8_bytes")
+            common["overflow"] = _string(item["overflow"], f"{normalizer_path}.overflow", pattern=_ID)
+            common["unmatched"] = _string(item["unmatched"], f"{normalizer_path}.unmatched", pattern=_ID)
+            rules: list[dict[str, Any]] = []
+            seen_exact: set[str] = set()
+            seen_contains: set[str] = set()
+            for rule_index, raw_rule in enumerate(_inbound_sequence(item["rules"], f"{normalizer_path}.rules")):
+                rule_path = f"{normalizer_path}.rules[{rule_index}]"
+                rule = _inbound_mapping(raw_rule, rule_path)
+                _exact_keys(rule, {"output", "exact", "contains"}, set(), rule_path)
+                exact = _string_list(rule["exact"], f"{rule_path}.exact")
+                contains = _string_list(rule["contains"], f"{rule_path}.contains")
+                if len(exact) != len(set(exact)) or len(contains) != len(set(contains)):
+                    raise RegistryError(f"{rule_path}: duplicate normalizer matcher")
+                if seen_exact.intersection(exact) or seen_contains.intersection(contains):
+                    raise RegistryError(f"{rule_path}: colliding normalizer matcher")
+                seen_exact.update(exact)
+                seen_contains.update(contains)
+                rules.append(
+                    {
+                        "output": _string(rule["output"], f"{rule_path}.output", pattern=_ID),
+                        "exact": list(exact),
+                        "contains": list(contains),
+                        "inputs": [],
+                    }
+                )
+            common["rules"] = rules
+        elif kind == "ordered-prefix-family":
+            _exact_keys(
+                item,
+                {
+                    "id", "kind", "trim", "case", "max_utf8_bytes", "empty", "overflow", "unmatched",
+                    "separators", "prefixes",
+                },
+                set(),
+                normalizer_path,
+            )
+            common["max_utf8_bytes"] = _integer(item["max_utf8_bytes"], f"{normalizer_path}.max_utf8_bytes")
+            common["overflow"] = _string(item["overflow"], f"{normalizer_path}.overflow", pattern=_ID)
+            common["unmatched"] = _string(item["unmatched"], f"{normalizer_path}.unmatched", pattern=_ID)
+            common["separators"] = list(
+                _string_list(item["separators"], f"{normalizer_path}.separators", allow_empty=False)
+            )
+            common["prefixes"] = list(_string_list(item["prefixes"], f"{normalizer_path}.prefixes", allow_empty=False))
+            if len(common["separators"]) != len(set(common["separators"])) or len(common["prefixes"]) != len(
+                set(common["prefixes"])
+            ):
+                raise RegistryError(f"{normalizer_path}: duplicate separator or prefix")
+        elif kind == "exact-map":
+            _exact_keys(item, {"id", "kind", "trim", "case", "empty", "unmatched", "rules"}, set(), normalizer_path)
+            common["unmatched"] = _string(item["unmatched"], f"{normalizer_path}.unmatched", pattern=_ID)
+            rules = []
+            seen_inputs: set[str] = set()
+            for rule_index, raw_rule in enumerate(_inbound_sequence(item["rules"], f"{normalizer_path}.rules")):
+                rule_path = f"{normalizer_path}.rules[{rule_index}]"
+                rule = _inbound_mapping(raw_rule, rule_path)
+                _exact_keys(rule, {"output", "inputs"}, set(), rule_path)
+                inputs = _string_list(rule["inputs"], f"{rule_path}.inputs", allow_empty=False)
+                if len(inputs) != len(set(inputs)) or seen_inputs.intersection(inputs):
+                    raise RegistryError(f"{rule_path}.inputs: colliding exact-map input")
+                seen_inputs.update(inputs)
+                rules.append(
+                    {
+                        "output": _string(rule["output"], f"{rule_path}.output", pattern=_ID),
+                        "exact": [],
+                        "contains": [],
+                        "inputs": list(inputs),
+                    }
+                )
+            common["rules"] = rules
+        elif kind == "enum":
+            _exact_keys(item, {"id", "kind", "trim", "case", "values", "empty", "unmatched"}, set(), normalizer_path)
+            common["unmatched"] = _string(item["unmatched"], f"{normalizer_path}.unmatched", pattern=_ID)
+            common["values"] = list(_string_list(item["values"], f"{normalizer_path}.values", allow_empty=False))
+            if len(common["values"]) != len(set(common["values"])):
+                raise RegistryError(f"{normalizer_path}.values: duplicate enum value")
+        else:
+            raise RegistryError(f"{normalizer_path}.kind: unsupported source normalizer")
+        if common["trim"] not in {"none", "unicode-space"} or common["case"] not in {"preserve", "lowercase"}:
+            raise RegistryError(f"{normalizer_path}: unsupported trim or case policy")
+        if (
+            common["empty"] not in {"reject", "unknown"}
+            or common["overflow"] not in {"", "reject", "other"}
+            or common["unmatched"] not in {"", "reject", "other"}
+        ):
+            raise RegistryError(f"{normalizer_path}: unsupported terminal normalization policy")
+        normalizers.append(common)
+    if tuple(item["id"] for item in normalizers) != _INBOUND_SOURCE_NORMALIZER_IDS:
+        raise RegistryError(f"{path}: canonical source normalizer inventory/order mismatch")
+    if normalizers[-1]["values"] != list(_INBOUND_TOKEN_TYPES):
+        raise RegistryError(f"{path}: token type normalizer vocabulary/order mismatch")
+    return tuple(normalizers)
+
+
+def _inbound_source_groups(value: Any, *, path: str) -> list[dict[str, Any]]:
+    groups: list[dict[str, Any]] = []
+    seen_sources: set[tuple[str, str]] = set()
+    for index, raw_group in enumerate(_inbound_sequence(value, path)):
+        group_path = f"{path}[{index}]"
+        group = _inbound_mapping(raw_group, group_path)
+        _exact_keys(group, {"placement", "keys"}, set(), group_path)
+        placement = _string(group["placement"], f"{group_path}.placement", pattern=_ID)
+        if placement not in _INBOUND_SOURCE_PLACEMENTS:
+            raise RegistryError(f"{group_path}.placement: unknown source placement")
+        keys = _string_list(group["keys"], f"{group_path}.keys", allow_empty=False)
+        if len(keys) != len(set(keys)):
+            raise RegistryError(f"{group_path}.keys: duplicate source key")
+        if placement == "authenticated_source" and keys != ("$authenticated_source",):
+            raise RegistryError(f"{group_path}: authenticated source placement has one sealed key")
+        if placement == "instrument_name" and keys != ("$instrument_name",):
+            raise RegistryError(f"{group_path}: instrument placement has one sealed key")
+        if placement in {"metric_point_attribute", "resource_attribute"} and any(
+            _ID.fullmatch(key) is None for key in keys
+        ):
+            raise RegistryError(f"{group_path}.keys: attribute source keys must be stable tokens")
+        if placement == "fixed" and len(keys) != 1:
+            raise RegistryError(f"{group_path}.keys: fixed placement requires one literal")
+        for key in keys:
+            identity = (placement, key)
+            if identity in seen_sources:
+                raise RegistryError(f"{path}: colliding source declaration {placement}/{key}")
+            seen_sources.add(identity)
+        groups.append({"placement": placement, "keys": list(keys)})
+    return groups
+
+
+def _inbound_source_rule(
+    value: Any,
+    *,
+    path: str,
+    identity_key: str,
+    include_disposition: bool,
+) -> dict[str, Any]:
+    rule = _inbound_mapping(value, path)
+    required = {identity_key, "requirement", "normalization", "source_groups"}
+    optional = {"allowed_values"}
+    if include_disposition:
+        required.add("disposition")
+    _exact_keys(rule, required, optional, path)
+    identity = _string(rule[identity_key], f"{path}.{identity_key}", pattern=_ID)
+    if include_disposition and rule["disposition"] != "project":
+        raise RegistryError(f"{path}.disposition: projected rule requires project")
+    requirement = _string(rule["requirement"], f"{path}.requirement", pattern=_ID)
+    if requirement not in {"required", "optional"}:
+        raise RegistryError(f"{path}.requirement: expected required or optional")
+    normalization = _string(rule["normalization"], f"{path}.normalization", pattern=_ID)
+    if normalization not in _INBOUND_SOURCE_NORMALIZATIONS:
+        raise RegistryError(f"{path}.normalization: unsupported source normalization")
+    allowed_values = list(_string_list(rule.get("allowed_values", []), f"{path}.allowed_values"))
+    if normalization == "token-type-label-v1":
+        if tuple(allowed_values) != _INBOUND_TOKEN_TYPES:
+            raise RegistryError(f"{path}.allowed_values: canonical token-type vocabulary/order mismatch")
+    elif allowed_values:
+        raise RegistryError(f"{path}.allowed_values: only token-type-label-v1 may declare values")
+    return {
+        identity_key: identity,
+        **({"disposition": "project"} if include_disposition else {}),
+        "requirement": requirement,
+        "normalization": normalization,
+        "allowed_values": allowed_values,
+        "source_groups": _inbound_source_groups(rule["source_groups"], path=f"{path}.source_groups"),
+    }
+
+
+def _inbound_source_projection_plans(
+    value: Any,
+    *,
+    path: str,
+    groups: Mapping[str, GroupIR],
+) -> tuple[dict[str, Any], ...]:
+    plans: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
+    for index, raw_plan in enumerate(_inbound_sequence(value, path)):
+        plan_path = f"{path}[{index}]"
+        plan = _inbound_mapping(raw_plan, plan_path)
+        _exact_keys(plan, {"id", "target_family", "field_rules", "cumulative_series"}, set(), plan_path)
+        plan_id = _string(plan["id"], f"{plan_path}.id", pattern=_ID)
+        family_id = _string(plan["target_family"], f"{plan_path}.target_family", pattern=_ID)
+        if plan_id in seen_ids:
+            raise RegistryError(f"{plan_path}.id: duplicate source projection plan")
+        seen_ids.add(plan_id)
+        family = groups.get(family_id)
+        if family is None or family.type != "metric":
+            raise RegistryError(f"{plan_path}.target_family: expected metric family")
+        field_rules: list[dict[str, Any]] = []
+        seen_targets: set[str] = set()
+        for rule_index, raw_rule in enumerate(_inbound_sequence(plan["field_rules"], f"{plan_path}.field_rules")):
+            rule_path = f"{plan_path}.field_rules[{rule_index}]"
+            rule = _inbound_mapping(raw_rule, rule_path)
+            target = _string(rule.get("target"), f"{rule_path}.target", pattern=_ID)
+            if target in seen_targets:
+                raise RegistryError(f"{rule_path}.target: duplicate field disposition")
+            seen_targets.add(target)
+            disposition = _string(rule.get("disposition"), f"{rule_path}.disposition", pattern=_ID)
+            if disposition == "omit":
+                _exact_keys(rule, {"target", "disposition"}, set(), rule_path)
+                field_rules.append({"target": target, "disposition": "omit"})
+            elif disposition == "project":
+                field_rules.append(
+                    _inbound_source_rule(
+                        rule,
+                        path=rule_path,
+                        identity_key="target",
+                        include_disposition=True,
+                    )
+                )
+            else:
+                raise RegistryError(f"{rule_path}.disposition: expected project or omit")
+        expected_targets = tuple(sorted((use.ref for use in family.resolved_uses), key=str.encode))
+        if tuple(rule["target"] for rule in field_rules) != expected_targets:
+            raise RegistryError(f"{plan_path}.field_rules: must cover target fields exactly in canonical order")
+
+        cumulative_raw = plan["cumulative_series"]
+        cumulative: dict[str, Any] | None = None
+        if cumulative_raw is not None:
+            cumulative_path = f"{plan_path}.cumulative_series"
+            cumulative_map = _inbound_mapping(cumulative_raw, cumulative_path)
+            _exact_keys(
+                cumulative_map,
+                {"applicability", "framing", "normalization_stage", "components", "reset_epoch"},
+                set(),
+                cumulative_path,
+            )
+            if (
+                cumulative_map["applicability"] != "monotonic-cumulative-sum"
+                or cumulative_map["framing"] != "length-prefixed-presence-v1"
+                or cumulative_map["normalization_stage"] != "before_framing"
+            ):
+                raise RegistryError(f"{cumulative_path}: cumulative identity policy drift")
+            components: list[dict[str, Any]] = []
+            for component_index, raw_component in enumerate(
+                _inbound_sequence(cumulative_map["components"], f"{cumulative_path}.components")
+            ):
+                components.append(
+                    _inbound_source_rule(
+                        raw_component,
+                        path=f"{cumulative_path}.components[{component_index}]",
+                        identity_key="id",
+                        include_disposition=False,
+                    )
+                )
+            component_ids = tuple(component["id"] for component in components)
+            if component_ids != _INBOUND_CUMULATIVE_COMPONENT_IDS or len(component_ids) != len(set(component_ids)):
+                raise RegistryError(f"{cumulative_path}.components: canonical series identity/order mismatch")
+            reset = _inbound_mapping(cumulative_map["reset_epoch"], f"{cumulative_path}.reset_epoch")
+            _exact_keys(
+                reset,
+                {"role", "identity", "placement", "key", "normalization"},
+                set(),
+                f"{cumulative_path}.reset_epoch",
+            )
+            expected_reset = {
+                "role": "reset_only",
+                "identity": False,
+                "placement": "metric_point_start_time",
+                "key": "$start_time_unix_nano",
+                "normalization": "unsigned-epoch-nanos-v1",
+            }
+            if reset != expected_reset:
+                raise RegistryError(f"{cumulative_path}.reset_epoch: start time is reset metadata only")
+            cumulative = {
+                "applicability": cumulative_map["applicability"],
+                "framing": cumulative_map["framing"],
+                "normalization_stage": cumulative_map["normalization_stage"],
+                "components": components,
+                "reset_epoch": expected_reset,
+            }
+        plans.append(
+            {
+                "id": plan_id,
+                "target_family": family_id,
+                "field_rules": field_rules,
+                "cumulative_series": cumulative,
+            }
+        )
+    if tuple(plan["id"] for plan in plans) != _INBOUND_SOURCE_PROJECTION_PLAN_IDS:
+        raise RegistryError(f"{path}: canonical source projection inventory/order mismatch")
+    if plans[0]["target_family"] != "metric.gen_ai.client.token.usage" or plans[0]["cumulative_series"] is None:
+        raise RegistryError(f"{path}: token metric projection/cumulative authority is incomplete")
+    if (
+        plans[1]["target_family"] != "metric.gen_ai.client.operation.duration"
+        or plans[1]["cumulative_series"] is not None
+    ):
+        raise RegistryError(f"{path}: duration metric projection authority is invalid")
+    return tuple(plans)
 
 
 def _inbound_unit_rule(value: Any, *, strategy: str, path: str) -> dict[str, Any]:
@@ -10452,6 +10823,8 @@ def _parse_inbound_otlp(
             "scope_schema_url",
             "resource_schema_url",
             "alias_sets",
+            "source_normalizers",
+            "source_projection_plans",
             "binding_classes",
             "derivation_attachments",
             "fixture_policy",
@@ -10508,6 +10881,28 @@ def _parse_inbound_otlp(
     if tuple(item["id"] for item in alias_sets) != _INBOUND_ALIAS_IDS:
         raise RegistryError(f"{path}.alias_sets: canonical inventory/order mismatch")
 
+    source_normalizers = _inbound_source_normalizers(
+        source["source_normalizers"],
+        path=f"{path}.source_normalizers",
+    )
+    source_projection_plans = _inbound_source_projection_plans(
+        source["source_projection_plans"],
+        path=f"{path}.source_projection_plans",
+        groups=groups,
+    )
+    source_projection_by_id = {plan["id"]: plan for plan in source_projection_plans}
+    referenced_normalizers = {
+        rule["normalization"]
+        for plan in source_projection_plans
+        for rule in (
+            [item for item in plan["field_rules"] if item["disposition"] == "project"]
+            + ([] if plan["cumulative_series"] is None else plan["cumulative_series"]["components"])
+        )
+    }
+    if referenced_normalizers != set(_INBOUND_SOURCE_NORMALIZER_IDS):
+        raise RegistryError(f"{path}.source_normalizers: declarations must all be referenced")
+    referenced_source_projection_plans: list[str] = []
+
     classes: list[dict[str, Any]] = []
     for index, raw_class in enumerate(_inbound_sequence(source["binding_classes"], f"{path}.binding_classes")):
         class_path = f"{path}.binding_classes[{index}]"
@@ -10536,7 +10931,12 @@ def _parse_inbound_otlp(
         if signal not in _INBOUND_SIGNALS or mode not in _INBOUND_MODES:
             raise RegistryError(f"{class_path}: invalid signal or mode")
         mapping = _inbound_mapping(item["mapping"], f"{class_path}.mapping")
-        _exact_keys(mapping, {"strategy", "alias_sets"}, {"unit_rule"}, f"{class_path}.mapping")
+        _exact_keys(
+            mapping,
+            {"strategy", "alias_sets"},
+            {"unit_rule", "source_projection_plan"},
+            f"{class_path}.mapping",
+        )
         mapping_strategy = _string(mapping["strategy"], f"{class_path}.mapping.strategy", pattern=_ID)
         raw_unit_rule = mapping.get("unit_rule")
         unit_rule = None
@@ -10555,6 +10955,26 @@ def _parse_inbound_otlp(
         alias_ids = _string_list(mapping["alias_sets"], f"{class_path}.mapping.alias_sets")
         if any(alias_id not in aliases_by_id for alias_id in alias_ids):
             raise RegistryError(f"{class_path}.mapping.alias_sets: unknown alias set")
+        source_projection_plan_id = mapping.get("source_projection_plan")
+        if source_projection_plan_id is not None:
+            source_projection_plan_id = _string(
+                source_projection_plan_id,
+                f"{class_path}.mapping.source_projection_plan",
+                pattern=_ID,
+            )
+            if source_projection_plan_id not in source_projection_by_id:
+                raise RegistryError(f"{class_path}.mapping.source_projection_plan: unknown plan")
+            referenced_source_projection_plans.append(source_projection_plan_id)
+        expected_projection_plan = {
+            "claude-token-usage-v1": "genai-token-metric-v1",
+            "duration-metric-v1": "genai-duration-metric-v1",
+        }.get(mapping_strategy)
+        if source_projection_plan_id != expected_projection_plan:
+            if expected_projection_plan is None:
+                raise RegistryError(f"{class_path}.mapping.source_projection_plan: forbidden for {mapping_strategy}")
+            raise RegistryError(f"{class_path}.mapping.source_projection_plan: required for {mapping_strategy}")
+        if source_projection_plan_id is not None and alias_ids:
+            raise RegistryError(f"{class_path}.mapping: source projection plan and alias sets cannot both own fields")
         discriminator = _inbound_mapping(item["discriminator"], f"{class_path}.discriminator")
         _exact_keys(discriminator, {"kind", "predicates"}, set(), f"{class_path}.discriminator")
         derived_targets = _inbound_sequence(item["derived_targets"], f"{class_path}.derived_targets", allow_empty=True)
@@ -10576,6 +10996,7 @@ def _parse_inbound_otlp(
                 "mapping": {
                     "strategy": mapping_strategy,
                     "alias_sets": list(alias_ids),
+                    "source_projection_plan": source_projection_plan_id,
                     "unit_rule": unit_rule,
                 },
                 "derived_targets": derived_targets,
@@ -10586,6 +11007,8 @@ def _parse_inbound_otlp(
         )
     if tuple(item["id"] for item in classes) != _INBOUND_CLASS_IDS:
         raise RegistryError(f"{path}.binding_classes: canonical inventory/order mismatch")
+    if tuple(referenced_source_projection_plans) != _INBOUND_SOURCE_PROJECTION_PLAN_IDS:
+        raise RegistryError(f"{path}.source_projection_plans: declarations must each be referenced exactly once")
 
     matches: list[dict[str, Any]] = []
     targets_by_match: dict[str, list[dict[str, Any]]] = {}
@@ -10690,6 +11113,11 @@ def _parse_inbound_otlp(
                     "mapping": {
                         "strategy": item["mapping"]["strategy"],
                         "alias_sets": [aliases_by_id[alias_id] for alias_id in item["mapping"]["alias_sets"]],
+                        "source_projection_plan": (
+                            None
+                            if item["mapping"]["source_projection_plan"] is None
+                            else source_projection_by_id[item["mapping"]["source_projection_plan"]]
+                        ),
                         "target_override": target_override,
                         "source_unit_rule": source_unit_rule,
                     },
@@ -10702,6 +11130,12 @@ def _parse_inbound_otlp(
                 }
             )
             role = "import" if item["mode"] in {"import", "import_and_derive"} else "derive"
+            projection_plan_id = item["mapping"]["source_projection_plan"]
+            projection_plan = None if projection_plan_id is None else source_projection_by_id[projection_plan_id]
+            if projection_plan is not None and projection_plan["target_family"] != target.id:
+                raise RegistryError(
+                    f"{class_path}.mapping.source_projection_plan: target family does not match expanded primary"
+                )
             primary_target = {
                 "id": f"{match_id}.{target.id}",
                 "match_id": match_id,
@@ -10727,6 +11161,7 @@ def _parse_inbound_otlp(
                 "outcome_rule": item["outcome_rule"],
                 "import_context_id": f"otlp.import.{target.id}" if target.type == "log" and role == "import" else None,
                 "source_unit_rule": source_unit_rule,
+                "source_projection_plan": projection_plan,
             }
             targets_by_match[match_id] = [primary_target]
             for raw_derived in item["derived_targets"]:
@@ -10754,6 +11189,7 @@ def _parse_inbound_otlp(
                         "outcome_rule": "forbidden",
                         "import_context_id": None,
                         "source_unit_rule": {"kind": "none", "target_unit": "", "accepted": []},
+                        "source_projection_plan": None,
                     }
                 )
     matches.sort(key=lambda item: item["id"].encode("ascii"))
@@ -10812,6 +11248,7 @@ def _parse_inbound_otlp(
                 "outcome_rule": "forbidden",
                 "import_context_id": None,
                 "source_unit_rule": {"kind": "none", "target_unit": "", "accepted": []},
+                "source_projection_plan": None,
             }
         )
     target_descriptors: list[dict[str, Any]] = []
@@ -10943,6 +11380,8 @@ def _parse_inbound_otlp(
             }
         ),
         alias_sets=tuple(_freeze_mapping(item) for item in alias_sets),
+        source_normalizers=tuple(_freeze_mapping(item) for item in source_normalizers),
+        source_projection_plans=tuple(_freeze_mapping(item) for item in source_projection_plans),
         binding_classes=tuple(_freeze_mapping(item) for item in classes),
         match_descriptors=tuple(_freeze_mapping(item) for item in matches),
         target_descriptors=tuple(_freeze_mapping(item) for item in target_descriptors),
