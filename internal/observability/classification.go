@@ -13,7 +13,6 @@ package observability
 import (
 	"fmt"
 	"sort"
-	"strings"
 )
 
 type ProducerKind string
@@ -177,11 +176,10 @@ func (classification Classification) Resolve(context ClassificationContext) (Res
 	if err := identity.Validate(); err != nil {
 		return ResolvedClassification{}, err
 	}
-	// The handwritten Classification value remains the compatibility-facing
-	// description of each producer key, but the generated registry is the
-	// runtime authority for the exact selected identity, mandatory rules, and
-	// companion rules. This prevents a producer cutover from silently retaining
-	// stale floor semantics after the structural registry changes.
+	// Classification exposes the generated group's compatibility-facing rule
+	// unions. Runtime resolution deliberately narrows those unions to the exact
+	// selected generated identity so one family cannot inherit another family's
+	// mandatory or companion behavior.
 	runtimeMandatoryRules := classification.MandatoryRules
 	runtimeCompanionRules := classification.CompanionRules
 	if group, found := lookupGeneratedProducerGroup(classification.Kind, classification.Key); found {
@@ -345,8 +343,7 @@ func bucketAllowed(bucket Bucket, allowed []Bucket) bool {
 	return false
 }
 
-var gatewayEventClassifications = buildGatewayEventClassifications()
-var auditActionClassifications = buildAuditActionClassifications()
+var gatewayEventClassifications, auditActionClassifications = buildGeneratedProducerClassifications()
 
 func GatewayEventClassification(key ProducerKey) (Classification, bool) {
 	classification, ok := gatewayEventClassifications[key]
@@ -385,298 +382,106 @@ func cloneClassification(classification Classification) Classification {
 	return classification
 }
 
-func buildGatewayEventClassifications() map[ProducerKey]Classification {
-	result := map[ProducerKey]Classification{}
-	add := func(classification Classification) {
-		classification.Kind = ProducerGatewayEvent
-		registerClassification(result, classification)
+func buildGeneratedProducerClassifications() (
+	map[ProducerKey]Classification,
+	map[ProducerKey]Classification,
+) {
+	gateway := make(map[ProducerKey]Classification)
+	audit := make(map[ProducerKey]Classification)
+	for index := range generatedProducerGroups {
+		group := generatedProducerGroups[index]
+		classification := classificationFromGeneratedProducerGroup(group)
+		var target map[ProducerKey]Classification
+		switch group.Kind {
+		case ProducerGatewayEvent:
+			target = gateway
+		case ProducerAuditAction:
+			target = audit
+		default:
+			panic(fmt.Sprintf("unknown generated producer kind %q", group.Kind))
+		}
+		if group.Key == "" {
+			panic("generated observability classification has empty producer key")
+		}
+		if _, exists := target[group.Key]; exists {
+			panic(fmt.Sprintf("duplicate generated observability classification %s/%s", group.Kind, group.Key))
+		}
+		target[group.Key] = classification
 	}
-	add(fixed("verdict", BucketGuardrailEvaluation, "guardrail.evaluation.completed", SeverityEvaluation,
-		nil, []CompanionRule{CompanionEnforcementWhenEnforced}))
-	add(fixed("judge", BucketGuardrailEvaluation, "guardrail.judge.completed", SeverityEvaluation, nil, nil))
-	add(contextual("lifecycle", []Bucket{
-		BucketComplianceActivity, BucketAgentLifecycle, BucketPlatformHealth,
-	}, SeverityCanonicalOrInfo, []MandatoryRule{
-		MandatoryControlPlaneMutation, MandatoryDurableHealthTransition,
-	}, nil))
-	add(contextual("error", []Bucket{
-		BucketModelIO, BucketToolActivity, BucketAgentLifecycle, BucketAssetScan,
-		BucketTelemetryIngest, BucketPlatformHealth,
-	}, SeverityFailureOrSource, []MandatoryRule{
-		MandatorySchemaValidationFailure, MandatorySQLiteFailure,
-		MandatoryExporterInitializationFailure, MandatoryDurableHealthTransition,
-	}, nil))
-	add(fixed("diagnostic", BucketDiagnostic, "diagnostic.message", SeverityCanonicalOrInfo, nil, nil))
-	add(optional("scan", BucketAssetScan, "scan.completed", SeverityCanonicalOrInfo,
-		nil, []CompanionRule{CompanionFindingPerObservation}))
-	add(fixed("scan_finding", BucketSecurityFinding, "finding.observed", SeverityFindingRequired, nil, nil))
-	add(Classification{
-		Key: "activity", Bucket: BucketComplianceActivity,
-		EventNamePolicy: EventNameContextRequired, SeverityPolicy: SeverityCanonicalOrInfo,
-		MandatoryRules: []MandatoryRule{
-			MandatoryControlPlaneMutation, MandatoryApprovalResolution, MandatoryAlertMutation,
-		},
-	})
-	add(contextual(
-		"destination_test",
-		[]Bucket{BucketComplianceActivity},
-		SeverityCanonicalOrInfo,
-		[]MandatoryRule{MandatoryDestinationTestActivity},
-		nil,
-	))
-	add(Classification{
-		Key: "egress", Bucket: BucketNetworkEgress,
-		EventNamePolicy: EventNameContextRequired, SeverityPolicy: SeverityCanonicalOrInfo,
-		MandatoryRules: []MandatoryRule{MandatoryEnforcedOutcome},
-	})
-	add(fixed("llm_prompt", BucketModelIO, "model.request", SeverityCanonicalOrInfo, nil, nil))
-	add(optional("llm_response", BucketModelIO, "model.response", SeverityCanonicalOrInfo, nil, nil))
-	add(Classification{
-		Key: "tool_invocation", Bucket: BucketToolActivity,
-		EventNamePolicy: EventNameContextRequired, SeverityPolicy: SeverityCanonicalOrInfo,
-		CompanionRules: []CompanionRule{CompanionEnforcementWhenEnforced},
-	})
-	add(fixed("hook_decision", BucketGuardrailEvaluation, "hook_decision", SeverityEvaluation,
-		nil, []CompanionRule{CompanionEnforcementWhenEnforced}))
-	add(Classification{
-		Key: "ai_discovery", Bucket: BucketAIDiscovery,
-		EventNamePolicy: EventNameContextRequired, SeverityPolicy: SeverityCanonicalOrInfo,
-	})
-	return result
+	return gateway, audit
 }
 
-func buildAuditActionClassifications() map[ProducerKey]Classification {
-	result := map[ProducerKey]Classification{}
-	addGroup := func(
-		bucket Bucket,
-		severity SeverityPolicy,
-		mandatory []MandatoryRule,
-		companions []CompanionRule,
-		actions ...string,
-	) {
-		for _, action := range actions {
-			registerClassification(result, Classification{
-				Kind: ProducerAuditAction, Key: ProducerKey(action), Bucket: bucket,
-				DefaultEventName: legacyAuditEventName(action),
-				EventNamePolicy:  EventNameContextOptional,
-				SeverityPolicy:   severity,
-				MandatoryRules:   append([]MandatoryRule(nil), mandatory...),
-				CompanionRules:   append([]CompanionRule(nil), companions...),
-			})
+func classificationFromGeneratedProducerGroup(group generatedProducerGroup) Classification {
+	classification := Classification{
+		Kind:            group.Kind,
+		Key:             group.Key,
+		EventNamePolicy: group.EventNamePolicy,
+		SeverityPolicy:  group.SeverityPolicy,
+	}
+	if group.DefaultIdentityIndex >= 0 {
+		if group.DefaultIdentityIndex >= len(group.Identities) {
+			panic(fmt.Sprintf("generated producer %s/%s has invalid default identity index", group.Kind, group.Key))
+		}
+		identity := group.Identities[group.DefaultIdentityIndex]
+		if identity.Origin != generatedIdentityDefault {
+			panic(fmt.Sprintf("generated producer %s/%s default identity has origin %q", group.Kind, group.Key, identity.Origin))
+		}
+		classification.Bucket = identity.Bucket
+		classification.DefaultEventName = identity.EventName
+	} else if group.EventNamePolicy != EventNameContextRequired {
+		panic(fmt.Sprintf("generated producer %s/%s policy %q has no default identity", group.Kind, group.Key, group.EventNamePolicy))
+	}
+
+	contextEnd := group.ContextIdentityStart + group.ContextIdentityCount
+	if group.ContextIdentityStart < 0 || group.ContextIdentityCount < 0 || contextEnd > len(group.Identities) {
+		panic(fmt.Sprintf("generated producer %s/%s has invalid context identity range", group.Kind, group.Key))
+	}
+	buckets := make(map[Bucket]struct{})
+	mandatoryRules := make(map[MandatoryRule]struct{})
+	companionRules := make(map[CompanionRule]struct{})
+	for index, identity := range group.Identities {
+		for _, rule := range identity.LegacyMandatoryRules {
+			mandatoryRules[rule] = struct{}{}
+		}
+		for _, rule := range identity.CompanionRules {
+			companionRules[rule] = struct{}{}
+		}
+		if index >= group.ContextIdentityStart && index < contextEnd {
+			if identity.Origin != generatedIdentityAllowedContext {
+				panic(fmt.Sprintf("generated producer %s/%s context identity has origin %q", group.Kind, group.Key, identity.Origin))
+			}
+			buckets[identity.Bucket] = struct{}{}
 		}
 	}
-
-	addGroup(BucketComplianceActivity, SeverityCanonicalOrInfo, []MandatoryRule{
-		MandatoryControlPlaneMutation, MandatoryApprovalResolution, MandatoryAlertMutation,
-		MandatoryProtectedBoundaryAuthFailure,
-	}, nil,
-		"approval-request", "approval-granted", "approval-denied",
-		"gateway-approval-requested", "gateway-approval-granted", "gateway-approval-denied",
-		"gateway-approval-pending", "config-update", "policy-update", "policy-reload", "action",
-		"acknowledge-alerts", "dismiss-alerts", "connector-hook-repaired",
-		"guardrail-config-reload", "guardrail-disable", "guardrail-enable", "guardrail-fail-mode",
-		"guardrail-hilt", "inspect-reveal", "api-auth-failure", "api-config-patch",
-		"setup-skill-scanner", "setup-mcp-scanner", "setup-gateway", "setup-guardrail",
-		"setup-hook-connector", "setup-connector-mode", "setup-redaction-toggle",
-		"setup-notifications-toggle", "setup-notifications-set", "setup-splunk",
-		"setup-observability", "setup-local-observability", "setup-webhook", "doctor", "upgrade",
-		"init-gateway", "init-guardrail", "init-notifications-toggle", "init-sandbox", "init-sidecar",
-		"policy-create", "policy-activate", "policy-delete", "registry-add", "registry-edit",
-		"registry-remove", "dismiss-alert",
-	)
-	addGroup(BucketSecurityFinding, SeverityFindingRequired, nil, nil,
-		"connector-hook-tampered", "gateway-session-prompt-alert", "gateway-tool-call-flagged",
-		"gateway-tool-call-judge-flagged", "gateway-multi-turn-injection", "tool-result-pii-alert",
-		"scan-finding",
-	)
-	addGroup(BucketGuardrailEvaluation, SeverityEvaluation, nil,
-		[]CompanionRule{CompanionEnforcementWhenEnforced},
-		"guardrail-block", "guardrail-warn", "guardrail-allow",
-		"connector-hook", "connector-hook-synthetic", "asset-policy", "sidecar-watcher-verdict",
-		"install-rejected", "install-allowed", "install-allowed-skip-enforce", "install-warning",
-		"guardrail-verdict", "guardrail-inspection", "guardrail-opa-inspection",
-		"guardrail-opa-verdict", "guardrail-tool-call-parse-error", "guardrail-tool-call-inspect",
-		"llm-judge-response", "inspect-tool-confirm", "inspect-tool-block", "inspect-tool-alert",
-		"inspect-tool-allow",
-	)
-	addGroup(BucketEnforcementAction, SeverityCanonicalOrInfo, []MandatoryRule{
-		MandatoryEnforcedOutcome, MandatoryEnforcementStateChange,
-	}, []CompanionRule{CompanionAssetLifecycleOnChange},
-		"quarantine", "restore", "disable", "enable", "sidecar-watcher-disable",
-		"sidecar-watcher-disable-plugin", "sidecar-watcher-block-mcp", "watcher-block",
-		"install-enforced", "install-blocked", "guardrail-launder", "guardrail-notify-inject",
-		"guardrail-block-message", "api-enforce-allow", "api-enforce-block", "api-enforce-unblock",
-		"scan-enforced", "skill-block", "skill-unblock", "skill-allow", "skill-disable",
-		"skill-enable", "skill-quarantine", "skill-restore", "plugin-block", "plugin-allow",
-		"plugin-disable", "plugin-enable", "plugin-quarantine", "plugin-restore", "block-mcp",
-		"allow-mcp", "mcp-unblock", "mcp-set-blocked", "tool-block", "tool-allow",
-		"tool-unblock", "api-plugin-disable", "api-plugin-enable", "api-skill-disable",
-		"api-skill-enable",
-	)
-	addGroup(BucketModelIO, SeverityCanonicalOrInfo, nil, nil,
-		"gateway-session-message", "gateway-chat-error",
-	)
-	addGroup(BucketToolActivity, SeverityCanonicalOrInfo, nil,
-		[]CompanionRule{CompanionEnforcementWhenEnforced},
-		"tool-call", "tool-result", "gateway-tool-call", "gateway-tool-call-blocked",
-		"gateway-tool-result",
-	)
-	addGroup(BucketAssetScan, SeverityCanonicalOrInfo, nil,
-		[]CompanionRule{CompanionFindingPerObservation},
-		"scan", "scan-start", "rescan", "rescan-start", "install-clean", "install-scan-error",
-		"api-mcp-scan", "api-plugin-scan", "api-skill-scan",
-	)
-	addGroup(BucketAssetLifecycle, SeverityCanonicalOrInfo,
-		[]MandatoryRule{MandatoryEnforcementStateChange}, nil,
-		"deploy", "drift", "install-detected", "install-dep", "api-skill-fetch", "plugin-install",
-		"plugin-remove", "mcp-set", "mcp-unset",
-	)
-	addGroup(BucketNetworkEgress, SeverityCanonicalOrInfo,
-		[]MandatoryRule{MandatoryEnforcedOutcome}, nil,
-		"network-egress-blocked", "network-egress-allowed",
-	)
-	addGroup(BucketAgentLifecycle, SeverityCanonicalOrInfo, nil, nil,
-		"codex.notify.agent-turn-complete", "sidecar-start", "sidecar-stop", "gateway-agent-start",
-		"gateway-agent-end", "gateway-agent-error", "gateway-session-error",
-	)
-	addGroup(BucketTelemetryIngest, SeverityCanonicalOrInfo, []MandatoryRule{
-		MandatorySchemaValidationFailure, MandatoryProtectedBoundaryAuthFailure,
-	}, nil,
-		"otel.ingest.logs", "otel.ingest.metrics", "otel.ingest.traces", "otel.ingest.malformed",
-		"codex.notify", "codex.notify.malformed",
-	)
-	addGroup(BucketPlatformHealth, SeverityCanonicalOrInfo, []MandatoryRule{
-		MandatorySQLiteFailure, MandatoryExporterInitializationFailure, MandatoryDurableHealthTransition,
-	}, nil,
-		"webhook-delivered", "webhook-failed", "sink-failure", "sink-restored",
-		"sidecar-connected", "sidecar-disconnected", "watch-start", "watch-stop", "gateway-ready",
-		"gateway-down", "gateway-recovered", "gateway-degraded", "gateway.judge_bodies.ready",
-		"gateway.judge_bodies.fallback", "gateway.judge_bodies.close_skipped",
-		"gateway.judge_bodies.close_error", "gateway.judge_store.drain_timeout", "guardrail-start",
-		"guardrail-healthy", "guardrail-degraded", "sink-flush-error",
-	)
-
-	for _, action := range []string{"block", "allow", "warn"} {
-		registerClassification(result, Classification{
-			Kind: ProducerAuditAction, Key: ProducerKey(action),
-			EventNamePolicy: EventNameContextRequired, SeverityPolicy: SeverityEvaluation,
-			AllowedContextBuckets: []Bucket{
-				BucketGuardrailEvaluation, BucketEnforcementAction,
-			},
-			MandatoryRules: []MandatoryRule{MandatoryEnforcedOutcome},
-			CompanionRules: []CompanionRule{CompanionEnforcementWhenEnforced},
-		})
-	}
-
-	for _, action := range []string{"init", "stop", "ready", "bootstrap"} {
-		registerClassification(result, Classification{
-			Kind: ProducerAuditAction, Key: ProducerKey(action),
-			EventNamePolicy: EventNameContextRequired, SeverityPolicy: SeverityCanonicalOrInfo,
-			AllowedContextBuckets: []Bucket{
-				BucketComplianceActivity, BucketAgentLifecycle, BucketPlatformHealth,
-			},
-			MandatoryRules: []MandatoryRule{
-				MandatoryControlPlaneMutation, MandatoryDurableHealthTransition,
-			},
-		})
-	}
-	registerClassification(result, Classification{
-		Kind: ProducerAuditAction, Key: "alert", EventNamePolicy: EventNameContextRequired,
-		SeverityPolicy: SeverityFindingRequired,
-		AllowedContextBuckets: []Bucket{
-			BucketSecurityFinding, BucketGuardrailEvaluation, BucketPlatformHealth,
-		},
-		MandatoryRules: []MandatoryRule{
-			MandatorySchemaValidationFailure, MandatorySQLiteFailure,
-			MandatoryExporterInitializationFailure, MandatoryDurableHealthTransition,
-		},
-	})
-
-	overrideSeverity(result, "gateway-chat-error", SeverityFailureOrSource)
-	overrideSeverity(result, "gateway-agent-error", SeverityFailureOrSource)
-	overrideSeverity(result, "gateway-session-error", SeverityFailureOrSource)
-	overrideSeverity(result, "install-scan-error", SeverityFailureOrSource)
-	overrideSeverity(result, "guardrail-tool-call-parse-error", SeverityFailureOrSource)
-	for _, action := range []string{
-		"webhook-failed", "sink-failure", "gateway-down", "gateway-degraded",
-		"gateway.judge_bodies.fallback", "gateway.judge_bodies.close_error",
-		"gateway.judge_store.drain_timeout", "guardrail-degraded", "sink-flush-error",
-	} {
-		overrideSeverity(result, action, SeverityFailureOrSource)
-	}
-	overrideSeverity(result, "otel.ingest.malformed", SeverityMalformedOrSource)
-	overrideSeverity(result, "codex.notify.malformed", SeverityMalformedOrSource)
-	return result
-}
-
-func fixed(
-	key string,
-	bucket Bucket,
-	event EventName,
-	severity SeverityPolicy,
-	mandatory []MandatoryRule,
-	companions []CompanionRule,
-) Classification {
-	return Classification{
-		Key: ProducerKey(key), Bucket: bucket, DefaultEventName: event,
-		EventNamePolicy: EventNameFixed, SeverityPolicy: severity,
-		MandatoryRules: mandatory, CompanionRules: companions,
-	}
-}
-
-func optional(
-	key string,
-	bucket Bucket,
-	event EventName,
-	severity SeverityPolicy,
-	mandatory []MandatoryRule,
-	companions []CompanionRule,
-) Classification {
-	classification := fixed(key, bucket, event, severity, mandatory, companions)
-	classification.EventNamePolicy = EventNameContextOptional
+	classification.AllowedContextBuckets = sortedGeneratedBuckets(buckets)
+	classification.MandatoryRules = sortedGeneratedMandatoryRules(mandatoryRules)
+	classification.CompanionRules = sortedGeneratedCompanionRules(companionRules)
 	return classification
 }
 
-func contextual(
-	key string,
-	allowed []Bucket,
-	severity SeverityPolicy,
-	mandatory []MandatoryRule,
-	companions []CompanionRule,
-) Classification {
-	return Classification{
-		Key: ProducerKey(key), EventNamePolicy: EventNameContextRequired,
-		SeverityPolicy: severity, MandatoryRules: mandatory, CompanionRules: companions,
-		AllowedContextBuckets: allowed,
+func sortedGeneratedBuckets(values map[Bucket]struct{}) []Bucket {
+	result := make([]Bucket, 0, len(values))
+	for value := range values {
+		result = append(result, value)
 	}
+	sort.Slice(result, func(left, right int) bool { return result[left] < result[right] })
+	return result
 }
 
-func registerClassification(target map[ProducerKey]Classification, classification Classification) {
-	if classification.Key == "" {
-		panic("observability classification has empty producer key")
+func sortedGeneratedMandatoryRules(values map[MandatoryRule]struct{}) []MandatoryRule {
+	result := make([]MandatoryRule, 0, len(values))
+	for value := range values {
+		result = append(result, value)
 	}
-	if _, exists := target[classification.Key]; exists {
-		panic(fmt.Sprintf("duplicate observability classification %s/%s", classification.Kind, classification.Key))
-	}
-	target[classification.Key] = classification
+	sort.Slice(result, func(left, right int) bool { return result[left] < result[right] })
+	return result
 }
 
-func overrideSeverity(
-	target map[ProducerKey]Classification,
-	action string,
-	policy SeverityPolicy,
-) {
-	key := ProducerKey(action)
-	classification, ok := target[key]
-	if !ok {
-		panic(fmt.Sprintf("cannot override missing audit action classification %q", action))
+func sortedGeneratedCompanionRules(values map[CompanionRule]struct{}) []CompanionRule {
+	result := make([]CompanionRule, 0, len(values))
+	for value := range values {
+		result = append(result, value)
 	}
-	classification.SeverityPolicy = policy
-	target[key] = classification
-}
-
-func legacyAuditEventName(action string) EventName {
-	// This creates only a compatibility identity from an already typed action key;
-	// bucket choice and floor behavior never depend on parsing this string.
-	return EventName("legacy.audit." + strings.ReplaceAll(action, "-", "."))
+	sort.Slice(result, func(left, right int) bool { return result[left] < result[right] })
+	return result
 }

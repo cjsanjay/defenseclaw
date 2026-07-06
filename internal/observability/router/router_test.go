@@ -662,6 +662,7 @@ func complianceMetadata(mandatory bool) Metadata {
 		observability.ProducerGatewayEvent,
 		"activity",
 		observability.ClassificationContext{
+			Bucket:      observability.BucketComplianceActivity,
 			EventName:   "config.change.applied",
 			RawSeverity: "INFO",
 			MandatoryFacts: observability.MandatoryFacts{
@@ -807,6 +808,7 @@ func classifiedLogResolution(
 	case "finding.observed":
 		return observability.ProducerGatewayEvent, "scan_finding", context, nil
 	case "config.change.applied":
+		context.Bucket = metadata.identity.Bucket
 		context.EventName = metadata.identity.Name
 		context.MandatoryFacts.ControlPlaneMutation = metadata.mandatory
 		return observability.ProducerGatewayEvent, "activity", context, nil

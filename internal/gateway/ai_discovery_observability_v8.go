@@ -223,7 +223,9 @@ func (adapter *aiDiscoveryV8Adapter) emitSignalLog(
 	metadata, err := router.NewClassifiedLogMetadata(
 		observability.ProducerGatewayEvent,
 		observability.ProducerKey("ai_discovery"),
-		observability.ClassificationContext{EventName: eventName, RawSeverity: "INFO"},
+		observability.ClassificationContext{
+			Bucket: observability.BucketAIDiscovery, EventName: eventName, RawSeverity: "INFO",
+		},
 		observability.SourceSystem,
 		"",
 		observability.ProducerKey("ai_discovery"),
@@ -283,7 +285,10 @@ func (adapter *aiDiscoveryV8Adapter) emitComponentConfidenceLog(
 	metadata, err := router.NewClassifiedLogMetadata(
 		observability.ProducerGatewayEvent,
 		observability.ProducerKey("ai_discovery"),
-		observability.ClassificationContext{EventName: "ai_component.confidence.changed", RawSeverity: string(logLevel)},
+		observability.ClassificationContext{
+			Bucket:    observability.BucketAIDiscovery,
+			EventName: "ai_component.confidence.changed", RawSeverity: string(logLevel),
+		},
 		observability.SourceSystem,
 		"",
 		observability.ProducerKey("ai_discovery"),
@@ -335,6 +340,7 @@ func (adapter *aiDiscoveryV8Adapter) emitSummaryLog(
 		outcome = observability.OutcomePartial
 	}
 	classification := observability.ClassificationContext{
+		Bucket:    observability.BucketAIDiscovery,
 		EventName: "ai.discovery.completed", RawSeverity: severity,
 	}
 	metadata, err := router.NewClassifiedLogMetadata(

@@ -174,6 +174,7 @@ func TestLocalLogPipelineAdmissionIsLazyAndFloorIsLocalOnly(t *testing.T) {
 	mandatory := classifiedLogCase{
 		bucket: observability.BucketComplianceActivity, kind: observability.ProducerGatewayEvent,
 		key: "activity", context: observability.ClassificationContext{
+			Bucket:    observability.BucketComplianceActivity,
 			EventName: "config.change.applied", RawSeverity: "INFO",
 			MandatoryFacts: observability.MandatoryFacts{ControlPlaneMutation: true},
 		},
@@ -817,7 +818,9 @@ func catalogLogCases() []classifiedLogCase {
 		audit(observability.BucketAgentLifecycle, "sidecar-start", "INFO"),
 		{
 			bucket: observability.BucketAIDiscovery, kind: observability.ProducerGatewayEvent, key: "ai_discovery",
-			context: observability.ClassificationContext{EventName: "ai_component.discovered", RawSeverity: "INFO"},
+			context: observability.ClassificationContext{
+				Bucket: observability.BucketAIDiscovery, EventName: "ai_component.discovered", RawSeverity: "INFO",
+			},
 		},
 		audit(observability.BucketTelemetryIngest, "otel.ingest.logs", "INFO"),
 		audit(observability.BucketPlatformHealth, "webhook-delivered", "INFO"),

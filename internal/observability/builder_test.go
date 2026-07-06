@@ -49,6 +49,7 @@ func validClassifiedLogInput() ClassifiedLogInput {
 		ProducerKind: ProducerGatewayEvent,
 		ProducerKey:  "activity",
 		ClassificationContext: ClassificationContext{
+			Bucket:      BucketComplianceActivity,
 			EventName:   "config.change.applied",
 			RawSeverity: "WARN",
 			MandatoryFacts: MandatoryFacts{

@@ -165,6 +165,7 @@ func activityMetadata(t *testing.T) router.Metadata {
 		observability.ProducerGatewayEvent,
 		"activity",
 		observability.ClassificationContext{
+			Bucket:    observability.BucketComplianceActivity,
 			EventName: "config.change.applied", RawSeverity: "INFO",
 			MandatoryFacts: observability.MandatoryFacts{ControlPlaneMutation: true},
 		},
@@ -241,6 +242,7 @@ func activityIdentity() testLogIdentity {
 	return testLogIdentity{
 		kind: observability.ProducerGatewayEvent, key: "activity",
 		context: observability.ClassificationContext{
+			Bucket:    observability.BucketComplianceActivity,
 			EventName: "config.change.applied", RawSeverity: "INFO",
 			MandatoryFacts: observability.MandatoryFacts{ControlPlaneMutation: true},
 		},
