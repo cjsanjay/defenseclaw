@@ -286,6 +286,7 @@ def test_v8_galileo_is_trace_only_and_uses_secret_reference() -> None:
         target=None,
     )
     assert destination["preset"] == "galileo"
+    assert destination["batch"] == {"scheduled_delay_ms": 1000}
     assert destination["headers"]["Galileo-API-Key"] == {"env": "GALILEO_API_KEY"}
     with pytest.raises(ValueError, match="traces only"):
         _build_v8_preset_destination(

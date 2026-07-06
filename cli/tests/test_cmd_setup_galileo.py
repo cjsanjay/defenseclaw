@@ -6,7 +6,10 @@
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
+from unittest.mock import patch
 
+import pytest
 import yaml
 from click.testing import CliRunner
 from defenseclaw.commands.cmd_setup_galileo import (
@@ -17,6 +20,7 @@ from defenseclaw.commands.cmd_setup_galileo import (
 )
 from defenseclaw.context import AppContext
 from defenseclaw.observability import apply_preset
+from defenseclaw.observability.v8_status import V8DestinationStatus
 
 
 def _app(tmp_path, monkeypatch) -> AppContext:
@@ -31,6 +35,27 @@ def _app(tmp_path, monkeypatch) -> AppContext:
     app = AppContext()
     app.cfg = config.load()
     return app
+
+
+def _v8_status(*, configured: bool = False, enabled: bool = True):
+    destinations = ()
+    if configured:
+        destinations = (
+            V8DestinationStatus(
+                name="galileo",
+                kind="otlp",
+                enabled=enabled,
+                generated=False,
+                capabilities=("traces",),
+                selected_signals=("traces",),
+                policy_form="send",
+                endpoint="https://api.galileo.ai/otel/traces",
+                route_count=1,
+                buckets=("agent.lifecycle", "model.io", "tool.activity"),
+                redaction_profiles=("none",),
+            ),
+        )
+    return SimpleNamespace(destinations=destinations)
 
 
 def test_cloud_non_interactive_writes_named_trace_destination(tmp_path, monkeypatch) -> None:
@@ -133,6 +158,58 @@ def test_rerun_reports_update_without_duplicating_destination(tmp_path, monkeypa
     assert [item["name"] for item in raw["otel"]["destinations"]] == ["galileo"]
 
 
+def test_v8_setup_reuses_canonical_writer_and_is_idempotent(tmp_path, monkeypatch) -> None:
+    app = _app(tmp_path, monkeypatch)
+    (tmp_path / "config.yaml").write_text("# operator comment\nconfig_version: 8\nobservability:\n  destinations: []\n")
+    monkeypatch.setenv("GALILEO_API_KEY", "must-never-print")
+    args = ["--non-interactive", "--project", "project", "--logstream", "stream"]
+
+    with (
+        patch(
+            "defenseclaw.commands.cmd_setup_galileo._v8_operator_status",
+            side_effect=[_v8_status(), _v8_status(configured=True)],
+        ),
+        patch("defenseclaw.observability.v8_writer._validate_candidate"),
+    ):
+        first = CliRunner().invoke(galileo, args, obj=app)
+        assert first.exit_code == 0, first.output
+        after_first = (tmp_path / "config.yaml").read_text()
+        second = CliRunner().invoke(galileo, args, obj=app)
+        assert second.exit_code == 0, second.output
+
+    assert "Action:      ADD" in first.output
+    assert "Config:      v8 (changed)" in first.output
+    assert "Action:      UPDATE" in second.output
+    assert "Config:      v8 (already configured)" in second.output
+    assert "must-never-print" not in first.output + second.output + after_first
+    assert (tmp_path / "config.yaml").read_text() == after_first
+    assert "# operator comment" in after_first
+
+    raw = yaml.safe_load(after_first)
+    assert "otel" not in raw
+    assert raw["observability"]["destinations"] == [
+        {
+            "name": "galileo",
+            "kind": "otlp",
+            "enabled": True,
+            "preset": "galileo",
+            "endpoint": "https://api.galileo.ai/otel/traces",
+            "protocol": "http/protobuf",
+            "batch": {"scheduled_delay_ms": 1000},
+            "headers": {
+                "Galileo-API-Key": {"env": "GALILEO_API_KEY"},
+                "project": "project",
+                "logstream": "stream",
+            },
+            "send": {
+                "signals": ["traces"],
+                "buckets": ["*"],
+                "redaction_profile": "none",
+            },
+        }
+    ]
+
+
 def test_status_json_redacts_api_key(tmp_path, monkeypatch) -> None:
     app = _app(tmp_path, monkeypatch)
     monkeypatch.setenv("GALILEO_API_KEY", "do-not-print")
@@ -150,6 +227,122 @@ def test_status_json_redacts_api_key(tmp_path, monkeypatch) -> None:
     assert "do-not-print" not in status.output
 
 
+def test_v8_status_uses_masked_plan_and_sanitized_health_only(tmp_path, monkeypatch) -> None:
+    app = _app(tmp_path, monkeypatch)
+    monkeypatch.setenv("GALILEO_API_KEY", "do-not-print")
+    health = {
+        "telemetry": {
+            "details": {
+                "destinations": [
+                    {
+                        "name": "galileo",
+                        "state": "healthy",
+                        "reason": "export_success",
+                        "queue": {"items": 2, "max_items": 2048, "dropped": 0},
+                        "last_success": "2026-07-06T12:00:00Z",
+                        "last_error": "Bearer secret-value",
+                        "headers": {"Galileo-API-Key": "secret-value"},
+                        "delivery": {"attempted": 99, "delivered": 98},
+                    }
+                ]
+            }
+        }
+    }
+    with (
+        patch(
+            "defenseclaw.commands.cmd_setup_galileo._v8_operator_status",
+            return_value=_v8_status(configured=True),
+        ),
+        patch(
+            "defenseclaw.commands.cmd_setup_galileo._gateway_health_snapshot",
+            return_value=health,
+        ),
+    ):
+        result = CliRunner().invoke(galileo, ["status", "--json"], obj=app)
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["config_version"] == 8
+    assert payload["signals"] == {"traces": True, "metrics": False, "logs": False}
+    assert payload["health"] == {
+        "state": "healthy",
+        "reason": "export_success",
+        "queue_items": 2,
+        "queue_max_items": 2048,
+        "dropped": 0,
+        "last_success": "2026-07-06T12:00:00Z",
+    }
+    assert payload["api_key"] == "configured"
+    assert "secret-value" not in result.output
+    assert "do-not-print" not in result.output
+    assert "attempted" not in result.output
+    assert "delivered" not in result.output
+
+
+@pytest.mark.parametrize(
+    ("arguments", "helper", "expected"),
+    [
+        (["enable"], "_set_v8_destination_enabled", ("galileo", True, "")),
+        (["disable"], "_set_v8_destination_enabled", ("galileo", False, "")),
+        (["remove", "--yes"], "_remove_v8_destination", ("galileo", "")),
+    ],
+)
+def test_v8_management_dispatches_to_canonical_mutators(
+    tmp_path,
+    monkeypatch,
+    arguments: list[str],
+    helper: str,
+    expected: tuple,
+) -> None:
+    app = _app(tmp_path, monkeypatch)
+    with (
+        patch(
+            "defenseclaw.commands.cmd_setup_galileo._v8_operator_status",
+            return_value=_v8_status(configured=True),
+        ),
+        patch(f"defenseclaw.commands.cmd_setup_galileo.{helper}") as canonical,
+    ):
+        result = CliRunner().invoke(galileo, arguments, obj=app)
+    assert result.exit_code == 0, result.output
+    canonical.assert_called_once_with(app.cfg.data_dir, *expected)
+
+
+def test_v8_test_dispatches_to_content_free_canonical_handshake(tmp_path, monkeypatch) -> None:
+    app = _app(tmp_path, monkeypatch)
+    with (
+        patch(
+            "defenseclaw.commands.cmd_setup_galileo._v8_operator_status",
+            return_value=_v8_status(configured=True),
+        ),
+        patch("defenseclaw.commands.cmd_setup_galileo._test_v8_destination") as canonical,
+    ):
+        result = CliRunner().invoke(galileo, ["test", "--timeout", "7"], obj=app)
+    assert result.exit_code == 0, result.output
+    canonical.assert_called_once_with(
+        app.cfg.data_dir,
+        "galileo",
+        7.0,
+        write_probe=False,
+    )
+    assert "attempted=" not in result.output
+    assert "collector_accepted=" not in result.output
+
+
+def test_v8_test_rejects_direct_otlp_write_probe(tmp_path, monkeypatch) -> None:
+    app = _app(tmp_path, monkeypatch)
+    with (
+        patch(
+            "defenseclaw.commands.cmd_setup_galileo._v8_operator_status",
+            return_value=_v8_status(configured=True),
+        ),
+        patch("defenseclaw.commands.cmd_setup_galileo._test_v8_destination") as canonical,
+    ):
+        result = CliRunner().invoke(galileo, ["test", "--direct"], obj=app)
+    assert result.exit_code != 0
+    assert "OTLP has no isolated write-probe" in result.output
+    assert "canonical content-free destination handshake" in result.output
+    canonical.assert_not_called()
+
+
 def test_self_hosted_endpoint_derivation() -> None:
     assert (
         _resolve_trace_endpoint("self-hosted", "https://console.galileo.example.com", None)
@@ -163,7 +356,6 @@ def test_self_hosted_endpoint_derivation() -> None:
 
 def test_trace_endpoint_rejects_userinfo() -> None:
     import click
-    import pytest
 
     with pytest.raises(click.ClickException, match="credential-free https"):
         _validate_https_endpoint("https://user:password@api.galileo.example/otel/traces")
@@ -338,9 +530,7 @@ def test_disabling_splunk_does_not_disable_galileo(tmp_path, monkeypatch) -> Non
     assert destinations["splunk-cloud"]["enabled"] is False
 
 
-def test_splunk_status_lists_every_named_destination(
-    tmp_path, monkeypatch, capsys
-) -> None:
+def test_splunk_status_lists_every_named_destination(tmp_path, monkeypatch, capsys) -> None:
     app = _app(tmp_path, monkeypatch)
     apply_preset("splunk-o11y", {"realm": "us1"}, str(tmp_path), name="splunk-us1")
     apply_preset("splunk-o11y", {"realm": "eu0"}, str(tmp_path), name="splunk-eu0")

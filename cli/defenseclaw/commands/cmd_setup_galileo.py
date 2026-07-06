@@ -31,11 +31,19 @@ import click
 import yaml
 
 from defenseclaw import ux
+from defenseclaw.commands.cmd_setup_observability import (
+    _add_v8_destination,
+    _remove_v8_destination,
+    _set_v8_destination_enabled,
+    _test_v8_destination,
+    _v8_operator_status,
+)
 from defenseclaw.context import AppContext, pass_ctx
 from defenseclaw.observability import (
     apply_preset,
     list_destinations,
     remove_destination,
+    resolve_preset,
     set_destination_enabled,
 )
 
@@ -124,9 +132,39 @@ def galileo(
     if not resolved_key:
         raise click.ClickException(f"{_KEY_ENV} is not set; export it or omit --non-interactive for a hidden prompt")
 
+    inputs = {"endpoint": endpoint, "project": project, "logstream": logstream}
+    v8_status = _v8_operator_status(app.cfg.data_dir)
+    if v8_status is not None:
+        existed = any(destination.name == _DESTINATION for destination in v8_status.destinations)
+        try:
+            result, warnings = _add_v8_destination(
+                app.cfg.data_dir,
+                resolve_preset("galileo"),
+                inputs,
+                name=_DESTINATION,
+                enabled=not disabled,
+                signals=("traces",),
+                token_value=resolved_key if api_key or persist_api_key else None,
+                target=None,
+                dry_run=dry_run,
+            )
+        except ValueError as exc:
+            raise click.ClickException(str(exc)) from exc
+        _print_v8_setup_result(
+            result,
+            warnings,
+            deployment=deployment,
+            endpoint=endpoint,
+            project=project,
+            logstream=logstream,
+            dry_run=dry_run,
+            existed=existed,
+        )
+        return
+
     result = apply_preset(
         "galileo",
-        {"endpoint": endpoint, "project": project, "logstream": logstream},
+        inputs,
         app.cfg.data_dir,
         name=_DESTINATION,
         enabled=not disabled,
@@ -161,6 +199,12 @@ def galileo(
 def status_cmd(app: AppContext, as_json: bool) -> None:
     """Show the configured Galileo destination without secret values."""
 
+    v8_status = _v8_operator_status(app.cfg.data_dir)
+    if v8_status is not None:
+        payload = _v8_status_payload(app, v8_status)
+        _print_status_payload(payload, as_json=as_json)
+        return
+
     destination = next((d for d in list_destinations(app.cfg.data_dir) if d.name == _DESTINATION), None)
     payload = {
         "configured": destination is not None,
@@ -174,12 +218,7 @@ def status_cmd(app: AppContext, as_json: bool) -> None:
     if live:
         payload["routing"] = live.get("routing", {})
         payload["delivery"] = live.get("delivery", {})
-    if as_json:
-        click.echo(json.dumps(payload, indent=2, sort_keys=True))
-        return
-    ux.section("Galileo status")
-    for key, value in payload.items():
-        click.echo(f"  {key.replace('_', ' ').title():<12} {value}")
+    _print_status_payload(payload, as_json=as_json)
 
 
 @galileo.command("enable")
@@ -187,6 +226,9 @@ def status_cmd(app: AppContext, as_json: bool) -> None:
 def enable_cmd(app: AppContext) -> None:
     """Enable the Galileo destination."""
 
+    if _v8_operator_status(app.cfg.data_dir) is not None:
+        _set_v8_destination_enabled(app.cfg.data_dir, _DESTINATION, True, "")
+        return
     try:
         set_destination_enabled(_DESTINATION, True, app.cfg.data_dir)
     except ValueError as exc:
@@ -199,6 +241,9 @@ def enable_cmd(app: AppContext) -> None:
 def disable_cmd(app: AppContext) -> None:
     """Disable Galileo without deleting its configuration."""
 
+    if _v8_operator_status(app.cfg.data_dir) is not None:
+        _set_v8_destination_enabled(app.cfg.data_dir, _DESTINATION, False, "")
+        return
     try:
         set_destination_enabled(_DESTINATION, False, app.cfg.data_dir)
     except ValueError as exc:
@@ -214,6 +259,10 @@ def remove_cmd(app: AppContext, yes: bool) -> None:
 
     if not yes and not click.confirm("  Remove the Galileo OTLP destination?", default=False):
         click.echo("  Aborted.")
+        return
+    if _v8_operator_status(app.cfg.data_dir) is not None:
+        _remove_v8_destination(app.cfg.data_dir, _DESTINATION, "")
+        click.echo("  GALILEO_API_KEY was preserved.")
         return
     try:
         remove_destination(_DESTINATION, app.cfg.data_dir)
@@ -232,6 +281,24 @@ def remove_cmd(app: AppContext, yes: bool) -> None:
 @pass_ctx
 def test_cmd(app: AppContext, timeout: float, direct: bool) -> None:
     """Send a canary through the real gateway/filter/exporter path by default."""
+
+    if _v8_operator_status(app.cfg.data_dir) is not None:
+        if direct:
+            raise click.ClickException(
+                "--direct is not supported for v8 Galileo because OTLP has no isolated write-probe; "
+                "omit --direct to use the canonical content-free destination handshake and use "
+                "gateway telemetry health for runtime delivery evidence"
+            )
+        # v8 destination tests are isolated, content-free handshakes against
+        # the canonical effective plan.  They deliberately do not claim that
+        # an ordinary trace was delivered or invent exporter delivery counts.
+        _test_v8_destination(
+            app.cfg.data_dir,
+            _DESTINATION,
+            timeout,
+            write_probe=False,
+        )
+        return
 
     raw = _load_config(app.cfg.data_dir)
     destination = _raw_destination(raw)
@@ -294,6 +361,95 @@ def test_cmd(app: AppContext, timeout: float, direct: bool) -> None:
     click.echo("  Direct probe bypassed the DefenseClaw runtime pipeline.")
 
 
+def _print_v8_setup_result(
+    result,
+    warnings: list[str],
+    *,
+    deployment: str,
+    endpoint: str,
+    project: str,
+    logstream: str,
+    dry_run: bool,
+    existed: bool,
+) -> None:
+    """Render one secret-free result from the canonical v8 writer."""
+
+    click.echo()
+    ux.section("Galileo configured" if not dry_run else "Galileo configuration preview")
+    click.echo(f"  Action:      {'UPDATE' if existed else 'ADD'}")
+    click.echo(f"  Deployment:  {deployment}")
+    click.echo(f"  Destination: {_DESTINATION}")
+    click.echo(f"  Endpoint:    {endpoint}")
+    click.echo(f"  Project:     {project}")
+    click.echo(f"  Log stream:  {logstream}")
+    click.echo("  Signals:     traces")
+    click.echo("  Delivery:    real-time after each completed model/tool operation (≤1s batch delay)")
+    click.echo(f"  Config:      v8 ({'changed' if result.changed else 'already configured'})")
+    for warning in warnings:
+        ux.warn(warning, indent="  ")
+    if not dry_run:
+        ux.subhead("Next: defenseclaw setup galileo test")
+
+
+def _v8_status_payload(app: AppContext, status) -> dict:
+    """Build a v8 Galileo status solely from masked plan and safe health."""
+
+    destination = next(
+        (item for item in status.destinations if item.name == _DESTINATION),
+        None,
+    )
+    selected = set(destination.selected_signals) if destination else set()
+    payload = {
+        "configured": destination is not None,
+        "name": _DESTINATION,
+        "enabled": bool(destination and destination.enabled),
+        "endpoint": destination.endpoint if destination else "",
+        "signals": {
+            "traces": "traces" in selected,
+            "metrics": "metrics" in selected,
+            "logs": "logs" in selected,
+        },
+        "api_key": "configured" if _resolve_secret(app.cfg.data_dir) else "missing",
+        "config_version": 8,
+    }
+    if destination is None:
+        return payload
+
+    from defenseclaw.observability.v8_status import destination_health_from_gateway
+
+    health = destination_health_from_gateway(_gateway_health_snapshot(app)).get(_DESTINATION)
+    if health is None:
+        return payload
+    safe_health = {
+        key: value
+        for key, value in {
+            "state": health.state,
+            "reason": health.reason,
+            "queue_items": health.queue_items,
+            "queue_bytes": health.queue_bytes,
+            "queue_max_items": health.queue_max_items,
+            "queue_max_bytes": health.queue_max_bytes,
+            "dropped": health.dropped,
+            "last_success": health.last_success,
+            "last_failure": health.last_failure,
+            "last_error_class": health.last_error_class,
+        }.items()
+        if value not in (None, "")
+    }
+    if safe_health:
+        payload["health"] = safe_health
+    return payload
+
+
+def _print_status_payload(payload: dict, *, as_json: bool) -> None:
+    if as_json:
+        click.echo(json.dumps(payload, indent=2, sort_keys=True))
+        return
+    ux.section("Galileo status")
+    for key, value in payload.items():
+        click.echo(f"  {key.replace('_', ' ').title():<12} {value}")
+
+
 def _gateway_api_base(app: AppContext) -> str:
     host = str(getattr(app.cfg.gateway, "api_bind", "") or "127.0.0.1")
     if host in {"0.0.0.0", "::", "[::]", "localhost"}:
@@ -333,13 +489,18 @@ def _runtime_canary_request(app: AppContext, timeout: float) -> dict:
     return payload
 
 
-def _live_galileo_health(app: AppContext) -> dict:
+def _gateway_health_snapshot(app: AppContext) -> dict:
     request = urllib.request.Request(_gateway_api_base(app) + "/health", method="GET")
     try:
         with urllib.request.urlopen(request, timeout=1.5) as response:  # noqa: S310 - loopback gateway
             body = json.loads(response.read().decode("utf-8"))
     except (urllib.error.URLError, OSError, ValueError, json.JSONDecodeError):
         return {}
+    return body if isinstance(body, dict) else {}
+
+
+def _live_galileo_health(app: AppContext) -> dict:
+    body = _gateway_health_snapshot(app)
     telemetry = body.get("telemetry") or {}
     details = telemetry.get("details") or {}
     for destination in details.get("destinations") or []:
@@ -384,9 +545,7 @@ def _validate_https_endpoint(value: str) -> str:
         or parsed.query
         or parsed.fragment
     ):
-        raise click.ClickException(
-            "Galileo trace endpoint must be credential-free https:// without query or fragment"
-        )
+        raise click.ClickException("Galileo trace endpoint must be credential-free https:// without query or fragment")
     return value.rstrip("/")
 
 

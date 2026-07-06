@@ -769,6 +769,10 @@ def _build_v8_preset_destination(
         destination["preset"] = "galileo"
         if explicit_signals and explicit_signals != ("traces",):
             raise ValueError("the Galileo preset supports traces only")
+        # Keep the first-class Galileo command's real-time batching contract
+        # when it writes the v8 destination shape.  This is an explicit
+        # preset override; the generic v8 OTLP default remains five seconds.
+        destination["batch"] = {"scheduled_delay_ms": 1000}
 
     headers: dict[str, Any] = {}
     for key, template in preset.otel_headers.items():
