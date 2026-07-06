@@ -26,11 +26,14 @@ const (
 	MaxBinaryVersionBytes      = 256
 	MaxSpanNameBytes           = 512
 	MaxProvenanceHexBytes      = 128
+	MaxImportIdentifierBytes   = 512
+	MaxImportForwardHops       = 4
 	MaxCanonicalRecordBytes    = 4 * 1024 * 1024
 )
 
 var lowerHexPattern = regexp.MustCompile(`^[0-9a-f]+$`)
 var provenanceProducerPattern = regexp.MustCompile(`^[a-z][a-z0-9_.-]{0,63}$`)
+var canonicalUUIDPattern = regexp.MustCompile(`^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$`)
 
 // Correlation is the closed v8 set of optional join keys. An empty value means
 // unknown; builders never invent a correlation identifier.
@@ -94,15 +97,127 @@ func (correlation Correlation) validate() error {
 	return nil
 }
 
+// ImportProtocol identifies the accepted-record transport. It is closed in v8.
+type ImportProtocol string
+
+const ImportProtocolOTLP ImportProtocol = "otlp"
+
+// ImportMode distinguishes a lossless canonical import from a derived local
+// observation. Import-and-derive is used when one inbound leaf produces both.
+type ImportMode string
+
+const (
+	ImportModeImport          ImportMode = "import"
+	ImportModeDerive          ImportMode = "derive"
+	ImportModeImportAndDerive ImportMode = "import_and_derive"
+)
+
+// ImportDerivation records the exact transformation used for a derived target.
+type ImportDerivation string
+
+const (
+	ImportDerivationFieldValue      ImportDerivation = "field_value"
+	ImportDerivationElapsedTime     ImportDerivation = "elapsed_time"
+	ImportDerivationCumulativeDelta ImportDerivation = "cumulative_delta"
+	ImportDerivationArithmeticMean  ImportDerivation = "arithmetic_mean"
+)
+
+// ImportProvenance is the closed, bounded description of one accepted OTLP
+// occurrence. It is informational: local provenance remains authoritative.
+// SourceAggregateCount preserves present-versus-absent because zero is not a
+// valid arithmetic-mean divisor.
+type ImportProvenance struct {
+	Protocol                 ImportProtocol
+	BindingID                string
+	Mode                     ImportMode
+	Derivation               ImportDerivation
+	SourceAggregateCount     Optional[uint64]
+	AuthenticatedSource      string
+	UpstreamInstanceID       string
+	UpstreamRecordID         string
+	UpstreamServiceName      string
+	UpstreamRedactionProfile string
+	IngressHopCount          uint32
+	LastHopInstanceID        string
+	LastHopDestination       string
+}
+
+func (provenance ImportProvenance) Validate() error {
+	if provenance.Protocol != ImportProtocolOTLP {
+		return fmt.Errorf("import provenance protocol must be otlp")
+	}
+	if err := validateRequiredBoundedText("import binding ID", provenance.BindingID, MaxImportIdentifierBytes); err != nil {
+		return err
+	}
+	if err := validateRequiredBoundedText("import authenticated source", provenance.AuthenticatedSource, MaxImportIdentifierBytes); err != nil {
+		return err
+	}
+	for field, value := range map[string]string{
+		"import upstream instance ID":  provenance.UpstreamInstanceID,
+		"import upstream service name": provenance.UpstreamServiceName,
+		"import last-hop instance ID":  provenance.LastHopInstanceID,
+		"import last-hop destination":  provenance.LastHopDestination,
+	} {
+		if value == "" {
+			continue
+		}
+		if err := validateRequiredBoundedText(field, value, MaxImportIdentifierBytes); err != nil {
+			return err
+		}
+	}
+	if provenance.UpstreamRecordID != "" &&
+		!canonicalUUIDPattern.MatchString(provenance.UpstreamRecordID) &&
+		!IsStableToken(provenance.UpstreamRecordID) {
+		return fmt.Errorf("import upstream record ID must be a canonical UUID or stable token")
+	}
+	if provenance.UpstreamRedactionProfile != "" && !IsStableToken(provenance.UpstreamRedactionProfile) {
+		return fmt.Errorf("import upstream redaction profile must be a stable token")
+	}
+	if provenance.IngressHopCount > MaxImportForwardHops {
+		return fmt.Errorf("import ingress hop count exceeds %d", MaxImportForwardHops)
+	}
+
+	count, hasCount := provenance.SourceAggregateCount.Get()
+	switch provenance.Mode {
+	case ImportModeImport:
+		if provenance.Derivation != "" {
+			return fmt.Errorf("import mode forbids derivation")
+		}
+		if hasCount {
+			return fmt.Errorf("import mode forbids source aggregate count")
+		}
+	case ImportModeDerive, ImportModeImportAndDerive:
+		switch provenance.Derivation {
+		case ImportDerivationFieldValue,
+			ImportDerivationElapsedTime,
+			ImportDerivationCumulativeDelta:
+			if hasCount {
+				return fmt.Errorf("source aggregate count is valid only for arithmetic_mean")
+			}
+		case ImportDerivationArithmeticMean:
+			if !hasCount || count == 0 {
+				return fmt.Errorf("arithmetic_mean requires a positive source aggregate count")
+			}
+		default:
+			return fmt.Errorf("deriving import mode requires a canonical derivation")
+		}
+	default:
+		return fmt.Errorf("import provenance mode is not canonical")
+	}
+	return nil
+}
+
 // Provenance records which binary, registry, and effective configuration
-// generation constructed the record.
+// generation constructed the record. Import is optional and never replaces
+// these trusted local fields.
 type Provenance struct {
-	Producer              string `json:"producer"`
-	BinaryVersion         string `json:"binary_version"`
-	RegistrySchemaVersion int    `json:"registry_schema_version"`
-	ConfigGeneration      int64  `json:"config_generation"`
-	BuildCommit           string `json:"build_commit,omitempty"`
-	ConfigDigest          string `json:"config_digest,omitempty"`
+	Producer              string            `json:"producer"`
+	BinaryVersion         string            `json:"binary_version"`
+	RegistrySchemaVersion int               `json:"registry_schema_version"`
+	ConfigGeneration      int64             `json:"config_generation"`
+	BuildCommit           string            `json:"build_commit,omitempty"`
+	ConfigDigest          string            `json:"config_digest,omitempty"`
+	Import                *ImportProvenance `json:"import,omitempty"`
 }
 
 func (provenance Provenance) Validate() error {
@@ -129,6 +244,11 @@ func (provenance Provenance) Validate() error {
 	}
 	if len(provenance.ConfigDigest) > MaxProvenanceHexBytes {
 		return fmt.Errorf("config digest exceeds %d bytes", MaxProvenanceHexBytes)
+	}
+	if provenance.Import != nil {
+		if err := provenance.Import.Validate(); err != nil {
+			return fmt.Errorf("invalid import provenance: %w", err)
+		}
 	}
 	return nil
 }
@@ -596,6 +716,7 @@ func (record Record) Clone() Record {
 	data.body = record.data.body.Clone()
 	data.instrumentData = record.data.instrumentData.Clone()
 	data.fieldClasses = cloneFieldClasses(record.data.fieldClasses)
+	data.provenance = cloneProvenance(record.data.provenance)
 	return Record{data: data}
 }
 
@@ -648,6 +769,28 @@ func cloneProvenance(input Provenance) Provenance {
 		ConfigGeneration:      input.ConfigGeneration,
 		BuildCommit:           strings.Clone(input.BuildCommit),
 		ConfigDigest:          strings.Clone(input.ConfigDigest),
+		Import:                cloneImportProvenance(input.Import),
+	}
+}
+
+func cloneImportProvenance(input *ImportProvenance) *ImportProvenance {
+	if input == nil {
+		return nil
+	}
+	return &ImportProvenance{
+		Protocol:                 ImportProtocol(strings.Clone(string(input.Protocol))),
+		BindingID:                strings.Clone(input.BindingID),
+		Mode:                     ImportMode(strings.Clone(string(input.Mode))),
+		Derivation:               ImportDerivation(strings.Clone(string(input.Derivation))),
+		SourceAggregateCount:     input.SourceAggregateCount,
+		AuthenticatedSource:      strings.Clone(input.AuthenticatedSource),
+		UpstreamInstanceID:       strings.Clone(input.UpstreamInstanceID),
+		UpstreamRecordID:         strings.Clone(input.UpstreamRecordID),
+		UpstreamServiceName:      strings.Clone(input.UpstreamServiceName),
+		UpstreamRedactionProfile: strings.Clone(input.UpstreamRedactionProfile),
+		IngressHopCount:          input.IngressHopCount,
+		LastHopInstanceID:        strings.Clone(input.LastHopInstanceID),
+		LastHopDestination:       strings.Clone(input.LastHopDestination),
 	}
 }
 
@@ -808,6 +951,38 @@ func provenanceWire(provenance Provenance) map[string]any {
 	}
 	if provenance.ConfigDigest != "" {
 		wire["config_digest"] = provenance.ConfigDigest
+	}
+	if provenance.Import != nil {
+		wire["import"] = importProvenanceWire(*provenance.Import)
+	}
+	return wire
+}
+
+func importProvenanceWire(provenance ImportProvenance) map[string]any {
+	wire := map[string]any{
+		"protocol":             provenance.Protocol,
+		"binding_id":           provenance.BindingID,
+		"mode":                 provenance.Mode,
+		"authenticated_source": provenance.AuthenticatedSource,
+		"ingress_hop_count":    provenance.IngressHopCount,
+	}
+	if provenance.Derivation != "" {
+		wire["derivation"] = provenance.Derivation
+	}
+	if count, present := provenance.SourceAggregateCount.Get(); present {
+		wire["source_aggregate_count"] = count
+	}
+	for key, value := range map[string]string{
+		"upstream_instance_id":       provenance.UpstreamInstanceID,
+		"upstream_record_id":         provenance.UpstreamRecordID,
+		"upstream_service_name":      provenance.UpstreamServiceName,
+		"upstream_redaction_profile": provenance.UpstreamRedactionProfile,
+		"last_hop_instance_id":       provenance.LastHopInstanceID,
+		"last_hop_destination":       provenance.LastHopDestination,
+	} {
+		if value != "" {
+			wire[key] = value
+		}
 	}
 	return wire
 }
