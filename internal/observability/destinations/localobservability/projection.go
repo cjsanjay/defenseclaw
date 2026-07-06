@@ -22,6 +22,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/defenseclaw/defenseclaw/internal/observability"
+	"github.com/defenseclaw/defenseclaw/internal/observability/compatibility/profilemanifest"
 	"github.com/defenseclaw/defenseclaw/internal/observability/delivery"
 	"github.com/defenseclaw/defenseclaw/internal/observability/redaction"
 )
@@ -36,6 +37,7 @@ type ProjectionReason string
 const (
 	ProjectionEligible       ProjectionReason = "eligible"
 	ProjectionInvalidInput   ProjectionReason = "invalid_projection"
+	ProjectionUnsupported    ProjectionReason = "unsupported_family"
 	ProjectionAliasConflict  ProjectionReason = "alias_conflict"
 	ProjectionOutputTooLarge ProjectionReason = "output_too_large"
 )
@@ -162,6 +164,17 @@ func Project(input redaction.Projection) Result {
 	if !ok || wire.Profile != "" {
 		return rejected(ProjectionInvalidInput)
 	}
+	if !profilemanifest.Eligible(
+		ProfileID,
+		observability.SignalTraces,
+		observability.EventName(wire.Family),
+	) {
+		return rejected(ProjectionUnsupported)
+	}
+	profile, ok := profilemanifest.Runtime(ProfileID)
+	if !ok || profile.Status != "available" {
+		return rejected(ProjectionUnsupported)
+	}
 	attributes := sanitizeObject(wire.Body.Attributes)
 	for index := range wire.Body.Events {
 		wire.Body.Events[index].Attributes = sanitizeObject(wire.Body.Events[index].Attributes)
@@ -169,15 +182,8 @@ func Project(input redaction.Projection) Result {
 	for index := range wire.Body.Links {
 		wire.Body.Links[index].Attributes = sanitizeObject(wire.Body.Links[index].Attributes)
 	}
-	aliases := [][2]string{
-		{"defenseclaw.connector.source", "connector"},
-		{"defenseclaw.agent.type", "gen_ai.agent.type"},
-		{"defenseclaw.guardrail.raw_action", "defenseclaw.raw_action"},
-		{"defenseclaw.guardrail.effective_action", "defenseclaw.decision"},
-		{"defenseclaw.guardrail.would_block", "defenseclaw.would_block"},
-	}
-	for _, alias := range aliases {
-		if !copyAlias(attributes, alias[0], alias[1]) {
+	for _, alias := range profile.AttributeAliases {
+		if !copyAlias(attributes, alias.Source, alias.Target) {
 			return rejected(ProjectionAliasConflict)
 		}
 	}
@@ -185,12 +191,19 @@ func Project(input redaction.Projection) Result {
 	// event. Preserve the two historical Agent360 TraceQL span attributes when
 	// every observed event value agrees; ambiguity is represented by omission,
 	// never by selecting or inventing a value.
-	for _, alias := range aliases[2:] {
-		if _, present := attributes[alias[1]]; present {
+	for _, alias := range profile.AttributeAliases {
+		if !alias.EventDerived {
 			continue
 		}
-		if value, present := unambiguousEventValue(wire.Body.Events, alias[0]); present {
-			attributes[alias[1]] = value
+		if _, present := attributes[alias.Target]; present {
+			continue
+		}
+		if value, present := unambiguousEventValue(
+			wire.Body.Events,
+			alias.Source,
+			profile.EventAliasSources,
+		); present {
+			attributes[alias.Target] = value
 		}
 	}
 	wire.Profile = ProfileID
@@ -221,11 +234,18 @@ func copyAlias(attributes map[string]any, canonical, alias string) bool {
 	return true
 }
 
-func unambiguousEventValue(events []projectedEvent, key string) (any, bool) {
+func unambiguousEventValue(events []projectedEvent, key string, allowedSources []string) (any, bool) {
 	var selected any
 	found := false
 	for _, event := range events {
-		if event.Name != "guardrail.decision" && event.Name != "hook.decision" {
+		allowed := false
+		for _, source := range allowedSources {
+			if event.Name == source {
+				allowed = true
+				break
+			}
+		}
+		if !allowed {
 			continue
 		}
 		value, present := event.Attributes[key]

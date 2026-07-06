@@ -41,6 +41,15 @@ var telemetryV8Schema []byte
 //go:embed telemetry/generated/catalog.json
 var telemetryV8Catalog []byte
 
+//go:embed telemetry/generated/compatibility/galileo-rich-v2.json
+var telemetryV8GalileoCompatibilityProfile []byte
+
+//go:embed telemetry/generated/compatibility/local-observability-v1.json
+var telemetryV8LocalObservabilityCompatibilityProfile []byte
+
+//go:embed telemetry/generated/compatibility/openinference-v1.json
+var telemetryV8OpenInferenceCompatibilityProfile []byte
+
 // DefenseClawConfigV8Schema returns a copy of the exact checked-in canonical v8
 // configuration schema bytes. Callers cannot mutate the process-wide embed.
 func DefenseClawConfigV8Schema() []byte {
@@ -81,4 +90,21 @@ func TelemetryV8Schema() []byte {
 // catalog. Callers cannot mutate the process-wide embed.
 func TelemetryV8Catalog() []byte {
 	return append([]byte(nil), telemetryV8Catalog...)
+}
+
+// TelemetryV8CompatibilityProfile returns a copy of one generated compatibility
+// profile manifest. Unknown profile IDs deliberately return nil.
+func TelemetryV8CompatibilityProfile(profileID string) []byte {
+	var source []byte
+	switch profileID {
+	case "galileo-rich-v2":
+		source = telemetryV8GalileoCompatibilityProfile
+	case "local-observability-v1":
+		source = telemetryV8LocalObservabilityCompatibilityProfile
+	case "openinference-v1":
+		source = telemetryV8OpenInferenceCompatibilityProfile
+	default:
+		return nil
+	}
+	return append([]byte(nil), source...)
 }

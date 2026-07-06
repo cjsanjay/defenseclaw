@@ -15,6 +15,7 @@ import json
 import subprocess
 import sys
 import zipfile
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -31,11 +32,25 @@ EXPECTED_RESOURCES = {
         "compatibility/v7-exporter-selection.json",
         schema_resources.v7_exporter_selection_bytes,
     ),
+    **{
+        f"{profile_id}.json": (
+            f"compatibility/{profile_id}.json",
+            partial(schema_resources.telemetry_v8_compatibility_profile_bytes, profile_id),
+        )
+        for profile_id in (
+            "galileo-rich-v2",
+            "local-observability-v1",
+            "openinference-v1",
+        )
+    },
 }
 EXPECTED_PACKAGE_DATA = {
     "_data/telemetry/v8/telemetry.schema.json",
     "_data/telemetry/v8/catalog.json",
     "_data/telemetry/v8/v7-exporter-selection.json",
+    "_data/telemetry/v8/galileo-rich-v2.json",
+    "_data/telemetry/v8/local-observability-v1.json",
+    "_data/telemetry/v8/openinference-v1.json",
 }
 
 
@@ -82,6 +97,14 @@ def test_staged_telemetry_inventory_is_exact() -> None:
         schema_resources.telemetry_v8_schema_bytes,
         schema_resources.telemetry_v8_catalog_bytes,
         schema_resources.v7_exporter_selection_bytes,
+        *(
+            partial(schema_resources.telemetry_v8_compatibility_profile_bytes, profile_id)
+            for profile_id in (
+                "galileo-rich-v2",
+                "local-observability-v1",
+                "openinference-v1",
+            )
+        ),
     ],
 )
 def test_resource_loader_has_no_repository_fallback(
@@ -122,7 +145,9 @@ def test_telemetry_package_data_is_exact_and_staging_is_untracked() -> None:
         assert ignored.returncode == 0
 
 
-def test_built_wheel_loads_v7_selection_from_installed_package_only(tmp_path: Path) -> None:
+def test_built_wheel_loads_telemetry_compatibility_resources_from_installed_package_only(
+    tmp_path: Path,
+) -> None:
     dist = tmp_path / "dist"
     completed = subprocess.run(
         ["uv", "build", "--wheel", "--out-dir", str(dist)],
@@ -138,18 +163,38 @@ def test_built_wheel_loads_v7_selection_from_installed_package_only(tmp_path: Pa
     with zipfile.ZipFile(wheel) as archive:
         archive.extractall(installed)
 
-    expected = (SOURCE_DIR / "compatibility/v7-exporter-selection.json").read_bytes()
+    expected = {
+        "v7-exporter-selection": hashlib.sha256(
+            (SOURCE_DIR / "compatibility/v7-exporter-selection.json").read_bytes()
+        ).hexdigest(),
+        **{
+            profile_id: hashlib.sha256((SOURCE_DIR / f"compatibility/{profile_id}.json").read_bytes()).hexdigest()
+            for profile_id in (
+                "galileo-rich-v2",
+                "local-observability-v1",
+                "openinference-v1",
+            )
+        },
+    }
     code = f"""
 import hashlib
+import json
 import sys
 sys.path.insert(0, {str(installed)!r})
-from defenseclaw.observability.schema_resources import v7_exporter_selection_bytes
+from defenseclaw.observability.schema_resources import (
+    telemetry_v8_compatibility_profile_bytes,
+    v7_exporter_selection_bytes,
+)
 from defenseclaw.observability.v8_compatibility import load_packaged_v7_compatibility_selection
 raw = v7_exporter_selection_bytes()
 selection = load_packaged_v7_compatibility_selection()
 audit_selector = next(selector for selector in selection.exporter_selectors('audit_sink', 'logs') if selector.actions)
 assert len(audit_selector.actions) == 188
-print(hashlib.sha256(raw).hexdigest())
+print(json.dumps({{
+    'v7-exporter-selection': hashlib.sha256(raw).hexdigest(),
+    **{{profile_id: hashlib.sha256(telemetry_v8_compatibility_profile_bytes(profile_id)).hexdigest()
+       for profile_id in ('galileo-rich-v2', 'local-observability-v1', 'openinference-v1')}},
+}}, sort_keys=True))
 """
     loaded = subprocess.run(
         [sys.executable, "-I", "-c", code],
@@ -160,4 +205,9 @@ print(hashlib.sha256(raw).hexdigest())
         timeout=60,
     )
     assert loaded.returncode == 0, loaded.stderr
-    assert loaded.stdout.strip() == hashlib.sha256(expected).hexdigest()
+    assert json.loads(loaded.stdout) == expected
+
+
+def test_unknown_compatibility_profile_fails_without_resource_probe() -> None:
+    with pytest.raises(ValueError, match="unknown telemetry compatibility profile"):
+        schema_resources.telemetry_v8_compatibility_profile_bytes("unknown-v1")

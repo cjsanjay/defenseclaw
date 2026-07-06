@@ -16,6 +16,7 @@ import (
 
 	"github.com/defenseclaw/defenseclaw/internal/config"
 	"github.com/defenseclaw/defenseclaw/internal/observability"
+	"github.com/defenseclaw/defenseclaw/internal/observability/compatibility/profilemanifest"
 	"github.com/defenseclaw/defenseclaw/internal/observability/delivery"
 	"github.com/defenseclaw/defenseclaw/internal/observability/pipeline"
 	"github.com/defenseclaw/defenseclaw/internal/observability/redaction"
@@ -30,6 +31,65 @@ func TestRuntimeIdentityUsesSharedNoCycleAuthority(t *testing.T) {
 		ProfileID != observability.RuntimeLocalObservabilityProfile {
 		t.Fatalf("local observability identity drifted: destination=%q profile=%q", DestinationName, ProfileID)
 	}
+}
+
+func TestGeneratedProfileOwnsExactLocalTraceEligibility(t *testing.T) {
+	t.Parallel()
+	manifest, err := profilemanifest.Get(ProfileID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	traceFamilies := profilemanifest.SortedFamilyIDs(manifest, observability.SignalTraces)
+	if len(traceFamilies) != 25 {
+		t.Fatalf("generated local trace family count = %d, want 25", len(traceFamilies))
+	}
+	for _, family := range []observability.EventName{
+		"span.agent.invoke",
+		"span.model.chat",
+		"span.tool.execute",
+		"span.guardrail.apply",
+	} {
+		if !profilemanifest.Eligible(ProfileID, observability.SignalTraces, family) {
+			t.Fatalf("generated profile omitted supported family %q", family)
+		}
+	}
+	if !profilemanifest.Eligible(ProfileID, observability.SignalTraces, "span.diagnostic.canary") {
+		t.Fatal("independent diagnostic canary was dropped from local compatibility input")
+	}
+}
+
+func TestDiagnosticCanaryReachesLocalDeliveryWithoutReleaseCanarySemantics(t *testing.T) {
+	t.Parallel()
+	fixture := newLocalFixture(t, "none", 12)
+	adapter := &captureAdapter{
+		deliveries: make(chan [][]byte, 1), acknowledgements: make(chan []string, 1), validate: true,
+	}
+	consumer := newTestConsumer(t, fixture, adapter, dispatcherConfig(fixture.destination.Name, 1, 0))
+	consumer.Activate()
+	if got := consumer.tryRecord(fixture.diagnosticRecord(t)); got != telemetry.V8CanonicalSpanEnqueueAccepted {
+		t.Fatalf("diagnostic canary enqueue = %s", got)
+	}
+	flush(t, consumer)
+	select {
+	case delivered := <-adapter.deliveries:
+		if len(delivered) != 1 {
+			t.Fatalf("diagnostic delivery count = %d", len(delivered))
+		}
+		wire, ok := decodeWire(delivered[0], true)
+		if !ok || wire.Family != observability.TelemetryFamilyDiagnosticCanary ||
+			wire.Bucket != string(observability.BucketDiagnostic) {
+			t.Fatalf("diagnostic local projection = family:%q bucket:%q valid:%v", wire.Family, wire.Bucket, ok)
+		}
+		if _, releaseMarker := wire.Body.Attributes["defenseclaw.telemetry.canary"]; releaseMarker {
+			t.Fatal("independent diagnostic span gained the two-span release-canary marker")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("diagnostic canary did not reach local projected delivery")
+	}
+	if got := waitAcknowledgement(t, adapter.acknowledgements); len(got) != 0 {
+		t.Fatalf("independent diagnostic span acknowledged as release canary: %v", got)
+	}
+	shutdown(t, consumer)
 }
 
 func TestProjectionPreservesRootAgentAndModelDashboardShapeWithoutFabrication(t *testing.T) {
@@ -746,6 +806,28 @@ func (fixture *localFixture) toolRecord(t *testing.T, input toolRecordInput) obs
 		GenAIToolType: observability.Present("function"), GenAIToolCallID: observability.Present("tool-call-1"),
 		DefenseClawToolProvider: observability.Present("builtin"), DefenseClawToolStatus: observability.Present("completed"),
 		ConditionConnectorKnown: true, ConditionOperationTerminal: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return record
+}
+
+func (fixture *localFixture) diagnosticRecord(t *testing.T) observability.Record {
+	t.Helper()
+	record, err := fixture.builder(t).BuildSpanDiagnosticCanary(observability.SpanDiagnosticCanaryInput{
+		Envelope: fixture.envelope("91919191919191919191919191919191", "d1d2d3d4d5d6d7d8", ""),
+		Outcome:  observability.OutcomeCompleted, Kind: "INTERNAL",
+		StartTimeUnixNano: 1_783_278_000_600_000_001, EndTimeUnixNano: 1_783_278_000_700_000_001,
+		TraceState: observability.Present("dc=local-diagnostic"), Flags: 0x101,
+		Status: observability.NewTraceStatusOK(), Resource: traceResource(),
+		Scope:               observability.TraceScopeInput{DroppedAttributesCount: observability.Present[uint32](11)},
+		ResourceServiceName: "defenseclaw", ResourceServiceNamespace: "cisco.ai-defense",
+		ResourceServiceInstanceID: "instance-local", ResourceDeploymentEnvironmentName: "test",
+		ResourceDefenseClawInstanceID: "instance-local",
+		DefenseClawDestinationID:      observability.Present(fixture.destination.Name),
+		DefenseClawDestinationSignal:  observability.Present("traces"),
+		ConditionOperationTerminal:    true,
 	})
 	if err != nil {
 		t.Fatal(err)

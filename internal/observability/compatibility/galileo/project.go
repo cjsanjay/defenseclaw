@@ -21,6 +21,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/defenseclaw/defenseclaw/internal/observability"
+	"github.com/defenseclaw/defenseclaw/internal/observability/compatibility/profilemanifest"
 	"github.com/defenseclaw/defenseclaw/internal/observability/redaction"
 	"go.opentelemetry.io/otel/trace"
 )
@@ -56,6 +57,13 @@ func Project(input redaction.Projection, configured Limits) Result {
 	attributes, ok := object(envelope.Body["attributes"])
 	if !ok {
 		return rejected(ReasonSchemaMissingRequired, "body.attributes")
+	}
+	if !profilemanifest.Eligible(
+		ProfileID,
+		observability.SignalTraces,
+		observability.EventName(envelope.Family),
+	) {
+		return rejected(ReasonUnsupportedShape)
 	}
 	contract, reason, missing := selectContract(envelope, attributes)
 	if reason != ReasonEligible {
@@ -110,60 +118,66 @@ func projectionMetadataValid(metadata map[string]any) bool {
 
 func selectContract(envelope projectedEnvelope, attributes map[string]any) (shapeContract, Reason, []string) {
 	family := envelope.Family
-	operation, operationPresent := stringAttribute(attributes, "gen_ai.operation.name")
 	canaryPresent, canaryValid := generatedCanaryMetadata(attributes)
 	if canaryPresent && (!canaryValid ||
 		family != observability.TelemetryFamilyAgentInvoke &&
 			family != observability.TelemetryFamilyModelChat) {
 		return shapeContract{}, ReasonUnsupportedShape, nil
 	}
-
-	switch family {
-	case observability.TelemetryFamilyAgentInvoke:
-		if !operationPresent {
-			return shapeContract{}, ReasonSchemaMissingRequired, []string{"gen_ai.operation.name"}
-		}
-		if operation != "invoke_agent" {
-			return shapeContract{}, ReasonUnsupportedShape, nil
-		}
-		return contract(ShapeAgent, family, operation, "AGENT", internalOrClient), ReasonEligible, nil
-	case observability.TelemetryFamilyModelChat, "span.guardrail.judge":
-		if !operationPresent {
-			return shapeContract{}, ReasonSchemaMissingRequired, []string{"gen_ai.operation.name"}
-		}
-		if operation != "chat" && operation != "text_completion" {
-			return shapeContract{}, ReasonUnsupportedShape, nil
-		}
-		return contract(ShapeLLM, family, operation, "LLM", clientOnly), ReasonEligible, nil
-	case "span.tool.execute":
-		if !operationPresent {
-			return shapeContract{}, ReasonSchemaMissingRequired, []string{"gen_ai.operation.name"}
-		}
-		if operation != "execute_tool" {
-			return shapeContract{}, ReasonUnsupportedShape, nil
-		}
-		return contract(ShapeTool, family, operation, "TOOL", internalOrClient), ReasonEligible, nil
-	case "span.retrieval.search":
-		dbOperation, present := stringAttribute(attributes, "db.operation.name")
+	projection, ok := profilemanifest.FamilyProjection(
+		ProfileID,
+		observability.SignalTraces,
+		observability.EventName(family),
+	)
+	if !ok || projection.Mode != "galileo_shape_v2" {
+		return shapeContract{}, ReasonUnsupportedShape, nil
+	}
+	shape := Shape(projection.Shape)
+	switch shape {
+	case ShapeAgent, ShapeLLM, ShapeTool, ShapeRetriever, ShapeWorkflow:
+	default:
+		return shapeContract{}, ReasonUnsupportedShape, nil
+	}
+	operation := ""
+	if projection.OperationAttribute != nil {
+		var present bool
+		operation, present = stringAttribute(attributes, *projection.OperationAttribute)
 		if !present {
-			return shapeContract{}, ReasonSchemaMissingRequired, []string{"db.operation.name"}
+			return shapeContract{}, ReasonSchemaMissingRequired, []string{*projection.OperationAttribute}
 		}
-		if dbOperation != "query" && dbOperation != "search" {
+		if !containsString(projection.AllowedOperations, operation) {
 			return shapeContract{}, ReasonUnsupportedShape, nil
 		}
-		return contract(ShapeRetriever, family, dbOperation, "RETRIEVER", internalOrClient), ReasonEligible, nil
-	case "span.workflow.run":
+	}
+	if shape == ShapeWorkflow {
 		if _, present := canonicalWorkflowName(attributes); !present {
 			return shapeContract{}, ReasonSchemaMissingRequired, []string{"defenseclaw.workflow.name"}
 		}
 		kind, present := stringAttribute(attributes, "openinference.span.kind")
-		if present && kind != "CHAIN" {
+		if present && kind != projection.OpenInferenceSpanKind {
 			return shapeContract{}, ReasonUnsupportedShape, nil
 		}
-		return contract(ShapeWorkflow, family, "", "CHAIN", internalOnly), ReasonEligible, nil
-	default:
+	}
+	allowedKinds := make(map[string]struct{}, len(projection.AllowedSpanKinds))
+	for _, kind := range projection.AllowedSpanKinds {
+		allowedKinds[kind] = struct{}{}
+	}
+	if projection.OpenInferenceSpanKind == "" || len(allowedKinds) == 0 {
 		return shapeContract{}, ReasonUnsupportedShape, nil
 	}
+	return contract(
+		shape, family, operation, projection.OpenInferenceSpanKind,
+		allowedKinds, projection.RequiredAttributes,
+	), ReasonEligible, nil
+}
+
+func containsString(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
 }
 
 // generatedCanaryMetadata recognizes only the release probe carried by the
@@ -185,8 +199,16 @@ func generatedCanaryMetadata(attributes map[string]any) (present, valid bool) {
 		destinationOK && observability.IsStableToken(destination)
 }
 
-func contract(shape Shape, family, operation, oiKind string, kinds map[string]struct{}) shapeContract {
-	return shapeContract{shape: shape, family: family, operation: operation, oiKind: oiKind, allowedKinds: kinds}
+func contract(
+	shape Shape,
+	family, operation, oiKind string,
+	kinds map[string]struct{},
+	requiredAttributes []string,
+) shapeContract {
+	return shapeContract{
+		shape: shape, family: family, operation: operation, oiKind: oiKind,
+		allowedKinds: kinds, requiredAttributes: append([]string(nil), requiredAttributes...),
+	}
 }
 
 func prepareRequiredProjection(
@@ -213,19 +235,18 @@ func prepareRequiredProjection(
 	if contract.family == "span.guardrail.judge" {
 		attributes["defenseclaw.guardrail.judge"] = true
 	}
+	for _, key := range contract.requiredAttributes {
+		requireNonEmptyString(attributes, key, &missing)
+	}
 
 	switch contract.shape {
 	case ShapeAgent:
-		requireNonEmptyString(attributes, "gen_ai.provider.name", &missing)
-		requireNonEmptyString(attributes, "gen_ai.agent.name", &missing)
 		ensureMessages(attributes, "input", "user", contentFallback(attributes, "input", limits), limits)
 		ensureMessages(attributes, "output", "assistant", contentFallback(attributes, "output", limits), limits)
 	case ShapeLLM:
-		requireNonEmptyString(attributes, "gen_ai.provider.name", &missing)
 		ensureMessages(attributes, "input", "user", contentFallback(attributes, "input", limits), limits)
 		ensureMessages(attributes, "output", "assistant", contentFallback(attributes, "output", limits), limits)
 	case ShapeTool:
-		requireNonEmptyString(attributes, "gen_ai.tool.name", &missing)
 		arguments, argumentsOK := boundedString(attributes["gen_ai.tool.call.arguments"], limits.MaxAttributeValueBytes)
 		result, resultOK := boundedString(attributes["gen_ai.tool.call.result"], limits.MaxAttributeValueBytes)
 		delete(attributes, "gen_ai.tool.call.arguments")
@@ -537,26 +558,26 @@ func allowedAttribute(key string) bool {
 }
 
 func requiredAttributeKeys(contract shapeContract) []string {
-	common := []string{
+	required := append([]string{
 		"openinference.span.kind", "gen_ai.input.messages", "gen_ai.output.messages",
 		"defenseclaw.telemetry.input.reported", "defenseclaw.telemetry.input.state",
 		"defenseclaw.telemetry.output.reported", "defenseclaw.telemetry.output.state",
-	}
+	}, contract.requiredAttributes...)
 	switch contract.shape {
 	case ShapeAgent:
-		return append(common, "gen_ai.operation.name", "gen_ai.provider.name", "gen_ai.agent.name")
+		return append(required, "gen_ai.operation.name")
 	case ShapeLLM:
-		return append(common, "gen_ai.operation.name", "gen_ai.provider.name")
+		return append(required, "gen_ai.operation.name")
 	case ShapeTool:
-		return append(common,
-			"gen_ai.operation.name", "gen_ai.tool.name", "gen_ai.tool.call.arguments", "gen_ai.tool.call.result",
+		return append(required,
+			"gen_ai.operation.name", "gen_ai.tool.call.arguments", "gen_ai.tool.call.result",
 			"defenseclaw.telemetry.arguments.reported", "defenseclaw.telemetry.arguments.state",
 			"defenseclaw.telemetry.result.reported", "defenseclaw.telemetry.result.state",
 		)
 	case ShapeRetriever:
-		return append(common, "db.operation.name")
+		return append(required, "db.operation.name")
 	case ShapeWorkflow:
-		return append(common, "defenseclaw.workflow.name")
+		return required
 	default:
 		return nil
 	}

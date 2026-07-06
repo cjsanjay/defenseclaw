@@ -105,6 +105,36 @@ func TestTelemetryV8GeneratedArtifactsEmbeddedExactly(t *testing.T) {
 	}
 }
 
+func TestTelemetryV8CompatibilityProfilesEmbeddedExactly(t *testing.T) {
+	t.Parallel()
+	for _, profileID := range []string{
+		"galileo-rich-v2",
+		"local-observability-v1",
+		"openinference-v1",
+	} {
+		profileID := profileID
+		t.Run(profileID, func(t *testing.T) {
+			t.Parallel()
+			path := "telemetry/generated/compatibility/" + profileID + ".json"
+			want, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := TelemetryV8CompatibilityProfile(profileID)
+			if !bytes.Equal(got, want) || !json.Valid(got) {
+				t.Fatalf("embedded %s differs from checked-in valid JSON", path)
+			}
+			got[0] ^= 0xff
+			if !bytes.Equal(TelemetryV8CompatibilityProfile(profileID), want) {
+				t.Fatalf("caller mutated embedded %s", path)
+			}
+		})
+	}
+	if got := TelemetryV8CompatibilityProfile("unknown-v1"); got != nil {
+		t.Fatalf("unknown profile returned %d bytes", len(got))
+	}
+}
+
 func TestDefenseClawConfigV8SchemaIdentityAndClosure(t *testing.T) {
 	t.Parallel()
 

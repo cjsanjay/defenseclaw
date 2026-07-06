@@ -149,6 +149,14 @@ _SCHEMA_OUTPUT_PATH: Final = f"{GENERATED_PREFIX}/telemetry.schema.json"
 _CATALOG_OUTPUT_PATH: Final = f"{GENERATED_PREFIX}/catalog.json"
 _CATALOG_MARKDOWN_OUTPUT_PATH: Final = f"{GENERATED_PREFIX}/catalog.md"
 _V7_EXPORTER_SELECTION_OUTPUT_PATH: Final = f"{GENERATED_PREFIX}/compatibility/v7-exporter-selection.json"
+_COMPATIBILITY_PROFILE_OUTPUT_PATHS: Final = {
+    profile: f"{GENERATED_PREFIX}/compatibility/{profile}.json"
+    for profile in (
+        "galileo-rich-v2",
+        "local-observability-v1",
+        "openinference-v1",
+    )
+}
 _EXAMPLE_MANIFEST_OUTPUT_PATH: Final = f"{GENERATED_PREFIX}/examples/manifest.json"
 _OTLP_MANIFEST_OUTPUT_PATH: Final = f"{GENERATED_PREFIX}/otlp-fixtures/manifest.json"
 _BASE_CANDIDATE_OUTPUT_PATHS: Final = (
@@ -156,6 +164,7 @@ _BASE_CANDIDATE_OUTPUT_PATHS: Final = (
     _CATALOG_OUTPUT_PATH,
     _CATALOG_MARKDOWN_OUTPUT_PATH,
     _V7_EXPORTER_SELECTION_OUTPUT_PATH,
+    *_COMPATIBILITY_PROFILE_OUTPUT_PATHS.values(),
     _EXAMPLE_MANIFEST_OUTPUT_PATH,
     _OTLP_MANIFEST_OUTPUT_PATH,
 )
@@ -1070,6 +1079,69 @@ _COMPATIBILITY_PROFILES: Final = frozenset(
         "local-observability-v1",
         "openinference-v1",
     }
+)
+_GALILEO_FAMILY_PROJECTIONS: Final = {
+    "span.agent.invoke": {
+        "mode": "galileo_shape_v2",
+        "shape": "agent",
+        "operation_attribute": "gen_ai.operation.name",
+        "allowed_operations": ["invoke_agent"],
+        "openinference_span_kind": "AGENT",
+        "allowed_span_kinds": ["CLIENT", "INTERNAL"],
+        "required_attributes": ["gen_ai.agent.name", "gen_ai.provider.name"],
+    },
+    "span.guardrail.judge": {
+        "mode": "galileo_shape_v2",
+        "shape": "llm",
+        "operation_attribute": "gen_ai.operation.name",
+        "allowed_operations": ["chat", "text_completion"],
+        "openinference_span_kind": "LLM",
+        "allowed_span_kinds": ["CLIENT"],
+        "required_attributes": ["gen_ai.provider.name"],
+    },
+    "span.model.chat": {
+        "mode": "galileo_shape_v2",
+        "shape": "llm",
+        "operation_attribute": "gen_ai.operation.name",
+        "allowed_operations": ["chat", "text_completion"],
+        "openinference_span_kind": "LLM",
+        "allowed_span_kinds": ["CLIENT"],
+        "required_attributes": ["gen_ai.provider.name"],
+    },
+    "span.retrieval.search": {
+        "mode": "galileo_shape_v2",
+        "shape": "retriever",
+        "operation_attribute": "db.operation.name",
+        "allowed_operations": ["query", "search"],
+        "openinference_span_kind": "RETRIEVER",
+        "allowed_span_kinds": ["CLIENT", "INTERNAL"],
+        "required_attributes": [],
+    },
+    "span.tool.execute": {
+        "mode": "galileo_shape_v2",
+        "shape": "tool",
+        "operation_attribute": "gen_ai.operation.name",
+        "allowed_operations": ["execute_tool"],
+        "openinference_span_kind": "TOOL",
+        "allowed_span_kinds": ["CLIENT", "INTERNAL"],
+        "required_attributes": ["gen_ai.tool.name"],
+    },
+    "span.workflow.run": {
+        "mode": "galileo_shape_v2",
+        "shape": "workflow",
+        "operation_attribute": None,
+        "allowed_operations": [],
+        "openinference_span_kind": "CHAIN",
+        "allowed_span_kinds": ["INTERNAL"],
+        "required_attributes": ["defenseclaw.workflow.name"],
+    },
+}
+_LOCAL_OBSERVABILITY_ALIASES: Final = (
+    ("defenseclaw.connector.source", "connector", False),
+    ("defenseclaw.agent.type", "gen_ai.agent.type", False),
+    ("defenseclaw.guardrail.raw_action", "defenseclaw.raw_action", True),
+    ("defenseclaw.guardrail.effective_action", "defenseclaw.decision", True),
+    ("defenseclaw.guardrail.would_block", "defenseclaw.would_block", True),
 )
 _FIELD_CLASSES: Final = (
     "metadata",
@@ -6474,7 +6546,166 @@ def _render_schema(model: CandidateRenderIndex, marker: JSONObject) -> JSONObjec
     }
 
 
-def _family_catalog_entry(model: CandidateRenderIndex, family: Mapping[str, FrozenJSON]) -> JSONObject:
+def _compatibility_profile_projection(
+    model: CandidateRenderIndex,
+    profile: str,
+    family: Mapping[str, FrozenJSON],
+) -> JSONObject:
+    family_id = _string(family["id"], "compatibility family id")
+    signal = {"log": "logs", "span": "traces", "metric": "metrics"}[family["type"]]
+    if profile == "galileo-rich-v2":
+        projection = _GALILEO_FAMILY_PROJECTIONS.get(family_id)
+        if signal != "traces" or projection is None:
+            raise CandidateRenderError("Galileo compatibility membership has no reviewed projection")
+        return dict(projection)
+    if profile == "openinference-v1":
+        if signal != "traces":
+            raise CandidateRenderError("OpenInference compatibility membership must be a trace family")
+        return {
+            "mode": "unsupported",
+            "behavior": "reject",
+            "reason": "runtime_projector_not_implemented",
+        }
+    if profile != "local-observability-v1":
+        raise CandidateRenderError("compatibility profile is unknown")
+    if signal == "logs":
+        return {"mode": "canonical_otlp_log_v1"}
+    if signal == "traces":
+        return {"mode": "local_trace_aliases_v1"}
+    metric = model.enriched_metrics.get(family_id)
+    if metric is None:
+        raise CandidateRenderError("local metric compatibility membership is not a metric")
+    matching = [
+        _plain(projection) for projection in metric.projections if projection.get("profile") == "local-observability-v1"
+    ]
+    if len(matching) > 1:
+        raise CandidateRenderError("local metric compatibility membership has no exact label projection")
+    if matching:
+        label_projection = matching[0]
+    elif family["empty_labels_reason"] is not None:
+        label_projection = {
+            "profile": "local-observability-v1",
+            "mappings": [],
+            "empty_labels_reason": family["empty_labels_reason"],
+        }
+    elif family_id in {
+        "metric.gen_ai.client.operation.duration",
+        "metric.gen_ai.client.token.usage",
+    }:
+        label_projection = {
+            "profile": "local-observability-v1",
+            "mappings": [[use["ref"], use["ref"]] for use in map(_resolved_use, family["resolved_uses"])],
+            "identity_mapping": True,
+        }
+    else:
+        raise CandidateRenderError("local metric compatibility membership has no exact label projection")
+    return {
+        "mode": "otel_sdk_metric_v1",
+        "instrument_type": metric.instrument_type,
+        "value_type": metric.value_type,
+        "unit": metric.unit,
+        "temporality": metric.temporality,
+        "boundaries": _plain(family["metric_boundaries"]),
+        "cardinality_limit": model.fields["metric_cardinality_limit"],
+        "label_projection": label_projection,
+    }
+
+
+def _compatibility_profile_document(model: CandidateRenderIndex, profile: str, marker: JSONObject) -> JSONObject:
+    if profile not in _COMPATIBILITY_PROFILES:
+        raise CandidateRenderError("compatibility profile is unknown")
+    families = []
+    for family in model.families:
+        if profile not in (family["compatibility_profiles"] or ()):
+            continue
+        families.append(
+            {
+                "family_id": family["id"],
+                "signal": {"log": "logs", "span": "traces", "metric": "metrics"}[family["type"]],
+                "bucket": family["bucket"],
+                "event_name": _family_event_name(family),
+                "eligibility": "eligible",
+                "projection": _compatibility_profile_projection(model, profile, family),
+            }
+        )
+    families.sort(key=lambda item: (item["signal"], item["family_id"]))
+    if not families:
+        raise CandidateRenderError("compatibility profile has no eligible families")
+    runtime_projection: JSONObject
+    if profile == "galileo-rich-v2":
+        runtime_projection = {
+            "status": "available",
+            "input": "route_redacted_canonical_record",
+            "mode": "destination_owned_projection",
+            "unsupported_behavior": "reject",
+        }
+    elif profile == "local-observability-v1":
+        runtime_projection = {
+            "status": "available",
+            "input": "route_redacted_canonical_record",
+            "mode": "canonical_logs_metrics_and_trace_alias_projection",
+            "unsupported_behavior": "reject",
+            "attribute_aliases": [
+                {"source": source, "target": target, "event_derived": event_derived}
+                for source, target, event_derived in _LOCAL_OBSERVABILITY_ALIASES
+            ],
+            "event_alias_sources": ["guardrail.decision", "hook.decision"],
+            "alias_conflict_behavior": "reject",
+        }
+    else:
+        runtime_projection = {
+            "status": "unsupported",
+            "input": "route_redacted_canonical_record",
+            "mode": "none",
+            "unsupported_behavior": "reject",
+            "reason": "runtime_projector_not_implemented",
+        }
+    return {
+        "x-defenseclaw-generated": marker,
+        "format": "defenseclaw-compatibility-profile-v1",
+        "profile_id": profile,
+        "availability": "pending" if profile == "openinference-v1" else "available",
+        "schema_version": model.schema_version,
+        "registry_version": model.registry_version,
+        "bucket_catalog_version": model.bucket_catalog_version,
+        "materialized_view_sha256": model.digest,
+        "runtime_projection": runtime_projection,
+        "families": families,
+    }
+
+
+def _render_compatibility_profile_artifacts(
+    model: CandidateRenderIndex,
+) -> tuple[Mapping[str, CandidateArtifact], Mapping[str, JSONObject]]:
+    artifacts: dict[str, CandidateArtifact] = {}
+    metadata: dict[str, JSONObject] = {}
+    for profile in sorted(_COMPATIBILITY_PROFILES):
+        path = _COMPATIBILITY_PROFILE_OUTPUT_PATHS[profile]
+        relative = _generated_relative_path(path)
+        marker = _authority_marker(
+            registry_version=model.registry_version,
+            digest=model.digest,
+            artifact=relative,
+        )
+        payload = _json_payload(_compatibility_profile_document(model, profile, marker))
+        digest = hashlib.sha256(payload).hexdigest()
+        runtime_status = "unsupported" if profile == "openinference-v1" else "available"
+        availability = "pending" if profile == "openinference-v1" else "available"
+        artifacts[path] = CandidateArtifact(path, payload, "application/json", JSON_OWNERSHIP_MARKER)
+        metadata[profile] = {
+            "availability": availability,
+            "path": relative,
+            "sha256": digest,
+            "runtime_projection": runtime_status,
+        }
+    return MappingProxyType(artifacts), MappingProxyType(metadata)
+
+
+def _family_catalog_entry(
+    model: CandidateRenderIndex,
+    family: Mapping[str, FrozenJSON],
+    compatibility_metadata: Mapping[str, JSONObject],
+) -> JSONObject:
     family_id = _string(family["id"], "family id")
     signal = {"log": "logs", "span": "traces", "metric": "metrics"}[family["type"]]
     uses = []
@@ -6541,7 +6772,14 @@ def _family_catalog_entry(model: CandidateRenderIndex, family: Mapping[str, Froz
         "allowed_link_relations": _plain(family["link_relations"]),
         "mandatory_floor": _plain(family["mandatory_floor"]),
         "compatibility_profiles": [
-            {"id": profile, "availability": "pending", "manifest": None} for profile in profiles
+            {
+                "id": profile,
+                "availability": compatibility_metadata[profile]["availability"],
+                "manifest": compatibility_metadata[profile]["path"],
+                "manifest_sha256": compatibility_metadata[profile]["sha256"],
+                "runtime_projection": compatibility_metadata[profile]["runtime_projection"],
+            }
+            for profile in profiles
         ],
         "lifecycle": {
             "introduced_in": family["introduced_in"],
@@ -6551,7 +6789,11 @@ def _family_catalog_entry(model: CandidateRenderIndex, family: Mapping[str, Froz
     }
 
 
-def _render_catalog(model: CandidateRenderIndex, marker: JSONObject) -> JSONObject:
+def _render_catalog(
+    model: CandidateRenderIndex,
+    marker: JSONObject,
+    compatibility_metadata: Mapping[str, JSONObject],
+) -> JSONObject:
     contract = _tagged(model.fields["structural_contract"], "StructuralContractIR")
     resource_group = model.groups["resource.core"]
     return {
@@ -6605,9 +6847,9 @@ def _render_catalog(model: CandidateRenderIndex, marker: JSONObject) -> JSONObje
             _plain_ir(_tagged(item, "ValueCatalogIR", _VALUE_CATALOG_FIELDS)) for item in model.fields["value_catalogs"]
         ],
         "attributes": [dict(model.attributes[key].metadata) for key in sorted(model.attributes)],
-        "families": [_family_catalog_entry(model, family) for family in model.families],
+        "families": [_family_catalog_entry(model, family, compatibility_metadata) for family in model.families],
         "compatibility_manifests": [
-            {"id": profile, "availability": "pending", "path": None} for profile in sorted(_COMPATIBILITY_PROFILES)
+            {"id": profile, **compatibility_metadata[profile]} for profile in sorted(_COMPATIBILITY_PROFILES)
         ],
     }
 
@@ -6650,8 +6892,13 @@ def _render_catalog_markdown(model: CandidateRenderIndex, catalog: Mapping[str, 
             "|---|---|",
         ]
     )
+    manifests = {item["id"]: item for item in catalog["compatibility_manifests"]}
     for profile in sorted(_COMPATIBILITY_PROFILES):
-        lines.append(f"| `{profile}` | pending; no candidate path is claimed |")
+        manifest = manifests[profile]
+        lines.append(
+            f"| `{profile}` | {manifest['availability']}; `{manifest['path']}`; "
+            f"runtime projection `{manifest['runtime_projection']}` |"
+        )
     lines.extend(
         [
             "",
@@ -7008,10 +7255,14 @@ def render_candidate_artifacts_from_index(model: CandidateRenderIndex) -> Mappin
     schema = _render_schema(model, schema_marker)
     add_json(_SCHEMA_OUTPUT_PATH, schema)
 
+    compatibility_artifacts, compatibility_metadata = _render_compatibility_profile_artifacts(model)
+    for artifact in compatibility_artifacts.values():
+        _add_candidate_artifact(artifacts, artifact)
+
     catalog_marker = _authority_marker(
         registry_version=model.registry_version, digest=model.digest, artifact="catalog.json"
     )
-    catalog = _render_catalog(model, catalog_marker)
+    catalog = _render_catalog(model, catalog_marker, compatibility_metadata)
     add_json(_CATALOG_OUTPUT_PATH, catalog)
     _add_candidate_artifact(
         artifacts,

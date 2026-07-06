@@ -24,12 +24,18 @@ loading a potentially different schema from the current working tree.
 from __future__ import annotations
 
 from importlib import resources
+from types import MappingProxyType
 from typing import Final
 
 _SCHEMA_RESOURCE: Final = "_data/telemetry/v8/telemetry.schema.json"
 _CATALOG_RESOURCE: Final = "_data/telemetry/v8/catalog.json"
-_V7_EXPORTER_SELECTION_RESOURCE: Final = (
-    "_data/telemetry/v8/v7-exporter-selection.json"
+_V7_EXPORTER_SELECTION_RESOURCE: Final = "_data/telemetry/v8/v7-exporter-selection.json"
+_COMPATIBILITY_PROFILE_RESOURCES: Final = MappingProxyType(
+    {
+        "galileo-rich-v2": "_data/telemetry/v8/galileo-rich-v2.json",
+        "local-observability-v1": "_data/telemetry/v8/local-observability-v1.json",
+        "openinference-v1": "_data/telemetry/v8/openinference-v1.json",
+    }
 )
 
 
@@ -48,8 +54,18 @@ def v7_exporter_selection_bytes() -> bytes:
     return resources.files("defenseclaw").joinpath(_V7_EXPORTER_SELECTION_RESOURCE).read_bytes()
 
 
+def telemetry_v8_compatibility_profile_bytes(profile_id: str) -> bytes:
+    """Return one generated destination compatibility-profile manifest."""
+    try:
+        resource = _COMPATIBILITY_PROFILE_RESOURCES[profile_id]
+    except KeyError as exc:
+        raise ValueError(f"unknown telemetry compatibility profile: {profile_id}") from exc
+    return resources.files("defenseclaw").joinpath(resource).read_bytes()
+
+
 __all__ = [
     "telemetry_v8_catalog_bytes",
+    "telemetry_v8_compatibility_profile_bytes",
     "telemetry_v8_schema_bytes",
     "v7_exporter_selection_bytes",
 ]

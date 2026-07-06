@@ -3,7 +3,7 @@
     "artifact": "examples/invalid/invalid-lifecycle-phase-code-mismatch.json",
     "authority": "candidate-not-public-authority",
     "generator": "defenseclaw-telemetry-candidate-renderer-v1",
-    "materialized_view_sha256": "473d6b37f58a9c4430a62dd75e44c044b0a39780bd1c217403a110e769453af8",
+    "materialized_view_sha256": "9ab8029c2e07448a6605044b18d79b0550df35f66671f495c67d9820439dd57e",
     "registry_version": 1
   },
   "base_example": "valid-root-agent-lifecycle-transition",
@@ -48,7 +48,7 @@
   "family": "span.agent.transition",
   "field_classes": {},
   "id": "invalid-lifecycle-phase-code-mismatch",
-  "materialized_view_sha256": "473d6b37f58a9c4430a62dd75e44c044b0a39780bd1c217403a110e769453af8",
+  "materialized_view_sha256": "9ab8029c2e07448a6605044b18d79b0550df35f66671f495c67d9820439dd57e",
   "mutation": {
     "changes": [
       {

@@ -1704,9 +1704,9 @@ def test_real_candidate_outputs_validate_as_one_complete_manifest_inventory(
     records = manifest["ownership_inventory"]["artifacts"]
     record_by_path = {record["path"]: record for record in records}
 
-    assert len(outputs) - len(module.GO_CANDIDATE_OUTPUT_PATHS) - 1 == 58
-    assert len(records) == 65
-    assert len(desired) == len(manifest["outputs"]) == 66
+    assert len(outputs) - len(module.GO_CANDIDATE_OUTPUT_PATHS) - 1 == 61
+    assert len(records) == 68
+    assert len(desired) == len(manifest["outputs"]) == 69
     assert live_outputs == tuple(sorted(expected_live))
     assert not any(path.startswith(module.PUBLIC_VIEW_STAGED_PREFIX) for path in manifest["outputs"])
     assert expected_live <= set(record_by_path)

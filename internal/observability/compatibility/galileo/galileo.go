@@ -225,16 +225,13 @@ type outputEnvelope struct {
 }
 
 type shapeContract struct {
-	shape        Shape
-	family       string
-	operation    string
-	oiKind       string
-	allowedKinds map[string]struct{}
+	shape              Shape
+	family             string
+	operation          string
+	oiKind             string
+	allowedKinds       map[string]struct{}
+	requiredAttributes []string
 }
-
-var internalOrClient = map[string]struct{}{"INTERNAL": {}, "CLIENT": {}}
-var clientOnly = map[string]struct{}{"CLIENT": {}}
-var internalOnly = map[string]struct{}{"INTERNAL": {}}
 
 // Compile-time assertion that this package's only accepted input type remains
 // the route-redaction result rather than a raw observability.Record.

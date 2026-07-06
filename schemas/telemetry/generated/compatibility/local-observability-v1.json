@@ -1,0 +1,5183 @@
+{
+  "x-defenseclaw-generated": {
+    "artifact": "compatibility/local-observability-v1.json",
+    "authority": "candidate-not-public-authority",
+    "generator": "defenseclaw-telemetry-candidate-renderer-v1",
+    "materialized_view_sha256": "9ab8029c2e07448a6605044b18d79b0550df35f66671f495c67d9820439dd57e",
+    "registry_version": 1
+  },
+  "availability": "available",
+  "bucket_catalog_version": 1,
+  "families": [
+    {
+      "bucket": "agent.lifecycle",
+      "eligibility": "eligible",
+      "event_name": "agent.discovery.completed",
+      "family_id": "log.agent.discovery.completed",
+      "projection": {
+        "mode": "canonical_otlp_log_v1"
+      },
+      "signal": "logs"
+    },
+    {
+      "bucket": "agent.lifecycle",
+      "eligibility": "eligible",
+      "event_name": "agent.discovery.rejected",
+      "family_id": "log.agent.discovery.rejected",
+      "projection": {
+        "mode": "canonical_otlp_log_v1"
+      },
+      "signal": "logs"
+    },
+    {
+      "bucket": "agent.lifecycle",
+      "eligibility": "eligible",
+      "event_name": "agent.discovery.signal",
+      "family_id": "log.agent.discovery.signal",
+      "projection": {
+        "mode": "canonical_otlp_log_v1"
+      },
+      "signal": "logs"
+    },
+    {
+      "bucket": "ai.discovery",
+      "eligibility": "eligible",
+      "event_name": "ai.discovery.completed",
+      "family_id": "log.ai.discovery.completed",
+      "projection": {
+        "mode": "canonical_otlp_log_v1"
+      },
+      "signal": "logs"
+    },
+    {
+      "bucket": "ai.discovery",
+      "eligibility": "eligible",
+      "event_name": "ai_component.changed",
+      "family_id": "log.ai_component.changed",
+      "projection": {
+        "mode": "canonical_otlp_log_v1"
+      },
+      "signal": "logs"
+    },
+    {
+      "bucket": "ai.discovery",
+      "eligibility": "eligible",
+      "event_name": "ai_component.confidence.changed",
+      "family_id": "log.ai_component.confidence.changed",
+      "projection": {
+        "mode": "canonical_otlp_log_v1"
+      },
+      "signal": "logs"
+    },
+    {
+      "bucket": "ai.discovery",
+      "eligibility": "eligible",
+      "event_name": "ai_component.discovered",
+      "family_id": "log.ai_component.discovered",
+      "projection": {
+        "mode": "canonical_otlp_log_v1"
+      },
+      "signal": "logs"
+    },
+    {
+      "bucket": "ai.discovery",
+      "eligibility": "eligible",
+      "event_name": "ai_component.removed",
+      "family_id": "log.ai_component.removed",
+      "projection": {
+        "mode": "canonical_otlp_log_v1"
+      },
+      "signal": "logs"
+    },
+    {
+      "bucket": "compliance.activity",
+      "eligibility": "eligible",
+      "event_name": "alert.acknowledgement.requested",
+      "family_id": "log.alert.acknowledgement.requested",
+      "projection": {
+        "mode": "canonical_otlp_log_v1"
+      },
+      "signal": "logs"
+    },
+    {
+      "bucket": "compliance.activity",
+      "eligibility": "eligible",
+      "event_name": "alert.dismissal.requested",
+      "family_id": "log.alert.dismissal.requested",
+      "projection": {
+        "mode": "canonical_otlp_log_v1"
+      },
+      "signal": "logs"
+    },
+    {
+      "bucket": "compliance.activity",
+      "eligibility": "eligible",
+      "event_name": "approval.resolved",
+      "family_id": "log.approval.resolved",
+      "projection": {
+        "mode": "canonical_otlp_log_v1"
+      },
+      "signal": "logs"
+    },
+    {
+      "bucket": "asset.lifecycle",
+      "eligibility": "eligible",
+      "event_name": "asset.activated",
+      "family_id": "log.asset.activated",
+      "projection": {
+        "mode": "canonical_otlp_log_v1"
+      },
+      "signal": "logs"
+    },
+    {
+      "bucket": "asset.lifecycle",
+      "eligibility": "eligible",
+      "event_name": "asset.admitted",
+      "family_id": "log.asset.admitted",
+      "projection": {
+        "mode": "canonical_otlp_log_v1"
+      },
+      "signal": "logs"
+    },
+    {
+      "bucket": "asset.lifecycle",
+      "eligibility": "eligible",
+      "event_name": "asset.disabled",
+      "family_id": "log.asset.disabled",
+      "projection": {
+        "mode": "canonical_otlp_log_v1"
+      },
+      "signal": "logs"
+    },
+    {
+      "bucket": "asset.lifecycle",
+      "eligibility": "eligible",
+      "event_name": "asset.discovered",
+      "family_id": "log.asset.discovered",
+      "projection": {
+        "mode": "canonical_otlp_log_v1"
+      },
+      "signal": "logs"
+    },
+    {
+      "bucket": "asset.lifecycle",
+      "eligibility": "eligible",
+      "event_name": "asset.quarantined",
+      "family_id": "log.asset.quarantined",
+      "projection": {
+        "mode": "canonical_otlp_log_v1"
+      },
+      "signal": "logs"
+    },
+    {
+      "bucket": "asset.lifecycle",
+      "eligibility": "eligible",
+      "event_name": "asset.registered",
+      "family_id": "log.asset.registered",
+      "projection": {
+        "mode": "canonical_otlp_log_v1"
+      },
+      "signal": "logs"
+    },
+    {
+      "bucket": "asset.lifecycle",
+      "eligibility": "eligible",
+      "event_name": "asset.released",
+      "family_id": "log.asset.released",
+      "projection": {
+        "mode": "canonical_otlp_log_v1"
+      },
+      "signal": "logs"
+    },
+    {
+      "bucket": "asset.lifecycle",
+      "eligibility": "eligible",
+      "event_name": "asset.removed",
+      "family_id": "log.asset.removed",
+      "projection": {
+        "mode": "canonical_otlp_log_v1"
+      },
+      "signal": "logs"
+    },
+    {
+      "bucket": "asset.lifecycle",
+      "eligibility": "eligible",
+      "event_name": "asset.updated",
+      "family_id": "log.asset.updated",
+      "projection": {
+        "mode": "canonical_otlp_log_v1"
+      },
+      "signal": "logs"
+    },
+    {
+      "bucket": "compliance.activity",
+      "eligibility": "eligible",
+      "event_name": "authentication.failed",
+      "family_id": "log.authentication.failed",
+      "projection": {
+        "mode": "canonical_otlp_log_v1"
+      },
+      "signal": "logs"
+    },
+    {
+      "bucket": "compliance.activity",
+      "eligibility": "eligible",
+      "event_name": "authorization.denied",
+      "family_id": "log.authorization.denied",
+      "projection": {
+        "mode": "canonical_otlp_log_v1"
+      },
+      "signal": "logs"
+    },
+    {
+      "bucket": "agent.lifecycle",
+      "eligibility": "eligible",
+      "event_name": "compact_end",
+      "family_id": "log.compat.compact_end",
+      "projection": {
+        "mode": "canonical_otlp_log_v1"
+      },
+      "signal": "logs"
+    },
+    {
+      "bucket": "agent.lifecycle",
+      "eligibility": "eligible",
+      "event_name": "compact_start",
+      "family_id": "log.compat.compact_start",
+      "projection": {
+        "mode": "canonical_otlp_log_v1"
+      },
+      "signal": "logs"
+    },
+    {
+      "bucket": "agent.lifecycle",
+      "eligibility": "eligible",
+      "event_name": "event",
+      "family_id": "log.compat.event",
+      "projection": {
+        "mode": "canonical_otlp_log_v1"
+      },
+      "signal": "logs"
+    },
+    {
+      "bucket": "guardrail.evaluation",
+      "eligibility": "eligible",
+      "event_name": "hook_decision",
+      "family_id": "log.compat.hook_decision",
+      "projection": {
+        "mode": "canonical_otlp_log_v1"
+      },
+      "signal": "logs"
+    },
+    {
+      "bucket": "agent.lifecycle",
+      "eligibility": "eligible",
+      "event_name": "session_end",
+      "family_id": "log.compat.session_end",
+      "projection": {
+        "mode": "canonical_otlp_log_v1"
+      },
+      "signal": "logs"
+    },
+    {
+      "bucket": "agent.lifecycle",
+      "eligibility": "eligible",
+      "event_name": "session_start",
+      "family_id": "log.compat.session_start",
+      "projection": {
+        "mode": "canonical_otlp_log_v1"
+      },
+      "signal": "logs"
+    },
+    {
+      "bucket": "agent.lifecycle",
+      "eligibility": "eligible",
+      "event_name": "subagent_start",
+      "family_id": "log.compat.subagent_start",
+      "projection": {
+        "mode": "canonical_otlp_log_v1"
+      },
+      "signal": "logs"
+    },
+    {
+      "bucket": "agent.lifecycle",
+      "eligibility": "eligible",
+      "event_name": "subagent_stop",
+      "family_id": "log.compat.subagent_stop",
+      "projection": {
+        "mode": "canonical_otlp_log_v1"
+      },
+      "signal": "logs"
+    },
+    {
+      "bucket": "tool.activity",
+      "eligibility": "eligible",
+      "event_name": "tool_end",
+      "family_id": "log.compat.tool_end",
+      "projection": {
+        "mode": "canonical_otlp_log_v1"
+      },
+      "signal": "logs"
+    },
+    {
+      "bucket": "tool.activity",
+      "eligibility": "eligible",
+      "event_name": "tool_start",
+      "family_id": "log.compat.tool_start",
+      "projection": {
+        "mode": "canonical_otlp_log_v1"
+      },
+      "signal": "logs"
+    },
+    {
+      "bucket": "agent.lifecycle",
+      "eligibility": "eligible",
+      "event_name": "turn_end",
+      "family_id": "log.compat.turn_end",
+      "projection": {
+        "mode": "canonical_otlp_log_v1"
+      },
+      "signal": "logs"
+    },
+    {
+      "bucket": "agent.lifecycle",
+      "eligibility": "eligible",
+      "event_name": "turn_start",
+      "family_id": "log.compat.turn_start",
+      "projection": {
+        "mode": "canonical_otlp_log_v1"
+      },
+      "signal": "logs"
+    },
+    {
+      "bucket": "compliance.activity",
+      "eligibility": "eligible",
+      "event_name": "config.change.applied",
+      "family_id": "log.config.change.applied",
+      "projection": {
+        "mode": "canonical_otlp_log_v1"
+      },
+      "signal": "logs"
+    },
+    {
+      "bucket": "compliance.activity",
+      "eligibility": "eligible",
+      "event_name": "config.change.attempted",
+      "family_id": "log.config.change.attempted",
+      "projection": {
+        "mode": "canonical_otlp_log_v1"
+      },
+      "signal": "logs"
+    },
+    {
+      "bucket": "compliance.activity",
+      "eligibility": "eligible",
+      "event_name": "config.reload.rejected",
+      "family_id": "log.config.reload.rejected",
+      "projection": {
+        "mode": "canonical_otlp_log_v1"
+      },
+      "signal": "logs"
+    },
+    {
+      "bucket": "platform.health",
+      "eligibility": "eligible",
+      "event_name": "destination.authentication.failed",
+      "family_id": "log.destination.authentication.failed",
+      "projection": {
+        "mode": "canonical_otlp_log_v1"
+      },
+      "signal": "logs"
+    },
+    {
+      "bucket": "platform.health",
+      "eligibility": "eligible",
+      "event_name": "destination.authorization.denied",
+      "family_id": "log.destination.authorization.denied",
+      "projection": {
+        "mode": "canonical_otlp_log_v1"
+      },
+      "signal": "logs"
+    },
+    {
+      "bucket": "platform.health",
+      "eligibility": "eligible",
+      "event_name": "destination.export_failed",
+      "family_id": "log.destination.export_failed",
+      "projection": {
+        "mode": "canonical_otlp_log_v1"
+      },
+      "signal": "logs"
+    },
+    {
+      "bucket": "platform.health",
+      "eligibility": "eligible",
+      "event_name": "destination.queue_full",
+      "family_id": "log.destination.queue_full",
+      "projection": {
+        "mode": "canonical_otlp_log_v1"
+      },
+      "signal": "logs"
+    },
+    {
+      "bucket": "compliance.activity",
+      "eligibility": "eligible",
+      "event_name": "destination.updated",
+      "family_id": "log.destination.updated",
+      "projection": {
+        "mode": "canonical_otlp_log_v1"
+      },
+      "signal": "logs"
+    },
+    {
+      "bucket": "diagnostic",
+      "eligibility": "eligible",
+      "event_name": "diagnostic.message",
+      "family_id": "log.diagnostic.message",
+      "projection": {
+        "mode": "canonical_otlp_log_v1"
+      },
+      "signal": "logs"
+    },
+    {
+      "bucket": "diagnostic",
+      "eligibility": "eligible",
+      "event_name": "diagnostic.snapshot",
+      "family_id": "log.diagnostic.snapshot",
+      "projection": {
+        "mode": "canonical_otlp_log_v1"
+      },
+      "signal": "logs"
+    },
+    {
+      "bucket": "network.egress",
+      "eligibility": "eligible",
+      "event_name": "egress.allowed",
+      "family_id": "log.egress.allowed",
+      "projection": {
+        "mode": "canonical_otlp_log_v1"
+      },
+      "signal": "logs"
+    },
+    {
+      "bucket": "network.egress",
+      "eligibility": "eligible",
+      "event_name": "egress.blocked",
+      "family_id": "log.egress.blocked",
+      "projection": {
+        "mode": "canonical_otlp_log_v1"
+      },
+      "signal": "logs"
+    },
+    {
+      "bucket": "network.egress",
+      "eligibility": "eligible",
+      "event_name": "egress.completed",
+      "family_id": "log.egress.completed",
+      "projection": {
+        "mode": "canonical_otlp_log_v1"
+      },
+      "signal": "logs"
+    },
+    {
+      "bucket": "network.egress",
+      "eligibility": "eligible",
+      "event_name": "egress.failed",
+      "family_id": "log.egress.failed",
+      "projection": {
+        "mode": "canonical_otlp_log_v1"
+      },
+      "signal": "logs"
+    },
+    {
+      "bucket": "network.egress",
+      "eligibility": "eligible",
+      "event_name": "egress.requested",
+      "family_id": "log.egress.requested",
+      "projection": {
+        "mode": "canonical_otlp_log_v1"
+      },
+      "signal": "logs"
+    },
+    {
+      "bucket": "enforcement.action",
+      "eligibility": "eligible",
+      "event_name": "enforcement.access.revoked",
+      "family_id": "log.enforcement.access.revoked",
+      "projection": {
+        "mode": "canonical_otlp_log_v1"
+      },
+      "signal": "logs"
+    },
+    {
+      "bucket": "enforcement.action",
+      "eligibility": "eligible",
+      "event_name": "enforcement.block.applied",
+      "family_id": "log.enforcement.block.applied",
+      "projection": {
+        "mode": "canonical_otlp_log_v1"
+      },
+      "signal": "logs"
+    },
+    {
+      "bucket": "enforcement.action",
+      "eligibility": "eligible",
+      "event_name": "enforcement.block.failed",
+      "family_id": "log.enforcement.block.failed",
+      "projection": {
+        "mode": "canonical_otlp_log_v1"
+      },
+      "signal": "logs"
+    },
+    {
+      "bucket": "enforcement.action",
+      "eligibility": "eligible",
+      "event_name": "enforcement.block.requested",
+      "family_id": "log.enforcement.block.requested",
+      "projection": {
+        "mode": "canonical_otlp_log_v1"
+      },
+      "signal": "logs"
+    },
+    {
+      "bucket": "enforcement.action",
+      "eligibility": "eligible",
+      "event_name": "enforcement.quarantine.applied",
+      "family_id": "log.enforcement.quarantine.applied",
+      "projection": {
+        "mode": "canonical_otlp_log_v1"
+      },
+      "signal": "logs"
+    },
+    {
+      "bucket": "enforcement.action",
+      "eligibility": "eligible",
+      "event_name": "enforcement.redaction.applied",
+      "family_id": "log.enforcement.redaction.applied",
+      "projection": {
+        "mode": "canonical_otlp_log_v1"
+      },
+      "signal": "logs"
+    },
+    {
+      "bucket": "enforcement.action",
+      "eligibility": "eligible",
+      "event_name": "enforcement.release.applied",
+      "family_id": "log.enforcement.release.applied",
+      "projection": {
+        "mode": "canonical_otlp_log_v1"
+      },
+      "signal": "logs"
+    },
+    {
+      "bucket": "security.finding",
+      "eligibility": "eligible",
+      "event_name": "finding.correlated",
+      "family_id": "log.finding.correlated",
+      "projection": {
+        "mode": "canonical_otlp_log_v1"
+      },
+      "signal": "logs"
+    },
+    {
+      "bucket": "security.finding",
+      "eligibility": "eligible",
+      "event_name": "finding.observed",
+      "family_id": "log.finding.observed",
+      "projection": {
+        "mode": "canonical_otlp_log_v1"
+      },
+      "signal": "logs"
+    },
+    {
+      "bucket": "guardrail.evaluation",
+      "eligibility": "eligible",
+      "event_name": "guardrail.evaluation.completed",
+      "family_id": "log.guardrail.evaluation.completed",
+      "projection": {
+        "mode": "canonical_otlp_log_v1"
+      },
+      "signal": "logs"
+    },
+    {
+      "bucket": "guardrail.evaluation",
+      "eligibility": "eligible",
+      "event_name": "guardrail.evaluation.failed",
+      "family_id": "log.guardrail.evaluation.failed",
+      "projection": {
+        "mode": "canonical_otlp_log_v1"
+      },
+      "signal": "logs"
+    },
+    {
+      "bucket": "guardrail.evaluation",
+      "eligibility": "eligible",
+      "event_name": "guardrail.evaluation.started",
+      "family_id": "log.guardrail.evaluation.started",
+      "projection": {
+        "mode": "canonical_otlp_log_v1"
+      },
+      "signal": "logs"
+    },
+    {
+      "bucket": "guardrail.evaluation",
+      "eligibility": "eligible",
+      "event_name": "guardrail.judge.completed",
+      "family_id": "log.guardrail.judge.completed",
+      "projection": {
+        "mode": "canonical_otlp_log_v1"
+      },
+      "signal": "logs"
+    },
+    {
+      "bucket": "model.io",
+      "eligibility": "eligible",
+      "event_name": "model.call.failed",
+      "family_id": "log.model.call.failed",
+      "projection": {
+        "mode": "canonical_otlp_log_v1"
+      },
+      "signal": "logs"
+    },
+    {
+      "bucket": "model.io",
+      "eligibility": "eligible",
+      "event_name": "model.request",
+      "family_id": "log.model.request",
+      "projection": {
+        "mode": "canonical_otlp_log_v1"
+      },
+      "signal": "logs"
+    },
+    {
+      "bucket": "model.io",
+      "eligibility": "eligible",
+      "event_name": "model.response",
+      "family_id": "log.model.response",
+      "projection": {
+        "mode": "canonical_otlp_log_v1"
+      },
+      "signal": "logs"
+    },
+    {
+      "bucket": "model.io",
+      "eligibility": "eligible",
+      "event_name": "model.stream.completed",
+      "family_id": "log.model.stream.completed",
+      "projection": {
+        "mode": "canonical_otlp_log_v1"
+      },
+      "signal": "logs"
+    },
+    {
+      "bucket": "compliance.activity",
+      "eligibility": "eligible",
+      "event_name": "observability.profile.changed",
+      "family_id": "log.observability.profile.changed",
+      "projection": {
+        "mode": "canonical_otlp_log_v1"
+      },
+      "signal": "logs"
+    },
+    {
+      "bucket": "compliance.activity",
+      "eligibility": "eligible",
+      "event_name": "policy.updated",
+      "family_id": "log.policy.updated",
+      "projection": {
+        "mode": "canonical_otlp_log_v1"
+      },
+      "signal": "logs"
+    },
+    {
+      "bucket": "platform.health",
+      "eligibility": "eligible",
+      "event_name": "redaction.failed_closed",
+      "family_id": "log.redaction.failed_closed",
+      "projection": {
+        "mode": "canonical_otlp_log_v1"
+      },
+      "signal": "logs"
+    },
+    {
+      "bucket": "compliance.activity",
+      "eligibility": "eligible",
+      "event_name": "redaction.profile.updated",
+      "family_id": "log.redaction.profile.updated",
+      "projection": {
+        "mode": "canonical_otlp_log_v1"
+      },
+      "signal": "logs"
+    },
+    {
+      "bucket": "asset.scan",
+      "eligibility": "eligible",
+      "event_name": "scan.cancelled",
+      "family_id": "log.scan.cancelled",
+      "projection": {
+        "mode": "canonical_otlp_log_v1"
+      },
+      "signal": "logs"
+    },
+    {
+      "bucket": "asset.scan",
+      "eligibility": "eligible",
+      "event_name": "scan.completed",
+      "family_id": "log.scan.completed",
+      "projection": {
+        "mode": "canonical_otlp_log_v1"
+      },
+      "signal": "logs"
+    },
+    {
+      "bucket": "asset.scan",
+      "eligibility": "eligible",
+      "event_name": "scan.failed",
+      "family_id": "log.scan.failed",
+      "projection": {
+        "mode": "canonical_otlp_log_v1"
+      },
+      "signal": "logs"
+    },
+    {
+      "bucket": "asset.scan",
+      "eligibility": "eligible",
+      "event_name": "scan.phase.completed",
+      "family_id": "log.scan.phase.completed",
+      "projection": {
+        "mode": "canonical_otlp_log_v1"
+      },
+      "signal": "logs"
+    },
+    {
+      "bucket": "asset.scan",
+      "eligibility": "eligible",
+      "event_name": "scan.started",
+      "family_id": "log.scan.started",
+      "projection": {
+        "mode": "canonical_otlp_log_v1"
+      },
+      "signal": "logs"
+    },
+    {
+      "bucket": "platform.health",
+      "eligibility": "eligible",
+      "event_name": "schema.validation_failed",
+      "family_id": "log.schema.validation_failed",
+      "projection": {
+        "mode": "canonical_otlp_log_v1"
+      },
+      "signal": "logs"
+    },
+    {
+      "bucket": "platform.health",
+      "eligibility": "eligible",
+      "event_name": "sqlite.write_failed",
+      "family_id": "log.sqlite.write_failed",
+      "projection": {
+        "mode": "canonical_otlp_log_v1"
+      },
+      "signal": "logs"
+    },
+    {
+      "bucket": "platform.health",
+      "eligibility": "eligible",
+      "event_name": "subsystem.degraded",
+      "family_id": "log.subsystem.degraded",
+      "projection": {
+        "mode": "canonical_otlp_log_v1"
+      },
+      "signal": "logs"
+    },
+    {
+      "bucket": "platform.health",
+      "eligibility": "eligible",
+      "event_name": "subsystem.ready",
+      "family_id": "log.subsystem.ready",
+      "projection": {
+        "mode": "canonical_otlp_log_v1"
+      },
+      "signal": "logs"
+    },
+    {
+      "bucket": "platform.health",
+      "eligibility": "eligible",
+      "event_name": "subsystem.restored",
+      "family_id": "log.subsystem.restored",
+      "projection": {
+        "mode": "canonical_otlp_log_v1"
+      },
+      "signal": "logs"
+    },
+    {
+      "bucket": "telemetry.ingest",
+      "eligibility": "eligible",
+      "event_name": "telemetry.authentication.failed",
+      "family_id": "log.telemetry.authentication.failed",
+      "projection": {
+        "mode": "canonical_otlp_log_v1"
+      },
+      "signal": "logs"
+    },
+    {
+      "bucket": "telemetry.ingest",
+      "eligibility": "eligible",
+      "event_name": "telemetry.authorization.denied",
+      "family_id": "log.telemetry.authorization.denied",
+      "projection": {
+        "mode": "canonical_otlp_log_v1"
+      },
+      "signal": "logs"
+    },
+    {
+      "bucket": "telemetry.ingest",
+      "eligibility": "eligible",
+      "event_name": "telemetry.batch.accepted",
+      "family_id": "log.telemetry.batch.accepted",
+      "projection": {
+        "mode": "canonical_otlp_log_v1"
+      },
+      "signal": "logs"
+    },
+    {
+      "bucket": "telemetry.ingest",
+      "eligibility": "eligible",
+      "event_name": "telemetry.batch.normalized",
+      "family_id": "log.telemetry.batch.normalized",
+      "projection": {
+        "mode": "canonical_otlp_log_v1"
+      },
+      "signal": "logs"
+    },
+    {
+      "bucket": "telemetry.ingest",
+      "eligibility": "eligible",
+      "event_name": "telemetry.batch.rejected",
+      "family_id": "log.telemetry.batch.rejected",
+      "projection": {
+        "mode": "canonical_otlp_log_v1"
+      },
+      "signal": "logs"
+    },
+    {
+      "bucket": "telemetry.ingest",
+      "eligibility": "eligible",
+      "event_name": "telemetry.records.dropped",
+      "family_id": "log.telemetry.records.dropped",
+      "projection": {
+        "mode": "canonical_otlp_log_v1"
+      },
+      "signal": "logs"
+    },
+    {
+      "bucket": "tool.activity",
+      "eligibility": "eligible",
+      "event_name": "tool.invocation.blocked",
+      "family_id": "log.tool.invocation.blocked",
+      "projection": {
+        "mode": "canonical_otlp_log_v1"
+      },
+      "signal": "logs"
+    },
+    {
+      "bucket": "tool.activity",
+      "eligibility": "eligible",
+      "event_name": "tool.invocation.completed",
+      "family_id": "log.tool.invocation.completed",
+      "projection": {
+        "mode": "canonical_otlp_log_v1"
+      },
+      "signal": "logs"
+    },
+    {
+      "bucket": "tool.activity",
+      "eligibility": "eligible",
+      "event_name": "tool.invocation.failed",
+      "family_id": "log.tool.invocation.failed",
+      "projection": {
+        "mode": "canonical_otlp_log_v1"
+      },
+      "signal": "logs"
+    },
+    {
+      "bucket": "tool.activity",
+      "eligibility": "eligible",
+      "event_name": "tool.invocation.requested",
+      "family_id": "log.tool.invocation.requested",
+      "projection": {
+        "mode": "canonical_otlp_log_v1"
+      },
+      "signal": "logs"
+    },
+    {
+      "bucket": "tool.activity",
+      "eligibility": "eligible",
+      "event_name": "tool.invocation.started",
+      "family_id": "log.tool.invocation.started",
+      "projection": {
+        "mode": "canonical_otlp_log_v1"
+      },
+      "signal": "logs"
+    },
+    {
+      "bucket": "compliance.activity",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.activity.diff_entries",
+      "family_id": "metric.defenseclaw.activity.diff_entries",
+      "projection": {
+        "boundaries": [],
+        "cardinality_limit": 2048,
+        "instrument_type": "histogram",
+        "label_projection": {
+          "mappings": [
+            [
+              "defenseclaw.metric.action",
+              "action"
+            ],
+            [
+              "defenseclaw.metric.actor",
+              "actor"
+            ],
+            [
+              "defenseclaw.metric.target_type",
+              "target_type"
+            ]
+          ],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "delta",
+        "unit": "{entry}",
+        "value_type": "int64"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "compliance.activity",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.activity.total",
+      "family_id": "metric.defenseclaw.activity.total",
+      "projection": {
+        "boundaries": null,
+        "cardinality_limit": 2048,
+        "instrument_type": "counter",
+        "label_projection": {
+          "mappings": [
+            [
+              "defenseclaw.metric.action",
+              "action"
+            ],
+            [
+              "defenseclaw.metric.actor",
+              "actor"
+            ],
+            [
+              "defenseclaw.metric.target_type",
+              "target_type"
+            ]
+          ],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "delta",
+        "unit": "{activity}",
+        "value_type": "int64"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "guardrail.evaluation",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.admission.decisions",
+      "family_id": "metric.defenseclaw.admission.decisions",
+      "projection": {
+        "boundaries": null,
+        "cardinality_limit": 2048,
+        "instrument_type": "counter",
+        "label_projection": {
+          "mappings": [
+            [
+              "defenseclaw.metric.decision",
+              "decision"
+            ],
+            [
+              "defenseclaw.metric.source",
+              "source"
+            ],
+            [
+              "defenseclaw.metric.target_type",
+              "target_type"
+            ]
+          ],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "delta",
+        "unit": "{decision}",
+        "value_type": "int64"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "agent.lifecycle",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.agent.discovery.duration",
+      "family_id": "metric.defenseclaw.agent.discovery.duration",
+      "projection": {
+        "boundaries": [],
+        "cardinality_limit": 2048,
+        "instrument_type": "histogram",
+        "label_projection": {
+          "mappings": [
+            [
+              "defenseclaw.metric.cache_hit",
+              "cache_hit"
+            ],
+            [
+              "defenseclaw.metric.result",
+              "result"
+            ],
+            [
+              "defenseclaw.metric.source",
+              "source"
+            ]
+          ],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "delta",
+        "unit": "ms",
+        "value_type": "double"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "agent.lifecycle",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.agent.discovery.errors",
+      "family_id": "metric.defenseclaw.agent.discovery.errors",
+      "projection": {
+        "boundaries": null,
+        "cardinality_limit": 2048,
+        "instrument_type": "counter",
+        "label_projection": {
+          "mappings": [
+            [
+              "defenseclaw.connector.source",
+              "connector"
+            ],
+            [
+              "defenseclaw.metric.reason",
+              "reason"
+            ]
+          ],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "delta",
+        "unit": "{error}",
+        "value_type": "int64"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "agent.lifecycle",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.agent.discovery.installed",
+      "family_id": "metric.defenseclaw.agent.discovery.installed",
+      "projection": {
+        "boundaries": null,
+        "cardinality_limit": 2048,
+        "instrument_type": "gauge",
+        "label_projection": {
+          "mappings": [
+            [
+              "defenseclaw.connector.source",
+              "connector"
+            ]
+          ],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "unspecified",
+        "unit": "1",
+        "value_type": "int64"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "agent.lifecycle",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.agent.discovery.runs",
+      "family_id": "metric.defenseclaw.agent.discovery.runs",
+      "projection": {
+        "boundaries": null,
+        "cardinality_limit": 2048,
+        "instrument_type": "counter",
+        "label_projection": {
+          "mappings": [
+            [
+              "defenseclaw.metric.cache_hit",
+              "cache_hit"
+            ],
+            [
+              "defenseclaw.metric.result",
+              "result"
+            ],
+            [
+              "defenseclaw.metric.source",
+              "source"
+            ]
+          ],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "delta",
+        "unit": "{run}",
+        "value_type": "int64"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "agent.lifecycle",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.agent.discovery.signals",
+      "family_id": "metric.defenseclaw.agent.discovery.signals",
+      "projection": {
+        "boundaries": null,
+        "cardinality_limit": 2048,
+        "instrument_type": "counter",
+        "label_projection": {
+          "mappings": [
+            [
+              "defenseclaw.connector.source",
+              "connector"
+            ],
+            [
+              "defenseclaw.metric.has_binary",
+              "has_binary"
+            ],
+            [
+              "defenseclaw.metric.has_config",
+              "has_config"
+            ],
+            [
+              "defenseclaw.metric.installed",
+              "installed"
+            ],
+            [
+              "defenseclaw.metric.probe_status",
+              "probe_status"
+            ]
+          ],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "delta",
+        "unit": "{signal}",
+        "value_type": "int64"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "agent.lifecycle",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.agent.last_seen",
+      "family_id": "metric.defenseclaw.agent.last_seen",
+      "projection": {
+        "boundaries": null,
+        "cardinality_limit": 2048,
+        "instrument_type": "gauge",
+        "label_projection": {
+          "mappings": [
+            [
+              "defenseclaw.connector.source",
+              "connector"
+            ],
+            [
+              "defenseclaw.agent.type",
+              "gen_ai.agent.type"
+            ]
+          ],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "unspecified",
+        "unit": "s",
+        "value_type": "double"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "agent.lifecycle",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.agent.lifecycle.transitions",
+      "family_id": "metric.defenseclaw.agent.lifecycle.transitions",
+      "projection": {
+        "boundaries": null,
+        "cardinality_limit": 2048,
+        "instrument_type": "counter",
+        "label_projection": {
+          "mappings": [
+            [
+              "defenseclaw.connector.source",
+              "connector"
+            ],
+            [
+              "defenseclaw.agent.type",
+              "gen_ai.agent.type"
+            ]
+          ],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "delta",
+        "unit": "{transition}",
+        "value_type": "int64"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "agent.lifecycle",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.agent.phase.current",
+      "family_id": "metric.defenseclaw.agent.phase.current",
+      "projection": {
+        "boundaries": null,
+        "cardinality_limit": 2048,
+        "instrument_type": "gauge",
+        "label_projection": {
+          "mappings": [
+            [
+              "defenseclaw.connector.source",
+              "connector"
+            ]
+          ],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "unspecified",
+        "unit": "1",
+        "value_type": "int64"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "agent.lifecycle",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.agent.phase.transitions",
+      "family_id": "metric.defenseclaw.agent.phase.transitions",
+      "projection": {
+        "boundaries": null,
+        "cardinality_limit": 2048,
+        "instrument_type": "counter",
+        "label_projection": {
+          "mappings": [
+            [
+              "defenseclaw.connector.source",
+              "connector"
+            ]
+          ],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "delta",
+        "unit": "{transition}",
+        "value_type": "int64"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "agent.lifecycle",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.agent.reported_cost",
+      "family_id": "metric.defenseclaw.agent.reported_cost",
+      "projection": {
+        "boundaries": null,
+        "cardinality_limit": 2048,
+        "instrument_type": "gauge",
+        "label_projection": {
+          "mappings": [
+            [
+              "defenseclaw.connector.source",
+              "connector"
+            ]
+          ],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "unspecified",
+        "unit": "USD",
+        "value_type": "double"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "agent.lifecycle",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.agent.token.usage",
+      "family_id": "metric.defenseclaw.agent.token.usage",
+      "projection": {
+        "boundaries": null,
+        "cardinality_limit": 2048,
+        "instrument_type": "counter",
+        "label_projection": {
+          "mappings": [
+            [
+              "defenseclaw.connector.source",
+              "connector"
+            ],
+            [
+              "gen_ai.token.type",
+              "kind"
+            ]
+          ],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "delta",
+        "unit": "{token}",
+        "value_type": "int64"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "ai.discovery",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.ai.components.installs",
+      "family_id": "metric.defenseclaw.ai.components.installs",
+      "projection": {
+        "boundaries": null,
+        "cardinality_limit": 2048,
+        "instrument_type": "gauge",
+        "label_projection": {
+          "mappings": [
+            [
+              "defenseclaw.metric.ecosystem",
+              "ecosystem"
+            ],
+            [
+              "defenseclaw.metric.name",
+              "name"
+            ]
+          ],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "unspecified",
+        "unit": "{install}",
+        "value_type": "int64"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "ai.discovery",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.ai.components.observations",
+      "family_id": "metric.defenseclaw.ai.components.observations",
+      "projection": {
+        "boundaries": null,
+        "cardinality_limit": 2048,
+        "instrument_type": "counter",
+        "label_projection": {
+          "mappings": [
+            [
+              "defenseclaw.metric.ecosystem",
+              "ecosystem"
+            ],
+            [
+              "defenseclaw.metric.identity_band",
+              "identity_band"
+            ],
+            [
+              "defenseclaw.metric.name",
+              "name"
+            ],
+            [
+              "defenseclaw.metric.presence_band",
+              "presence_band"
+            ]
+          ],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "delta",
+        "unit": "{observation}",
+        "value_type": "int64"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "ai.discovery",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.ai.components.workspaces",
+      "family_id": "metric.defenseclaw.ai.components.workspaces",
+      "projection": {
+        "boundaries": null,
+        "cardinality_limit": 2048,
+        "instrument_type": "gauge",
+        "label_projection": {
+          "mappings": [
+            [
+              "defenseclaw.metric.ecosystem",
+              "ecosystem"
+            ],
+            [
+              "defenseclaw.metric.name",
+              "name"
+            ]
+          ],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "unspecified",
+        "unit": "{workspace}",
+        "value_type": "int64"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "ai.discovery",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.ai.confidence.identity_score",
+      "family_id": "metric.defenseclaw.ai.confidence.identity_score",
+      "projection": {
+        "boundaries": [],
+        "cardinality_limit": 2048,
+        "instrument_type": "histogram",
+        "label_projection": {
+          "mappings": [
+            [
+              "defenseclaw.metric.ecosystem",
+              "ecosystem"
+            ],
+            [
+              "defenseclaw.metric.framework",
+              "framework"
+            ],
+            [
+              "defenseclaw.metric.name",
+              "name"
+            ]
+          ],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "delta",
+        "unit": "1",
+        "value_type": "double"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "ai.discovery",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.ai.confidence.presence_score",
+      "family_id": "metric.defenseclaw.ai.confidence.presence_score",
+      "projection": {
+        "boundaries": [],
+        "cardinality_limit": 2048,
+        "instrument_type": "histogram",
+        "label_projection": {
+          "mappings": [
+            [
+              "defenseclaw.metric.ecosystem",
+              "ecosystem"
+            ],
+            [
+              "defenseclaw.metric.framework",
+              "framework"
+            ],
+            [
+              "defenseclaw.metric.name",
+              "name"
+            ]
+          ],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "delta",
+        "unit": "1",
+        "value_type": "double"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "ai.discovery",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.ai.discovery.active_signals",
+      "family_id": "metric.defenseclaw.ai.discovery.active_signals",
+      "projection": {
+        "boundaries": null,
+        "cardinality_limit": 2048,
+        "instrument_type": "gauge",
+        "label_projection": {
+          "mappings": [
+            [
+              "defenseclaw.metric.privacy_mode",
+              "privacy_mode"
+            ],
+            [
+              "defenseclaw.metric.source",
+              "source"
+            ]
+          ],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "unspecified",
+        "unit": "{signal}",
+        "value_type": "int64"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "ai.discovery",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.ai.discovery.dedupe_suppressed",
+      "family_id": "metric.defenseclaw.ai.discovery.dedupe_suppressed",
+      "projection": {
+        "boundaries": null,
+        "cardinality_limit": 2048,
+        "instrument_type": "counter",
+        "label_projection": {
+          "mappings": [
+            [
+              "defenseclaw.metric.privacy_mode",
+              "privacy_mode"
+            ],
+            [
+              "defenseclaw.metric.result",
+              "result"
+            ],
+            [
+              "defenseclaw.metric.source",
+              "source"
+            ]
+          ],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "delta",
+        "unit": "{signal}",
+        "value_type": "int64"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "ai.discovery",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.ai.discovery.duration",
+      "family_id": "metric.defenseclaw.ai.discovery.duration",
+      "projection": {
+        "boundaries": [],
+        "cardinality_limit": 2048,
+        "instrument_type": "histogram",
+        "label_projection": {
+          "mappings": [
+            [
+              "defenseclaw.metric.privacy_mode",
+              "privacy_mode"
+            ],
+            [
+              "defenseclaw.metric.result",
+              "result"
+            ],
+            [
+              "defenseclaw.metric.source",
+              "source"
+            ]
+          ],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "delta",
+        "unit": "ms",
+        "value_type": "double"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "ai.discovery",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.ai.discovery.errors",
+      "family_id": "metric.defenseclaw.ai.discovery.errors",
+      "projection": {
+        "boundaries": null,
+        "cardinality_limit": 2048,
+        "instrument_type": "counter",
+        "label_projection": {
+          "mappings": [
+            [
+              "defenseclaw.metric.detector",
+              "detector"
+            ],
+            [
+              "defenseclaw.metric.reason",
+              "reason"
+            ]
+          ],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "delta",
+        "unit": "{error}",
+        "value_type": "int64"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "ai.discovery",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.ai.discovery.files_scanned",
+      "family_id": "metric.defenseclaw.ai.discovery.files_scanned",
+      "projection": {
+        "boundaries": null,
+        "cardinality_limit": 2048,
+        "instrument_type": "counter",
+        "label_projection": {
+          "mappings": [
+            [
+              "defenseclaw.metric.privacy_mode",
+              "privacy_mode"
+            ],
+            [
+              "defenseclaw.metric.result",
+              "result"
+            ],
+            [
+              "defenseclaw.metric.source",
+              "source"
+            ]
+          ],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "delta",
+        "unit": "{file}",
+        "value_type": "int64"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "ai.discovery",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.ai.discovery.gone_signals",
+      "family_id": "metric.defenseclaw.ai.discovery.gone_signals",
+      "projection": {
+        "boundaries": null,
+        "cardinality_limit": 2048,
+        "instrument_type": "counter",
+        "label_projection": {
+          "mappings": [
+            [
+              "defenseclaw.metric.ai.product",
+              "ai.product"
+            ],
+            [
+              "defenseclaw.metric.ai.vendor",
+              "ai.vendor"
+            ],
+            [
+              "defenseclaw.metric.confidence",
+              "confidence"
+            ],
+            [
+              "defenseclaw.metric.detector",
+              "detector"
+            ],
+            [
+              "defenseclaw.metric.privacy_mode",
+              "privacy_mode"
+            ],
+            [
+              "defenseclaw.metric.result",
+              "result"
+            ],
+            [
+              "defenseclaw.metric.signal.category",
+              "signal.category"
+            ],
+            [
+              "defenseclaw.metric.source",
+              "source"
+            ],
+            [
+              "defenseclaw.ai.discovery.signal.state",
+              "state"
+            ]
+          ],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "delta",
+        "unit": "{signal}",
+        "value_type": "int64"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "ai.discovery",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.ai.discovery.new_signals",
+      "family_id": "metric.defenseclaw.ai.discovery.new_signals",
+      "projection": {
+        "boundaries": null,
+        "cardinality_limit": 2048,
+        "instrument_type": "counter",
+        "label_projection": {
+          "mappings": [
+            [
+              "defenseclaw.metric.ai.product",
+              "ai.product"
+            ],
+            [
+              "defenseclaw.metric.ai.vendor",
+              "ai.vendor"
+            ],
+            [
+              "defenseclaw.metric.confidence",
+              "confidence"
+            ],
+            [
+              "defenseclaw.metric.detector",
+              "detector"
+            ],
+            [
+              "defenseclaw.metric.privacy_mode",
+              "privacy_mode"
+            ],
+            [
+              "defenseclaw.metric.result",
+              "result"
+            ],
+            [
+              "defenseclaw.metric.signal.category",
+              "signal.category"
+            ],
+            [
+              "defenseclaw.metric.source",
+              "source"
+            ],
+            [
+              "defenseclaw.ai.discovery.signal.state",
+              "state"
+            ]
+          ],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "delta",
+        "unit": "{signal}",
+        "value_type": "int64"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "ai.discovery",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.ai.discovery.runs",
+      "family_id": "metric.defenseclaw.ai.discovery.runs",
+      "projection": {
+        "boundaries": null,
+        "cardinality_limit": 2048,
+        "instrument_type": "counter",
+        "label_projection": {
+          "mappings": [
+            [
+              "defenseclaw.metric.privacy_mode",
+              "privacy_mode"
+            ],
+            [
+              "defenseclaw.metric.result",
+              "result"
+            ],
+            [
+              "defenseclaw.metric.source",
+              "source"
+            ]
+          ],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "delta",
+        "unit": "{run}",
+        "value_type": "int64"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "ai.discovery",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.ai.discovery.signals",
+      "family_id": "metric.defenseclaw.ai.discovery.signals",
+      "projection": {
+        "boundaries": null,
+        "cardinality_limit": 2048,
+        "instrument_type": "counter",
+        "label_projection": {
+          "mappings": [
+            [
+              "defenseclaw.metric.ai.product",
+              "ai.product"
+            ],
+            [
+              "defenseclaw.metric.ai.vendor",
+              "ai.vendor"
+            ],
+            [
+              "defenseclaw.metric.confidence",
+              "confidence"
+            ],
+            [
+              "defenseclaw.metric.detector",
+              "detector"
+            ],
+            [
+              "defenseclaw.metric.signal.category",
+              "signal.category"
+            ],
+            [
+              "defenseclaw.ai.discovery.signal.state",
+              "state"
+            ]
+          ],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "delta",
+        "unit": "{signal}",
+        "value_type": "int64"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "security.finding",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.alert.count",
+      "family_id": "metric.defenseclaw.alert.count",
+      "projection": {
+        "boundaries": null,
+        "cardinality_limit": 2048,
+        "instrument_type": "counter",
+        "label_projection": {
+          "mappings": [
+            [
+              "defenseclaw.metric.alert.severity",
+              "alert.severity"
+            ],
+            [
+              "defenseclaw.metric.alert.source",
+              "alert.source"
+            ],
+            [
+              "defenseclaw.metric.alert.type",
+              "alert.type"
+            ],
+            [
+              "defenseclaw.connector.source",
+              "connector"
+            ]
+          ],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "delta",
+        "unit": "{alert}",
+        "value_type": "int64"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "enforcement.action",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.approval.count",
+      "family_id": "metric.defenseclaw.approval.count",
+      "projection": {
+        "boundaries": null,
+        "cardinality_limit": 2048,
+        "instrument_type": "counter",
+        "label_projection": {
+          "mappings": [
+            [
+              "defenseclaw.metric.auto",
+              "auto"
+            ],
+            [
+              "defenseclaw.metric.dangerous",
+              "dangerous"
+            ],
+            [
+              "defenseclaw.metric.result",
+              "result"
+            ]
+          ],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "delta",
+        "unit": "{request}",
+        "value_type": "int64"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "platform.health",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.audit.db.errors",
+      "family_id": "metric.defenseclaw.audit.db.errors",
+      "projection": {
+        "boundaries": null,
+        "cardinality_limit": 2048,
+        "instrument_type": "counter",
+        "label_projection": {
+          "mappings": [
+            [
+              "defenseclaw.metric.operation",
+              "operation"
+            ]
+          ],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "delta",
+        "unit": "{error}",
+        "value_type": "int64"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "compliance.activity",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.audit.events.total",
+      "family_id": "metric.defenseclaw.audit.events.total",
+      "projection": {
+        "boundaries": null,
+        "cardinality_limit": 2048,
+        "instrument_type": "counter",
+        "label_projection": {
+          "mappings": [
+            [
+              "defenseclaw.metric.action",
+              "action"
+            ],
+            [
+              "defenseclaw.connector.source",
+              "connector"
+            ],
+            [
+              "defenseclaw.security.severity",
+              "severity"
+            ]
+          ],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "delta",
+        "unit": "{event}",
+        "value_type": "int64"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "platform.health",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.audit.sink.batches.delivered",
+      "family_id": "metric.defenseclaw.audit.sink.batches.delivered",
+      "projection": {
+        "boundaries": null,
+        "cardinality_limit": 2048,
+        "instrument_type": "counter",
+        "label_projection": {
+          "mappings": [
+            [
+              "defenseclaw.metric.kind",
+              "kind"
+            ],
+            [
+              "defenseclaw.metric.retry_count",
+              "retry_count"
+            ],
+            [
+              "defenseclaw.metric.sink",
+              "sink"
+            ],
+            [
+              "defenseclaw.metric.status_code",
+              "status_code"
+            ]
+          ],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "delta",
+        "unit": "{batch}",
+        "value_type": "int64"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "platform.health",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.audit.sink.batches.dropped",
+      "family_id": "metric.defenseclaw.audit.sink.batches.dropped",
+      "projection": {
+        "boundaries": null,
+        "cardinality_limit": 2048,
+        "instrument_type": "counter",
+        "label_projection": {
+          "mappings": [
+            [
+              "defenseclaw.metric.kind",
+              "kind"
+            ],
+            [
+              "defenseclaw.metric.retry_count",
+              "retry_count"
+            ],
+            [
+              "defenseclaw.metric.sink",
+              "sink"
+            ],
+            [
+              "defenseclaw.metric.status_code",
+              "status_code"
+            ]
+          ],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "delta",
+        "unit": "{batch}",
+        "value_type": "int64"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "platform.health",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.audit.sink.circuit.state",
+      "family_id": "metric.defenseclaw.audit.sink.circuit.state",
+      "projection": {
+        "boundaries": null,
+        "cardinality_limit": 2048,
+        "instrument_type": "updowncounter",
+        "label_projection": {
+          "mappings": [
+            [
+              "defenseclaw.metric.sink.kind",
+              "sink.kind"
+            ],
+            [
+              "defenseclaw.metric.sink.name",
+              "sink.name"
+            ]
+          ],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "delta",
+        "unit": "1",
+        "value_type": "int64"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "platform.health",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.audit.sink.delivery.latency",
+      "family_id": "metric.defenseclaw.audit.sink.delivery.latency",
+      "projection": {
+        "boundaries": [],
+        "cardinality_limit": 2048,
+        "instrument_type": "histogram",
+        "label_projection": {
+          "mappings": [
+            [
+              "defenseclaw.metric.kind",
+              "kind"
+            ],
+            [
+              "defenseclaw.metric.retry_count",
+              "retry_count"
+            ],
+            [
+              "defenseclaw.metric.sink",
+              "sink"
+            ],
+            [
+              "defenseclaw.metric.status_code",
+              "status_code"
+            ]
+          ],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "delta",
+        "unit": "ms",
+        "value_type": "double"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "platform.health",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.audit.sink.failures",
+      "family_id": "metric.defenseclaw.audit.sink.failures",
+      "projection": {
+        "boundaries": null,
+        "cardinality_limit": 2048,
+        "instrument_type": "counter",
+        "label_projection": {
+          "mappings": [
+            [
+              "defenseclaw.metric.sink.kind",
+              "sink.kind"
+            ],
+            [
+              "defenseclaw.metric.sink.name",
+              "sink.name"
+            ],
+            [
+              "defenseclaw.metric.sink.reason",
+              "sink.reason"
+            ]
+          ],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "delta",
+        "unit": "{failure}",
+        "value_type": "int64"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "platform.health",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.audit.sink.queue.depth",
+      "family_id": "metric.defenseclaw.audit.sink.queue.depth",
+      "projection": {
+        "boundaries": null,
+        "cardinality_limit": 2048,
+        "instrument_type": "updowncounter",
+        "label_projection": {
+          "mappings": [
+            [
+              "defenseclaw.metric.sink.kind",
+              "sink.kind"
+            ],
+            [
+              "defenseclaw.metric.sink.name",
+              "sink.name"
+            ]
+          ],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "delta",
+        "unit": "{event}",
+        "value_type": "int64"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "guardrail.evaluation",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.cisco.errors",
+      "family_id": "metric.defenseclaw.cisco.errors",
+      "projection": {
+        "boundaries": null,
+        "cardinality_limit": 2048,
+        "instrument_type": "counter",
+        "label_projection": {
+          "mappings": [
+            [
+              "defenseclaw.metric.code",
+              "code"
+            ]
+          ],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "delta",
+        "unit": "{error}",
+        "value_type": "int64"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "guardrail.evaluation",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.cisco_inspect.latency",
+      "family_id": "metric.defenseclaw.cisco_inspect.latency",
+      "projection": {
+        "boundaries": [],
+        "cardinality_limit": 2048,
+        "instrument_type": "histogram",
+        "label_projection": {
+          "mappings": [
+            [
+              "defenseclaw.outcome",
+              "outcome"
+            ]
+          ],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "delta",
+        "unit": "ms",
+        "value_type": "double"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "agent.lifecycle",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.codex.notify",
+      "family_id": "metric.defenseclaw.codex.notify",
+      "projection": {
+        "boundaries": null,
+        "cardinality_limit": 2048,
+        "instrument_type": "counter",
+        "label_projection": {
+          "mappings": [
+            [
+              "defenseclaw.metric.result",
+              "result"
+            ],
+            [
+              "defenseclaw.metric.status",
+              "status"
+            ],
+            [
+              "defenseclaw.metric.type",
+              "type"
+            ]
+          ],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "delta",
+        "unit": "{event}",
+        "value_type": "int64"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "agent.lifecycle",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.codex.notify.malformed",
+      "family_id": "metric.defenseclaw.codex.notify.malformed",
+      "projection": {
+        "boundaries": null,
+        "cardinality_limit": 2048,
+        "instrument_type": "counter",
+        "label_projection": {
+          "mappings": [
+            [
+              "defenseclaw.metric.type",
+              "type"
+            ]
+          ],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "delta",
+        "unit": "{event}",
+        "value_type": "int64"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "compliance.activity",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.config.load.errors",
+      "family_id": "metric.defenseclaw.config.load.errors",
+      "projection": {
+        "boundaries": null,
+        "cardinality_limit": 2048,
+        "instrument_type": "counter",
+        "label_projection": {
+          "mappings": [
+            [
+              "defenseclaw.metric.error_type",
+              "error_type"
+            ]
+          ],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "delta",
+        "unit": "{error}",
+        "value_type": "int64"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "agent.lifecycle",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.connector.hook.invocations",
+      "family_id": "metric.defenseclaw.connector.hook.invocations",
+      "projection": {
+        "boundaries": null,
+        "cardinality_limit": 2048,
+        "instrument_type": "counter",
+        "label_projection": {
+          "mappings": [
+            [
+              "defenseclaw.connector.source",
+              "connector"
+            ],
+            [
+              "defenseclaw.metric.event_type",
+              "event_type"
+            ],
+            [
+              "defenseclaw.metric.reason",
+              "reason"
+            ],
+            [
+              "defenseclaw.metric.result",
+              "result"
+            ]
+          ],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "delta",
+        "unit": "{hook}",
+        "value_type": "int64"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "agent.lifecycle",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.connector.hook.latency",
+      "family_id": "metric.defenseclaw.connector.hook.latency",
+      "projection": {
+        "boundaries": [
+          1,
+          2,
+          5,
+          10,
+          25,
+          50,
+          100,
+          250,
+          500,
+          1000,
+          2500,
+          5000,
+          10000
+        ],
+        "cardinality_limit": 2048,
+        "instrument_type": "histogram",
+        "label_projection": {
+          "mappings": [
+            [
+              "defenseclaw.connector.source",
+              "connector"
+            ],
+            [
+              "defenseclaw.metric.event_type",
+              "event_type"
+            ],
+            [
+              "defenseclaw.metric.reason",
+              "reason"
+            ],
+            [
+              "defenseclaw.metric.result",
+              "result"
+            ]
+          ],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "delta",
+        "unit": "ms",
+        "value_type": "double"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "agent.lifecycle",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.connector.hook.outcome",
+      "family_id": "metric.defenseclaw.connector.hook.outcome",
+      "projection": {
+        "boundaries": null,
+        "cardinality_limit": 2048,
+        "instrument_type": "counter",
+        "label_projection": {
+          "mappings": [
+            [
+              "defenseclaw.metric.action",
+              "action"
+            ],
+            [
+              "defenseclaw.connector.source",
+              "connector"
+            ],
+            [
+              "defenseclaw.metric.event_type",
+              "event_type"
+            ],
+            [
+              "defenseclaw.security.severity",
+              "severity"
+            ],
+            [
+              "defenseclaw.metric.would_block",
+              "would_block"
+            ]
+          ],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "delta",
+        "unit": "{decision}",
+        "value_type": "int64"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "agent.lifecycle",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.connector.hook.tokens",
+      "family_id": "metric.defenseclaw.connector.hook.tokens",
+      "projection": {
+        "boundaries": null,
+        "cardinality_limit": 2048,
+        "instrument_type": "counter",
+        "label_projection": {
+          "mappings": [
+            [
+              "defenseclaw.connector.source",
+              "connector"
+            ],
+            [
+              "gen_ai.token.type",
+              "kind"
+            ],
+            [
+              "gen_ai.request.model",
+              "model"
+            ]
+          ],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "delta",
+        "unit": "{token}",
+        "value_type": "int64"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "agent.lifecycle",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.connector.hook.unified_dispatch",
+      "family_id": "metric.defenseclaw.connector.hook.unified_dispatch",
+      "projection": {
+        "boundaries": null,
+        "cardinality_limit": 2048,
+        "instrument_type": "counter",
+        "label_projection": {
+          "mappings": [
+            [
+              "defenseclaw.connector.source",
+              "connector"
+            ]
+          ],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "delta",
+        "unit": "{invocation}",
+        "value_type": "int64"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "network.egress",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.egress.events",
+      "family_id": "metric.defenseclaw.egress.events",
+      "projection": {
+        "boundaries": null,
+        "cardinality_limit": 2048,
+        "instrument_type": "counter",
+        "label_projection": {
+          "mappings": [
+            [
+              "defenseclaw.metric.branch",
+              "branch"
+            ],
+            [
+              "defenseclaw.metric.decision",
+              "decision"
+            ],
+            [
+              "defenseclaw.metric.source",
+              "source"
+            ]
+          ],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "delta",
+        "unit": "{event}",
+        "value_type": "int64"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "diagnostic",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.gateway.errors",
+      "family_id": "metric.defenseclaw.gateway.errors",
+      "projection": {
+        "boundaries": null,
+        "cardinality_limit": 2048,
+        "instrument_type": "counter",
+        "label_projection": {
+          "mappings": [
+            [
+              "defenseclaw.metric.error.code",
+              "error.code"
+            ],
+            [
+              "defenseclaw.metric.error.subsystem",
+              "error.subsystem"
+            ]
+          ],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "delta",
+        "unit": "{error}",
+        "value_type": "int64"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "diagnostic",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.gateway.events.emitted",
+      "family_id": "metric.defenseclaw.gateway.events.emitted",
+      "projection": {
+        "boundaries": null,
+        "cardinality_limit": 2048,
+        "instrument_type": "counter",
+        "label_projection": {
+          "mappings": [
+            [
+              "defenseclaw.metric.event_type",
+              "event_type"
+            ],
+            [
+              "defenseclaw.security.severity",
+              "severity"
+            ]
+          ],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "delta",
+        "unit": "{event}",
+        "value_type": "int64"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "tool.activity",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.gateway.forwarded_headers",
+      "family_id": "metric.defenseclaw.gateway.forwarded_headers",
+      "projection": {
+        "boundaries": null,
+        "cardinality_limit": 2048,
+        "instrument_type": "counter",
+        "label_projection": {
+          "mappings": [
+            [
+              "defenseclaw.metric.path",
+              "path"
+            ],
+            [
+              "defenseclaw.metric.result",
+              "result"
+            ]
+          ],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "delta",
+        "unit": "{header}",
+        "value_type": "int64"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "guardrail.evaluation",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.gateway.judge.errors",
+      "family_id": "metric.defenseclaw.gateway.judge.errors",
+      "projection": {
+        "boundaries": null,
+        "cardinality_limit": 2048,
+        "instrument_type": "counter",
+        "label_projection": {
+          "mappings": [
+            [
+              "defenseclaw.judge.kind",
+              "judge.kind"
+            ],
+            [
+              "defenseclaw.metric.judge.reason",
+              "judge.reason"
+            ]
+          ],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "delta",
+        "unit": "{error}",
+        "value_type": "int64"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "guardrail.evaluation",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.gateway.judge.invocations",
+      "family_id": "metric.defenseclaw.gateway.judge.invocations",
+      "projection": {
+        "boundaries": null,
+        "cardinality_limit": 2048,
+        "instrument_type": "counter",
+        "label_projection": {
+          "mappings": [
+            [
+              "defenseclaw.judge.action",
+              "judge.action"
+            ],
+            [
+              "defenseclaw.judge.kind",
+              "judge.kind"
+            ],
+            [
+              "defenseclaw.metric.judge.severity",
+              "judge.severity"
+            ]
+          ],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "delta",
+        "unit": "{invocation}",
+        "value_type": "int64"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "guardrail.evaluation",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.gateway.judge.latency",
+      "family_id": "metric.defenseclaw.gateway.judge.latency",
+      "projection": {
+        "boundaries": [],
+        "cardinality_limit": 2048,
+        "instrument_type": "histogram",
+        "label_projection": {
+          "mappings": [
+            [
+              "defenseclaw.judge.kind",
+              "judge.kind"
+            ]
+          ],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "delta",
+        "unit": "ms",
+        "value_type": "double"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "enforcement.action",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.gateway.verdicts",
+      "family_id": "metric.defenseclaw.gateway.verdicts",
+      "projection": {
+        "boundaries": null,
+        "cardinality_limit": 2048,
+        "instrument_type": "counter",
+        "label_projection": {
+          "mappings": [
+            [
+              "defenseclaw.destination.app",
+              "destination_app"
+            ],
+            [
+              "defenseclaw.policy.id",
+              "policy_id"
+            ],
+            [
+              "defenseclaw.guardrail.effective_action",
+              "verdict.action"
+            ],
+            [
+              "defenseclaw.security.severity",
+              "verdict.severity"
+            ],
+            [
+              "defenseclaw.guardrail.stage",
+              "verdict.stage"
+            ]
+          ],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "delta",
+        "unit": "{verdict}",
+        "value_type": "int64"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "guardrail.evaluation",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.guardrail.cache.hits",
+      "family_id": "metric.defenseclaw.guardrail.cache.hits",
+      "projection": {
+        "boundaries": null,
+        "cardinality_limit": 2048,
+        "instrument_type": "counter",
+        "label_projection": {
+          "mappings": [
+            [
+              "defenseclaw.metric.cache",
+              "cache"
+            ],
+            [
+              "defenseclaw.scan.scanner",
+              "scanner"
+            ],
+            [
+              "defenseclaw.metric.ttl_bucket",
+              "ttl_bucket"
+            ],
+            [
+              "defenseclaw.metric.verdict",
+              "verdict"
+            ]
+          ],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "delta",
+        "unit": "{hit}",
+        "value_type": "int64"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "guardrail.evaluation",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.guardrail.cache.misses",
+      "family_id": "metric.defenseclaw.guardrail.cache.misses",
+      "projection": {
+        "boundaries": null,
+        "cardinality_limit": 2048,
+        "instrument_type": "counter",
+        "label_projection": {
+          "mappings": [
+            [
+              "defenseclaw.metric.cache",
+              "cache"
+            ],
+            [
+              "defenseclaw.scan.scanner",
+              "scanner"
+            ],
+            [
+              "defenseclaw.metric.ttl_bucket",
+              "ttl_bucket"
+            ],
+            [
+              "defenseclaw.metric.verdict",
+              "verdict"
+            ]
+          ],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "delta",
+        "unit": "{miss}",
+        "value_type": "int64"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "guardrail.evaluation",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.guardrail.evaluations",
+      "family_id": "metric.defenseclaw.guardrail.evaluations",
+      "projection": {
+        "boundaries": null,
+        "cardinality_limit": 2048,
+        "instrument_type": "counter",
+        "label_projection": {
+          "mappings": [
+            [
+              "defenseclaw.guardrail.effective_action",
+              "guardrail.action_taken"
+            ],
+            [
+              "defenseclaw.connector.source",
+              "guardrail.connector"
+            ],
+            [
+              "defenseclaw.metric.guardrail.scanner",
+              "guardrail.scanner"
+            ]
+          ],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "delta",
+        "unit": "{evaluation}",
+        "value_type": "int64"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "guardrail.evaluation",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.guardrail.judge.latency",
+      "family_id": "metric.defenseclaw.guardrail.judge.latency",
+      "projection": {
+        "boundaries": [],
+        "cardinality_limit": 2048,
+        "instrument_type": "histogram",
+        "label_projection": {
+          "mappings": [
+            [
+              "defenseclaw.judge.kind",
+              "judge.kind"
+            ]
+          ],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "delta",
+        "unit": "ms",
+        "value_type": "double"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "guardrail.evaluation",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.guardrail.latency",
+      "family_id": "metric.defenseclaw.guardrail.latency",
+      "projection": {
+        "boundaries": [],
+        "cardinality_limit": 2048,
+        "instrument_type": "histogram",
+        "label_projection": {
+          "mappings": [
+            [
+              "defenseclaw.connector.source",
+              "guardrail.connector"
+            ],
+            [
+              "defenseclaw.metric.guardrail.scanner",
+              "guardrail.scanner"
+            ]
+          ],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "delta",
+        "unit": "ms",
+        "value_type": "double"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "platform.health",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.http.auth.failures",
+      "family_id": "metric.defenseclaw.http.auth.failures",
+      "projection": {
+        "boundaries": null,
+        "cardinality_limit": 2048,
+        "instrument_type": "counter",
+        "label_projection": {
+          "mappings": [
+            [
+              "defenseclaw.metric.reason",
+              "reason"
+            ]
+          ],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "delta",
+        "unit": "{failure}",
+        "value_type": "int64"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "platform.health",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.http.rate_limit.breaches",
+      "family_id": "metric.defenseclaw.http.rate_limit.breaches",
+      "projection": {
+        "boundaries": null,
+        "cardinality_limit": 2048,
+        "instrument_type": "counter",
+        "label_projection": {
+          "mappings": [
+            [
+              "defenseclaw.metric.client.kind",
+              "client.kind"
+            ]
+          ],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "delta",
+        "unit": "{breach}",
+        "value_type": "int64"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "platform.health",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.http.request.count",
+      "family_id": "metric.defenseclaw.http.request.count",
+      "projection": {
+        "boundaries": null,
+        "cardinality_limit": 2048,
+        "instrument_type": "counter",
+        "label_projection": {
+          "mappings": [
+            [
+              "http.request.method",
+              "http.method"
+            ],
+            [
+              "http.response.status_code",
+              "http.status_code"
+            ]
+          ],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "delta",
+        "unit": "{request}",
+        "value_type": "int64"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "platform.health",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.http.request.duration",
+      "family_id": "metric.defenseclaw.http.request.duration",
+      "projection": {
+        "boundaries": [],
+        "cardinality_limit": 2048,
+        "instrument_type": "histogram",
+        "label_projection": {
+          "mappings": [
+            [
+              "http.request.method",
+              "http.method"
+            ],
+            [
+              "http.response.status_code",
+              "http.status_code"
+            ]
+          ],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "delta",
+        "unit": "ms",
+        "value_type": "double"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "guardrail.evaluation",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.inspect.evaluations",
+      "family_id": "metric.defenseclaw.inspect.evaluations",
+      "projection": {
+        "boundaries": null,
+        "cardinality_limit": 2048,
+        "instrument_type": "counter",
+        "label_projection": {
+          "mappings": [
+            [
+              "defenseclaw.metric.action",
+              "action"
+            ],
+            [
+              "defenseclaw.connector.source",
+              "connector"
+            ],
+            [
+              "defenseclaw.security.severity",
+              "severity"
+            ],
+            [
+              "defenseclaw.metric.tool",
+              "tool"
+            ]
+          ],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "delta",
+        "unit": "{evaluation}",
+        "value_type": "int64"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "guardrail.evaluation",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.inspect.latency",
+      "family_id": "metric.defenseclaw.inspect.latency",
+      "projection": {
+        "boundaries": [],
+        "cardinality_limit": 2048,
+        "instrument_type": "histogram",
+        "label_projection": {
+          "mappings": [
+            [
+              "defenseclaw.connector.source",
+              "connector"
+            ],
+            [
+              "defenseclaw.metric.tool",
+              "tool"
+            ]
+          ],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "delta",
+        "unit": "ms",
+        "value_type": "double"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "platform.health",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.judge.persist.batch_size",
+      "family_id": "metric.defenseclaw.judge.persist.batch_size",
+      "projection": {
+        "boundaries": [
+          1,
+          2,
+          4,
+          8,
+          16,
+          24,
+          32,
+          48,
+          64
+        ],
+        "cardinality_limit": 2048,
+        "instrument_type": "histogram",
+        "label_projection": {
+          "empty_labels_reason": "All current production Add/Record callsites pass no instrument-specific attributes; OTel resource attributes may still be attached by the provider.",
+          "mappings": [],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "delta",
+        "unit": "{row}",
+        "value_type": "int64"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "platform.health",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.judge.persist.drops",
+      "family_id": "metric.defenseclaw.judge.persist.drops",
+      "projection": {
+        "boundaries": null,
+        "cardinality_limit": 2048,
+        "instrument_type": "counter",
+        "label_projection": {
+          "mappings": [
+            [
+              "defenseclaw.metric.reason",
+              "reason"
+            ]
+          ],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "delta",
+        "unit": "{drop}",
+        "value_type": "int64"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "platform.health",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.judge.persist.queue_depth",
+      "family_id": "metric.defenseclaw.judge.persist.queue_depth",
+      "projection": {
+        "boundaries": null,
+        "cardinality_limit": 2048,
+        "instrument_type": "gauge",
+        "label_projection": {
+          "empty_labels_reason": "All current production Add/Record callsites pass no instrument-specific attributes; OTel resource attributes may still be attached by the provider.",
+          "mappings": [],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "unspecified",
+        "unit": "{item}",
+        "value_type": "int64"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "platform.health",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.judge.semaphore.depth",
+      "family_id": "metric.defenseclaw.judge.semaphore.depth",
+      "projection": {
+        "boundaries": null,
+        "cardinality_limit": 2048,
+        "instrument_type": "updowncounter",
+        "label_projection": {
+          "empty_labels_reason": "All current production Add/Record callsites pass no instrument-specific attributes; OTel resource attributes may still be attached by the provider.",
+          "mappings": [],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "delta",
+        "unit": "{slot}",
+        "value_type": "int64"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "platform.health",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.judge.semaphore.drops",
+      "family_id": "metric.defenseclaw.judge.semaphore.drops",
+      "projection": {
+        "boundaries": null,
+        "cardinality_limit": 2048,
+        "instrument_type": "counter",
+        "label_projection": {
+          "empty_labels_reason": "All current production Add/Record callsites pass no instrument-specific attributes; OTel resource attributes may still be attached by the provider.",
+          "mappings": [],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "delta",
+        "unit": "{drop}",
+        "value_type": "int64"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "model.io",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.llm_bridge.latency",
+      "family_id": "metric.defenseclaw.llm_bridge.latency",
+      "projection": {
+        "boundaries": [],
+        "cardinality_limit": 2048,
+        "instrument_type": "histogram",
+        "label_projection": {
+          "mappings": [
+            [
+              "defenseclaw.metric.status",
+              "status"
+            ]
+          ],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "delta",
+        "unit": "ms",
+        "value_type": "double"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "tool.activity",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.openshell.exit",
+      "family_id": "metric.defenseclaw.openshell.exit",
+      "projection": {
+        "boundaries": null,
+        "cardinality_limit": 2048,
+        "instrument_type": "counter",
+        "label_projection": {
+          "mappings": [
+            [
+              "defenseclaw.metric.command",
+              "command"
+            ],
+            [
+              "defenseclaw.tool.exit_code",
+              "exit_code"
+            ]
+          ],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "delta",
+        "unit": "{exit}",
+        "value_type": "int64"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "telemetry.ingest",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.otel.ingest.bytes",
+      "family_id": "metric.defenseclaw.otel.ingest.bytes",
+      "projection": {
+        "boundaries": null,
+        "cardinality_limit": 2048,
+        "instrument_type": "counter",
+        "label_projection": {
+          "mappings": [
+            [
+              "defenseclaw.connector.source",
+              "connector"
+            ],
+            [
+              "defenseclaw.telemetry.signal",
+              "signal"
+            ],
+            [
+              "defenseclaw.metric.source",
+              "source"
+            ]
+          ],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "delta",
+        "unit": "By",
+        "value_type": "int64"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "telemetry.ingest",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.otel.ingest.last_seen_ts",
+      "family_id": "metric.defenseclaw.otel.ingest.last_seen_ts",
+      "projection": {
+        "boundaries": null,
+        "cardinality_limit": 2048,
+        "instrument_type": "gauge",
+        "label_projection": {
+          "mappings": [
+            [
+              "defenseclaw.connector.source",
+              "connector"
+            ],
+            [
+              "defenseclaw.telemetry.signal",
+              "signal"
+            ],
+            [
+              "defenseclaw.metric.source",
+              "source"
+            ]
+          ],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "unspecified",
+        "unit": "s",
+        "value_type": "double"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "telemetry.ingest",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.otel.ingest.malformed",
+      "family_id": "metric.defenseclaw.otel.ingest.malformed",
+      "projection": {
+        "boundaries": null,
+        "cardinality_limit": 2048,
+        "instrument_type": "counter",
+        "label_projection": {
+          "mappings": [
+            [
+              "defenseclaw.connector.source",
+              "connector"
+            ],
+            [
+              "defenseclaw.telemetry.signal",
+              "signal"
+            ],
+            [
+              "defenseclaw.metric.source",
+              "source"
+            ]
+          ],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "delta",
+        "unit": "{request}",
+        "value_type": "int64"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "telemetry.ingest",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.otel.ingest.records",
+      "family_id": "metric.defenseclaw.otel.ingest.records",
+      "projection": {
+        "boundaries": null,
+        "cardinality_limit": 2048,
+        "instrument_type": "counter",
+        "label_projection": {
+          "mappings": [
+            [
+              "defenseclaw.connector.source",
+              "connector"
+            ],
+            [
+              "defenseclaw.telemetry.signal",
+              "signal"
+            ],
+            [
+              "defenseclaw.metric.source",
+              "source"
+            ]
+          ],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "delta",
+        "unit": "{record}",
+        "value_type": "int64"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "telemetry.ingest",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.otel.ingest.requests",
+      "family_id": "metric.defenseclaw.otel.ingest.requests",
+      "projection": {
+        "boundaries": null,
+        "cardinality_limit": 2048,
+        "instrument_type": "counter",
+        "label_projection": {
+          "mappings": [
+            [
+              "defenseclaw.connector.source",
+              "connector"
+            ],
+            [
+              "defenseclaw.metric.result",
+              "result"
+            ],
+            [
+              "defenseclaw.telemetry.signal",
+              "signal"
+            ],
+            [
+              "defenseclaw.metric.source",
+              "source"
+            ]
+          ],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "delta",
+        "unit": "{request}",
+        "value_type": "int64"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "platform.health",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.panics.total",
+      "family_id": "metric.defenseclaw.panics.total",
+      "projection": {
+        "boundaries": null,
+        "cardinality_limit": 2048,
+        "instrument_type": "counter",
+        "label_projection": {
+          "mappings": [
+            [
+              "defenseclaw.metric.subsystem",
+              "subsystem"
+            ]
+          ],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "delta",
+        "unit": "{panic}",
+        "value_type": "int64"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "guardrail.evaluation",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.policy.evaluations",
+      "family_id": "metric.defenseclaw.policy.evaluations",
+      "projection": {
+        "boundaries": null,
+        "cardinality_limit": 2048,
+        "instrument_type": "counter",
+        "label_projection": {
+          "mappings": [
+            [
+              "defenseclaw.metric.policy.domain",
+              "policy.domain"
+            ],
+            [
+              "defenseclaw.metric.policy.verdict",
+              "policy.verdict"
+            ]
+          ],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "delta",
+        "unit": "{evaluation}",
+        "value_type": "int64"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "guardrail.evaluation",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.policy.latency",
+      "family_id": "metric.defenseclaw.policy.latency",
+      "projection": {
+        "boundaries": [],
+        "cardinality_limit": 2048,
+        "instrument_type": "histogram",
+        "label_projection": {
+          "mappings": [
+            [
+              "defenseclaw.metric.policy.domain",
+              "policy.domain"
+            ]
+          ],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "delta",
+        "unit": "ms",
+        "value_type": "double"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "compliance.activity",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.policy.reloads",
+      "family_id": "metric.defenseclaw.policy.reloads",
+      "projection": {
+        "boundaries": null,
+        "cardinality_limit": 2048,
+        "instrument_type": "counter",
+        "label_projection": {
+          "mappings": [
+            [
+              "defenseclaw.metric.policy.status",
+              "policy.status"
+            ]
+          ],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "delta",
+        "unit": "{reload}",
+        "value_type": "int64"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "platform.health",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.process.uptime_seconds",
+      "family_id": "metric.defenseclaw.process.uptime_seconds",
+      "projection": {
+        "boundaries": null,
+        "cardinality_limit": 2048,
+        "instrument_type": "gauge",
+        "label_projection": {
+          "empty_labels_reason": "All current production Add/Record callsites pass no instrument-specific attributes; OTel resource attributes may still be attached by the provider.",
+          "mappings": [],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "unspecified",
+        "unit": "s",
+        "value_type": "double"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "diagnostic",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.provenance.bumps",
+      "family_id": "metric.defenseclaw.provenance.bumps",
+      "projection": {
+        "boundaries": null,
+        "cardinality_limit": 2048,
+        "instrument_type": "counter",
+        "label_projection": {
+          "mappings": [
+            [
+              "defenseclaw.metric.reason",
+              "reason"
+            ]
+          ],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "delta",
+        "unit": "{bump}",
+        "value_type": "int64"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "enforcement.action",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.quarantine.actions",
+      "family_id": "metric.defenseclaw.quarantine.actions",
+      "projection": {
+        "boundaries": null,
+        "cardinality_limit": 2048,
+        "instrument_type": "counter",
+        "label_projection": {
+          "mappings": [
+            [
+              "defenseclaw.metric.quarantine.op",
+              "quarantine.op"
+            ],
+            [
+              "defenseclaw.metric.quarantine.result",
+              "quarantine.result"
+            ]
+          ],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "delta",
+        "unit": "{action}",
+        "value_type": "int64"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "platform.health",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.queue.depth",
+      "family_id": "metric.defenseclaw.queue.depth",
+      "projection": {
+        "boundaries": null,
+        "cardinality_limit": 2048,
+        "instrument_type": "gauge",
+        "label_projection": {
+          "mappings": [
+            [
+              "defenseclaw.metric.capacity",
+              "capacity"
+            ],
+            [
+              "defenseclaw.metric.queue",
+              "queue"
+            ]
+          ],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "unspecified",
+        "unit": "{item}",
+        "value_type": "int64"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "platform.health",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.queue.drops",
+      "family_id": "metric.defenseclaw.queue.drops",
+      "projection": {
+        "boundaries": null,
+        "cardinality_limit": 2048,
+        "instrument_type": "counter",
+        "label_projection": {
+          "mappings": [
+            [
+              "defenseclaw.metric.queue",
+              "queue"
+            ],
+            [
+              "defenseclaw.metric.reason",
+              "reason"
+            ]
+          ],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "delta",
+        "unit": "{drop}",
+        "value_type": "int64"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "diagnostic",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.redaction.applied",
+      "family_id": "metric.defenseclaw.redaction.applied",
+      "projection": {
+        "boundaries": null,
+        "cardinality_limit": 2048,
+        "instrument_type": "counter",
+        "label_projection": {
+          "mappings": [
+            [
+              "defenseclaw.metric.detector",
+              "detector"
+            ],
+            [
+              "defenseclaw.metric.field",
+              "field"
+            ]
+          ],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "delta",
+        "unit": "{redaction}",
+        "value_type": "int64"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "platform.health",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.runtime.fd.in_use",
+      "family_id": "metric.defenseclaw.runtime.fd.in_use",
+      "projection": {
+        "boundaries": null,
+        "cardinality_limit": 2048,
+        "instrument_type": "gauge",
+        "label_projection": {
+          "empty_labels_reason": "All current production Add/Record callsites pass no instrument-specific attributes; OTel resource attributes may still be attached by the provider.",
+          "mappings": [],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "unspecified",
+        "unit": "{fd}",
+        "value_type": "int64"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "platform.health",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.runtime.gc.pause",
+      "family_id": "metric.defenseclaw.runtime.gc.pause",
+      "projection": {
+        "boundaries": [],
+        "cardinality_limit": 2048,
+        "instrument_type": "histogram",
+        "label_projection": {
+          "empty_labels_reason": "All current production Add/Record callsites pass no instrument-specific attributes; OTel resource attributes may still be attached by the provider.",
+          "mappings": [],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "delta",
+        "unit": "ns",
+        "value_type": "int64"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "platform.health",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.runtime.goroutines",
+      "family_id": "metric.defenseclaw.runtime.goroutines",
+      "projection": {
+        "boundaries": null,
+        "cardinality_limit": 2048,
+        "instrument_type": "gauge",
+        "label_projection": {
+          "empty_labels_reason": "All current production Add/Record callsites pass no instrument-specific attributes; OTel resource attributes may still be attached by the provider.",
+          "mappings": [],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "unspecified",
+        "unit": "{goroutine}",
+        "value_type": "int64"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "platform.health",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.runtime.heap.alloc",
+      "family_id": "metric.defenseclaw.runtime.heap.alloc",
+      "projection": {
+        "boundaries": null,
+        "cardinality_limit": 2048,
+        "instrument_type": "gauge",
+        "label_projection": {
+          "empty_labels_reason": "All current production Add/Record callsites pass no instrument-specific attributes; OTel resource attributes may still be attached by the provider.",
+          "mappings": [],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "unspecified",
+        "unit": "By",
+        "value_type": "int64"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "platform.health",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.runtime.heap.objects",
+      "family_id": "metric.defenseclaw.runtime.heap.objects",
+      "projection": {
+        "boundaries": null,
+        "cardinality_limit": 2048,
+        "instrument_type": "gauge",
+        "label_projection": {
+          "empty_labels_reason": "All current production Add/Record callsites pass no instrument-specific attributes; OTel resource attributes may still be attached by the provider.",
+          "mappings": [],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "unspecified",
+        "unit": "{object}",
+        "value_type": "int64"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "asset.scan",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.scan.count",
+      "family_id": "metric.defenseclaw.scan.count",
+      "projection": {
+        "boundaries": null,
+        "cardinality_limit": 2048,
+        "instrument_type": "counter",
+        "label_projection": {
+          "mappings": [
+            [
+              "defenseclaw.scan.scanner",
+              "scanner"
+            ],
+            [
+              "defenseclaw.metric.target_type",
+              "target_type"
+            ],
+            [
+              "defenseclaw.metric.verdict",
+              "verdict"
+            ]
+          ],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "delta",
+        "unit": "{scan}",
+        "value_type": "int64"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "asset.scan",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.scan.duration",
+      "family_id": "metric.defenseclaw.scan.duration",
+      "projection": {
+        "boundaries": [],
+        "cardinality_limit": 2048,
+        "instrument_type": "histogram",
+        "label_projection": {
+          "mappings": [
+            [
+              "defenseclaw.scan.scanner",
+              "scanner"
+            ],
+            [
+              "defenseclaw.metric.target_type",
+              "target_type"
+            ]
+          ],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "delta",
+        "unit": "ms",
+        "value_type": "double"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "asset.scan",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.scan.errors",
+      "family_id": "metric.defenseclaw.scan.errors",
+      "projection": {
+        "boundaries": null,
+        "cardinality_limit": 2048,
+        "instrument_type": "counter",
+        "label_projection": {
+          "mappings": [
+            [
+              "defenseclaw.metric.error_type",
+              "error_type"
+            ],
+            [
+              "defenseclaw.scan.scanner",
+              "scanner"
+            ],
+            [
+              "defenseclaw.metric.target_type",
+              "target_type"
+            ]
+          ],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "delta",
+        "unit": "{error}",
+        "value_type": "int64"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "security.finding",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.scan.findings",
+      "family_id": "metric.defenseclaw.scan.findings",
+      "projection": {
+        "boundaries": null,
+        "cardinality_limit": 2048,
+        "instrument_type": "counter",
+        "label_projection": {
+          "mappings": [
+            [
+              "defenseclaw.connector.source",
+              "connector"
+            ],
+            [
+              "defenseclaw.scan.scanner",
+              "scanner"
+            ],
+            [
+              "defenseclaw.security.severity",
+              "severity"
+            ],
+            [
+              "defenseclaw.metric.target_type",
+              "target_type"
+            ]
+          ],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "delta",
+        "unit": "{finding}",
+        "value_type": "int64"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "security.finding",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.scan.findings.by_rule",
+      "family_id": "metric.defenseclaw.scan.findings.by_rule",
+      "projection": {
+        "boundaries": null,
+        "cardinality_limit": 2048,
+        "instrument_type": "counter",
+        "label_projection": {
+          "mappings": [
+            [
+              "defenseclaw.connector.source",
+              "connector"
+            ],
+            [
+              "defenseclaw.finding.rule_id",
+              "rule_id"
+            ],
+            [
+              "defenseclaw.scan.scanner",
+              "scanner"
+            ],
+            [
+              "defenseclaw.security.severity",
+              "severity"
+            ]
+          ],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "delta",
+        "unit": "{finding}",
+        "value_type": "int64"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "security.finding",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.scan.findings.gauge",
+      "family_id": "metric.defenseclaw.scan.findings.gauge",
+      "projection": {
+        "boundaries": null,
+        "cardinality_limit": 2048,
+        "instrument_type": "updowncounter",
+        "label_projection": {
+          "mappings": [
+            [
+              "defenseclaw.security.severity",
+              "severity"
+            ],
+            [
+              "defenseclaw.metric.target_type",
+              "target_type"
+            ]
+          ],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "delta",
+        "unit": "{finding}",
+        "value_type": "int64"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "asset.scan",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.scanner.queue.depth",
+      "family_id": "metric.defenseclaw.scanner.queue.depth",
+      "projection": {
+        "boundaries": null,
+        "cardinality_limit": 2048,
+        "instrument_type": "updowncounter",
+        "label_projection": {
+          "mappings": [
+            [
+              "defenseclaw.scan.scanner",
+              "scanner"
+            ]
+          ],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "delta",
+        "unit": "{scan}",
+        "value_type": "int64"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "diagnostic",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.schema.violations",
+      "family_id": "metric.defenseclaw.schema.violations",
+      "projection": {
+        "boundaries": null,
+        "cardinality_limit": 2048,
+        "instrument_type": "counter",
+        "label_projection": {
+          "mappings": [
+            [
+              "defenseclaw.metric.code",
+              "code"
+            ],
+            [
+              "defenseclaw.metric.event_type",
+              "event_type"
+            ]
+          ],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "delta",
+        "unit": "{event}",
+        "value_type": "int64"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "platform.health",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.slo.block.latency",
+      "family_id": "metric.defenseclaw.slo.block.latency",
+      "projection": {
+        "boundaries": [],
+        "cardinality_limit": 2048,
+        "instrument_type": "histogram",
+        "label_projection": {
+          "mappings": [
+            [
+              "defenseclaw.metric.target_type",
+              "target_type"
+            ]
+          ],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "delta",
+        "unit": "ms",
+        "value_type": "double"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "diagnostic",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.slo.tui.refresh",
+      "family_id": "metric.defenseclaw.slo.tui.refresh",
+      "projection": {
+        "boundaries": [],
+        "cardinality_limit": 2048,
+        "instrument_type": "histogram",
+        "label_projection": {
+          "mappings": [
+            [
+              "defenseclaw.metric.panel",
+              "panel"
+            ]
+          ],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "delta",
+        "unit": "ms",
+        "value_type": "double"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "platform.health",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.sqlite.busy_retries",
+      "family_id": "metric.defenseclaw.sqlite.busy_retries",
+      "projection": {
+        "boundaries": null,
+        "cardinality_limit": 2048,
+        "instrument_type": "counter",
+        "label_projection": {
+          "mappings": [
+            [
+              "defenseclaw.metric.operation",
+              "operation"
+            ]
+          ],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "delta",
+        "unit": "{event}",
+        "value_type": "int64"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "platform.health",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.sqlite.checkpoint.duration",
+      "family_id": "metric.defenseclaw.sqlite.checkpoint.duration",
+      "projection": {
+        "boundaries": [],
+        "cardinality_limit": 2048,
+        "instrument_type": "histogram",
+        "label_projection": {
+          "empty_labels_reason": "All current production Add/Record callsites pass no instrument-specific attributes; OTel resource attributes may still be attached by the provider.",
+          "mappings": [],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "delta",
+        "unit": "ms",
+        "value_type": "double"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "platform.health",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.sqlite.db.bytes",
+      "family_id": "metric.defenseclaw.sqlite.db.bytes",
+      "projection": {
+        "boundaries": null,
+        "cardinality_limit": 2048,
+        "instrument_type": "gauge",
+        "label_projection": {
+          "empty_labels_reason": "All current production Add/Record callsites pass no instrument-specific attributes; OTel resource attributes may still be attached by the provider.",
+          "mappings": [],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "unspecified",
+        "unit": "By",
+        "value_type": "int64"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "platform.health",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.sqlite.freelist_count",
+      "family_id": "metric.defenseclaw.sqlite.freelist_count",
+      "projection": {
+        "boundaries": null,
+        "cardinality_limit": 2048,
+        "instrument_type": "gauge",
+        "label_projection": {
+          "empty_labels_reason": "All current production Add/Record callsites pass no instrument-specific attributes; OTel resource attributes may still be attached by the provider.",
+          "mappings": [],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "unspecified",
+        "unit": "{page}",
+        "value_type": "int64"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "platform.health",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.sqlite.page_count",
+      "family_id": "metric.defenseclaw.sqlite.page_count",
+      "projection": {
+        "boundaries": null,
+        "cardinality_limit": 2048,
+        "instrument_type": "gauge",
+        "label_projection": {
+          "empty_labels_reason": "All current production Add/Record callsites pass no instrument-specific attributes; OTel resource attributes may still be attached by the provider.",
+          "mappings": [],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "unspecified",
+        "unit": "{page}",
+        "value_type": "int64"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "platform.health",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.sqlite.wal.bytes",
+      "family_id": "metric.defenseclaw.sqlite.wal.bytes",
+      "projection": {
+        "boundaries": null,
+        "cardinality_limit": 2048,
+        "instrument_type": "gauge",
+        "label_projection": {
+          "empty_labels_reason": "All current production Add/Record callsites pass no instrument-specific attributes; OTel resource attributes may still be attached by the provider.",
+          "mappings": [],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "unspecified",
+        "unit": "By",
+        "value_type": "int64"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "model.io",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.stream.bytes_sent",
+      "family_id": "metric.defenseclaw.stream.bytes_sent",
+      "projection": {
+        "boundaries": [],
+        "cardinality_limit": 2048,
+        "instrument_type": "histogram",
+        "label_projection": {
+          "mappings": [
+            [
+              "defenseclaw.outcome",
+              "outcome"
+            ]
+          ],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "delta",
+        "unit": "By",
+        "value_type": "int64"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "model.io",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.stream.duration_ms",
+      "family_id": "metric.defenseclaw.stream.duration_ms",
+      "projection": {
+        "boundaries": [],
+        "cardinality_limit": 2048,
+        "instrument_type": "histogram",
+        "label_projection": {
+          "mappings": [
+            [
+              "defenseclaw.outcome",
+              "outcome"
+            ]
+          ],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "delta",
+        "unit": "ms",
+        "value_type": "double"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "model.io",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.stream.lifecycle",
+      "family_id": "metric.defenseclaw.stream.lifecycle",
+      "projection": {
+        "boundaries": null,
+        "cardinality_limit": 2048,
+        "instrument_type": "counter",
+        "label_projection": {
+          "mappings": [
+            [
+              "defenseclaw.outcome",
+              "outcome"
+            ],
+            [
+              "defenseclaw.metric.transition",
+              "transition"
+            ]
+          ],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "delta",
+        "unit": "{transition}",
+        "value_type": "int64"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "platform.health",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.telemetry.destination.exports",
+      "family_id": "metric.defenseclaw.telemetry.destination.exports",
+      "projection": {
+        "boundaries": null,
+        "cardinality_limit": 2048,
+        "instrument_type": "counter",
+        "label_projection": {
+          "mappings": [
+            [
+              "defenseclaw.destination.id",
+              "destination"
+            ],
+            [
+              "defenseclaw.outcome",
+              "outcome"
+            ],
+            [
+              "defenseclaw.telemetry.signal",
+              "signal"
+            ]
+          ],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "delta",
+        "unit": "{span}",
+        "value_type": "int64"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "platform.health",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.telemetry.destination.spans",
+      "family_id": "metric.defenseclaw.telemetry.destination.spans",
+      "projection": {
+        "boundaries": null,
+        "cardinality_limit": 2048,
+        "instrument_type": "counter",
+        "label_projection": {
+          "mappings": [
+            [
+              "defenseclaw.destination.id",
+              "destination"
+            ],
+            [
+              "defenseclaw.outcome",
+              "outcome"
+            ],
+            [
+              "defenseclaw.metric.reason",
+              "reason"
+            ]
+          ],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "delta",
+        "unit": "{span}",
+        "value_type": "int64"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "platform.health",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.telemetry.exporter.errors",
+      "family_id": "metric.defenseclaw.telemetry.exporter.errors",
+      "projection": {
+        "boundaries": null,
+        "cardinality_limit": 2048,
+        "instrument_type": "counter",
+        "label_projection": {
+          "mappings": [
+            [
+              "defenseclaw.metric.exporter",
+              "exporter"
+            ],
+            [
+              "defenseclaw.metric.reason",
+              "reason"
+            ],
+            [
+              "defenseclaw.telemetry.signal",
+              "signal"
+            ]
+          ],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "delta",
+        "unit": "{error}",
+        "value_type": "int64"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "platform.health",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.telemetry.exporter.last_export_ts",
+      "family_id": "metric.defenseclaw.telemetry.exporter.last_export_ts",
+      "projection": {
+        "boundaries": null,
+        "cardinality_limit": 2048,
+        "instrument_type": "gauge",
+        "label_projection": {
+          "mappings": [
+            [
+              "defenseclaw.metric.exporter",
+              "exporter"
+            ],
+            [
+              "defenseclaw.telemetry.signal",
+              "signal"
+            ]
+          ],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "unspecified",
+        "unit": "s",
+        "value_type": "double"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "tool.activity",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.tool.calls",
+      "family_id": "metric.defenseclaw.tool.calls",
+      "projection": {
+        "boundaries": null,
+        "cardinality_limit": 2048,
+        "instrument_type": "counter",
+        "label_projection": {
+          "mappings": [
+            [
+              "defenseclaw.metric.dangerous",
+              "dangerous"
+            ],
+            [
+              "defenseclaw.tool.provider",
+              "tool.provider"
+            ]
+          ],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "delta",
+        "unit": "{call}",
+        "value_type": "int64"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "tool.activity",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.tool.duration",
+      "family_id": "metric.defenseclaw.tool.duration",
+      "projection": {
+        "boundaries": [],
+        "cardinality_limit": 2048,
+        "instrument_type": "histogram",
+        "label_projection": {
+          "mappings": [
+            [
+              "defenseclaw.tool.provider",
+              "tool.provider"
+            ]
+          ],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "delta",
+        "unit": "ms",
+        "value_type": "double"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "tool.activity",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.tool.errors",
+      "family_id": "metric.defenseclaw.tool.errors",
+      "projection": {
+        "boundaries": null,
+        "cardinality_limit": 2048,
+        "instrument_type": "counter",
+        "label_projection": {
+          "mappings": [
+            [
+              "defenseclaw.tool.exit_code",
+              "exit_code"
+            ]
+          ],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "delta",
+        "unit": "{error}",
+        "value_type": "int64"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "diagnostic",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.tui.filter.applied",
+      "family_id": "metric.defenseclaw.tui.filter.applied",
+      "projection": {
+        "boundaries": null,
+        "cardinality_limit": 2048,
+        "instrument_type": "counter",
+        "label_projection": {
+          "mappings": [
+            [
+              "defenseclaw.metric.filter_type",
+              "filter_type"
+            ],
+            [
+              "defenseclaw.metric.panel",
+              "panel"
+            ]
+          ],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "delta",
+        "unit": "{filter}",
+        "value_type": "int64"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "asset.lifecycle",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.watcher.errors",
+      "family_id": "metric.defenseclaw.watcher.errors",
+      "projection": {
+        "boundaries": null,
+        "cardinality_limit": 2048,
+        "instrument_type": "counter",
+        "label_projection": {
+          "empty_labels_reason": "All current production Add/Record callsites pass no instrument-specific attributes; OTel resource attributes may still be attached by the provider.",
+          "mappings": [],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "delta",
+        "unit": "{error}",
+        "value_type": "int64"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "asset.lifecycle",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.watcher.events",
+      "family_id": "metric.defenseclaw.watcher.events",
+      "projection": {
+        "boundaries": null,
+        "cardinality_limit": 2048,
+        "instrument_type": "counter",
+        "label_projection": {
+          "mappings": [
+            [
+              "defenseclaw.connector.source",
+              "connector"
+            ],
+            [
+              "defenseclaw.metric.event_type",
+              "event_type"
+            ],
+            [
+              "defenseclaw.metric.target_type",
+              "target_type"
+            ]
+          ],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "delta",
+        "unit": "{event}",
+        "value_type": "int64"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "asset.lifecycle",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.watcher.restarts",
+      "family_id": "metric.defenseclaw.watcher.restarts",
+      "projection": {
+        "boundaries": null,
+        "cardinality_limit": 2048,
+        "instrument_type": "counter",
+        "label_projection": {
+          "empty_labels_reason": "All current production Add/Record callsites pass no instrument-specific attributes; OTel resource attributes may still be attached by the provider.",
+          "mappings": [],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "delta",
+        "unit": "{restart}",
+        "value_type": "int64"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "network.egress",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.webhook.circuit_breaker",
+      "family_id": "metric.defenseclaw.webhook.circuit_breaker",
+      "projection": {
+        "boundaries": null,
+        "cardinality_limit": 2048,
+        "instrument_type": "counter",
+        "label_projection": {
+          "mappings": [
+            [
+              "defenseclaw.webhook.circuit.state",
+              "state"
+            ],
+            [
+              "defenseclaw.metric.webhook.target_hash",
+              "webhook.target_hash"
+            ]
+          ],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "delta",
+        "unit": "{transition}",
+        "value_type": "int64"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "network.egress",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.webhook.cooldown.suppressed",
+      "family_id": "metric.defenseclaw.webhook.cooldown.suppressed",
+      "projection": {
+        "boundaries": null,
+        "cardinality_limit": 2048,
+        "instrument_type": "counter",
+        "label_projection": {
+          "mappings": [
+            [
+              "defenseclaw.metric.webhook.kind",
+              "webhook.kind"
+            ]
+          ],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "delta",
+        "unit": "{event}",
+        "value_type": "int64"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "network.egress",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.webhook.dispatches",
+      "family_id": "metric.defenseclaw.webhook.dispatches",
+      "projection": {
+        "boundaries": null,
+        "cardinality_limit": 2048,
+        "instrument_type": "counter",
+        "label_projection": {
+          "mappings": [
+            [
+              "defenseclaw.outcome",
+              "outcome"
+            ],
+            [
+              "defenseclaw.metric.webhook.kind",
+              "webhook.kind"
+            ]
+          ],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "delta",
+        "unit": "{dispatch}",
+        "value_type": "int64"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "network.egress",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.webhook.failures",
+      "family_id": "metric.defenseclaw.webhook.failures",
+      "projection": {
+        "boundaries": null,
+        "cardinality_limit": 2048,
+        "instrument_type": "counter",
+        "label_projection": {
+          "mappings": [
+            [
+              "defenseclaw.outcome",
+              "outcome"
+            ],
+            [
+              "defenseclaw.metric.webhook.kind",
+              "webhook.kind"
+            ]
+          ],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "delta",
+        "unit": "{failure}",
+        "value_type": "int64"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "network.egress",
+      "eligibility": "eligible",
+      "event_name": "defenseclaw.webhook.latency",
+      "family_id": "metric.defenseclaw.webhook.latency",
+      "projection": {
+        "boundaries": [],
+        "cardinality_limit": 2048,
+        "instrument_type": "histogram",
+        "label_projection": {
+          "mappings": [
+            [
+              "http.response.status_code",
+              "http.status_code"
+            ],
+            [
+              "defenseclaw.metric.webhook.kind",
+              "webhook.kind"
+            ],
+            [
+              "defenseclaw.metric.webhook.target_hash",
+              "webhook.target_hash"
+            ]
+          ],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "delta",
+        "unit": "ms",
+        "value_type": "double"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "model.io",
+      "eligibility": "eligible",
+      "event_name": "gen_ai.client.operation.duration",
+      "family_id": "metric.gen_ai.client.operation.duration",
+      "projection": {
+        "boundaries": [
+          0.01,
+          0.02,
+          0.04,
+          0.08,
+          0.16,
+          0.32,
+          0.64,
+          1.28,
+          2.56,
+          5.12,
+          10.24,
+          20.48,
+          40.96,
+          81.92
+        ],
+        "cardinality_limit": 2048,
+        "instrument_type": "histogram",
+        "label_projection": {
+          "identity_mapping": true,
+          "mappings": [
+            [
+              "gen_ai.agent.id",
+              "gen_ai.agent.id"
+            ],
+            [
+              "gen_ai.agent.name",
+              "gen_ai.agent.name"
+            ],
+            [
+              "gen_ai.operation.name",
+              "gen_ai.operation.name"
+            ],
+            [
+              "gen_ai.provider.name",
+              "gen_ai.provider.name"
+            ],
+            [
+              "gen_ai.request.model",
+              "gen_ai.request.model"
+            ]
+          ],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "delta",
+        "unit": "s",
+        "value_type": "double"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "model.io",
+      "eligibility": "eligible",
+      "event_name": "gen_ai.client.token.usage",
+      "family_id": "metric.gen_ai.client.token.usage",
+      "projection": {
+        "boundaries": [
+          1,
+          4,
+          16,
+          64,
+          256,
+          1024,
+          4096,
+          16384,
+          65536,
+          262144,
+          1048576,
+          4194304,
+          16777216,
+          67108864
+        ],
+        "cardinality_limit": 2048,
+        "instrument_type": "histogram",
+        "label_projection": {
+          "identity_mapping": true,
+          "mappings": [
+            [
+              "gen_ai.agent.id",
+              "gen_ai.agent.id"
+            ],
+            [
+              "gen_ai.agent.name",
+              "gen_ai.agent.name"
+            ],
+            [
+              "gen_ai.conversation.id",
+              "gen_ai.conversation.id"
+            ],
+            [
+              "gen_ai.operation.name",
+              "gen_ai.operation.name"
+            ],
+            [
+              "gen_ai.provider.name",
+              "gen_ai.provider.name"
+            ],
+            [
+              "gen_ai.request.model",
+              "gen_ai.request.model"
+            ],
+            [
+              "gen_ai.token.type",
+              "gen_ai.token.type"
+            ]
+          ],
+          "profile": "local-observability-v1"
+        },
+        "mode": "otel_sdk_metric_v1",
+        "temporality": "delta",
+        "unit": "{token}",
+        "value_type": "double"
+      },
+      "signal": "metrics"
+    },
+    {
+      "bucket": "compliance.activity",
+      "eligibility": "eligible",
+      "event_name": "span.admin.operation",
+      "family_id": "span.admin.operation",
+      "projection": {
+        "mode": "local_trace_aliases_v1"
+      },
+      "signal": "traces"
+    },
+    {
+      "bucket": "agent.lifecycle",
+      "eligibility": "eligible",
+      "event_name": "span.agent.invoke",
+      "family_id": "span.agent.invoke",
+      "projection": {
+        "mode": "local_trace_aliases_v1"
+      },
+      "signal": "traces"
+    },
+    {
+      "bucket": "agent.lifecycle",
+      "eligibility": "eligible",
+      "event_name": "span.agent.transition",
+      "family_id": "span.agent.transition",
+      "projection": {
+        "mode": "local_trace_aliases_v1"
+      },
+      "signal": "traces"
+    },
+    {
+      "bucket": "ai.discovery",
+      "eligibility": "eligible",
+      "event_name": "span.ai.discovery",
+      "family_id": "span.ai.discovery",
+      "projection": {
+        "mode": "local_trace_aliases_v1"
+      },
+      "signal": "traces"
+    },
+    {
+      "bucket": "ai.discovery",
+      "eligibility": "eligible",
+      "event_name": "span.ai.discovery.detector",
+      "family_id": "span.ai.discovery.detector",
+      "projection": {
+        "mode": "local_trace_aliases_v1"
+      },
+      "signal": "traces"
+    },
+    {
+      "bucket": "enforcement.action",
+      "eligibility": "eligible",
+      "event_name": "span.approval.resolve",
+      "family_id": "span.approval.resolve",
+      "projection": {
+        "mode": "local_trace_aliases_v1"
+      },
+      "signal": "traces"
+    },
+    {
+      "bucket": "asset.scan",
+      "eligibility": "eligible",
+      "event_name": "span.asset.scan",
+      "family_id": "span.asset.scan",
+      "projection": {
+        "mode": "local_trace_aliases_v1"
+      },
+      "signal": "traces"
+    },
+    {
+      "bucket": "asset.scan",
+      "eligibility": "eligible",
+      "event_name": "span.asset.scan.phase",
+      "family_id": "span.asset.scan.phase",
+      "projection": {
+        "mode": "local_trace_aliases_v1"
+      },
+      "signal": "traces"
+    },
+    {
+      "bucket": "asset.lifecycle",
+      "eligibility": "eligible",
+      "event_name": "span.asset.transition",
+      "family_id": "span.asset.transition",
+      "projection": {
+        "mode": "local_trace_aliases_v1"
+      },
+      "signal": "traces"
+    },
+    {
+      "bucket": "platform.health",
+      "eligibility": "eligible",
+      "event_name": "span.config.reload",
+      "family_id": "span.config.reload",
+      "projection": {
+        "mode": "local_trace_aliases_v1"
+      },
+      "signal": "traces"
+    },
+    {
+      "bucket": "platform.health",
+      "eligibility": "eligible",
+      "event_name": "span.destination.export",
+      "family_id": "span.destination.export",
+      "projection": {
+        "mode": "local_trace_aliases_v1"
+      },
+      "signal": "traces"
+    },
+    {
+      "bucket": "diagnostic",
+      "eligibility": "eligible",
+      "event_name": "span.diagnostic.canary",
+      "family_id": "span.diagnostic.canary",
+      "projection": {
+        "mode": "local_trace_aliases_v1"
+      },
+      "signal": "traces"
+    },
+    {
+      "bucket": "enforcement.action",
+      "eligibility": "eligible",
+      "event_name": "span.enforcement.apply",
+      "family_id": "span.enforcement.apply",
+      "projection": {
+        "mode": "local_trace_aliases_v1"
+      },
+      "signal": "traces"
+    },
+    {
+      "bucket": "security.finding",
+      "eligibility": "eligible",
+      "event_name": "span.finding.enrich",
+      "family_id": "span.finding.enrich",
+      "projection": {
+        "mode": "local_trace_aliases_v1"
+      },
+      "signal": "traces"
+    },
+    {
+      "bucket": "guardrail.evaluation",
+      "eligibility": "eligible",
+      "event_name": "span.guardrail.apply",
+      "family_id": "span.guardrail.apply",
+      "projection": {
+        "mode": "local_trace_aliases_v1"
+      },
+      "signal": "traces"
+    },
+    {
+      "bucket": "guardrail.evaluation",
+      "eligibility": "eligible",
+      "event_name": "span.guardrail.judge",
+      "family_id": "span.guardrail.judge",
+      "projection": {
+        "mode": "local_trace_aliases_v1"
+      },
+      "signal": "traces"
+    },
+    {
+      "bucket": "guardrail.evaluation",
+      "eligibility": "eligible",
+      "event_name": "span.guardrail.phase",
+      "family_id": "span.guardrail.phase",
+      "projection": {
+        "mode": "local_trace_aliases_v1"
+      },
+      "signal": "traces"
+    },
+    {
+      "bucket": "model.io",
+      "eligibility": "eligible",
+      "event_name": "span.model.chat",
+      "family_id": "span.model.chat",
+      "projection": {
+        "mode": "local_trace_aliases_v1"
+      },
+      "signal": "traces"
+    },
+    {
+      "bucket": "model.io",
+      "eligibility": "eligible",
+      "event_name": "span.model.embeddings",
+      "family_id": "span.model.embeddings",
+      "projection": {
+        "mode": "local_trace_aliases_v1"
+      },
+      "signal": "traces"
+    },
+    {
+      "bucket": "network.egress",
+      "eligibility": "eligible",
+      "event_name": "span.network.request",
+      "family_id": "span.network.request",
+      "projection": {
+        "mode": "local_trace_aliases_v1"
+      },
+      "signal": "traces"
+    },
+    {
+      "bucket": "tool.activity",
+      "eligibility": "eligible",
+      "event_name": "span.retrieval.search",
+      "family_id": "span.retrieval.search",
+      "projection": {
+        "mode": "local_trace_aliases_v1"
+      },
+      "signal": "traces"
+    },
+    {
+      "bucket": "telemetry.ingest",
+      "eligibility": "eligible",
+      "event_name": "span.telemetry.normalize",
+      "family_id": "span.telemetry.normalize",
+      "projection": {
+        "mode": "local_trace_aliases_v1"
+      },
+      "signal": "traces"
+    },
+    {
+      "bucket": "telemetry.ingest",
+      "eligibility": "eligible",
+      "event_name": "span.telemetry.receive",
+      "family_id": "span.telemetry.receive",
+      "projection": {
+        "mode": "local_trace_aliases_v1"
+      },
+      "signal": "traces"
+    },
+    {
+      "bucket": "tool.activity",
+      "eligibility": "eligible",
+      "event_name": "span.tool.execute",
+      "family_id": "span.tool.execute",
+      "projection": {
+        "mode": "local_trace_aliases_v1"
+      },
+      "signal": "traces"
+    },
+    {
+      "bucket": "agent.lifecycle",
+      "eligibility": "eligible",
+      "event_name": "span.workflow.run",
+      "family_id": "span.workflow.run",
+      "projection": {
+        "mode": "local_trace_aliases_v1"
+      },
+      "signal": "traces"
+    }
+  ],
+  "format": "defenseclaw-compatibility-profile-v1",
+  "materialized_view_sha256": "9ab8029c2e07448a6605044b18d79b0550df35f66671f495c67d9820439dd57e",
+  "profile_id": "local-observability-v1",
+  "registry_version": 1,
+  "runtime_projection": {
+    "alias_conflict_behavior": "reject",
+    "attribute_aliases": [
+      {
+        "event_derived": false,
+        "source": "defenseclaw.connector.source",
+        "target": "connector"
+      },
+      {
+        "event_derived": false,
+        "source": "defenseclaw.agent.type",
+        "target": "gen_ai.agent.type"
+      },
+      {
+        "event_derived": true,
+        "source": "defenseclaw.guardrail.raw_action",
+        "target": "defenseclaw.raw_action"
+      },
+      {
+        "event_derived": true,
+        "source": "defenseclaw.guardrail.effective_action",
+        "target": "defenseclaw.decision"
+      },
+      {
+        "event_derived": true,
+        "source": "defenseclaw.guardrail.would_block",
+        "target": "defenseclaw.would_block"
+      }
+    ],
+    "event_alias_sources": [
+      "guardrail.decision",
+      "hook.decision"
+    ],
+    "input": "route_redacted_canonical_record",
+    "mode": "canonical_logs_metrics_and_trace_alias_projection",
+    "status": "available",
+    "unsupported_behavior": "reject"
+  },
+  "schema_version": 1
+}

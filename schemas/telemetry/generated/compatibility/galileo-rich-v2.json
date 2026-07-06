@@ -1,0 +1,159 @@
+{
+  "x-defenseclaw-generated": {
+    "artifact": "compatibility/galileo-rich-v2.json",
+    "authority": "candidate-not-public-authority",
+    "generator": "defenseclaw-telemetry-candidate-renderer-v1",
+    "materialized_view_sha256": "9ab8029c2e07448a6605044b18d79b0550df35f66671f495c67d9820439dd57e",
+    "registry_version": 1
+  },
+  "availability": "available",
+  "bucket_catalog_version": 1,
+  "families": [
+    {
+      "bucket": "agent.lifecycle",
+      "eligibility": "eligible",
+      "event_name": "span.agent.invoke",
+      "family_id": "span.agent.invoke",
+      "projection": {
+        "allowed_operations": [
+          "invoke_agent"
+        ],
+        "allowed_span_kinds": [
+          "CLIENT",
+          "INTERNAL"
+        ],
+        "mode": "galileo_shape_v2",
+        "openinference_span_kind": "AGENT",
+        "operation_attribute": "gen_ai.operation.name",
+        "required_attributes": [
+          "gen_ai.agent.name",
+          "gen_ai.provider.name"
+        ],
+        "shape": "agent"
+      },
+      "signal": "traces"
+    },
+    {
+      "bucket": "guardrail.evaluation",
+      "eligibility": "eligible",
+      "event_name": "span.guardrail.judge",
+      "family_id": "span.guardrail.judge",
+      "projection": {
+        "allowed_operations": [
+          "chat",
+          "text_completion"
+        ],
+        "allowed_span_kinds": [
+          "CLIENT"
+        ],
+        "mode": "galileo_shape_v2",
+        "openinference_span_kind": "LLM",
+        "operation_attribute": "gen_ai.operation.name",
+        "required_attributes": [
+          "gen_ai.provider.name"
+        ],
+        "shape": "llm"
+      },
+      "signal": "traces"
+    },
+    {
+      "bucket": "model.io",
+      "eligibility": "eligible",
+      "event_name": "span.model.chat",
+      "family_id": "span.model.chat",
+      "projection": {
+        "allowed_operations": [
+          "chat",
+          "text_completion"
+        ],
+        "allowed_span_kinds": [
+          "CLIENT"
+        ],
+        "mode": "galileo_shape_v2",
+        "openinference_span_kind": "LLM",
+        "operation_attribute": "gen_ai.operation.name",
+        "required_attributes": [
+          "gen_ai.provider.name"
+        ],
+        "shape": "llm"
+      },
+      "signal": "traces"
+    },
+    {
+      "bucket": "tool.activity",
+      "eligibility": "eligible",
+      "event_name": "span.retrieval.search",
+      "family_id": "span.retrieval.search",
+      "projection": {
+        "allowed_operations": [
+          "query",
+          "search"
+        ],
+        "allowed_span_kinds": [
+          "CLIENT",
+          "INTERNAL"
+        ],
+        "mode": "galileo_shape_v2",
+        "openinference_span_kind": "RETRIEVER",
+        "operation_attribute": "db.operation.name",
+        "required_attributes": [],
+        "shape": "retriever"
+      },
+      "signal": "traces"
+    },
+    {
+      "bucket": "tool.activity",
+      "eligibility": "eligible",
+      "event_name": "span.tool.execute",
+      "family_id": "span.tool.execute",
+      "projection": {
+        "allowed_operations": [
+          "execute_tool"
+        ],
+        "allowed_span_kinds": [
+          "CLIENT",
+          "INTERNAL"
+        ],
+        "mode": "galileo_shape_v2",
+        "openinference_span_kind": "TOOL",
+        "operation_attribute": "gen_ai.operation.name",
+        "required_attributes": [
+          "gen_ai.tool.name"
+        ],
+        "shape": "tool"
+      },
+      "signal": "traces"
+    },
+    {
+      "bucket": "agent.lifecycle",
+      "eligibility": "eligible",
+      "event_name": "span.workflow.run",
+      "family_id": "span.workflow.run",
+      "projection": {
+        "allowed_operations": [],
+        "allowed_span_kinds": [
+          "INTERNAL"
+        ],
+        "mode": "galileo_shape_v2",
+        "openinference_span_kind": "CHAIN",
+        "operation_attribute": null,
+        "required_attributes": [
+          "defenseclaw.workflow.name"
+        ],
+        "shape": "workflow"
+      },
+      "signal": "traces"
+    }
+  ],
+  "format": "defenseclaw-compatibility-profile-v1",
+  "materialized_view_sha256": "9ab8029c2e07448a6605044b18d79b0550df35f66671f495c67d9820439dd57e",
+  "profile_id": "galileo-rich-v2",
+  "registry_version": 1,
+  "runtime_projection": {
+    "input": "route_redacted_canonical_record",
+    "mode": "destination_owned_projection",
+    "status": "available",
+    "unsupported_behavior": "reject"
+  },
+  "schema_version": 1
+}

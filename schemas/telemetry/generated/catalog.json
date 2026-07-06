@@ -3,7 +3,7 @@
     "artifact": "catalog.json",
     "authority": "candidate-not-public-authority",
     "generator": "defenseclaw-telemetry-candidate-renderer-v1",
-    "materialized_view_sha256": "473d6b37f58a9c4430a62dd75e44c044b0a39780bd1c217403a110e769453af8",
+    "materialized_view_sha256": "9ab8029c2e07448a6605044b18d79b0550df35f66671f495c67d9820439dd57e",
     "registry_version": 1
   },
   "attributes": [
@@ -12979,19 +12979,25 @@
   "bucket_catalog_version": 1,
   "compatibility_manifests": [
     {
-      "availability": "pending",
+      "availability": "available",
       "id": "galileo-rich-v2",
-      "path": null
+      "path": "compatibility/galileo-rich-v2.json",
+      "runtime_projection": "available",
+      "sha256": "8997523147580bde1ddf3d552107bb91fcbb6a91d0cd8f14ad0e5321d392f247"
     },
     {
-      "availability": "pending",
+      "availability": "available",
       "id": "local-observability-v1",
-      "path": null
+      "path": "compatibility/local-observability-v1.json",
+      "runtime_projection": "available",
+      "sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78"
     },
     {
       "availability": "pending",
       "id": "openinference-v1",
-      "path": null
+      "path": "compatibility/openinference-v1.json",
+      "runtime_projection": "unsupported",
+      "sha256": "5ed66018337298fd4062cd96adbb7eaacec27d96ae787d563afdfe76c88eae79"
     }
   ],
   "conditions": [
@@ -13121,9 +13127,11 @@
       "bucket": "agent.lifecycle",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -13245,9 +13253,11 @@
       "bucket": "agent.lifecycle",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -13370,9 +13380,11 @@
       "bucket": "agent.lifecycle",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -13478,9 +13490,11 @@
       "bucket": "ai.discovery",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -13701,9 +13715,11 @@
       "bucket": "ai.discovery",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -13992,9 +14008,11 @@
       "bucket": "ai.discovery",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -14283,9 +14301,11 @@
       "bucket": "ai.discovery",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -14574,9 +14594,11 @@
       "bucket": "ai.discovery",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -14865,9 +14887,11 @@
       "bucket": "compliance.activity",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [
@@ -15093,9 +15117,11 @@
       "bucket": "compliance.activity",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [
@@ -15321,9 +15347,11 @@
       "bucket": "compliance.activity",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -15871,9 +15899,11 @@
       "bucket": "asset.lifecycle",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -16194,9 +16224,11 @@
       "bucket": "asset.lifecycle",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -16517,9 +16549,11 @@
       "bucket": "asset.lifecycle",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -16840,9 +16874,11 @@
       "bucket": "asset.lifecycle",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -17161,9 +17197,11 @@
       "bucket": "asset.lifecycle",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -17484,9 +17522,11 @@
       "bucket": "asset.lifecycle",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -17807,9 +17847,11 @@
       "bucket": "asset.lifecycle",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -18130,9 +18172,11 @@
       "bucket": "asset.lifecycle",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -18453,9 +18497,11 @@
       "bucket": "asset.lifecycle",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -18776,9 +18822,11 @@
       "bucket": "compliance.activity",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [
@@ -19002,9 +19050,11 @@
       "bucket": "compliance.activity",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [
@@ -19228,9 +19278,11 @@
       "bucket": "agent.lifecycle",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [
@@ -19890,9 +19942,11 @@
       "bucket": "agent.lifecycle",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [
@@ -20548,9 +20602,11 @@
       "bucket": "agent.lifecycle",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [
@@ -21204,9 +21260,11 @@
       "bucket": "guardrail.evaluation",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -21909,9 +21967,11 @@
       "bucket": "agent.lifecycle",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [
@@ -22570,9 +22630,11 @@
       "bucket": "agent.lifecycle",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [
@@ -23228,9 +23290,11 @@
       "bucket": "agent.lifecycle",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [
@@ -23886,9 +23950,11 @@
       "bucket": "agent.lifecycle",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [
@@ -24547,9 +24613,11 @@
       "bucket": "tool.activity",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -25240,9 +25308,11 @@
       "bucket": "tool.activity",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -25925,9 +25995,11 @@
       "bucket": "agent.lifecycle",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [
@@ -26586,9 +26658,11 @@
       "bucket": "agent.lifecycle",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [
@@ -27244,9 +27318,11 @@
       "bucket": "compliance.activity",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [
@@ -27470,9 +27546,11 @@
       "bucket": "compliance.activity",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [
@@ -27696,9 +27774,11 @@
       "bucket": "compliance.activity",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [
@@ -27923,9 +28003,11 @@
       "bucket": "platform.health",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -28008,9 +28090,11 @@
       "bucket": "platform.health",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -28093,9 +28177,11 @@
       "bucket": "platform.health",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -28183,9 +28269,11 @@
       "bucket": "platform.health",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -28268,9 +28356,11 @@
       "bucket": "compliance.activity",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [
@@ -28495,9 +28585,11 @@
       "bucket": "diagnostic",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -28562,9 +28654,11 @@
       "bucket": "diagnostic",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -28629,9 +28723,11 @@
       "bucket": "network.egress",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -28964,9 +29060,11 @@
       "bucket": "network.egress",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -29301,9 +29399,11 @@
       "bucket": "network.egress",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -29636,9 +29736,11 @@
       "bucket": "network.egress",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -29973,9 +30075,11 @@
       "bucket": "network.egress",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -30308,9 +30412,11 @@
       "bucket": "enforcement.action",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -30533,9 +30639,11 @@
       "bucket": "enforcement.action",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -30758,9 +30866,11 @@
       "bucket": "enforcement.action",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -30986,9 +31096,11 @@
       "bucket": "enforcement.action",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -31211,9 +31323,11 @@
       "bucket": "enforcement.action",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -31436,9 +31550,11 @@
       "bucket": "enforcement.action",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -31661,9 +31777,11 @@
       "bucket": "enforcement.action",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -31886,9 +32004,11 @@
       "bucket": "security.finding",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -32289,9 +32409,11 @@
       "bucket": "security.finding",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -32692,9 +32814,11 @@
       "bucket": "guardrail.evaluation",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -33467,9 +33591,11 @@
       "bucket": "guardrail.evaluation",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [
@@ -34239,9 +34365,11 @@
       "bucket": "guardrail.evaluation",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [
@@ -35009,9 +35137,11 @@
       "bucket": "guardrail.evaluation",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [
@@ -35529,9 +35659,11 @@
       "bucket": "model.io",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -36483,9 +36615,11 @@
       "bucket": "model.io",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -37434,9 +37568,11 @@
       "bucket": "model.io",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -38385,9 +38521,11 @@
       "bucket": "model.io",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -39336,9 +39474,11 @@
       "bucket": "compliance.activity",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [
@@ -39563,9 +39703,11 @@
       "bucket": "compliance.activity",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [
@@ -39790,9 +39932,11 @@
       "bucket": "platform.health",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -39875,9 +40019,11 @@
       "bucket": "compliance.activity",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [
@@ -40102,9 +40248,11 @@
       "bucket": "asset.scan",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -40451,9 +40599,11 @@
       "bucket": "asset.scan",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -40802,9 +40952,11 @@
       "bucket": "asset.scan",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -41152,9 +41304,11 @@
       "bucket": "asset.scan",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -41503,9 +41657,11 @@
       "bucket": "asset.scan",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -41852,9 +42008,11 @@
       "bucket": "platform.health",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -41937,9 +42095,11 @@
       "bucket": "platform.health",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -42023,9 +42183,11 @@
       "bucket": "platform.health",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -42109,9 +42271,11 @@
       "bucket": "platform.health",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -42194,9 +42358,11 @@
       "bucket": "platform.health",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -42279,9 +42445,11 @@
       "bucket": "telemetry.ingest",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -42462,9 +42630,11 @@
       "bucket": "telemetry.ingest",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -42645,9 +42815,11 @@
       "bucket": "telemetry.ingest",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -42826,9 +42998,11 @@
       "bucket": "telemetry.ingest",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -43009,9 +43183,11 @@
       "bucket": "telemetry.ingest",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -43192,9 +43368,11 @@
       "bucket": "telemetry.ingest",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -43375,9 +43553,11 @@
       "bucket": "tool.activity",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -44060,9 +44240,11 @@
       "bucket": "tool.activity",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -44745,9 +44927,11 @@
       "bucket": "tool.activity",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -45433,9 +45617,11 @@
       "bucket": "tool.activity",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -46118,9 +46304,11 @@
       "bucket": "tool.activity",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -46803,9 +46991,11 @@
       "bucket": "compliance.activity",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -46888,9 +47078,11 @@
       "bucket": "compliance.activity",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -46973,9 +47165,11 @@
       "bucket": "guardrail.evaluation",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -47058,9 +47252,11 @@
       "bucket": "agent.lifecycle",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -47143,9 +47339,11 @@
       "bucket": "agent.lifecycle",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -47214,9 +47412,11 @@
       "bucket": "agent.lifecycle",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -47271,9 +47471,11 @@
       "bucket": "agent.lifecycle",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -47356,9 +47558,11 @@
       "bucket": "agent.lifecycle",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -47469,9 +47673,11 @@
       "bucket": "agent.lifecycle",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -47638,9 +47844,11 @@
       "bucket": "agent.lifecycle",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -47877,9 +48085,11 @@
       "bucket": "agent.lifecycle",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -48004,9 +48214,11 @@
       "bucket": "agent.lifecycle",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -48145,9 +48357,11 @@
       "bucket": "agent.lifecycle",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -48300,9 +48514,11 @@
       "bucket": "agent.lifecycle",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -48469,9 +48685,11 @@
       "bucket": "ai.discovery",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -48540,9 +48758,11 @@
       "bucket": "ai.discovery",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -48639,9 +48859,11 @@
       "bucket": "ai.discovery",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -48710,9 +48932,11 @@
       "bucket": "ai.discovery",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -48795,9 +49019,11 @@
       "bucket": "ai.discovery",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -48880,9 +49106,11 @@
       "bucket": "ai.discovery",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -48951,9 +49179,11 @@
       "bucket": "ai.discovery",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -49036,9 +49266,11 @@
       "bucket": "ai.discovery",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -49121,9 +49353,11 @@
       "bucket": "ai.discovery",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -49192,9 +49426,11 @@
       "bucket": "ai.discovery",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -49277,9 +49513,11 @@
       "bucket": "ai.discovery",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -49446,9 +49684,11 @@
       "bucket": "ai.discovery",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -49615,9 +49855,11 @@
       "bucket": "ai.discovery",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -49700,9 +49942,11 @@
       "bucket": "ai.discovery",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -49827,9 +50071,11 @@
       "bucket": "security.finding",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -49926,9 +50172,11 @@
       "bucket": "enforcement.action",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -50011,9 +50259,11 @@
       "bucket": "platform.health",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -50068,9 +50318,11 @@
       "bucket": "compliance.activity",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -50153,9 +50405,11 @@
       "bucket": "platform.health",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -50252,9 +50506,11 @@
       "bucket": "platform.health",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -50351,9 +50607,11 @@
       "bucket": "platform.health",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -50422,9 +50680,11 @@
       "bucket": "platform.health",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -50521,9 +50781,11 @@
       "bucket": "platform.health",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -50606,9 +50868,11 @@
       "bucket": "platform.health",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -50677,9 +50941,11 @@
       "bucket": "guardrail.evaluation",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -50734,9 +51000,11 @@
       "bucket": "guardrail.evaluation",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -50791,9 +51059,11 @@
       "bucket": "agent.lifecycle",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -50876,9 +51146,11 @@
       "bucket": "agent.lifecycle",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -50933,9 +51205,11 @@
       "bucket": "compliance.activity",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -50990,9 +51264,11 @@
       "bucket": "agent.lifecycle",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -51089,9 +51365,11 @@
       "bucket": "agent.lifecycle",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -51202,9 +51480,11 @@
       "bucket": "agent.lifecycle",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -51315,9 +51595,11 @@
       "bucket": "agent.lifecycle",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -51400,9 +51682,11 @@
       "bucket": "agent.lifecycle",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -51457,9 +51741,11 @@
       "bucket": "network.egress",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -51542,9 +51828,11 @@
       "bucket": "diagnostic",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -51613,9 +51901,11 @@
       "bucket": "diagnostic",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -51684,9 +51974,11 @@
       "bucket": "tool.activity",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -51755,9 +52047,11 @@
       "bucket": "guardrail.evaluation",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -51826,9 +52120,11 @@
       "bucket": "guardrail.evaluation",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -51911,9 +52207,11 @@
       "bucket": "guardrail.evaluation",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -51968,9 +52266,11 @@
       "bucket": "enforcement.action",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -52081,9 +52381,11 @@
       "bucket": "guardrail.evaluation",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -52180,9 +52482,11 @@
       "bucket": "guardrail.evaluation",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -52279,9 +52583,11 @@
       "bucket": "guardrail.evaluation",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -52364,9 +52670,11 @@
       "bucket": "guardrail.evaluation",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -52435,9 +52743,11 @@
       "bucket": "guardrail.evaluation",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -52506,9 +52816,11 @@
       "bucket": "platform.health",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -52577,9 +52889,11 @@
       "bucket": "platform.health",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -52648,9 +52962,11 @@
       "bucket": "platform.health",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -52733,9 +53049,11 @@
       "bucket": "platform.health",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -52818,9 +53136,11 @@
       "bucket": "guardrail.evaluation",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -52917,9 +53237,11 @@
       "bucket": "guardrail.evaluation",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -52988,9 +53310,11 @@
       "bucket": "platform.health",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -53039,9 +53363,11 @@
       "bucket": "platform.health",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -53096,9 +53422,11 @@
       "bucket": "platform.health",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -53137,9 +53465,11 @@
       "bucket": "platform.health",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -53178,9 +53508,11 @@
       "bucket": "platform.health",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -53219,9 +53551,11 @@
       "bucket": "model.io",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -53290,9 +53624,11 @@
       "bucket": "tool.activity",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -53361,9 +53697,11 @@
       "bucket": "telemetry.ingest",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -53446,9 +53784,11 @@
       "bucket": "telemetry.ingest",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -53531,9 +53871,11 @@
       "bucket": "telemetry.ingest",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -53616,9 +53958,11 @@
       "bucket": "telemetry.ingest",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -53701,9 +54045,11 @@
       "bucket": "telemetry.ingest",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -53800,9 +54146,11 @@
       "bucket": "platform.health",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -53857,9 +54205,11 @@
       "bucket": "guardrail.evaluation",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -53928,9 +54278,11 @@
       "bucket": "guardrail.evaluation",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -53985,9 +54337,11 @@
       "bucket": "compliance.activity",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -54042,9 +54396,11 @@
       "bucket": "platform.health",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -54083,9 +54439,11 @@
       "bucket": "diagnostic",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -54140,9 +54498,11 @@
       "bucket": "enforcement.action",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -54211,9 +54571,11 @@
       "bucket": "platform.health",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -54282,9 +54644,11 @@
       "bucket": "platform.health",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -54353,9 +54717,11 @@
       "bucket": "diagnostic",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -54424,9 +54790,11 @@
       "bucket": "platform.health",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -54465,9 +54833,11 @@
       "bucket": "platform.health",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -54506,9 +54876,11 @@
       "bucket": "platform.health",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -54547,9 +54919,11 @@
       "bucket": "platform.health",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -54588,9 +54962,11 @@
       "bucket": "platform.health",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -54629,9 +55005,11 @@
       "bucket": "asset.scan",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -54714,9 +55092,11 @@
       "bucket": "asset.scan",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -54785,9 +55165,11 @@
       "bucket": "asset.scan",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -54870,9 +55252,11 @@
       "bucket": "security.finding",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -54969,9 +55353,11 @@
       "bucket": "security.finding",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -55068,9 +55454,11 @@
       "bucket": "security.finding",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -55139,9 +55527,11 @@
       "bucket": "asset.scan",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -55196,9 +55586,11 @@
       "bucket": "diagnostic",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -55267,9 +55659,11 @@
       "bucket": "platform.health",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -55324,9 +55718,11 @@
       "bucket": "diagnostic",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -55381,9 +55777,11 @@
       "bucket": "platform.health",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -55438,9 +55836,11 @@
       "bucket": "platform.health",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -55479,9 +55879,11 @@
       "bucket": "platform.health",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -55520,9 +55922,11 @@
       "bucket": "platform.health",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -55561,9 +55965,11 @@
       "bucket": "platform.health",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -55602,9 +56008,11 @@
       "bucket": "platform.health",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -55643,9 +56051,11 @@
       "bucket": "model.io",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -55714,9 +56124,11 @@
       "bucket": "model.io",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -55785,9 +56197,11 @@
       "bucket": "model.io",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -55870,9 +56284,11 @@
       "bucket": "platform.health",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -55955,9 +56371,11 @@
       "bucket": "platform.health",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -56040,9 +56458,11 @@
       "bucket": "platform.health",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -56125,9 +56545,11 @@
       "bucket": "platform.health",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -56196,9 +56618,11 @@
       "bucket": "tool.activity",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -56281,9 +56705,11 @@
       "bucket": "tool.activity",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -56352,9 +56778,11 @@
       "bucket": "tool.activity",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -56423,9 +56851,11 @@
       "bucket": "diagnostic",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -56494,9 +56924,11 @@
       "bucket": "asset.lifecycle",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -56535,9 +56967,11 @@
       "bucket": "asset.lifecycle",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -56620,9 +57054,11 @@
       "bucket": "asset.lifecycle",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -56661,9 +57097,11 @@
       "bucket": "network.egress",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -56732,9 +57170,11 @@
       "bucket": "network.egress",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -56789,9 +57229,11 @@
       "bucket": "network.egress",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -56860,9 +57302,11 @@
       "bucket": "network.egress",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -56931,9 +57375,11 @@
       "bucket": "network.egress",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -57016,9 +57462,11 @@
       "bucket": "model.io",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -57144,9 +57592,11 @@
       "bucket": "model.io",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [],
@@ -57307,9 +57757,11 @@
       "bucket": "compliance.activity",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [
@@ -57701,19 +58153,25 @@
       "bucket": "agent.lifecycle",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "galileo-rich-v2",
-          "manifest": null
+          "manifest": "compatibility/galileo-rich-v2.json",
+          "manifest_sha256": "8997523147580bde1ddf3d552107bb91fcbb6a91d0cd8f14ad0e5321d392f247",
+          "runtime_projection": "available"
         },
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         },
         {
           "availability": "pending",
           "id": "openinference-v1",
-          "manifest": null
+          "manifest": "compatibility/openinference-v1.json",
+          "manifest_sha256": "5ed66018337298fd4062cd96adbb7eaacec27d96ae787d563afdfe76c88eae79",
+          "runtime_projection": "unsupported"
         }
       ],
       "conditional_attributes": [
@@ -58728,9 +59186,11 @@
       "bucket": "agent.lifecycle",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [
@@ -59513,9 +59973,11 @@
       "bucket": "ai.discovery",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [
@@ -59893,9 +60355,11 @@
       "bucket": "ai.discovery",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [
@@ -60165,9 +60629,11 @@
       "bucket": "enforcement.action",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [
@@ -60869,9 +61335,11 @@
       "bucket": "asset.scan",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [
@@ -61377,9 +61845,11 @@
       "bucket": "asset.scan",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [
@@ -61886,9 +62356,11 @@
       "bucket": "asset.lifecycle",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [
@@ -62370,9 +62842,11 @@
       "bucket": "platform.health",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [
@@ -62572,9 +63046,11 @@
       "bucket": "platform.health",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [
@@ -62840,7 +63316,15 @@
       ],
       "brief": "Canonical span.diagnostic.canary bounded operation.",
       "bucket": "diagnostic",
-      "compatibility_profiles": [],
+      "compatibility_profiles": [
+        {
+          "availability": "available",
+          "id": "local-observability-v1",
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
+        }
+      ],
       "conditional_attributes": [
         "defenseclaw.connector.source",
         "defenseclaw.outcome",
@@ -63108,9 +63592,11 @@
       "bucket": "enforcement.action",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [
@@ -63499,9 +63985,11 @@
       "bucket": "security.finding",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [
@@ -64069,9 +64557,11 @@
       "bucket": "guardrail.evaluation",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [
@@ -65033,19 +65523,25 @@
       "bucket": "guardrail.evaluation",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "galileo-rich-v2",
-          "manifest": null
+          "manifest": "compatibility/galileo-rich-v2.json",
+          "manifest_sha256": "8997523147580bde1ddf3d552107bb91fcbb6a91d0cd8f14ad0e5321d392f247",
+          "runtime_projection": "available"
         },
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         },
         {
           "availability": "pending",
           "id": "openinference-v1",
-          "manifest": null
+          "manifest": "compatibility/openinference-v1.json",
+          "manifest_sha256": "5ed66018337298fd4062cd96adbb7eaacec27d96ae787d563afdfe76c88eae79",
+          "runtime_projection": "unsupported"
         }
       ],
       "conditional_attributes": [
@@ -66462,9 +66958,11 @@
       "bucket": "guardrail.evaluation",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [
@@ -67106,19 +67604,25 @@
       "bucket": "model.io",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "galileo-rich-v2",
-          "manifest": null
+          "manifest": "compatibility/galileo-rich-v2.json",
+          "manifest_sha256": "8997523147580bde1ddf3d552107bb91fcbb6a91d0cd8f14ad0e5321d392f247",
+          "runtime_projection": "available"
         },
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         },
         {
           "availability": "pending",
           "id": "openinference-v1",
-          "manifest": null
+          "manifest": "compatibility/openinference-v1.json",
+          "manifest_sha256": "5ed66018337298fd4062cd96adbb7eaacec27d96ae787d563afdfe76c88eae79",
+          "runtime_projection": "unsupported"
         }
       ],
       "conditional_attributes": [
@@ -68273,14 +68777,18 @@
       "bucket": "model.io",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         },
         {
           "availability": "pending",
           "id": "openinference-v1",
-          "manifest": null
+          "manifest": "compatibility/openinference-v1.json",
+          "manifest_sha256": "5ed66018337298fd4062cd96adbb7eaacec27d96ae787d563afdfe76c88eae79",
+          "runtime_projection": "unsupported"
         }
       ],
       "conditional_attributes": [
@@ -69292,9 +69800,11 @@
       "bucket": "network.egress",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [
@@ -69860,19 +70370,25 @@
       "bucket": "tool.activity",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "galileo-rich-v2",
-          "manifest": null
+          "manifest": "compatibility/galileo-rich-v2.json",
+          "manifest_sha256": "8997523147580bde1ddf3d552107bb91fcbb6a91d0cd8f14ad0e5321d392f247",
+          "runtime_projection": "available"
         },
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         },
         {
           "availability": "pending",
           "id": "openinference-v1",
-          "manifest": null
+          "manifest": "compatibility/openinference-v1.json",
+          "manifest_sha256": "5ed66018337298fd4062cd96adbb7eaacec27d96ae787d563afdfe76c88eae79",
+          "runtime_projection": "unsupported"
         }
       ],
       "conditional_attributes": [
@@ -70675,9 +71191,11 @@
       "bucket": "telemetry.ingest",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [
@@ -71016,9 +71534,11 @@
       "bucket": "telemetry.ingest",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         }
       ],
       "conditional_attributes": [
@@ -71475,19 +71995,25 @@
       "bucket": "tool.activity",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "galileo-rich-v2",
-          "manifest": null
+          "manifest": "compatibility/galileo-rich-v2.json",
+          "manifest_sha256": "8997523147580bde1ddf3d552107bb91fcbb6a91d0cd8f14ad0e5321d392f247",
+          "runtime_projection": "available"
         },
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         },
         {
           "availability": "pending",
           "id": "openinference-v1",
-          "manifest": null
+          "manifest": "compatibility/openinference-v1.json",
+          "manifest_sha256": "5ed66018337298fd4062cd96adbb7eaacec27d96ae787d563afdfe76c88eae79",
+          "runtime_projection": "unsupported"
         }
       ],
       "conditional_attributes": [
@@ -72474,19 +73000,25 @@
       "bucket": "agent.lifecycle",
       "compatibility_profiles": [
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "galileo-rich-v2",
-          "manifest": null
+          "manifest": "compatibility/galileo-rich-v2.json",
+          "manifest_sha256": "8997523147580bde1ddf3d552107bb91fcbb6a91d0cd8f14ad0e5321d392f247",
+          "runtime_projection": "available"
         },
         {
-          "availability": "pending",
+          "availability": "available",
           "id": "local-observability-v1",
-          "manifest": null
+          "manifest": "compatibility/local-observability-v1.json",
+          "manifest_sha256": "afbbba496bb589a55c543a6172e15c7ed245c623a84321c348c4227db65d7e78",
+          "runtime_projection": "available"
         },
         {
           "availability": "pending",
           "id": "openinference-v1",
-          "manifest": null
+          "manifest": "compatibility/openinference-v1.json",
+          "manifest_sha256": "5ed66018337298fd4062cd96adbb7eaacec27d96ae787d563afdfe76c88eae79",
+          "runtime_projection": "unsupported"
         }
       ],
       "conditional_attributes": [
@@ -73539,7 +74071,7 @@
     ],
     "version": 1
   },
-  "materialized_view_sha256": "473d6b37f58a9c4430a62dd75e44c044b0a39780bd1c217403a110e769453af8",
+  "materialized_view_sha256": "9ab8029c2e07448a6605044b18d79b0550df35f66671f495c67d9820439dd57e",
   "registry_version": 1,
   "resource_attributes": {
     "compatibility_aliases": [

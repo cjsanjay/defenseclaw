@@ -15,6 +15,7 @@ import dataclasses
 import hashlib
 import importlib.util
 import json
+import re
 import subprocess
 import sys
 from collections import Counter
@@ -743,11 +744,14 @@ def test_candidate_renderer_is_deterministic_complete_and_in_memory(
     assert {path: artifact.payload for path, artifact in from_index.items()} == {
         path: artifact.payload for path, artifact in artifacts.items()
     }
-    assert len(artifacts) == 58
+    assert len(artifacts) == 61
     assert {
         f"{PREFIX}/telemetry.schema.json",
         f"{PREFIX}/catalog.json",
         f"{PREFIX}/catalog.md",
+        f"{PREFIX}/compatibility/galileo-rich-v2.json",
+        f"{PREFIX}/compatibility/local-observability-v1.json",
+        f"{PREFIX}/compatibility/openinference-v1.json",
         f"{PREFIX}/compatibility/v7-exporter-selection.json",
         f"{PREFIX}/examples/manifest.json",
         f"{PREFIX}/otlp-fixtures/manifest.json",
@@ -868,7 +872,7 @@ def test_candidate_index_consumes_reviewed_go_symbol_contract_immutably_and_pres
     assert rows[("span_event", "model.retry")].symbol == "TelemetrySpanEventModelRetry"
     assert rows[("structured_type", "gen_ai.canonical_json")].declaration_form == "exported_type"
     assert rows[("span_link_constructor", "span.model.chat#caused_by")].symbol == ("NewSpanModelChatCausedByLink")
-    assert len(artifacts) == 58
+    assert len(artifacts) == 61
     with pytest.raises(TypeError):
         index.go_symbol_policy.brand_spellings["otel"] = "Otel"  # type: ignore[index]
     with pytest.raises(TypeError):
@@ -1239,7 +1243,7 @@ def test_public_views_have_exact_live_portable_inventory_and_no_staged_paths(
     planned_paths = tuple(path for entry in plan.views for path in entry.target_paths)
     staged_paths = {f"{PREFIX}/public-views/{path}" for path in public_paths}
 
-    assert len(artifacts) == 58
+    assert len(artifacts) == 61
     assert len(plan.views) == 21
     assert renderer.PUBLIC_VIEW_GENERATED_AUTHORITY == "generated"
     assert len(public_paths) == 26
@@ -2655,12 +2659,101 @@ def test_catalog_contains_portable_family_privacy_condition_lifecycle_and_compat
     for forbidden in ("dashboard_uid", "datasource_uid", "loki_query", "tempo_query", "normalized_prometheus"):
         assert forbidden not in portable_text
     assert all(
-        item["availability"] == "pending" and item["path"] is None for item in catalog["compatibility_manifests"]
+        item["availability"] == ("pending" if item["id"] == "openinference-v1" else "available")
+        and item["path"] == f"compatibility/{item['id']}.json"
+        and re.fullmatch(r"[0-9a-f]{64}", item["sha256"])
+        for item in catalog["compatibility_manifests"]
     )
     assert all(
-        item["availability"] == "pending" and item["manifest"] is None
+        item["availability"] == ("pending" if item["id"] == "openinference-v1" else "available")
+        and item["manifest"] == f"compatibility/{item['id']}.json"
+        and re.fullmatch(r"[0-9a-f]{64}", item["manifest_sha256"])
         for family in catalog["families"]
         for item in family["compatibility_profiles"]
+    )
+
+
+def test_generated_compatibility_profiles_are_digest_bound_exact_and_explicit(
+    artifacts: Mapping[str, Any],
+) -> None:
+    catalog = _json(artifacts, "catalog.json")
+    manifests = {item["id"]: item for item in catalog["compatibility_manifests"]}
+    documents: dict[str, dict[str, Any]] = {}
+    for profile_id, metadata in manifests.items():
+        artifact = artifacts[f"{PREFIX}/{metadata['path']}"]
+        assert hashlib.sha256(artifact.payload).hexdigest() == metadata["sha256"]
+        document = json.loads(artifact.payload)
+        documents[profile_id] = document
+        assert document["format"] == "defenseclaw-compatibility-profile-v1"
+        assert document["profile_id"] == profile_id
+        assert document["availability"] == metadata["availability"]
+        assert document["materialized_view_sha256"] == catalog["materialized_view_sha256"]
+        assert [(item["signal"], item["family_id"]) for item in document["families"]] == sorted(
+            (item["signal"], item["family_id"]) for item in document["families"]
+        )
+
+    galileo = documents["galileo-rich-v2"]
+    assert galileo["runtime_projection"]["status"] == "available"
+    assert {item["family_id"]: item["projection"]["shape"] for item in galileo["families"]} == {
+        "span.agent.invoke": "agent",
+        "span.guardrail.judge": "llm",
+        "span.model.chat": "llm",
+        "span.retrieval.search": "retriever",
+        "span.tool.execute": "tool",
+        "span.workflow.run": "workflow",
+    }
+
+    local = documents["local-observability-v1"]
+    assert local["runtime_projection"]["status"] == "available"
+    assert local["runtime_projection"]["alias_conflict_behavior"] == "reject"
+    assert Counter(item["signal"] for item in local["families"]) == Counter({"logs": 91, "metrics": 131, "traces": 25})
+    assert all(
+        item["projection"]["mode"]
+        == {"logs": "canonical_otlp_log_v1", "metrics": "otel_sdk_metric_v1", "traces": "local_trace_aliases_v1"}[
+            item["signal"]
+        ]
+        for item in local["families"]
+    )
+    catalog_families = {item["id"]: item for item in catalog["families"]}
+    local_metrics = [item for item in local["families"] if item["signal"] == "metrics"]
+    assert len(local_metrics) == 131
+    for family in local_metrics:
+        projection = family["projection"]
+        metric = catalog_families[family["family_id"]]["metric"]
+        assert {
+            "instrument_type": projection["instrument_type"],
+            "value_type": projection["value_type"],
+            "unit": projection["unit"],
+            "temporality": projection["temporality"],
+            "boundaries": projection["boundaries"],
+            "cardinality_limit": projection["cardinality_limit"],
+        } == {
+            "instrument_type": metric["instrument_type"],
+            "value_type": metric["value_type"],
+            "unit": metric["unit"],
+            "temporality": metric["temporality"],
+            "boundaries": metric["boundaries"],
+            "cardinality_limit": metric["cardinality_limit"],
+        }
+        assert projection["cardinality_limit"] == 2048
+
+    openinference = documents["openinference-v1"]
+    assert openinference["runtime_projection"] == {
+        "input": "route_redacted_canonical_record",
+        "mode": "none",
+        "reason": "runtime_projector_not_implemented",
+        "status": "unsupported",
+        "unsupported_behavior": "reject",
+    }
+    assert len(openinference["families"]) == 7
+    assert all(
+        item["projection"]
+        == {
+            "mode": "unsupported",
+            "behavior": "reject",
+            "reason": "runtime_projector_not_implemented",
+        }
+        for item in openinference["families"]
     )
 
 

@@ -24,8 +24,35 @@ import (
 	"time"
 
 	"github.com/defenseclaw/defenseclaw/internal/observability"
+	"github.com/defenseclaw/defenseclaw/internal/observability/compatibility/profilemanifest"
 	"github.com/defenseclaw/defenseclaw/internal/observability/redaction"
 )
+
+func TestGeneratedProfileExactlyCoversImplementedShapes(t *testing.T) {
+	t.Parallel()
+	manifest, err := profilemanifest.Get(ProfileID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]Shape{
+		"span.agent.invoke":     ShapeAgent,
+		"span.guardrail.judge":  ShapeLLM,
+		"span.model.chat":       ShapeLLM,
+		"span.retrieval.search": ShapeRetriever,
+		"span.tool.execute":     ShapeTool,
+		"span.workflow.run":     ShapeWorkflow,
+	}
+	if len(manifest.Families) != len(want) {
+		t.Fatalf("generated Galileo family count = %d, want %d", len(manifest.Families), len(want))
+	}
+	for _, family := range manifest.Families {
+		shape, ok := want[family.FamilyID]
+		if !ok || family.Signal != observability.SignalTraces ||
+			family.Projection.Shape != string(shape) || family.Projection.Mode != "galileo_shape_v2" {
+			t.Fatalf("generated Galileo family = %+v", family)
+		}
+	}
+}
 
 func TestProjectAcceptsExactRichV2Shapes(t *testing.T) {
 	t.Parallel()

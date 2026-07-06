@@ -4004,7 +4004,8 @@ groups:
     - resumes
     - derived_from
     - correlates_with
-    compatibility_profiles: []
+    compatibility_profiles:
+    - local-observability-v1
     legacy_bindings:
     - source: 'PR #403 and current telemetry schemas'
       disposition: preserved

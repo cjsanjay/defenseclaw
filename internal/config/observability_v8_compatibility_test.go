@@ -27,17 +27,18 @@ func TestObservabilityV8CompatibilityProfilesComeFromGeneratedCatalog(t *testing
 		t.Fatal(err)
 	}
 	for _, test := range []struct {
-		profile string
-		family  observability.EventName
+		profile      string
+		family       observability.EventName
+		availability string
 	}{
-		{"galileo-rich-v2", observability.EventName("span.model.chat")},
-		{"galileo-rich-v2", observability.EventName("span.agent.invoke")},
-		{"local-observability-v1", observability.EventName("span.tool.execute")},
-		{"openinference-v1", observability.EventName("span.retrieval.search")},
+		{"galileo-rich-v2", observability.EventName("span.model.chat"), "available"},
+		{"galileo-rich-v2", observability.EventName("span.agent.invoke"), "available"},
+		{"local-observability-v1", observability.EventName("span.tool.execute"), "available"},
+		{"openinference-v1", observability.EventName("span.retrieval.search"), "pending"},
 	} {
 		profile, ok := profiles[test.profile]
-		if !ok || profile.Availability != "pending" || !slices.ContainsFunc(profile.TraceFamilies, func(family observabilityV8CatalogTraceFamily) bool {
-			return family.EventName == test.family && family.Availability == "pending"
+		if !ok || profile.Availability != test.availability || !slices.ContainsFunc(profile.TraceFamilies, func(family observabilityV8CatalogTraceFamily) bool {
+			return family.EventName == test.family && family.Availability == test.availability
 		}) {
 			t.Fatalf("generated profile %q does not contain %q: %+v", test.profile, test.family, profile)
 		}
@@ -153,23 +154,30 @@ func TestObservabilityV8EffectivePlanPublishesCompatibilityAndReloadApplicabilit
 	}
 	localProfile := assertDestination(observability.RuntimeLocalObservabilityDestination).CompatibilityProfiles
 	if len(localProfile) != 1 || localProfile[0].ID != observability.RuntimeLocalObservabilityProfile ||
-		localProfile[0].Availability != "pending" ||
+		localProfile[0].Availability != "available" ||
 		!slices.ContainsFunc(localProfile[0].EligibleSpanFamilies, func(family ObservabilityV8EffectiveSpanFamily) bool {
 			return family.EventName == "span.tool.execute" && family.Bucket == observability.BucketToolActivity &&
-				family.Availability == "pending"
+				family.Availability == "available"
 		}) {
 		t.Fatalf("local compatibility = %+v", localProfile)
 	}
 	galileoProfile := assertDestination("galileo").CompatibilityProfiles
 	if len(galileoProfile) != 1 || galileoProfile[0].ID != "galileo-rich-v2" ||
-		galileoProfile[0].Availability != "pending" ||
+		galileoProfile[0].Availability != "available" ||
 		!slices.ContainsFunc(galileoProfile[0].EligibleSpanFamilies, func(family ObservabilityV8EffectiveSpanFamily) bool {
 			return family.EventName == "span.model.chat" && family.Bucket == observability.BucketModelIO &&
-				family.Availability == "pending"
+				family.Availability == "available"
 		}) {
 		t.Fatalf("Galileo compatibility = %+v", galileoProfile)
 	}
 	if profiles := assertDestination("generic").CompatibilityProfiles; len(profiles) != 0 {
 		t.Fatalf("generic OTLP destination invented compatibility profiles: %+v", profiles)
+	}
+	for _, destination := range plan.Snapshot().Destinations {
+		for _, profile := range destination.CompatibilityProfiles {
+			if profile.ID == "openinference-v1" {
+				t.Fatalf("effective plan presented runtime-unsupported OpenInference as destination-compatible: %+v", profile)
+			}
+		}
 	}
 }

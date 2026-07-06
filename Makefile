@@ -726,13 +726,20 @@ _bundle-data:
 	cp schemas/config/v8/defenseclaw-config.schema.json cli/defenseclaw/_data/config/v8/
 	cp schemas/config/v8/reference/observability.yaml cli/defenseclaw/_data/config/v8/
 	cp schemas/config/v8/reference/observability.md cli/defenseclaw/_data/config/v8/
-	@# The generated telemetry bundle and catalog are the only public telemetry
-	@# resources shipped in the Python wheel. This ignored directory is disposable
-	@# build staging; canonical generated authority remains under schemas/.
+	@# The generated telemetry schema, catalog, migration selection, and exact
+	@# compatibility-profile manifests ship in the Python wheel. This ignored
+	@# directory is disposable build staging; canonical generated authority remains
+	@# under schemas/.
 	cp schemas/telemetry/generated/telemetry.schema.json cli/defenseclaw/_data/telemetry/v8/
 	cp schemas/telemetry/generated/catalog.json cli/defenseclaw/_data/telemetry/v8/
 	cp schemas/telemetry/generated/compatibility/v7-exporter-selection.json \
 		cli/defenseclaw/_data/telemetry/v8/v7-exporter-selection.json
+	cp schemas/telemetry/generated/compatibility/galileo-rich-v2.json \
+		cli/defenseclaw/_data/telemetry/v8/galileo-rich-v2.json
+	cp schemas/telemetry/generated/compatibility/local-observability-v1.json \
+		cli/defenseclaw/_data/telemetry/v8/local-observability-v1.json
+	cp schemas/telemetry/generated/compatibility/openinference-v1.json \
+		cli/defenseclaw/_data/telemetry/v8/openinference-v1.json
 	@# splunk_local_bridge and local_observability_stack are bind-mounted by Docker
 	@# (Grafana, Loki, Splunk, etc.) when `defenseclaw obs up` is running. Prefer
 	@# rsync-with-delete over `rm -rf && cp -r` because Docker Desktop on macOS

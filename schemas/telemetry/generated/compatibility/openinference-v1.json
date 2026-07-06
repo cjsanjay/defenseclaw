@@ -1,0 +1,109 @@
+{
+  "x-defenseclaw-generated": {
+    "artifact": "compatibility/openinference-v1.json",
+    "authority": "candidate-not-public-authority",
+    "generator": "defenseclaw-telemetry-candidate-renderer-v1",
+    "materialized_view_sha256": "9ab8029c2e07448a6605044b18d79b0550df35f66671f495c67d9820439dd57e",
+    "registry_version": 1
+  },
+  "availability": "pending",
+  "bucket_catalog_version": 1,
+  "families": [
+    {
+      "bucket": "agent.lifecycle",
+      "eligibility": "eligible",
+      "event_name": "span.agent.invoke",
+      "family_id": "span.agent.invoke",
+      "projection": {
+        "behavior": "reject",
+        "mode": "unsupported",
+        "reason": "runtime_projector_not_implemented"
+      },
+      "signal": "traces"
+    },
+    {
+      "bucket": "guardrail.evaluation",
+      "eligibility": "eligible",
+      "event_name": "span.guardrail.judge",
+      "family_id": "span.guardrail.judge",
+      "projection": {
+        "behavior": "reject",
+        "mode": "unsupported",
+        "reason": "runtime_projector_not_implemented"
+      },
+      "signal": "traces"
+    },
+    {
+      "bucket": "model.io",
+      "eligibility": "eligible",
+      "event_name": "span.model.chat",
+      "family_id": "span.model.chat",
+      "projection": {
+        "behavior": "reject",
+        "mode": "unsupported",
+        "reason": "runtime_projector_not_implemented"
+      },
+      "signal": "traces"
+    },
+    {
+      "bucket": "model.io",
+      "eligibility": "eligible",
+      "event_name": "span.model.embeddings",
+      "family_id": "span.model.embeddings",
+      "projection": {
+        "behavior": "reject",
+        "mode": "unsupported",
+        "reason": "runtime_projector_not_implemented"
+      },
+      "signal": "traces"
+    },
+    {
+      "bucket": "tool.activity",
+      "eligibility": "eligible",
+      "event_name": "span.retrieval.search",
+      "family_id": "span.retrieval.search",
+      "projection": {
+        "behavior": "reject",
+        "mode": "unsupported",
+        "reason": "runtime_projector_not_implemented"
+      },
+      "signal": "traces"
+    },
+    {
+      "bucket": "tool.activity",
+      "eligibility": "eligible",
+      "event_name": "span.tool.execute",
+      "family_id": "span.tool.execute",
+      "projection": {
+        "behavior": "reject",
+        "mode": "unsupported",
+        "reason": "runtime_projector_not_implemented"
+      },
+      "signal": "traces"
+    },
+    {
+      "bucket": "agent.lifecycle",
+      "eligibility": "eligible",
+      "event_name": "span.workflow.run",
+      "family_id": "span.workflow.run",
+      "projection": {
+        "behavior": "reject",
+        "mode": "unsupported",
+        "reason": "runtime_projector_not_implemented"
+      },
+      "signal": "traces"
+    }
+  ],
+  "format": "defenseclaw-compatibility-profile-v1",
+  "materialized_view_sha256": "9ab8029c2e07448a6605044b18d79b0550df35f66671f495c67d9820439dd57e",
+  "profile_id": "openinference-v1",
+  "registry_version": 1,
+  "runtime_projection": {
+    "input": "route_redacted_canonical_record",
+    "mode": "none",
+    "reason": "runtime_projector_not_implemented",
+    "status": "unsupported",
+    "unsupported_behavior": "reject"
+  },
+  "schema_version": 1
+}
