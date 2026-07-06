@@ -3,7 +3,7 @@
     "artifact": "compatibility/inbound-otlp.json",
     "authority": "candidate-not-public-authority",
     "generator": "defenseclaw-telemetry-candidate-renderer-v1",
-    "materialized_view_sha256": "f53cb20a665ef93a3d2e08f10f2107c9c1a3a93d420ccf5fd2d83af06daa26f1",
+    "materialized_view_sha256": "c6a5683883ef0ac2628eecc9f003abb189615dec164271a1ea634427bd6b88eb",
     "registry_version": 1
   },
   "alias_sets": [
@@ -859,7 +859,7 @@
     }
   ],
   "bucket_catalog_version": 1,
-  "candidate_render_index_sha256": "3470772368e5ff98ddc467f160cfba7a3a6624c5fcbc52c88b29bfda98cfabb8",
+  "candidate_render_index_sha256": "0cda686150f0e2742f3f766069981ee7ad5f4f7499fbd79d0a1b50fa44bfce66",
   "contract": {
     "forward_destination_key": "defenseclaw.telemetry.forward.destination",
     "forward_hop_count_key": "defenseclaw.telemetry.forward.hop_count",
@@ -41200,7 +41200,7 @@
       "unknown_fields": "drop_and_count"
     }
   ],
-  "materialized_view_sha256": "f53cb20a665ef93a3d2e08f10f2107c9c1a3a93d420ccf5fd2d83af06daa26f1",
+  "materialized_view_sha256": "c6a5683883ef0ac2628eecc9f003abb189615dec164271a1ea634427bd6b88eb",
   "native_markers": [
     {
       "id": "otlp.native.marker.logs.leaf_attribute.defenseclaw.bucket",

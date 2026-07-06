@@ -12853,6 +12853,7 @@ producer_mappings:
   - sqlite_failure
   - exporter_initialization_failure
   - durable_health_transition
+  - protected_boundary_auth_failure
   companion_rules: []
   compatibility:
     introduced_in: telemetry-registry-v1
