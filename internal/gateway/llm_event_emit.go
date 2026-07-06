@@ -31,43 +31,48 @@ const (
 )
 
 type llmEventMeta struct {
-	Source          string
-	Provider        string
-	Model           string
-	SessionID       string
-	RequestID       string
-	RunID           string
-	TurnID          string
-	PromptID        string
-	ResponseID      string
-	AgentID         string
-	AgentName       string
-	AgentType       string
-	RootAgentID     string
-	ParentAgentID   string
-	RootSessionID   string
-	ParentSessionID string
-	LifecycleID     string
-	ExecutionID     string
-	LifecycleEvent  string
-	LifecycleState  string
-	LifecycleDedupe string
-	Phase           string
-	PreviousPhase   string
-	OperationID     string
-	Sequence        int64
-	AgentDepth      int
-	ReportedCostUSD float64
-	ReportedCost    bool
-	ReportedCostSum bool
-	SessionSource   string
-	SessionResumed  bool
-	UserID          string
-	UserName        string
-	PolicyID        string
-	DestinationApp  string
-	ToolName        string
-	ToolID          string
+	Source        string
+	Provider      string
+	Model         string
+	SessionID     string
+	RequestID     string
+	RunID         string
+	TurnID        string
+	PromptID      string
+	ResponseID    string
+	AgentID       string
+	AgentName     string
+	AgentType     string
+	RootAgentID   string
+	ParentAgentID string
+	// LineageProvenance distinguishes connector-reported topology from
+	// topology inferred by the hook bridge. It is empty only when neither
+	// claim can be made truthfully.
+	LineageProvenance string
+	RootSessionID     string
+	ParentSessionID   string
+	LifecycleID       string
+	ExecutionID       string
+	LifecycleEvent    string
+	LifecycleState    string
+	LifecycleOutcome  string
+	LifecycleDedupe   string
+	Phase             string
+	PreviousPhase     string
+	OperationID       string
+	Sequence          int64
+	AgentDepth        int
+	ReportedCostUSD   float64
+	ReportedCost      bool
+	ReportedCostSum   bool
+	SessionSource     string
+	SessionResumed    bool
+	UserID            string
+	UserName          string
+	PolicyID          string
+	DestinationApp    string
+	ToolName          string
+	ToolID            string
 	// TraceEventID scopes the short OTel anchor used for one hook delivery.
 	// Session and agent identifiers remain stable across deliveries, but a
 	// backend must not be asked to append children to a trace it has already
@@ -345,7 +350,7 @@ func (a *APIServer) emitCodexHookLLMEvent(ctx context.Context, req codexHookRequ
 	meta.TraceEventID = hookTraceEventID(ctx, meta)
 	meta = a.enrichHookPhase(meta)
 	recordLifecycle := a.shouldRecordHookLifecycleTransition(meta)
-	emitHookLifecycleEvent(ctx, meta)
+	a.emitHookLifecycleEvent(ctx, meta)
 	if recordLifecycle {
 		meta = a.normalizeHookReportedCost(meta)
 		a.recordHookLifecycleMetric(ctx, meta)
@@ -434,7 +439,7 @@ func (a *APIServer) emitAgentHookLLMEvent(ctx context.Context, req agentHookRequ
 	meta.TraceEventID = hookTraceEventID(ctx, meta)
 	meta = a.enrichHookPhase(meta)
 	recordLifecycle := a.shouldRecordHookLifecycleTransition(meta)
-	emitHookLifecycleEvent(ctx, meta)
+	a.emitHookLifecycleEvent(ctx, meta)
 	if recordLifecycle {
 		meta = a.normalizeHookReportedCost(meta)
 		a.recordHookLifecycleMetric(ctx, meta)
@@ -503,7 +508,7 @@ func (a *APIServer) emitClaudeCodeHookLLMEvent(ctx context.Context, req claudeCo
 	meta.TraceEventID = hookTraceEventID(ctx, meta)
 	meta = a.enrichHookPhase(meta)
 	recordLifecycle := a.shouldRecordHookLifecycleTransition(meta)
-	emitHookLifecycleEvent(ctx, meta)
+	a.emitHookLifecycleEvent(ctx, meta)
 	if recordLifecycle {
 		meta = a.normalizeHookReportedCost(meta)
 		a.recordHookLifecycleMetric(ctx, meta)
@@ -584,6 +589,7 @@ func hookLLMEventMeta(source, sessionID, turnID, model, hookSource, agentID, age
 		"hook_event_name", "hookEventName", "event_type", "eventType", "event_name", "eventName",
 	))
 	rootAgentID := stableLLMEventID("agent", source, sessionID, "root")
+	lineageProvenance := "inferred"
 	agentID = strings.TrimSpace(agentID)
 	if agentID == "" && (lifecycleEvent == "subagent_start" || lifecycleEvent == "subagent_stop") {
 		childIdentity := firstNonEmpty(
@@ -602,9 +608,14 @@ func hookLLMEventMeta(source, sessionID, turnID, model, hookSource, agentID, age
 		firstString(payload, "parent_session_id", "parentSessionId", "parentSessionID"),
 		firstString(objectAt(payload, "extra"), "parent_session_id", "parentSessionId", "parentSessionID"),
 	)
-	parentAgentID := firstNonEmpty(
+	reportedParentAgentID := firstNonEmpty(
 		firstString(payload, "parent_agent_id", "parentAgentId", "parent_id", "parentId"),
 		firstString(objectAt(payload, "extra"), "parent_subagent_id", "parentSubagentId", "parent_agent_id", "parentAgentId"),
+	)
+	parentAgentID := reportedParentAgentID
+	reportedRootAgentID := firstNonEmpty(
+		firstString(payload, "root_agent_id", "rootAgentId", "rootAgentID"),
+		firstString(objectAt(payload, "extra"), "root_agent_id", "rootAgentId", "rootAgentID"),
 	)
 	if parentAgentID == "" {
 		if parentSessionID != "" {
@@ -620,8 +631,7 @@ func hookLLMEventMeta(source, sessionID, turnID, model, hookSource, agentID, age
 		parentAgentID = rootAgentID
 	}
 	rootAgentID = firstNonEmpty(
-		firstString(payload, "root_agent_id", "rootAgentId", "rootAgentID"),
-		firstString(objectAt(payload, "extra"), "root_agent_id", "rootAgentId", "rootAgentID"),
+		reportedRootAgentID,
 		parentAgentID, agentID,
 	)
 	rootSessionID := firstNonEmpty(
@@ -635,6 +645,10 @@ func hookLLMEventMeta(source, sessionID, turnID, model, hookSource, agentID, age
 	}
 	if parentAgentID != "" && depth == 0 {
 		depth = 1
+	}
+	if reportedRootAgentID != "" && hookAgentDepthReported(payload) &&
+		(parentAgentID == "" || reportedParentAgentID != "") {
+		lineageProvenance = "reported"
 	}
 	lifecycleState := hookLifecycleState(lifecycleEvent, payload)
 	sessionSource := firstString(payload, "session_source", "sessionSource", "resume_source", "resumeSource")
@@ -653,24 +667,25 @@ func hookLLMEventMeta(source, sessionID, turnID, model, hookSource, agentID, age
 		AgentID:   agentID,
 		// Prefer a readable runtime name in UIs. The stable opaque identity is
 		// still preserved separately as gen_ai.agent.id.
-		AgentName:       firstNonEmpty(agentName, agentType, source, agentID),
-		AgentType:       firstNonEmpty(agentType, source),
-		RootAgentID:     rootAgentID,
-		ParentAgentID:   parentAgentID,
-		RootSessionID:   rootSessionID,
-		ParentSessionID: parentSessionID,
-		LifecycleID:     stableLLMEventID("lifecycle", source, sessionID, agentID),
-		ExecutionID:     stableLLMEventID("execution", source, sessionID, agentID, executionSeed),
-		LifecycleEvent:  lifecycleEvent,
-		LifecycleState:  lifecycleState,
-		AgentDepth:      depth,
-		ReportedCostUSD: reportedCost.USD,
-		ReportedCost:    reportedCost.Present,
-		ReportedCostSum: reportedCost.Cumulative,
-		SessionSource:   sessionSource,
-		SessionResumed:  resumed,
-		UserID:          userID,
-		UserName:        userName,
+		AgentName:         firstNonEmpty(agentName, agentType, source, agentID),
+		AgentType:         firstNonEmpty(agentType, source),
+		RootAgentID:       rootAgentID,
+		ParentAgentID:     parentAgentID,
+		LineageProvenance: lineageProvenance,
+		RootSessionID:     rootSessionID,
+		ParentSessionID:   parentSessionID,
+		LifecycleID:       stableLLMEventID("lifecycle", source, sessionID, agentID),
+		ExecutionID:       stableLLMEventID("execution", source, sessionID, agentID, executionSeed),
+		LifecycleEvent:    lifecycleEvent,
+		LifecycleState:    lifecycleState,
+		AgentDepth:        depth,
+		ReportedCostUSD:   reportedCost.USD,
+		ReportedCost:      reportedCost.Present,
+		ReportedCostSum:   reportedCost.Cumulative,
+		SessionSource:     sessionSource,
+		SessionResumed:    resumed,
+		UserID:            userID,
+		UserName:          userName,
 	}
 }
 
@@ -681,6 +696,7 @@ func hookLLMEventMeta(source, sessionID, turnID, model, hookSource, agentID, age
 func applyHookEventMeta(meta llmEventMeta, event string, payload map[string]interface{}) llmEventMeta {
 	meta.LifecycleEvent = canonicalHookLifecycleEvent(event)
 	meta.LifecycleState = hookLifecycleState(meta.LifecycleEvent, payload)
+	meta.LifecycleOutcome = hookLifecycleOutcome(event, meta.LifecycleEvent, meta.LifecycleState, payload)
 	meta.LifecycleDedupe = hookLifecycleDedupeKey(meta, payload)
 	meta.Phase = hookLifecyclePhase(event, meta.LifecycleEvent, meta.LifecycleState)
 	meta.OperationID = hookOperationID(meta)
@@ -693,12 +709,22 @@ func applyHookEventMeta(meta llmEventMeta, event string, payload map[string]inte
 		rootAgentID := stableLLMEventID("agent", meta.Source, meta.SessionID, "root")
 		if meta.AgentID != "" && meta.AgentID != rootAgentID {
 			meta.ParentAgentID = rootAgentID
+			meta.LineageProvenance = "inferred"
 			if meta.AgentDepth == 0 {
 				meta.AgentDepth = 1
 			}
 		}
 	}
 	return meta
+}
+
+func hookAgentDepthReported(payload map[string]interface{}) bool {
+	for _, key := range []string{"agent_depth", "agentDepth", "depth"} {
+		if _, present := payload[key]; present {
+			return true
+		}
+	}
+	return false
 }
 
 func canonicalHookLifecycleEvent(event string) string {
@@ -756,6 +782,71 @@ func hookLifecycleState(event string, payload map[string]interface{}) string {
 			return "failed"
 		}
 		return "observed"
+	}
+}
+
+// hookLifecycleOutcome retains the bounded terminal result that is otherwise
+// lost when several raw connector events normalize to the same lifecycle
+// event/state pair. The value is consumed by the generated compat family; the
+// legacy gateway event remains byte-for-byte governed by its existing fields.
+func hookLifecycleOutcome(rawEvent, event, state string, payload map[string]interface{}) string {
+	switch event {
+	case "session_start", "subagent_start", "turn_start", "tool_start", "compact_start":
+		return "attempted"
+	case "event":
+		return ""
+	}
+
+	status := strings.ToLower(strings.Join([]string{
+		canonicalEvent(rawEvent),
+		state,
+		firstString(payload, "status", "child_status", "reason", "outcome", "error", "error_details", "termination_reason", "terminationReason"),
+	}, " "))
+	if event == "tool_end" {
+		switch {
+		case strings.Contains(status, "permissiondenied") || strings.Contains(status, "denied"):
+			return "denied"
+		case strings.Contains(status, "blocked"):
+			return "blocked"
+		case strings.Contains(status, "reject"):
+			return "rejected"
+		case strings.Contains(status, "timeout") || strings.Contains(status, "timedout"):
+			return "timed_out"
+		case strings.Contains(status, "skip"):
+			return "skipped"
+		case strings.Contains(status, "partial"):
+			return "partial"
+		case strings.Contains(status, "cancel") || strings.Contains(status, "interrupt"):
+			return "cancelled"
+		case strings.Contains(status, "fail") || strings.Contains(status, "error"):
+			return "failed"
+		default:
+			return "completed"
+		}
+	}
+	if event == "compact_end" {
+		switch {
+		case strings.Contains(status, "nochange") || strings.Contains(status, "no_change"):
+			return "no_change"
+		case strings.Contains(status, "partial"):
+			return "partial"
+		case strings.Contains(status, "cancel") || strings.Contains(status, "interrupt"):
+			return "cancelled"
+		case strings.Contains(status, "fail") || strings.Contains(status, "error"):
+			return "failed"
+		default:
+			return "completed"
+		}
+	}
+	switch {
+	case strings.Contains(status, "terminat"):
+		return "terminated"
+	case state == "interrupted" || strings.Contains(status, "cancel") || strings.Contains(status, "interrupt"):
+		return "cancelled"
+	case state == "failed" || strings.Contains(status, "fail") || strings.Contains(status, "error"):
+		return "failed"
+	default:
+		return "completed"
 	}
 }
 
@@ -1073,6 +1164,7 @@ func (a *APIServer) mergeHookSessionLifecycle(meta llmEventMeta) llmEventMeta {
 	}
 	meta.RootAgentID = firstNonEmpty(meta.RootAgentID, snapshot.meta.RootAgentID, snapshot.meta.AgentID)
 	meta.ParentAgentID = firstNonEmpty(meta.ParentAgentID, snapshot.meta.ParentAgentID)
+	meta.LineageProvenance = firstNonEmpty(meta.LineageProvenance, snapshot.meta.LineageProvenance)
 	meta.RootSessionID = firstNonEmpty(meta.RootSessionID, snapshot.meta.RootSessionID, snapshot.meta.SessionID)
 	meta.ParentSessionID = firstNonEmpty(meta.ParentSessionID, snapshot.meta.ParentSessionID)
 	if meta.AgentDepth == 0 && snapshot.meta.AgentDepth > 0 {
@@ -1238,7 +1330,7 @@ func hookLifecycleContent(meta llmEventMeta, direction string) string {
 	return string(b)
 }
 
-func emitHookLifecycleEvent(ctx context.Context, meta llmEventMeta) {
+func emitLegacyHookLifecycleEvent(ctx context.Context, meta llmEventMeta) {
 	if strings.TrimSpace(meta.Source) == "" || strings.TrimSpace(meta.SessionID) == "" {
 		return
 	}
@@ -1390,17 +1482,19 @@ func (a *APIServer) emitInferredDelegatedAgentTransitions(
 		if starting {
 			child.LifecycleEvent = "subagent_start"
 			child.LifecycleState = "active"
+			child.LifecycleOutcome = "attempted"
 			child.Phase = "session"
 			child = a.beginHookExecution(child)
 		} else {
 			child.LifecycleEvent = "subagent_stop"
 			child.LifecycleState = "completed"
+			child.LifecycleOutcome = "completed"
 			child.Phase = "completed"
 			child = a.mergeHookSessionLifecycle(child)
 		}
 		child.OperationID = hookOperationID(child)
 		child = a.enrichHookPhase(child)
-		emitHookLifecycleEvent(ctx, child)
+		a.emitHookLifecycleEvent(ctx, child)
 		a.recordHookLifecycleMetric(ctx, child)
 		a.emitHookLifecycleTransitionSpan(ctx, child)
 	}
@@ -1456,6 +1550,7 @@ func inferredDelegatedAgents(parent llmEventMeta, tool, arguments string) []llmE
 		child.AgentName = name
 		child.AgentType = "subagent"
 		child.ParentAgentID = parent.AgentID
+		child.LineageProvenance = "inferred"
 		child.ParentSessionID = ""
 		child.AgentDepth = parent.AgentDepth + 1
 		child.LifecycleID = stableLLMEventID("lifecycle", child.Source, child.SessionID, child.AgentID)
