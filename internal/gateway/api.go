@@ -3194,6 +3194,25 @@ func constantTimeStringMatch(a, b string) bool {
 }
 
 func (a *APIServer) emitHTTPAuthFailure(ctx context.Context, r *http.Request, route string, code gatewaylog.ErrorCode, metricReason string) {
+	// OTLP receivers own a more specific telemetry.authentication.failed
+	// occurrence, including the inbound signal and connector when those facts
+	// are known. Keep that existing path isolated from the ordinary sidecar API
+	// boundary so one failed OTLP request is never also relabeled as a generic
+	// administrative authentication failure.
+	if r != nil && !isOTLPEndpointPath(r.URL.Path) &&
+		a.emitAPIAuthenticationFailureV8(ctx, metricReason) {
+		// Runtime presence selects canonical ownership before any legacy gateway
+		// log is produced. A canonical build/persistence failure must not
+		// resurrect that legacy log and create an ambiguous duplicate. The
+		// registered auth-failure counter is an independent metric signal retained
+		// for dashboard continuity; use fixed-cardinality labels because the outer
+		// auth middleware runs before ServeMux assigns r.Pattern.
+		if a.otel != nil {
+			a.otel.RecordHTTPAuthFailure(ctx, "sidecar-api", apiAuthenticationFailureReason(metricReason))
+		}
+		return
+	}
+
 	actor := "anonymous"
 	if strings.TrimSpace(r.Header.Get("Authorization")) != "" || r.Header.Get("X-DefenseClaw-Token") != "" {
 		actor = "claimed"
