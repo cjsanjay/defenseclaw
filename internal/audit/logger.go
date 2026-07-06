@@ -157,6 +157,10 @@ type Logger struct {
 	// runtime. The runtime package imports audit for event-history persistence,
 	// so audit owns this narrow interface rather than importing runtime back.
 	runtimeV8 RuntimeV8Emitter
+	// runtimeV8Authoritative is sticky once a v8 runtime has been bound. Producer
+	// cutovers that use runtimeV8BindingSnapshot consult it so a shutdown detach
+	// cannot resurrect their v7 SQLite/OTel/sink fanout.
+	runtimeV8Authoritative bool
 	// gwWriter is optional: when set, scan completions emit EventScan /
 	// EventScanFinding rows through the gateway JSONL choke point.
 	gwWriter *gatewaylog.Writer
@@ -215,13 +219,19 @@ func (l *Logger) SetStructuredEmitter(e StructuredEmitter) {
 }
 
 // SetRuntimeV8Emitter binds generated audit-action producers to the unified v8
-// runtime. A nil emitter preserves the complete v7 path.
+// runtime. A nil emitter preserves the complete v7 path only when no v8
+// runtime has ever been bound to this Logger. Once bound, authority remains
+// sticky across detach so binding-aware producer cutovers cannot resurrect
+// legacy fanout.
 func (l *Logger) SetRuntimeV8Emitter(emitter RuntimeV8Emitter) {
 	if l == nil {
 		return
 	}
 	l.mu.Lock()
 	l.runtimeV8 = emitter
+	if emitter != nil {
+		l.runtimeV8Authoritative = true
+	}
 	l.mu.Unlock()
 }
 
@@ -233,6 +243,32 @@ func (l *Logger) runtimeV8Snapshot() RuntimeV8Emitter {
 	emitter := l.runtimeV8
 	l.mu.RUnlock()
 	return emitter
+}
+
+type runtimeV8Binding struct {
+	emitter       RuntimeV8Emitter
+	metricEmitter RuntimeV8MetricEmitter
+	authoritative bool
+}
+
+// runtimeV8BindingSnapshot returns the log and generated-metric capabilities
+// from one mutex snapshot. A producer must use this single binding for the
+// complete occurrence so a concurrent reload/detach cannot split it between
+// v7 and v8 paths.
+func (l *Logger) runtimeV8BindingSnapshot() runtimeV8Binding {
+	if l == nil {
+		return runtimeV8Binding{}
+	}
+	l.mu.RLock()
+	emitter := l.runtimeV8
+	binding := runtimeV8Binding{
+		emitter: emitter, authoritative: l.runtimeV8Authoritative,
+	}
+	if metricEmitter, ok := emitter.(RuntimeV8MetricEmitter); ok {
+		binding.metricEmitter = metricEmitter
+	}
+	l.mu.RUnlock()
+	return binding
 }
 
 // SetGatewayLogWriter installs the gateway JSONL writer used for v7
