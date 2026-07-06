@@ -256,6 +256,79 @@ func generatedToolInput(tool string, start, end time.Time) observability.SpanToo
 	}
 }
 
+func generatedTransitionInput(event, state, phase, previous string, sequence int64, start, end time.Time) observability.SpanAgentTransitionInput {
+	envelope := generatedTraceEnvelope()
+	envelope.Phase = phase
+	input := observability.SpanAgentTransitionInput{
+		Envelope: envelope, Outcome: observability.OutcomeCompleted, Kind: "INTERNAL",
+		StartTimeUnixNano: generatedTimeNanos(start), EndTimeUnixNano: generatedTimeNanos(end),
+		Status:                              observability.NewTraceStatusOK(),
+		DefenseClawConnectorSource:          observability.Present("openai_codex"),
+		DefenseClawRunID:                    observability.Present("run-001"),
+		DefenseClawOperationID:              observability.Present("operation-" + event),
+		DefenseClawTurnID:                   observability.Present("turn-001"),
+		GenAIConversationID:                 "session-001",
+		GenAIAgentID:                        "agent-root",
+		GenAIAgentName:                      observability.Present("codex"),
+		DefenseClawAgentType:                observability.Present("root"),
+		DefenseClawAgentRootID:              "agent-root",
+		DefenseClawAgentLineageProvenance:   observability.Present("reported"),
+		DefenseClawSessionRootID:            "session-001",
+		DefenseClawAgentLifecycleID:         "lifecycle-001",
+		DefenseClawAgentExecutionID:         "execution-001",
+		DefenseClawAgentDepth:               0,
+		DefenseClawAgentLifecycleEvent:      event,
+		DefenseClawAgentLifecycleState:      state,
+		DefenseClawAgentPhase:               observability.Present(phase),
+		DefenseClawAgentPhaseCode:           observability.Present[int64](int64(telemetry.AgentPhaseCode(phase))),
+		DefenseClawAgentSequence:            observability.Present(sequence),
+		DefenseClawAgentReportedCostPresent: false,
+		ConditionConnectorKnown:             true,
+		ConditionOperationTerminal:          true,
+	}
+	if previous != "" {
+		input.DefenseClawAgentPhasePrevious = observability.Present(previous)
+	}
+	return input
+}
+
+func generatedApprovalInput(start, end time.Time) observability.SpanApprovalResolveInput {
+	envelope := generatedTraceEnvelope()
+	envelope.Phase = "approval"
+	return observability.SpanApprovalResolveInput{
+		Envelope: envelope, Outcome: observability.OutcomeApproved, Kind: "INTERNAL",
+		StartTimeUnixNano: generatedTimeNanos(start), EndTimeUnixNano: generatedTimeNanos(end),
+		Status:                            observability.NewTraceStatusOK(),
+		DefenseClawConnectorSource:        observability.Present("openai_codex"),
+		DefenseClawRunID:                  observability.Present("run-001"),
+		DefenseClawOperationID:            observability.Present("operation-approval-001"),
+		GenAIConversationID:               observability.Present("session-001"),
+		GenAIAgentID:                      observability.Present("agent-root"),
+		GenAIAgentName:                    observability.Present("codex"),
+		DefenseClawAgentType:              observability.Present("root"),
+		DefenseClawAgentRootID:            observability.Present("agent-root"),
+		DefenseClawAgentLineageProvenance: observability.Present("reported"),
+		DefenseClawSessionRootID:          observability.Present("session-001"),
+		DefenseClawAgentLifecycleID:       observability.Present("lifecycle-001"),
+		DefenseClawAgentExecutionID:       observability.Present("execution-001"),
+		DefenseClawAgentDepth:             observability.Present[int64](0),
+		DefenseClawAgentLifecycleEvent:    observability.Present("tool_start"),
+		DefenseClawAgentLifecycleState:    observability.Present("active"),
+		DefenseClawAgentPhase:             observability.Present("approval"),
+		DefenseClawAgentPhasePrevious:     observability.Present("tool"),
+		DefenseClawAgentPhaseCode:         observability.Present[int64](5),
+		DefenseClawAgentSequence:          observability.Present[int64](9),
+		DefenseClawApprovalID:             observability.Present("approval-001"),
+		DefenseClawApprovalCommandName:    observability.Present("shell"),
+		DefenseClawApprovalArgc:           observability.Present[int64](2),
+		DefenseClawApprovalActorType:      observability.Present("operator"),
+		DefenseClawApprovalResult:         observability.Present("approved"),
+		DefenseClawApprovalDangerous:      observability.Present(false),
+		ConditionConnectorKnown:           true,
+		ConditionOperationTerminal:        true,
+	}
+}
+
 func generatedTimeNanos(value time.Time) uint64 {
 	if value.IsZero() {
 		return 0
@@ -357,6 +430,122 @@ func TestGeneratedTraceSessionPreservesRichHierarchyAndMissingData(t *testing.T)
 	}
 	if links, ok := modelBody["links"].([]any); !ok || len(links) != 1 {
 		t.Fatalf("model links=%v", modelBody["links"])
+	}
+}
+
+func TestGeneratedTraceSessionPreservesToolApprovalAndLifecycleTransitionTopology(t *testing.T) {
+	dependencies := newRuntimeTestDependencies(t)
+	pipelines := &generatedTracePipelines{consumers: make(map[uint64]*generatedTraceConsumer)}
+	plan := generatedTracePlan(t, dependencies, 90, "always_on", []observability.Bucket{"*"})
+	runtime := newGeneratedTraceRuntime(t, dependencies, pipelines, plan)
+
+	base := time.Now().UTC().Add(-time.Second)
+	agentInput := generatedAgentInput("root", base, base.Add(900*time.Millisecond))
+	_, agent, err := runtime.StartAgentTrace(t.Context(), agentInput)
+	if err != nil || agent == nil {
+		t.Fatalf("start agent=%v error=%v", agent, err)
+	}
+	invalidTransition := generatedTransitionInput(
+		"turn_start", "active", "planning", "", 1,
+		base.Add(50*time.Millisecond), base.Add(75*time.Millisecond),
+	)
+	invalidTransition.GenAIConversationID = ""
+	if invalidHandle, invalidErr := agent.StartTransition(invalidTransition); invalidHandle != nil ||
+		generatedTraceErrorCode(invalidErr) != GeneratedTraceInvalidInput || agent.Context() == nil {
+		t.Fatalf("invalid transition handle=%v error=%v root-live=%t", invalidHandle, invalidErr, agent.Context() != nil)
+	}
+	toolInput := generatedToolInput("shell", base.Add(100*time.Millisecond), base.Add(600*time.Millisecond))
+	tool, err := agent.StartTool(toolInput)
+	if err != nil || tool == nil {
+		t.Fatalf("start tool=%v error=%v", tool, err)
+	}
+	approvalInput := generatedApprovalInput(base.Add(200*time.Millisecond), base.Add(500*time.Millisecond))
+	approval, err := tool.StartApproval(approvalInput)
+	if err != nil || approval == nil {
+		t.Fatalf("start approval=%v error=%v", approval, err)
+	}
+	if err := approval.End(approvalInput); err != nil {
+		t.Fatal(err)
+	}
+	if err := tool.End(toolInput); err != nil {
+		t.Fatal(err)
+	}
+	transitionInput := generatedTransitionInput(
+		"turn_end", "completed", "responding", "approval", 10,
+		base.Add(650*time.Millisecond), base.Add(700*time.Millisecond),
+	)
+	transition, err := agent.StartTransition(transitionInput)
+	if err != nil || transition == nil {
+		t.Fatalf("start transition=%v error=%v", transition, err)
+	}
+	if err := transition.End(transitionInput); err != nil {
+		t.Fatal(err)
+	}
+	if err := agent.End(agentInput); err != nil {
+		t.Fatal(err)
+	}
+
+	spans := pipelines.consumer(t, 1).snapshot()
+	if len(spans) != 4 {
+		t.Fatalf("canonical spans=%d, want agent + tool + approval + transition", len(spans))
+	}
+	wantCompletionOrder := []observability.EventName{
+		observability.EventName(observability.TelemetryFamilyApprovalResolve),
+		observability.EventName(observability.TelemetryFamilyToolExecute),
+		observability.EventName(observability.TelemetryFamilyAgentTransition),
+		observability.EventName(observability.TelemetryFamilyAgentInvoke),
+	}
+	for index, want := range wantCompletionOrder {
+		if got := spans[index].Record().EventName(); got != want {
+			t.Fatalf("completion order[%d]=%s, want %s", index, got, want)
+		}
+	}
+	byFamily := make(map[observability.EventName]telemetry.V8CanonicalEndedSpan, len(spans))
+	for _, ended := range spans {
+		byFamily[ended.Record().EventName()] = ended
+	}
+	agentSpan := byFamily[observability.EventName(observability.TelemetryFamilyAgentInvoke)]
+	toolSpan := byFamily[observability.EventName(observability.TelemetryFamilyToolExecute)]
+	approvalSpan := byFamily[observability.EventName(observability.TelemetryFamilyApprovalResolve)]
+	transitionSpan := byFamily[observability.EventName(observability.TelemetryFamilyAgentTransition)]
+	toolParent, toolParentOK := toolSpan.ParentSpanID()
+	approvalParent, approvalParentOK := approvalSpan.ParentSpanID()
+	transitionParent, transitionParentOK := transitionSpan.ParentSpanID()
+	if !toolParentOK || toolParent != agentSpan.SpanID() ||
+		!approvalParentOK || approvalParent != toolSpan.SpanID() ||
+		!transitionParentOK || transitionParent != agentSpan.SpanID() {
+		t.Fatalf(
+			"parents tool=%s/%t approval=%s/%t transition=%s/%t agent=%s",
+			toolParent, toolParentOK, approvalParent, approvalParentOK,
+			transitionParent, transitionParentOK, agentSpan.SpanID(),
+		)
+	}
+	if agentSpan.TraceID() != toolSpan.TraceID() || agentSpan.TraceID() != approvalSpan.TraceID() ||
+		agentSpan.TraceID() != transitionSpan.TraceID() {
+		t.Fatal("tool/approval/lifecycle topology split across traces")
+	}
+	approvalAttributes := generatedTraceRecordAttributes(t, approvalSpan.Record())
+	if approvalAttributes["defenseclaw.approval.id"] != "approval-001" ||
+		approvalAttributes["defenseclaw.approval.result"] != "approved" ||
+		approvalAttributes["defenseclaw.agent.phase"] != "approval" ||
+		approvalAttributes["defenseclaw.agent.phase.code"] != float64(5) ||
+		approvalAttributes["defenseclaw.agent.sequence"] != float64(9) ||
+		approvalAttributes["defenseclaw.operation.id"] != "operation-approval-001" {
+		t.Fatalf("approval attributes=%v", approvalAttributes)
+	}
+	transitionAttributes := generatedTraceRecordAttributes(t, transitionSpan.Record())
+	if transitionAttributes["defenseclaw.agent.lifecycle.event"] != "turn_end" ||
+		transitionAttributes["defenseclaw.agent.lifecycle.state"] != "completed" ||
+		transitionAttributes["defenseclaw.agent.phase"] != "responding" ||
+		transitionAttributes["defenseclaw.agent.phase.previous"] != "approval" ||
+		transitionAttributes["defenseclaw.agent.phase.code"] != float64(7) ||
+		transitionAttributes["defenseclaw.agent.sequence"] != float64(10) {
+		t.Fatalf("transition attributes=%v", transitionAttributes)
+	}
+	for _, key := range []string{"defenseclaw.approval.command", "defenseclaw.approval.argv", "defenseclaw.approval.cwd"} {
+		if _, fabricated := approvalAttributes[key]; fabricated {
+			t.Fatalf("unreported approval content %s was fabricated", key)
+		}
 	}
 }
 
@@ -462,6 +651,23 @@ func TestGeneratedTraceSessionSupportsRealNestedSubagent(t *testing.T) {
 	if err != nil || child == nil || child.TraceID() != root.TraceID() {
 		t.Fatalf("start child=%v error=%v", child, err)
 	}
+	grandchildInput := generatedAgentInput("subagent", base.Add(200*time.Millisecond), base.Add(300*time.Millisecond))
+	grandchildInput.Envelope.Correlation.AgentID = "agent-grandchild"
+	grandchildInput.DefenseClawOperationID = observability.Present("operation-agent-grandchild")
+	grandchildInput.GenAIAgentID = observability.Present("agent-grandchild")
+	grandchildInput.GenAIAgentName = observability.Present("researcher")
+	grandchildInput.DefenseClawAgentRootID = observability.Present("agent-root")
+	grandchildInput.DefenseClawAgentParentID = observability.Present("agent-child")
+	grandchildInput.DefenseClawAgentLifecycleID = observability.Present("lifecycle-grandchild")
+	grandchildInput.DefenseClawAgentExecutionID = observability.Present("execution-grandchild")
+	grandchildInput.DefenseClawAgentDepth = observability.Present[int64](2)
+	grandchild, err := child.StartAgent(grandchildInput)
+	if err != nil || grandchild == nil || grandchild.TraceID() != root.TraceID() {
+		t.Fatalf("start grandchild=%v error=%v", grandchild, err)
+	}
+	if err := grandchild.End(grandchildInput); err != nil {
+		t.Fatal(err)
+	}
 	if err := child.End(childInput); err != nil {
 		t.Fatal(err)
 	}
@@ -469,27 +675,42 @@ func TestGeneratedTraceSessionSupportsRealNestedSubagent(t *testing.T) {
 		t.Fatal(err)
 	}
 	spans := pipelines.consumer(t, 1).snapshot()
-	if len(spans) != 2 {
-		t.Fatalf("agent spans=%d, want 2", len(spans))
+	if len(spans) != 3 {
+		t.Fatalf("agent spans=%d, want root + direct + nested subagent", len(spans))
 	}
-	var rootSpan, childSpan telemetry.V8CanonicalEndedSpan
+	var rootSpan, childSpan, grandchildSpan telemetry.V8CanonicalEndedSpan
 	for _, ended := range spans {
 		attributes := generatedTraceRecordAttributes(t, ended.Record())
-		if attributes["gen_ai.agent.id"] == "agent-child" {
+		switch attributes["gen_ai.agent.id"] {
+		case "agent-child":
 			childSpan = ended
 			if attributes["defenseclaw.agent.root.id"] != "agent-root" ||
 				attributes["defenseclaw.agent.parent.id"] != "agent-root" ||
 				attributes["defenseclaw.agent.depth"] != float64(1) {
 				t.Fatalf("child hierarchy attributes=%v", attributes)
 			}
-		} else {
+		case "agent-grandchild":
+			grandchildSpan = ended
+			if attributes["defenseclaw.agent.root.id"] != "agent-root" ||
+				attributes["defenseclaw.agent.parent.id"] != "agent-child" ||
+				attributes["defenseclaw.agent.depth"] != float64(2) {
+				t.Fatalf("grandchild hierarchy attributes=%v", attributes)
+			}
+		default:
 			rootSpan = ended
 		}
 	}
-	parent, hasParent := childSpan.ParentSpanID()
+	childParent, childHasParent := childSpan.ParentSpanID()
+	grandchildParent, grandchildHasParent := grandchildSpan.ParentSpanID()
 	if !rootSpan.SpanID().IsValid() || !childSpan.SpanID().IsValid() ||
-		!hasParent || parent != rootSpan.SpanID() {
-		t.Fatalf("subagent physical parent=%s/%v root=%s", parent, hasParent, rootSpan.SpanID())
+		!grandchildSpan.SpanID().IsValid() ||
+		!childHasParent || childParent != rootSpan.SpanID() ||
+		!grandchildHasParent || grandchildParent != childSpan.SpanID() {
+		t.Fatalf(
+			"subagent parents direct=%s/%v nested=%s/%v root=%s child=%s",
+			childParent, childHasParent, grandchildParent, grandchildHasParent,
+			rootSpan.SpanID(), childSpan.SpanID(),
+		)
 	}
 }
 
@@ -508,6 +729,14 @@ func TestGeneratedTraceSessionPinsGenerationAcrossReloadAndRejectsStaleUse(t *te
 	model, err := agent.StartModel(modelInput)
 	if err != nil || model == nil {
 		t.Fatalf("start model=%v error=%v", model, err)
+	}
+	transitionInput := generatedTransitionInput(
+		"compact_start", "active", "maintenance", "model", 8,
+		base.Add(750*time.Millisecond), base.Add(800*time.Millisecond),
+	)
+	transition, err := agent.StartTransition(transitionInput)
+	if err != nil || transition == nil {
+		t.Fatalf("start transition=%v error=%v", transition, err)
 	}
 
 	reloadDone := make(chan struct {
@@ -538,10 +767,13 @@ func TestGeneratedTraceSessionPinsGenerationAcrossReloadAndRejectsStaleUse(t *te
 		t.Fatal("reload returned before the trace hierarchy released its lease")
 	default:
 	}
-	if agent.Generation() != 1 || model.Generation() != 1 {
+	if agent.Generation() != 1 || model.Generation() != 1 || transition.Generation() != 1 {
 		t.Fatal("live trace handles changed generation after reload publication")
 	}
 	if err := model.End(modelInput); err != nil {
+		t.Fatal(err)
+	}
+	if err := transition.End(transitionInput); err != nil {
 		t.Fatal(err)
 	}
 	if err := agent.End(agentInput); err != nil {
@@ -603,7 +835,8 @@ func TestGeneratedTraceSessionReleasesLeaseAfterBuildFailureAndSamplingDrop(t *t
 			disabled := false
 			source.TracePolicy.Sampler = "always_on"
 			source.Buckets = map[observability.Bucket]config.ObservabilityV8BucketPolicySource{
-				observability.BucketModelIO: {Collect: config.ObservabilityV8CollectSource{Traces: &disabled}},
+				observability.BucketModelIO:           {Collect: config.ObservabilityV8CollectSource{Traces: &disabled}},
+				observability.BucketEnforcementAction: {Collect: config.ObservabilityV8CollectSource{Traces: &disabled}},
 			}
 			source.Destinations = []config.ObservabilityV8DestinationSource{{
 				Name: "otlp-all", Kind: config.ObservabilityV8DestinationOTLP,
@@ -627,6 +860,14 @@ func TestGeneratedTraceSessionReleasesLeaseAfterBuildFailureAndSamplingDrop(t *t
 	model, modelErr := thirdAgent.StartModel(modelInput)
 	if modelErr != nil || model != nil {
 		t.Fatalf("disabled model bucket returned handle=%v error=%v", model, modelErr)
+	}
+	approvalInput := generatedApprovalInput(base.Add(3*time.Millisecond), base.Add(4*time.Millisecond))
+	approval, approvalErr := thirdAgent.StartApproval(approvalInput)
+	if approvalErr != nil || approval != nil {
+		t.Fatalf("disabled approval bucket returned handle=%v error=%v", approval, approvalErr)
+	}
+	if thirdAgent.Context() == nil {
+		t.Fatal("disabled child collection closed the admitted root")
 	}
 	thirdAgent.Abort()
 }

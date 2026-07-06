@@ -45,8 +45,10 @@ func TestGeneratedProfileOwnsExactLocalTraceEligibility(t *testing.T) {
 	}
 	for _, family := range []observability.EventName{
 		"span.agent.invoke",
+		"span.agent.transition",
 		"span.model.chat",
 		"span.tool.execute",
+		"span.approval.resolve",
 		"span.guardrail.apply",
 	} {
 		if !profilemanifest.Eligible(ProfileID, observability.SignalTraces, family) {

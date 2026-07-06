@@ -82,6 +82,22 @@ type ToolTrace struct {
 	node    *generatedTraceNode
 }
 
+// AgentTransitionTrace is one generated span.agent.transition nested under a
+// bounded AgentTrace. It represents source-observed lifecycle/phase evidence;
+// callers must not synthesize a transition merely to complete a trace shape.
+type AgentTransitionTrace struct {
+	session *generatedTraceSession
+	node    *generatedTraceNode
+}
+
+// ApprovalTrace is one generated span.approval.resolve nested under the exact
+// bounded agent or tool operation which observed the approval. The handle does
+// not infer an approval identity, actor, result, or duration.
+type ApprovalTrace struct {
+	session *generatedTraceSession
+	node    *generatedTraceNode
+}
+
 type generatedTraceSession struct {
 	mu         sync.Mutex
 	lease      *runtimegraph.Lease
@@ -314,6 +330,43 @@ func (span *AgentTrace) StartTool(input observability.SpanToolExecuteInput) (*To
 	return &ToolTrace{session: span.session, node: node}, nil
 }
 
+// StartTransition starts a generated lifecycle transition under this exact
+// bounded agent anchor. Lifecycle event is the span-name key and remains
+// producer supplied; the runtime only seals trace/resource identity.
+func (span *AgentTrace) StartTransition(input observability.SpanAgentTransitionInput) (*AgentTransitionTrace, error) {
+	if span == nil || span.session == nil || span.node == nil ||
+		input.GenAIConversationID == "" || input.GenAIAgentID == "" ||
+		input.DefenseClawAgentRootID == "" || input.DefenseClawSessionRootID == "" ||
+		input.DefenseClawAgentLifecycleID == "" || input.DefenseClawAgentExecutionID == "" ||
+		input.DefenseClawAgentLifecycleEvent == "" || input.DefenseClawAgentLifecycleState == "" {
+		return nil, generatedTraceError(GeneratedTraceInvalidInput)
+	}
+	node, err := span.session.startChild(
+		span.node, observability.BucketAgentLifecycle, observability.TelemetryFamilyAgentTransition,
+		input.Kind, input.DefenseClawAgentLifecycleEvent, input.StartTimeUnixNano,
+	)
+	if err != nil || node == nil {
+		return nil, err
+	}
+	return &AgentTransitionTrace{session: span.session, node: node}, nil
+}
+
+// StartApproval starts a generated approval span under this exact bounded
+// agent anchor when no narrower active tool parent is available.
+func (span *AgentTrace) StartApproval(input observability.SpanApprovalResolveInput) (*ApprovalTrace, error) {
+	if span == nil || span.session == nil || span.node == nil {
+		return nil, generatedTraceError(GeneratedTraceInvalidInput)
+	}
+	node, err := span.session.startChild(
+		span.node, observability.BucketEnforcementAction, observability.TelemetryFamilyApprovalResolve,
+		input.Kind, "approval", input.StartTimeUnixNano,
+	)
+	if err != nil || node == nil {
+		return nil, err
+	}
+	return &ApprovalTrace{session: span.session, node: node}, nil
+}
+
 // StartTool starts a generated span.tool.execute child under this model call.
 func (span *ModelTrace) StartTool(input observability.SpanToolExecuteInput) (*ToolTrace, error) {
 	if span == nil || span.session == nil || span.node == nil || input.GenAIToolName == "" {
@@ -329,6 +382,23 @@ func (span *ModelTrace) StartTool(input observability.SpanToolExecuteInput) (*To
 	return &ToolTrace{session: span.session, node: node}, nil
 }
 
+// StartApproval starts a generated approval span under the tool operation that
+// requested it. This preserves causal OTel parentage independently from the
+// logical root/parent-agent lineage carried by canonical attributes.
+func (span *ToolTrace) StartApproval(input observability.SpanApprovalResolveInput) (*ApprovalTrace, error) {
+	if span == nil || span.session == nil || span.node == nil {
+		return nil, generatedTraceError(GeneratedTraceInvalidInput)
+	}
+	node, err := span.session.startChild(
+		span.node, observability.BucketEnforcementAction, observability.TelemetryFamilyApprovalResolve,
+		input.Kind, "approval", input.StartTimeUnixNano,
+	)
+	if err != nil || node == nil {
+		return nil, err
+	}
+	return &ApprovalTrace{session: span.session, node: node}, nil
+}
+
 // Context returns the immutable OTel context for parenting work which has not
 // yet migrated. It returns nil after the handle is invalid; callers cannot use
 // it to mutate the generated span.
@@ -341,18 +411,38 @@ func (span *ModelTrace) Context() context.Context {
 func (span *ToolTrace) Context() context.Context {
 	return generatedNodeContext(span.session, span.node)
 }
+func (span *AgentTransitionTrace) Context() context.Context {
+	return generatedNodeContext(span.session, span.node)
+}
+func (span *ApprovalTrace) Context() context.Context {
+	return generatedNodeContext(span.session, span.node)
+}
 
 func (span *AgentTrace) Generation() uint64 { return generatedNodeGeneration(span.session, span.node) }
 func (span *ModelTrace) Generation() uint64 { return generatedNodeGeneration(span.session, span.node) }
 func (span *ToolTrace) Generation() uint64  { return generatedNodeGeneration(span.session, span.node) }
+func (span *AgentTransitionTrace) Generation() uint64 {
+	return generatedNodeGeneration(span.session, span.node)
+}
+func (span *ApprovalTrace) Generation() uint64 {
+	return generatedNodeGeneration(span.session, span.node)
+}
 
 func (span *AgentTrace) TraceID() string { return generatedNodeTraceID(span.session, span.node) }
 func (span *ModelTrace) TraceID() string { return generatedNodeTraceID(span.session, span.node) }
 func (span *ToolTrace) TraceID() string  { return generatedNodeTraceID(span.session, span.node) }
+func (span *AgentTransitionTrace) TraceID() string {
+	return generatedNodeTraceID(span.session, span.node)
+}
+func (span *ApprovalTrace) TraceID() string { return generatedNodeTraceID(span.session, span.node) }
 
 func (span *AgentTrace) SpanID() string { return generatedNodeSpanID(span.session, span.node) }
 func (span *ModelTrace) SpanID() string { return generatedNodeSpanID(span.session, span.node) }
 func (span *ToolTrace) SpanID() string  { return generatedNodeSpanID(span.session, span.node) }
+func (span *AgentTransitionTrace) SpanID() string {
+	return generatedNodeSpanID(span.session, span.node)
+}
+func (span *ApprovalTrace) SpanID() string { return generatedNodeSpanID(span.session, span.node) }
 
 // End builds and registers the exact generated agent record. Ending the root
 // releases the sole graph lease. Any rejection is terminal and aborts the
@@ -378,6 +468,20 @@ func (span *ToolTrace) End(input observability.SpanToolExecuteInput) error {
 	return span.session.endTool(span.node, input)
 }
 
+func (span *AgentTransitionTrace) End(input observability.SpanAgentTransitionInput) error {
+	if span == nil || span.session == nil || span.node == nil {
+		return generatedTraceError(GeneratedTraceInvalidInput)
+	}
+	return span.session.endAgentTransition(span.node, input)
+}
+
+func (span *ApprovalTrace) End(input observability.SpanApprovalResolveInput) error {
+	if span == nil || span.session == nil || span.node == nil {
+		return generatedTraceError(GeneratedTraceInvalidInput)
+	}
+	return span.session.endApproval(span.node, input)
+}
+
 // Abort ends every still-recording physical span without canonical handoff and
 // releases the root lease. It is safe to call from every caller cleanup path;
 // a repeated call is a no-op.
@@ -394,6 +498,18 @@ func (span *ModelTrace) Abort() {
 }
 
 func (span *ToolTrace) Abort() {
+	if span != nil && span.session != nil {
+		span.session.abort()
+	}
+}
+
+func (span *AgentTransitionTrace) Abort() {
+	if span != nil && span.session != nil {
+		span.session.abort()
+	}
+}
+
+func (span *ApprovalTrace) Abort() {
 	if span != nil && span.session != nil {
 		span.session.abort()
 	}
@@ -532,6 +648,54 @@ func (session *generatedTraceSession) endTool(
 	return session.registerEndLocked(node, input.Status, record)
 }
 
+func (session *generatedTraceSession) endAgentTransition(
+	node *generatedTraceNode,
+	input observability.SpanAgentTransitionInput,
+) (err error) {
+	defer session.abortOnPanic()
+	session.mu.Lock()
+	defer session.mu.Unlock()
+	if err := session.preflightEndLocked(node); err != nil {
+		return err
+	}
+	end, ok := generatedTraceEndTime(input.EndTimeUnixNano, node.start)
+	if !ok {
+		session.abortLocked()
+		return generatedTraceError(GeneratedTraceInvalidInput)
+	}
+	input = session.sealAgentTransitionInput(input, node, end)
+	record, buildErr := session.builder.BuildSpanAgentTransition(input)
+	if buildErr != nil {
+		session.abortLocked()
+		return generatedTraceError(GeneratedTraceBuildRejected)
+	}
+	return session.registerEndLocked(node, input.Status, record)
+}
+
+func (session *generatedTraceSession) endApproval(
+	node *generatedTraceNode,
+	input observability.SpanApprovalResolveInput,
+) (err error) {
+	defer session.abortOnPanic()
+	session.mu.Lock()
+	defer session.mu.Unlock()
+	if err := session.preflightEndLocked(node); err != nil {
+		return err
+	}
+	end, ok := generatedTraceEndTime(input.EndTimeUnixNano, node.start)
+	if !ok {
+		session.abortLocked()
+		return generatedTraceError(GeneratedTraceInvalidInput)
+	}
+	input = session.sealApprovalInput(input, node, end)
+	record, buildErr := session.builder.BuildSpanApprovalResolve(input)
+	if buildErr != nil {
+		session.abortLocked()
+		return generatedTraceError(GeneratedTraceBuildRejected)
+	}
+	return session.registerEndLocked(node, input.Status, record)
+}
+
 func (session *generatedTraceSession) preflightEndLocked(node *generatedTraceNode) error {
 	if session == nil || session.closed || session.lease == nil || session.lease.Graph() == nil {
 		return generatedTraceError(GeneratedTraceClosed)
@@ -647,6 +811,51 @@ func (session *generatedTraceSession) sealToolInput(
 	return input
 }
 
+func (session *generatedTraceSession) sealAgentTransitionInput(
+	input observability.SpanAgentTransitionInput,
+	node *generatedTraceNode,
+	end time.Time,
+) observability.SpanAgentTransitionInput {
+	input.Envelope = session.sealEnvelope(input.Envelope, node)
+	input.Kind, input.StartTimeUnixNano, input.EndTimeUnixNano = node.kind, uint64(node.start.UnixNano()), uint64(end.UnixNano())
+	input.ParentSpanID, input.TraceState, input.Flags = generatedTraceParent(node), generatedTraceState(node.spanContext), generatedTraceFlags(node)
+	input.Resource, input.Scope = session.resource.Resource, observability.TraceScopeInput{}
+	input.ResourceServiceName = session.resource.ServiceName
+	input.ResourceServiceNamespace = session.resource.ServiceNamespace
+	input.ResourceServiceInstanceID = session.resource.ServiceInstanceID
+	input.ResourceDeploymentEnvironmentName = session.resource.DeploymentEnvironmentName
+	input.ResourceHostName, input.ResourceHostArch, input.ResourceOsType = session.resource.HostName, session.resource.HostArch, session.resource.OSType
+	input.ResourceTenantID, input.ResourceWorkspaceID = session.resource.TenantID, session.resource.WorkspaceID
+	input.ResourceDefenseClawDeploymentMode = session.resource.DefenseClawDeploymentMode
+	input.ResourceDefenseClawClawMode = session.resource.DefenseClawClawMode
+	input.ResourceDefenseClawInstanceID = session.resource.DefenseClawInstanceID
+	input.ResourceDefenseClawDevicePublicKeyFingerprint = session.resource.DefenseClawDevicePublicKeyFingerprint
+	input.DefenseClawAgentLifecycleEvent = node.nameKey
+	return input
+}
+
+func (session *generatedTraceSession) sealApprovalInput(
+	input observability.SpanApprovalResolveInput,
+	node *generatedTraceNode,
+	end time.Time,
+) observability.SpanApprovalResolveInput {
+	input.Envelope = session.sealEnvelope(input.Envelope, node)
+	input.Kind, input.StartTimeUnixNano, input.EndTimeUnixNano = node.kind, uint64(node.start.UnixNano()), uint64(end.UnixNano())
+	input.ParentSpanID, input.TraceState, input.Flags = generatedTraceParent(node), generatedTraceState(node.spanContext), generatedTraceFlags(node)
+	input.Resource, input.Scope = session.resource.Resource, observability.TraceScopeInput{}
+	input.ResourceServiceName = session.resource.ServiceName
+	input.ResourceServiceNamespace = session.resource.ServiceNamespace
+	input.ResourceServiceInstanceID = session.resource.ServiceInstanceID
+	input.ResourceDeploymentEnvironmentName = session.resource.DeploymentEnvironmentName
+	input.ResourceHostName, input.ResourceHostArch, input.ResourceOsType = session.resource.HostName, session.resource.HostArch, session.resource.OSType
+	input.ResourceTenantID, input.ResourceWorkspaceID = session.resource.TenantID, session.resource.WorkspaceID
+	input.ResourceDefenseClawDeploymentMode = session.resource.DefenseClawDeploymentMode
+	input.ResourceDefenseClawClawMode = session.resource.DefenseClawClawMode
+	input.ResourceDefenseClawInstanceID = session.resource.DefenseClawInstanceID
+	input.ResourceDefenseClawDevicePublicKeyFingerprint = session.resource.DefenseClawDevicePublicKeyFingerprint
+	return input
+}
+
 func (session *generatedTraceSession) sealEnvelope(
 	envelope observability.FamilyEnvelopeInput,
 	node *generatedTraceNode,
@@ -757,6 +966,8 @@ func generatedTraceFamilyKind(family, kind string) bool {
 		return kind == "INTERNAL" || kind == "CLIENT"
 	case observability.TelemetryFamilyModelChat:
 		return kind == "CLIENT"
+	case observability.TelemetryFamilyAgentTransition, observability.TelemetryFamilyApprovalResolve:
+		return kind == "INTERNAL"
 	default:
 		return false
 	}
@@ -770,6 +981,10 @@ func generatedTraceNamePrefix(family string) string {
 		return "chat "
 	case observability.TelemetryFamilyToolExecute:
 		return "execute_tool "
+	case observability.TelemetryFamilyAgentTransition:
+		return "agent.transition "
+	case observability.TelemetryFamilyApprovalResolve:
+		return "exec."
 	default:
 		return ""
 	}

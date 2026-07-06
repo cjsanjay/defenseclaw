@@ -24,6 +24,8 @@ import (
 	observabilityruntime "github.com/defenseclaw/defenseclaw/internal/observability/runtime"
 	"github.com/defenseclaw/defenseclaw/internal/observability/runtimegraph"
 	"github.com/defenseclaw/defenseclaw/internal/telemetry"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 )
 
 type proxyCanonicalCapture struct {
@@ -144,6 +146,40 @@ func TestHandleChatCompletionGeneratedTraceRejectsEmptyModelBeforeConstruction(t
 	}))
 	if recorder.Code != 400 || provider.getLastReq() != nil || len(capture.snapshot()) != 0 {
 		t.Fatalf("status=%d provider=%v spans=%d", recorder.Code, provider.getLastReq(), len(capture.snapshot()))
+	}
+}
+
+func TestHandleChatCompletionGeneratedTraceDoesNotDuplicateLegacySpans(t *testing.T) {
+	runtime, capture := newProxyGeneratedTraceRuntime(t)
+	legacyExporter := tracetest.NewInMemoryExporter()
+	legacyProvider, err := telemetry.NewProviderForTraceTest(sdkmetric.NewManualReader(), legacyExporter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = legacyProvider.Shutdown(context.Background()) })
+
+	proxy := newTestProxy(t, &mockProvider{}, newMockInspector(), "action")
+	proxy.SetDefaultAgentName("openclaw")
+	proxy.otel = legacyProvider
+	proxy.bindObservabilityV8Trace(runtime)
+	recorder := postChat(t, proxy, mustJSON(t, map[string]any{
+		"model": "gpt-4", "messages": []map[string]any{{"role": "user", "content": "hello"}},
+	}))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if got := len(capture.snapshot()); got != 2 {
+		t.Fatalf("generated spans=%d, want agent + model", got)
+	}
+	for _, span := range legacyExporter.GetSpans() {
+		for _, item := range span.Attributes {
+			if string(item.Key) != "gen_ai.operation.name" {
+				continue
+			}
+			if operation := item.Value.AsString(); operation == "invoke_agent" || operation == "chat" {
+				t.Fatalf("v8 request duplicated legacy %q span %q", operation, span.Name)
+			}
+		}
 	}
 }
 
