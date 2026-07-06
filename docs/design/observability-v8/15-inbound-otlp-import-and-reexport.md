@@ -501,6 +501,30 @@ decoded leaves
 The batch health record is metadata about admission. It is not a copy of an
 imported leaf and does not substitute for a successfully imported record.
 
+Batch-health emission follows this exact mapping:
+
+- a decoded empty batch is `telemetry.batch.normalized` with `outcome=completed`;
+- a nonempty batch containing only `imported`, `imported_and_derived`,
+  `derived_only`, `collection_disabled`, and/or a mixture containing
+  `self_suppressed` is `completed`;
+- any `hop_limit`, `unsupported_identity`, `ambiguous_identity`,
+  `invalid_mapped_field`, `invalid_record`, or `local_persistence_failed` makes
+  the batch `partial`, even when independent siblings succeed; and
+- the singular nonempty all-`self_suppressed` case emits no canonical batch log,
+  ingest metric, or receive/normalize trace. A health record for a proven local
+  echo would itself be exported back into the receiver and create an unbounded
+  sequence. Mixed batches still emit their one normal outcome; a later echo of
+  that outcome terminates under this all-self rule.
+
+`telemetry.records.dropped` is emitted at most once for each nonzero permanent
+drop reason in the fixed six-reason set above (`hop_limit` through
+`local_persistence_failed`), ordered exactly as listed. Its `record_count` is the
+count for that reason and its byte fields describe the whole measured batch, not
+an invented per-record size. `collection_disabled` and `self_suppressed` remain
+visible in bounded batch counters/metrics but are policy/loop dispositions, not
+`records.dropped` occurrences. No derivative-target count participates in the
+primary accounting equation or changes the wire acknowledgement.
+
 ## 9. Upgrade and compatibility
 
 `defenseclaw upgrade` requires no new operator choice for this behavior. The v8
@@ -546,7 +570,7 @@ removing locally generated record/observed timestamps.
 | `OTLP-A15` | `TestOTLPInboundCollectionBeforeConstruction` | Disabled primary/derived targets allocate no builder record and reach no SQLite/route; one target's policy does not disable its sibling derivation; every imported mandatory-family log uses the private import context, remains `mandatory=false`, and cannot enter the floor |
 | `OTLP-A16` | `TestOTLPInboundSQLiteBeforeRemote` | Imported logs commit once before fan-out; SQLite failure exports nowhere; traces/metrics create no audit row |
 | `OTLP-A17` | `TestOTLPInboundDestinationFanoutAndRedactionIsolation` | Two capable destinations receive independent selected projections; log-only gets logs; central profiles apply; no adapter can read decoded inbound data |
-| `OTLP-A18` | `TestOTLPInboundPartialBatchAccountingAndAck` | Every mixed-batch leaf has one disposition, the accounting equation holds, bounded health contains no payload, and permanent leaf drops return empty success without retry |
+| `OTLP-A18` | `TestOTLPInboundPartialBatchAccountingAndAck` | Every mixed-batch leaf has one disposition, the accounting equation holds, completed/partial and the ordered fixed six drop-reason occurrences are exact, bounded health contains no payload, an all-self-suppressed batch emits no recursive health/metric/trace, and permanent leaf drops return empty success without retry |
 | `OTLP-A19` | `TestOTLPInboundDuplicateAndCumulativeSemantics` | Repeated ordinary leaves create distinct local IDs; retry keeps one local ID; exact cumulative-token repeats/out-of-order/resets follow section 4.4 |
 | `OTLP-A20` | `TestOTLPInboundReloadGenerationIsolation` | In-flight import remains on one generation lease from collection through delivery; new binding/config publication is atomic and retired generations leak no work |
 | `OTLP-A21` | `TestOTLPInboundPR403TopologyAndMissingData` | Native lifecycle traces preserve root/subagent/turn/tool relations; generic GenAI traces never fabricate absent PR #403 facts |
