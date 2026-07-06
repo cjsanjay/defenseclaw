@@ -1415,7 +1415,13 @@ func (s *Sidecar) applyConfigReloadSnapshot(
 	}
 
 	if aiRestart {
-		s.swapAIDiscovery(nextAIDiscovery)
+		if nextAIDiscovery != nil && appliedCfg.ConfigVersion == 8 {
+			nextAIDiscovery.BindObservabilityV8(newAIDiscoveryV8Adapter(s.observabilityV8Emitter()))
+		}
+		oldDiscovery := s.swapAIDiscovery(nextAIDiscovery)
+		if oldDiscovery != nil && oldDiscovery != nextAIDiscovery {
+			oldDiscovery.BindObservabilityV8(nil)
+		}
 		if api := s.apiSnapshot(); api != nil {
 			api.SetAIDiscoveryService(nextAIDiscovery)
 		}

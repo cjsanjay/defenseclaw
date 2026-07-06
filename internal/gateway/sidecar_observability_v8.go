@@ -319,6 +319,9 @@ func (s *Sidecar) bindObservabilityV8ConsumersLocked() {
 	if judge := s.sharedJudge(); judge != nil {
 		judge.bindJudgeTraceV8(judgeRuntime)
 	}
+	if discovery := s.aiDiscoverySnapshot(); discovery != nil {
+		discovery.BindObservabilityV8(newAIDiscoveryV8Adapter(emitter))
+	}
 
 	s.apiMu.RLock()
 	if api := s.apiServer; api != nil {

@@ -42,10 +42,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/codes"
-	"go.opentelemetry.io/otel/trace"
-
 	"github.com/defenseclaw/defenseclaw/internal/config"
 	"github.com/defenseclaw/defenseclaw/internal/gatewaylog"
 	"github.com/defenseclaw/defenseclaw/internal/inventory/lockparse"
@@ -117,6 +113,10 @@ var allowedAISignalCategories = map[string]bool{
 
 // AIDiscoveryOptions is the sidecar-local runtime view of config.AIDiscoveryConfig.
 type AIDiscoveryOptions struct {
+	// ConfigVersion is runtime wiring state, not an operator-facing discovery
+	// knob. Version 8 makes the canonical runtime authoritative even while its
+	// adapter is detached, preventing legacy telemetry resurrection.
+	ConfigVersion             int
 	Enabled                   bool
 	Mode                      string
 	ScanInterval              time.Duration
@@ -384,6 +384,9 @@ type ContinuousDiscoveryService struct {
 	// only constructs one ContinuousDiscoveryService; if that ever
 	// changes, each instance still gets its own serialization.
 	scanMu sync.Mutex
+
+	observabilityV8Mu sync.RWMutex
+	observabilityV8   AIDiscoveryObservabilityV8
 }
 
 type scanResponse struct {
@@ -475,6 +478,7 @@ func AIDiscoveryOptionsFromConfig(cfg *config.Config) AIDiscoveryOptions {
 	home, _ := os.UserHomeDir()
 	ad := cfg.AIDiscovery
 	return normalizeAIDiscoveryOptions(AIDiscoveryOptions{
+		ConfigVersion:             cfg.ConfigVersion,
 		Enabled:                   ad.Enabled,
 		Mode:                      ad.Mode,
 		ScanInterval:              time.Duration(ad.ScanIntervalMin) * time.Minute,
@@ -664,20 +668,10 @@ func (s *ContinuousDiscoveryService) runScan(ctx context.Context, full bool, sou
 
 	start := time.Now()
 	scanID := newScanID()
-	ctx, span := s.otel.Tracer().Start(ctx, "defenseclaw.ai.discovery",
-		trace.WithAttributes(
-			attribute.String("defenseclaw.ai.discovery.scan_id", scanID),
-			attribute.String("defenseclaw.ai.discovery.source", source),
-			attribute.String("defenseclaw.ai.discovery.privacy_mode", s.opts.Mode),
-		),
-	)
-	// Mirror tenant/workspace/device join keys from the process
-	// resource onto the discovery span so backends that drop OTel
-	// resource on span rows still surface deployment context next
-	// to the trace — same parity guardrail spans get via
-	// telemetry.StartGuardrailStageSpan.
-	s.otel.SetSpanResourceContext(span)
-	defer span.End()
+	ctx, scanObservation := s.startScanObservation(ctx, AIDiscoveryV8ScanStart{
+		ScanID: scanID, Source: source, PrivacyMode: s.opts.Mode, StartedAt: start,
+	})
+	defer scanObservation.abort()
 
 	prev, prevErr := s.store.Load()
 	if prevErr != nil {
@@ -692,19 +686,11 @@ func (s *ContinuousDiscoveryService) runScan(ctx context.Context, full bool, sou
 		fmt.Fprintf(os.Stderr, "[ai-discovery] previous-scan load failed (treating workspace as new): %v\n", prevErr)
 		prev = aiStateFile{}
 	}
-	signals, stats := s.scanSignals(ctx, full)
+	signals, stats := s.scanSignals(ctx, scanID, scanObservation, full)
 	if prevErr != nil {
 		stats.Errors++
 	}
 	report := s.classifyAndPersist(scanID, source, start, signals, stats, prev, full)
-	if stats.Errors > 0 {
-		span.SetStatus(codes.Error, "one or more detectors failed")
-	}
-	span.SetAttributes(
-		attribute.Int("defenseclaw.ai.discovery.signals", report.Summary.TotalSignals),
-		attribute.Int("defenseclaw.ai.discovery.active_signals", report.Summary.ActiveSignals),
-		attribute.Int("defenseclaw.ai.discovery.files_scanned", report.Summary.FilesScanned),
-	)
 
 	s.mu.Lock()
 	s.last = cloneAIDiscoveryReport(report)
@@ -713,6 +699,7 @@ func (s *ContinuousDiscoveryService) runScan(ctx context.Context, full bool, sou
 
 	s.fanoutReport(ctx, report)
 	s.notifyReportObservers(ctx, report)
+	scanObservation.end(report)
 	return report, nil
 }
 
@@ -749,17 +736,35 @@ func (s *ContinuousDiscoveryService) notifyReportObservers(ctx context.Context, 
 // installs (no OTel, redaction enabled) don't pay for a rollup
 // they'd discard.
 func (s *ContinuousDiscoveryService) fanoutReport(ctx context.Context, report AIDiscoveryReport) {
-	otelOn := s.opts.EmitOTel && s.otel != nil && s.otel.Enabled()
+	observer, authoritative := s.observabilityV8Snapshot()
+	v8On := authoritative && observer != nil
+	otelOn := !authoritative && s.opts.EmitOTel && s.otel != nil && s.otel.Enabled()
 	eventsOn := s.events != nil
 	// The snapshot is only consulted when (a) OTel is on, or
 	// (b) gateway events are on AND redaction is OFF (otherwise
 	// BuildAIDiscoveryPayload strips Confidence anyway). Skip
 	// the rollup entirely when neither path needs it.
 	var snap componentRollupSnapshot
-	if otelOn || (eventsOn && s.opts.DisableRedaction) {
+	if v8On || otelOn || (eventsOn && s.opts.DisableRedaction) {
 		snap = buildComponentRollupSnapshot(report.Signals, s.confidenceParams)
 	}
-	if otelOn {
+	if v8On {
+		components := make([]AIDiscoveryV8ComponentObservation, 0, len(snap.Groups))
+		for _, group := range snap.Groups {
+			if confidence, ok := snap.ScoreFor(group); ok {
+				if len(group.Signals) == 0 || strings.TrimSpace(group.Signals[0].Category) == "" {
+					continue
+				}
+				componentKey := strings.ToLower(group.Ecosystem) + "\x00" + strings.ToLower(group.Name)
+				components = append(components, AIDiscoveryV8ComponentObservation{
+					ComponentID: stableSignalID(componentKey), ComponentType: group.Signals[0].Category,
+					HasLifecycleChange: group.HasLifecycleChange,
+					Metrics:            buildComponentConfidenceAttrs(group, confidence, s.confidenceParams.Policy.Version),
+				})
+			}
+		}
+		_ = observer.EmitReport(ctx, report, components)
+	} else if otelOn {
 		s.emitTelemetry(ctx, report, snap)
 	}
 	if eventsOn {
@@ -774,7 +779,12 @@ type scanStats struct {
 	DetectorDurations map[string]int
 }
 
-func (s *ContinuousDiscoveryService) scanSignals(ctx context.Context, full bool) ([]AISignal, scanStats) {
+func (s *ContinuousDiscoveryService) scanSignals(
+	ctx context.Context,
+	scanID string,
+	scanObservation *aiDiscoveryScanObservation,
+	full bool,
+) ([]AISignal, scanStats) {
 	stats := scanStats{DetectorDurations: map[string]int{}}
 	var signals []AISignal
 	seen := map[string]bool{}
@@ -794,20 +804,19 @@ func (s *ContinuousDiscoveryService) scanSignals(ctx context.Context, full bool)
 	}
 	measure := func(name string, fn func() ([]AISignal, int, error)) {
 		start := time.Now()
-		_, child := s.otel.Tracer().Start(ctx, "defenseclaw.ai.discovery.detector",
-			trace.WithAttributes(attribute.String("defenseclaw.ai.discovery.detector", name)))
-		s.otel.SetSpanResourceContext(child)
+		child := scanObservation.startDetector(ctx, s, AIDiscoveryV8DetectorStart{
+			ScanID: scanID, Detector: name, StartedAt: start,
+		})
 		out, files, err := fn()
-		child.SetAttributes(attribute.Int("defenseclaw.ai.discovery.signals", len(out)))
-		if files > 0 {
-			child.SetAttributes(attribute.Int("defenseclaw.ai.discovery.files_scanned", files))
-		}
 		if err != nil {
 			stats.Errors++
-			child.RecordError(err)
-			child.SetStatus(codes.Error, err.Error())
 		}
-		child.End()
+		endedAt := time.Now()
+		child.end(AIDiscoveryV8DetectorResult{
+			EndedAt: endedAt, DurationMs: endedAt.Sub(start).Milliseconds(),
+			SignalsTotal: int64(len(out)), FilesScanned: int64(files), Failed: err != nil,
+			legacyError: err,
+		})
 		stats.FilesScanned += files
 		stats.DetectorDurations[name] = int(time.Since(start).Milliseconds())
 		add(out)

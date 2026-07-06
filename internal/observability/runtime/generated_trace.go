@@ -1291,6 +1291,8 @@ func generatedTraceFamilyKind(family, kind string) bool {
 		return kind == "SERVER"
 	case observability.TelemetryFamilyTelemetryNormalize:
 		return kind == "INTERNAL"
+	case observability.TelemetryFamilyAIDiscovery, observability.TelemetryFamilyAIDiscoveryDetector:
+		return kind == "INTERNAL"
 	default:
 		return false
 	}
@@ -1317,6 +1319,10 @@ func generatedTraceName(family, key string) string {
 		return key + " telemetry"
 	case observability.TelemetryFamilyTelemetryNormalize:
 		return "telemetry.normalize " + key
+	case observability.TelemetryFamilyAIDiscovery:
+		return "defenseclaw.ai.discovery"
+	case observability.TelemetryFamilyAIDiscoveryDetector:
+		return "defenseclaw.ai.discovery.detector"
 	default:
 		return ""
 	}

@@ -18,6 +18,7 @@ package telemetry
 
 import (
 	logNoop "go.opentelemetry.io/otel/log/noop"
+	sdklog "go.opentelemetry.io/otel/sdk/log"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
@@ -80,4 +81,25 @@ func NewProviderForTraceTest(reader *sdkmetric.ManualReader, exporter *tracetest
 		tracer:         tp.Tracer("defenseclaw-test"),
 		logger:         logNoop.NewLoggerProvider().Logger("test"),
 	}, nil
+}
+
+// NewProviderForTraceLogTest creates a legacy provider with deterministic
+// in-memory metric, trace, and log exporters. Cross-package producer tests use
+// it to prove a v7 call path still reaches every historical signal without
+// exposing Provider internals solely for tests.
+func NewProviderForTraceLogTest(
+	reader *sdkmetric.ManualReader,
+	traceExporter *tracetest.InMemoryExporter,
+	logExporter sdklog.Exporter,
+) (*Provider, error) {
+	provider, err := NewProviderForTraceTest(reader, traceExporter)
+	if err != nil {
+		return nil, err
+	}
+	loggerProvider := sdklog.NewLoggerProvider(
+		sdklog.WithProcessor(sdklog.NewSimpleProcessor(logExporter)),
+	)
+	provider.loggerProvider = loggerProvider
+	provider.logger = loggerProvider.Logger("defenseclaw-test")
+	return provider, nil
 }
