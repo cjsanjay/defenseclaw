@@ -166,15 +166,24 @@ func (l *Logger) logActivityImpl(in ActivityInput) error {
 	}
 	stampAuditEventEnvelope(&auditEv)
 	auditEv = sanitizeEvent(auditEv)
-	disposition, emitErr := l.emitControlPlaneV8(context.Background(), auditEv)
+	disposition, emitErr := l.emitControlPlaneV8WithEvidence(
+		context.Background(), auditEv, controlPlaneV8ActivityEvidence(in),
+	)
 	if emitErr != nil {
 		return emitErr
 	}
 	// Runtime-handled activity occurrences exclusively own canonical SQLite and
-	// optional destination fanout. Suppress the native activity_events row plus
-	// legacy audit sink, OTel, and gateway activity mirror so neither local SQL
-	// nor gateway.jsonl duplicates or resurrects the signal.
+	// optional log destination fanout. Suppress the native activity_events row,
+	// audit sinks, and gateway activity mirror so neither local SQL nor
+	// gateway.jsonl duplicates or resurrects the log. The registered aggregate
+	// metrics are independent signals and remain exactly once for dashboard
+	// continuity during producer cutover.
 	if disposition != auditV8Unhandled {
+		_, otel, _ := l.snapshot()
+		if disposition == auditV8Persisted && otel != nil {
+			otel.RecordAuditEvent(context.Background(), auditEv.Action, auditEv.Severity, auditEv.Connector)
+			otel.RecordActivityTotal(context.Background(), action, targetType, actor, len(in.Diff))
+		}
 		return nil
 	}
 	if err := l.store.InsertActivityEvent(row); err != nil {

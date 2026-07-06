@@ -244,8 +244,13 @@ func TestLogActionControlPlaneV8GeneratedFamiliesPersistOnceAndPreserveV7(t *tes
 			if err != nil || bodyObject["defenseclaw.admin.operation"] != string(test.action) {
 				t.Fatalf("generated body = %#v err=%v", bodyObject, err)
 			}
-			if bodyObject["defenseclaw.admin.principal_ref"] != "defenseclaw" {
-				t.Fatalf("generated principal_ref = %#v, want defenseclaw", bodyObject["defenseclaw.admin.principal_ref"])
+			if _, present := bodyObject["defenseclaw.admin.principal_ref"]; present {
+				t.Fatalf("process actor was fabricated as an authenticated principal: %#v", bodyObject)
+			}
+			if bodyObject["defenseclaw.admin.actor_ref"] != "defenseclaw" ||
+				bodyObject["defenseclaw.admin.origin"] != "api" ||
+				bodyObject["defenseclaw.admin.target_ref"] != "control-plane-target" {
+				t.Fatalf("generated actor/origin/target evidence = %#v", bodyObject)
 			}
 
 			canonical := loadV8HistoryRow(t, logger.store, legacy.ID)
@@ -304,6 +309,7 @@ func TestLogActionControlPlaneV8MandatoryFloorPersistsExactlyOnce(t *testing.T) 
 }
 
 func TestLogActivityControlPlaneV8PersistsOneActivityAndOneCanonicalAuditRow(t *testing.T) {
+	const secret = "activity-secret-value-canary"
 	logger := newTestLogger(t)
 	runtime := newTestRuntimeV8Emitter(t, logger.store, router.AdmissionOrdinary)
 	logger.SetRuntimeV8Emitter(runtime)
@@ -312,6 +318,13 @@ func TestLogActivityControlPlaneV8PersistsOneActivityAndOneCanonicalAuditRow(t *
 	if err := logger.LogActivity(ActivityInput{
 		Actor: "watcher", Action: ActionPolicyReload, TargetType: "policy", TargetID: "default",
 		Reason: "filesystem update", RunID: "run-activity", TraceID: "trace-activity",
+		Before: map[string]any{"credential": secret, "enabled": false},
+		After:  map[string]any{"credential": secret, "enabled": true, "mode": "strict"},
+		Diff: []ActivityDiffEntry{
+			{Path: "credential", Op: "replace", Before: secret, After: secret},
+			{Path: "enabled", Op: "replace", Before: false, After: true},
+		},
+		VersionFrom: "gen=7", VersionTo: "gen=8",
 	}); err != nil {
 		t.Fatalf("LogActivity: %v", err)
 	}
@@ -339,8 +352,35 @@ func TestLogActivityControlPlaneV8PersistsOneActivityAndOneCanonicalAuditRow(t *
 		t.Fatal("activity canonical body is absent")
 	}
 	bodyObject, bodyErr := body.Object()
-	if bodyErr != nil || bodyObject["defenseclaw.admin.principal_ref"] != "watcher" {
-		t.Fatalf("activity canonical principal = %#v err=%v", bodyObject, bodyErr)
+	if bodyErr != nil {
+		t.Fatalf("activity canonical body: %v", bodyErr)
+	}
+	if _, present := bodyObject["defenseclaw.admin.principal_ref"]; present {
+		t.Fatalf("trusted watcher subsystem was fabricated as an authenticated principal: %#v", bodyObject)
+	}
+	want := map[string]any{
+		"defenseclaw.admin.actor_ref":        "watcher",
+		"defenseclaw.admin.origin":           "config_file",
+		"defenseclaw.admin.target_ref":       "policy:default",
+		"defenseclaw.admin.before_summary":   "object_fields=2",
+		"defenseclaw.admin.after_summary":    "object_fields=3",
+		"defenseclaw.admin.current_revision": "generation:7",
+		"defenseclaw.admin.revision":         "generation:8",
+	}
+	for key, expected := range want {
+		if bodyObject[key] != expected {
+			t.Fatalf("activity %s=%#v want %#v; body=%#v", key, bodyObject[key], expected, bodyObject)
+		}
+	}
+	if fmt.Sprint(bodyObject["defenseclaw.admin.change_count"]) != "2" {
+		t.Fatalf("activity change count=%#v want 2", bodyObject["defenseclaw.admin.change_count"])
+	}
+	if _, present := bodyObject["defenseclaw.admin.reason"]; present {
+		t.Fatalf("free-form activity reason entered registered reason-code field: %#v", bodyObject)
+	}
+	encoded, encodeErr := records[0].Bytes()
+	if encodeErr != nil || strings.Contains(string(encoded), secret) || strings.Contains(string(encoded), "credential") {
+		t.Fatalf("activity evidence retained config data: err=%v record=%s", encodeErr, encoded)
 	}
 }
 
@@ -350,10 +390,47 @@ func TestControlPlaneV8PrincipalIncludesOnlySchemaSafeKnownActor(t *testing.T) {
 	} else if value, present := principal.Get(); !present || value != "cli:alice" {
 		t.Fatalf("principal = (%q, %t), want (cli:alice, true)", value, present)
 	}
-	for _, actor := range []string{"", "Alice Example", strings.Repeat("a", 257)} {
+	for _, actor := range []string{"", "watcher", "defenseclaw", "Alice Example", strings.Repeat("a", 257)} {
 		if principal, known := controlPlaneV8Principal(actor); known || principal.IsPresent() {
 			t.Fatalf("unsafe actor %q produced a principal", actor)
 		}
+	}
+}
+
+func TestControlPlaneV8ActivityEvidenceAdmitsOnlyRegisteredSafeFacts(t *testing.T) {
+	evidence := controlPlaneV8ActivityEvidence(ActivityInput{
+		Actor: "cli:alice", TargetType: "config", TargetID: "observability",
+		Reason: "operator_request", Before: map[string]any{}, After: map[string]any{"secret": "never-copy"},
+		Diff:        []ActivityDiffEntry{{Path: "secret", Op: "add", After: "never-copy"}},
+		VersionFrom: "revision:41", VersionTo: "revision:42",
+	})
+	for name, value := range map[string]observability.Optional[string]{
+		"actor": evidence.actorRef, "target": evidence.targetRef, "reason": evidence.reason,
+		"before": evidence.beforeSummary, "after": evidence.afterSummary,
+		"revision": evidence.revision, "current revision": evidence.currentRevision,
+	} {
+		if _, present := value.Get(); !present {
+			t.Fatalf("safe activity %s was absent", name)
+		}
+	}
+	if value, _ := evidence.reason.Get(); value != "operator_request" {
+		t.Fatalf("reason=%q want operator_request", value)
+	}
+	if value, _ := evidence.beforeSummary.Get(); value != "object_fields=0" {
+		t.Fatalf("before summary=%q", value)
+	}
+	if value, _ := evidence.afterSummary.Get(); value != "object_fields=1" || strings.Contains(value, "secret") {
+		t.Fatalf("after summary=%q", value)
+	}
+	if count, present := evidence.changeCount.Get(); !present || count != 1 {
+		t.Fatalf("change count=(%d,%t)", count, present)
+	}
+	if unsafe := controlPlaneV8ActivityEvidence(ActivityInput{
+		Actor: "Alice Example", TargetType: "config", TargetID: "contains space",
+		Reason: "free-form reason", VersionTo: "not a revision",
+	}); unsafe.actorRef.IsPresent() || unsafe.targetRef.IsPresent() || unsafe.reason.IsPresent() ||
+		unsafe.revision.IsPresent() {
+		t.Fatalf("unsafe activity evidence was admitted: %#v", unsafe)
 	}
 }
 

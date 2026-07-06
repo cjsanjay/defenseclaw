@@ -713,6 +713,9 @@ func (l *Logger) logActionWithEnvelopeContextAndAsset(
 		return emitErr
 	}
 	if disposition != auditV8Unhandled {
+		if disposition == auditV8Persisted && otel != nil {
+			otel.RecordAuditEvent(context.Background(), event.Action, event.Severity, event.Connector)
+		}
 		return nil
 	}
 	runtimeV8 := l.runtimeV8Snapshot()
@@ -880,6 +883,9 @@ func (l *Logger) logEventWithV8(ctx context.Context, event Event, emit auditV8Ev
 		}
 	}
 	if disposition != auditV8Unhandled {
+		if disposition == auditV8Persisted && otel != nil {
+			otel.RecordAuditEvent(context.Background(), event.Action, event.Severity, event.Connector)
+		}
 		return nil
 	}
 	if err := l.store.LogEvent(event); err != nil {

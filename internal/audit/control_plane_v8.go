@@ -71,6 +71,22 @@ const (
 
 type controlPlaneV8Family uint8
 
+// controlPlaneV8Evidence carries only producer-normalized, secret-free
+// administrative facts. It is deliberately private: arbitrary audit Details
+// strings and config values never become canonical metadata merely because an
+// action maps to a control-plane family.
+type controlPlaneV8Evidence struct {
+	actorRef        observability.Optional[string]
+	origin          observability.Optional[string]
+	targetRef       observability.Optional[string]
+	beforeSummary   observability.Optional[string]
+	afterSummary    observability.Optional[string]
+	reason          observability.Optional[string]
+	revision        observability.Optional[string]
+	currentRevision observability.Optional[string]
+	changeCount     observability.Optional[int64]
+}
+
 var controlPlaneV8PrincipalPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:/-]*$`)
 
 const (
@@ -85,6 +101,14 @@ const (
 // Any handled disposition means the runtime exclusively owns persistence and
 // fanout, including an intentional non-mandatory collection drop.
 func (l *Logger) emitControlPlaneV8(ctx context.Context, event Event) (auditV8Disposition, error) {
+	return l.emitControlPlaneV8WithEvidence(ctx, event, controlPlaneV8Evidence{})
+}
+
+func (l *Logger) emitControlPlaneV8WithEvidence(
+	ctx context.Context,
+	event Event,
+	evidence controlPlaneV8Evidence,
+) (auditV8Disposition, error) {
 	family := controlPlaneV8FamilyForAction(event.Action)
 	if family == controlPlaneV8FamilyNone {
 		return auditV8Unhandled, nil
@@ -116,7 +140,9 @@ func (l *Logger) emitControlPlaneV8(ctx context.Context, event Event) (auditV8Di
 	}
 
 	build := func(snapshot RuntimeV8BuildContext, admission router.Admission) (observability.Record, error) {
-		return buildControlPlaneV8Record(event, family, source, classification, normalized, snapshot, admission)
+		return buildControlPlaneV8Record(
+			event, family, source, classification, normalized, snapshot, admission, evidence,
+		)
 	}
 	result, err := emitter.EmitRuntimeV8(
 		contextWithLegacyEventProjection(ctx, event), metadata, build,
@@ -159,6 +185,7 @@ func buildControlPlaneV8Record(
 	normalized observability.SeverityNormalization,
 	snapshot RuntimeV8BuildContext,
 	admission router.Admission,
+	evidence controlPlaneV8Evidence,
 ) (observability.Record, error) {
 	if event.ID == "" || event.Timestamp.IsZero() || event.BinaryVersion == "" ||
 		snapshot.ConfigGeneration > math.MaxInt64 || !observability.IsStableToken(snapshot.ConfigDigest) {
@@ -221,6 +248,18 @@ func buildControlPlaneV8Record(
 		Provenance:  provenance,
 	}
 	principal, principalKnown := controlPlaneV8Principal(event.Actor)
+	actorRef := evidence.actorRef
+	if !actorRef.IsPresent() {
+		actorRef = optionalControlPlaneV8Actor(event.Actor)
+	}
+	origin := evidence.origin
+	if !origin.IsPresent() {
+		origin = controlPlaneV8Origin(source)
+	}
+	targetRef := evidence.targetRef
+	if !targetRef.IsPresent() {
+		targetRef = optionalControlPlaneV8Target(event.Target)
+	}
 
 	var record observability.Record
 	switch family {
@@ -229,20 +268,38 @@ func buildControlPlaneV8Record(
 			Envelope: envelope, Severity: severity, LogLevel: logLevel,
 			Outcome: observability.OutcomeApplied, DefenseClawAdminOperation: event.Action,
 			DefenseClawAdminPrincipalRef: principal, ConditionAdminPrincipalKnown: principalKnown,
-			MandatoryControlPlaneMutation: true,
+			DefenseClawAdminActorRef: actorRef, DefenseClawAdminOrigin: origin,
+			DefenseClawAdminTargetRef:       targetRef,
+			DefenseClawAdminBeforeSummary:   evidence.beforeSummary,
+			DefenseClawAdminAfterSummary:    evidence.afterSummary,
+			DefenseClawAdminReason:          evidence.reason,
+			DefenseClawAdminRevision:        evidence.revision,
+			DefenseClawAdminCurrentRevision: evidence.currentRevision,
+			DefenseClawAdminChangeCount:     evidence.changeCount,
+			MandatoryControlPlaneMutation:   true,
 		})
 	case controlPlaneV8FamilyPolicyUpdated:
 		record, err = builder.BuildLogPolicyUpdated(observability.LogPolicyUpdatedInput{
 			Envelope: envelope, Severity: severity, LogLevel: logLevel,
 			Outcome: observability.OutcomeApplied, DefenseClawAdminOperation: event.Action,
 			DefenseClawAdminPrincipalRef: principal, ConditionAdminPrincipalKnown: principalKnown,
-			MandatoryControlPlaneMutation: true,
+			DefenseClawAdminActorRef: actorRef, DefenseClawAdminOrigin: origin,
+			DefenseClawAdminTargetRef:       targetRef,
+			DefenseClawAdminBeforeSummary:   evidence.beforeSummary,
+			DefenseClawAdminAfterSummary:    evidence.afterSummary,
+			DefenseClawAdminReason:          evidence.reason,
+			DefenseClawAdminRevision:        evidence.revision,
+			DefenseClawAdminCurrentRevision: evidence.currentRevision,
+			DefenseClawAdminChangeCount:     evidence.changeCount,
+			MandatoryControlPlaneMutation:   true,
 		})
 	case controlPlaneV8FamilyAuthenticationFailed:
 		record, err = builder.BuildLogAuthenticationFailed(observability.LogAuthenticationFailedInput{
 			Envelope: envelope, Severity: severity, LogLevel: logLevel,
 			Outcome: observability.OutcomeRejected, DefenseClawAdminOperation: event.Action,
 			DefenseClawAdminPrincipalRef: principal, ConditionAdminPrincipalKnown: principalKnown,
+			DefenseClawAdminActorRef: actorRef, DefenseClawAdminOrigin: origin,
+			DefenseClawAdminTargetRef: targetRef, DefenseClawAdminReason: evidence.reason,
 			MandatoryProtectedBoundaryAuthFailure: true,
 		})
 	case controlPlaneV8FamilyApprovalResolved:
@@ -370,6 +427,97 @@ func optionalControlPlaneV8Identifier(value string) observability.Optional[strin
 	return observability.Present(value)
 }
 
+func optionalControlPlaneV8Actor(value string) observability.Optional[string] {
+	value = strings.TrimSpace(value)
+	if value == "" || len(value) > 512 || !utf8.ValidString(value) ||
+		!controlPlaneV8PrincipalPattern.MatchString(value) {
+		return observability.Absent[string]()
+	}
+	return observability.Present(value)
+}
+
+func optionalControlPlaneV8Target(value string) observability.Optional[string] {
+	value = strings.TrimSpace(value)
+	if value == "" || len(value) > 1024 || !utf8.ValidString(value) ||
+		!controlPlaneV8PrincipalPattern.MatchString(value) {
+		return observability.Absent[string]()
+	}
+	return observability.Present(value)
+}
+
+func optionalControlPlaneV8Reason(value string) observability.Optional[string] {
+	value = strings.TrimSpace(value)
+	if value == "" || len(value) > 256 || !utf8.ValidString(value) ||
+		!observability.IsStableToken(value) {
+		return observability.Absent[string]()
+	}
+	return observability.Present(value)
+}
+
+func optionalControlPlaneV8Revision(value string) observability.Optional[string] {
+	value = strings.TrimSpace(value)
+	if strings.HasPrefix(value, "gen=") {
+		digits := strings.TrimPrefix(value, "gen=")
+		valid := digits != ""
+		for _, character := range digits {
+			valid = valid && character >= '0' && character <= '9'
+		}
+		if valid {
+			value = "generation:" + digits
+		}
+	}
+	return optionalControlPlaneV8Identifier(value)
+}
+
+func controlPlaneV8Origin(source observability.Source) observability.Optional[string] {
+	var origin string
+	switch source {
+	case observability.SourceOperatorAPI:
+		origin = "api"
+	case observability.SourceCLI:
+		origin = "cli"
+	case observability.SourceWatcher:
+		origin = "config_file"
+	case observability.SourceOperator:
+		origin = "operator"
+	default:
+		origin = "internal"
+	}
+	return observability.Present(origin)
+}
+
+func controlPlaneV8ActivityEvidence(input ActivityInput) controlPlaneV8Evidence {
+	return controlPlaneV8Evidence{
+		actorRef:        optionalControlPlaneV8Actor(input.Actor),
+		targetRef:       optionalControlPlaneV8Target(activityTargetReference(input.TargetType, input.TargetID)),
+		beforeSummary:   controlPlaneV8StateSummary(input.Before),
+		afterSummary:    controlPlaneV8StateSummary(input.After),
+		reason:          optionalControlPlaneV8Reason(input.Reason),
+		revision:        optionalControlPlaneV8Revision(input.VersionTo),
+		currentRevision: optionalControlPlaneV8Revision(input.VersionFrom),
+		changeCount:     observability.Present(int64(len(input.Diff))),
+	}
+}
+
+func activityTargetReference(targetType, targetID string) string {
+	targetType = strings.TrimSpace(targetType)
+	targetID = strings.TrimSpace(targetID)
+	if targetType == "" || targetID == "" {
+		return ""
+	}
+	return targetType + ":" + targetID
+}
+
+func controlPlaneV8StateSummary(value map[string]any) observability.Optional[string] {
+	if value == nil {
+		return observability.Absent[string]()
+	}
+	// Counts are intentionally the only generic summary. Field names and values
+	// may themselves disclose credentials, paths, tenant data, or governed
+	// content, so richer summaries require an explicit producer-owned allowlist.
+	return observability.Present(fmt.Sprintf("object_fields=%d", len(value)))
+}
+
 func controlPlaneV8Correlation(event Event) observability.Correlation {
 	return observability.Correlation{
 		RunID:             event.RunID,
@@ -387,7 +535,9 @@ func controlPlaneV8Correlation(event Event) observability.Correlation {
 
 func controlPlaneV8Principal(actor string) (observability.Optional[string], bool) {
 	actor = strings.TrimSpace(actor)
-	if actor == "" || len(actor) > 256 || !utf8.ValidString(actor) ||
+	trustedPrincipal := strings.HasPrefix(actor, "principal:") ||
+		strings.HasPrefix(actor, "operator:") || strings.HasPrefix(actor, "cli:")
+	if !trustedPrincipal || len(actor) > 256 || !utf8.ValidString(actor) ||
 		!controlPlaneV8PrincipalPattern.MatchString(actor) {
 		return observability.Absent[string](), false
 	}
