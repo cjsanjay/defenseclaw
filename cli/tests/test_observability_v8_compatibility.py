@@ -73,6 +73,11 @@ def _artifact() -> dict[str, Any]:
                 "traces": [_selector(event_names=["span.tool.execute", "span.model.chat"])],
                 "metrics": [_selector(buckets=["platform.health", "model.io"])],
             },
+            "galileo": {
+                "traces": [
+                    _selector(event_names=["span.agent.invoke", "span.model.chat", "span.tool.execute"]),
+                ],
+            },
             "local_observability": {
                 "logs": [_selector(buckets=["agent.lifecycle", "platform.health"])],
                 "traces": [_selector(event_names=["span.workflow.run", "span.agent.run"])],
@@ -118,6 +123,11 @@ def test_valid_narrow_artifact_exposes_exact_immutable_queries() -> None:
     assert selection.exporter_selectors("audit_sink", "logs")[0].actions == (
         "config-update",
         "scan",
+    )
+    assert selection.exporter_selectors("galileo", "traces")[0].event_names == (
+        "span.agent.invoke",
+        "span.model.chat",
+        "span.tool.execute",
     )
     assert selection.feature_selectors("otel_individual_findings")[0].event_names == ("finding.observed",)
     assert selection.span_filter_selectors("chat", ["gen_ai.operation.name", "gen_ai.request.model"])[

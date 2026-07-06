@@ -44,6 +44,7 @@ EXPORTER_SIGNALS: Final = {
     "gateway_console": ("logs",),
     "audit_sink": ("logs",),
     "generic_otlp": SIGNALS,
+    "galileo": ("traces",),
     "local_observability": SIGNALS,
 }
 FEATURE_NAMES: Final = ("otel_individual_findings",)

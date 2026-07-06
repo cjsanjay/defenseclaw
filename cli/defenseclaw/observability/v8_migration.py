@@ -1606,6 +1606,16 @@ def _convert_otel_destination(
         ]:
             groups.append((protocol, by_protocol[protocol], False))
 
+    if is_local:
+        # The runtime binds the local-observability-v1 trace projection to the
+        # reserved destination name.  V7 signal-specific protocols may split a
+        # destination, so keep the trace-bearing group on that exact name and
+        # suffix only its generic log/metric siblings.  Stable partitioning
+        # preserves the existing protocol order for all non-trace groups.
+        groups = [group for group in groups if "traces" in group[1]] + [
+            group for group in groups if "traces" not in group[1]
+        ]
+
     split = len(groups) > 1
     result: list[dict[str, Any]] = []
     for group_index, (protocol, group, galileo_group) in enumerate(groups):
@@ -1707,7 +1717,23 @@ def _span_filter_selectors(
     if not value:
         return None
     if is_galileo and _matches_authoritative_galileo_span_filter(value):
-        return None  # The versioned Galileo preset owns this exact projection.
+        try:
+            selectors = ctx.compatibility_selection.exporter_selectors("galileo", "traces")
+        except V7CompatibilityError:
+            raise V8MigrationDependencyError(
+                "span_filter_mapping_incomplete",
+                path,
+                "regenerate the exact Galileo exporter compatibility selection",
+                source_name=ctx.source_name,
+            ) from None
+        if not selectors:
+            raise V8MigrationDependencyError(
+                "span_filter_mapping_incomplete",
+                path,
+                "regenerate a nonempty Galileo exporter compatibility selection",
+                source_name=ctx.source_name,
+            )
+        return selectors
     predicates: list[tuple[str, Sequence[str]]] = []
     if raw_operations := value.get("operations"):
         for index, raw in enumerate(_sequence(raw_operations, f"{path}.operations", ctx)):

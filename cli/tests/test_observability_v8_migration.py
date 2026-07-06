@@ -75,6 +75,17 @@ _GENERATED_COMPATIBILITY = {
             ],
             "metrics": [{"buckets": ["model.io", "agent.lifecycle", "ai.discovery", "platform.health"]}],
         },
+        "galileo": {
+            "traces": [
+                {
+                    "event_names": [
+                        "span.agent.invoke",
+                        "span.model.chat",
+                        "span.tool.execute",
+                    ]
+                }
+            ],
+        },
         "local_observability": {
             "logs": [
                 {
@@ -1197,6 +1208,82 @@ otel:
     assert first.candidate == second.candidate
 
 
+def test_split_local_protocols_keep_dashboard_trace_profile_on_reserved_name() -> None:
+    result = _convert(
+        """config_version: 7
+otel:
+  enabled: true
+  destinations:
+    - name: local-observability
+      preset: local-otlp
+      enabled: true
+      endpoint: http://127.0.0.1:4318
+      protocol: http
+      traces: {enabled: true, protocol: grpc, endpoint: '127.0.0.1:4317'}
+      logs: {enabled: true}
+      metrics: {enabled: true}
+"""
+    )
+    document = _document(result)
+    trace_destination = _destination(document, "local-observability")
+    log_metric_destination = _destination(document, "local-observability-logs-metrics")
+
+    assert result.summary.local_observability == "full"
+    assert trace_destination["protocol"] == "grpc"
+    assert trace_destination["signal_overrides"] == {"traces": {"endpoint": "127.0.0.1:4317"}}
+    assert trace_destination["routes"] == [
+        {
+            "name": "legacy-local-observability-traces-1",
+            "signals": ["traces"],
+            "selector": {
+                "event_names": [
+                    "span.agent.invoke",
+                    "span.model.chat",
+                    "span.retrieval.search",
+                    "span.tool.execute",
+                    "span.workflow.run",
+                ]
+            },
+            "redaction_profile": "legacy-v7",
+        }
+    ]
+    assert log_metric_destination["protocol"] == "http/protobuf"
+    assert log_metric_destination["routes"] == [
+        {
+            "name": "legacy-individual-findings-disabled-1",
+            "signals": ["logs"],
+            "selector": {"event_names": ["finding.observed"]},
+            "action": "drop",
+        },
+        {
+            "name": "legacy-local-observability-logs-1",
+            "signals": ["logs"],
+            "selector": {
+                "buckets": [
+                    "security.finding",
+                    "model.io",
+                    "tool.activity",
+                    "agent.lifecycle",
+                    "platform.health",
+                ]
+            },
+            "redaction_profile": "legacy-v7",
+        },
+        {
+            "name": "legacy-local-observability-metrics-1",
+            "signals": ["metrics"],
+            "selector": {"buckets": ["model.io", "agent.lifecycle", "platform.health"]},
+        },
+    ]
+    assert all(
+        "*" not in values
+        for destination in (trace_destination, log_metric_destination)
+        for route in destination["routes"]
+        for values in route["selector"].values()
+    )
+    load_validate_v8(result.candidate)
+
+
 def test_flat_signal_protocol_becomes_v7_destination_fallback() -> None:
     result = _convert(
         """config_version: 7
@@ -1732,14 +1819,92 @@ __SPAN_FILTER__
                 "event_names": [
                     "span.agent.invoke",
                     "span.model.chat",
+                    "span.tool.execute",
+                ]
+            },
+            "redaction_profile": "legacy-v7",
+        }
+    ]
+
+
+def test_generic_otel_emit_disable_and_redaction_goldens_are_exact() -> None:
+    template = """config_version: 7
+privacy: {disable_redaction: __DISABLED__}
+ai_discovery: {enabled: true, emit_otel: false}
+otel:
+  enabled: true
+  logs: {emit_individual_findings: false}
+  destinations:
+    - name: remote
+      enabled: true
+      endpoint: https://collector.example.test
+      protocol: grpc
+      logs: {enabled: true}
+      traces: {enabled: true}
+      metrics: {enabled: true}
+"""
+    expected_routes = [
+        {
+            "name": "legacy-ai-discovery-disabled",
+            "signals": ["logs", "traces", "metrics"],
+            "selector": {"buckets": ["ai.discovery"]},
+            "action": "drop",
+        },
+        {
+            "name": "legacy-individual-findings-disabled-1",
+            "signals": ["logs"],
+            "selector": {"event_names": ["finding.observed"]},
+            "action": "drop",
+        },
+        {
+            "name": "legacy-generic-otlp-logs-1",
+            "signals": ["logs"],
+            "selector": {"buckets": ["security.finding", "model.io", "ai.discovery"]},
+            "redaction_profile": "legacy-v7",
+        },
+        {
+            "name": "legacy-generic-otlp-traces-1",
+            "signals": ["traces"],
+            "selector": {
+                "event_names": [
+                    "span.agent.invoke",
+                    "span.model.chat",
                     "span.retrieval.search",
                     "span.tool.execute",
                     "span.workflow.run",
                 ]
             },
             "redaction_profile": "legacy-v7",
-        }
+        },
+        {
+            "name": "legacy-generic-otlp-metrics-1",
+            "signals": ["metrics"],
+            "selector": {"buckets": ["model.io", "agent.lifecycle", "ai.discovery", "platform.health"]},
+        },
     ]
+
+    redacted = _convert(template.replace("__DISABLED__", "false"))
+    redacted_document = _document(redacted)
+    assert _destination(redacted_document, "remote")["routes"] == expected_routes
+    assert redacted_document["observability"]["defaults"]["redaction_profile"] == "legacy-v7"
+    assert "ai.discovery" not in redacted_document["observability"].get("buckets", {})
+
+    unredacted = _convert(template.replace("__DISABLED__", "true"))
+    unredacted_document = _document(unredacted)
+    unredacted_routes = _destination(unredacted_document, "remote")["routes"]
+    assert unredacted_document["observability"]["defaults"] == {
+        "collect": {"logs": False, "traces": False, "metrics": False}
+    }
+    assert unredacted_routes == [
+        ({**route, "redaction_profile": "none"} if route.get("redaction_profile") == "legacy-v7" else route)
+        for route in expected_routes
+    ]
+    for route in (*expected_routes, *unredacted_routes):
+        if route.get("action", "send") == "send":
+            assert route["selector"]
+            assert all("*" not in values for values in route["selector"].values())
+    load_validate_v8(redacted.candidate)
+    load_validate_v8(unredacted.candidate)
 
 
 def test_span_filter_predicates_use_v7_whitespace_normalization() -> None:
