@@ -140,6 +140,9 @@ func (s *Sidecar) BootstrapObservabilityRuntime(
 		_ = owner.closeWithTimeout()
 		return false, newSidecarObservabilityV8BootstrapError(sidecarObservabilityV8BootstrapBinding, err)
 	}
+	if s.logger != nil {
+		s.logger.SetControlPlaneV8Emitter(owner)
+	}
 	return true, nil
 }
 
@@ -336,6 +339,31 @@ func (owner *sidecarOwnedObservabilityV8Runtime) Emit(
 	return owner.runtime.Emit(ctx, metadata, builder)
 }
 
+// EmitControlPlaneV8 adapts the audit package's cycle-free producer seam to
+// the generation-pinned runtime builder contract. The adapter never derives
+// provenance from the legacy process-global version state: both generation
+// and digest come from the exact graph lease that admitted this emission.
+func (owner *sidecarOwnedObservabilityV8Runtime) EmitControlPlaneV8(
+	ctx context.Context,
+	metadata router.Metadata,
+	builder audit.ControlPlaneV8Builder,
+) (bool, error) {
+	if builder == nil {
+		return false, newSidecarObservabilityV8BootstrapError(sidecarObservabilityV8BootstrapInvalid, nil)
+	}
+	outcome, err := owner.Emit(
+		ctx,
+		metadata,
+		func(snapshot observabilityruntime.EmitContext, admission router.Admission) (observability.Record, error) {
+			return builder(audit.ControlPlaneV8BuildContext{
+				ConfigGeneration: snapshot.Generation(),
+				ConfigDigest:     snapshot.Digest(),
+			}, admission)
+		},
+	)
+	return outcome.LocalPersisted(), err
+}
+
 func (owner *sidecarOwnedObservabilityV8Runtime) EmitTraceCanary(
 	ctx context.Context,
 	destination string,
@@ -434,6 +462,13 @@ func (s *Sidecar) closeOwnedObservabilityV8Runtime() error {
 	s.observabilityV8Mu.Unlock()
 	if !ok || owner == nil {
 		return nil
+	}
+	// Stop new control-plane producers from acquiring this owner before Close
+	// waits for already-started emissions. Sidecar shutdown has already joined
+	// the config/API/proxy producers, so no selected v8 action can legitimately
+	// fall back to the legacy path after this detach.
+	if s.logger != nil {
+		s.logger.SetControlPlaneV8Emitter(nil)
 	}
 	if err := owner.closeWithTimeout(); err != nil {
 		return err
@@ -622,5 +657,6 @@ var (
 	_ sidecarRuntimeEmitter                = (*sidecarOwnedObservabilityV8Runtime)(nil)
 	_ sidecarRuntimeCanaryEmitter          = (*sidecarOwnedObservabilityV8Runtime)(nil)
 	_ proxyV8TraceRuntime                  = (*sidecarOwnedObservabilityV8Runtime)(nil)
+	_ audit.ControlPlaneV8Emitter          = (*sidecarOwnedObservabilityV8Runtime)(nil)
 	_ config.ObservabilityV8SecretResolver = sidecarObservabilityV8SecretResolver{}
 )

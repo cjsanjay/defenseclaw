@@ -453,39 +453,82 @@ func (writer *EventHistoryWriter) appendContextTxResolvedProfile(
 		record.Outcome() == observability.OutcomeRevoked ||
 		record.Outcome() == observability.OutcomeTerminated
 
+	legacyTarget := any(nullStr(target))
+	legacyActor := any(provenance.Producer)
+	legacyDetails := any(details)
+	legacyStructured := any(string(payloadJSON))
+	legacySeverity := severityValue
+	legacySchemaVersion := any(version.SchemaVersion)
+	legacyContentHash := any(nullStr(provenance.ConfigDigest))
+	legacyGeneration := any(provenance.ConfigGeneration)
+	legacyBinaryVersion := any(provenance.BinaryVersion)
+	legacyAgentName := any(sql.NullString{})
+	legacyDestinationApp := any(sql.NullString{})
+	legacyToolName := any(sql.NullString{})
+	legacyToolID := any(nullStr(correlation.ToolInvocationID))
+	legacyStepIndex := any(sql.NullInt64{})
+	legacyEnforced := any(nullBool(enforced))
+	legacyRulePackDir := any(sql.NullString{})
+	if legacy, present, legacyErr := legacyEventProjectionFromContext(ctx, record); legacyErr != nil {
+		return eventHistoryAppendOutcome{}, eventHistoryFailure(EventHistoryHealthProjectionRejected, legacyErr)
+	} else if present {
+		structured, encodeErr := encodeStructuredPayload(legacy.Structured)
+		if encodeErr != nil {
+			return eventHistoryAppendOutcome{}, eventHistoryFailure(EventHistoryHealthProjectionRejected, encodeErr)
+		}
+		legacyTarget = nullStr(legacy.Target)
+		legacyActor = legacy.Actor
+		legacyDetails = legacy.Details
+		legacyStructured = structured
+		legacySeverity = nullStr(legacy.Severity)
+		legacySchemaVersion = nullInt(legacy.SchemaVersion)
+		legacyContentHash = nullStr(legacy.ContentHash)
+		legacyGeneration = nullUint64(legacy.Generation)
+		legacyBinaryVersion = nullStr(legacy.BinaryVersion)
+		legacyAgentName = nullStr(legacy.AgentName)
+		legacyDestinationApp = nullStr(legacy.DestinationApp)
+		legacyToolName = nullStr(legacy.ToolName)
+		legacyToolID = nullStr(legacy.ToolID)
+		legacyStepIndex = nullInt(legacy.StepIdx)
+		legacyEnforced = nullBool(legacy.Enforced)
+		legacyRulePackDir = nullStr(legacy.RulePackDir)
+	}
+
 	_, err = txExec(tx, "v8_event_history_insert", `
 		INSERT INTO audit_events (
 			id, timestamp, action, target, actor, details, structured_json, severity,
-			run_id, trace_id, request_id, session_id, agent_instance_id, policy_id, tool_id,
+			run_id, trace_id, request_id, session_id, turn_id, agent_name, agent_instance_id,
+			policy_id, destination_app, tool_name, tool_id,
 			schema_version, content_hash, generation, binary_version, agent_id, sidecar_instance_id,
-			connector, enforced,
+			connector, step_idx, enforced, rule_pack_dir,
 			bucket, event_name, source, signal, bucket_catalog_version, payload_json, projected_record_json,
 			record_schema_version, projection_hash,
-			redaction_profile, mandatory, turn_id, evaluation_id, scan_id, finding_id,
+			redaction_profile, mandatory, evaluation_id, scan_id, finding_id,
 			enforcement_action_id, payload_hmac, integrity_algorithm, integrity_key_id
 		) VALUES (
 			?, ?, ?, ?, ?, ?, ?, ?,
-			?, ?, ?, ?, ?, ?, ?, ?, ?,
+			?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
 			?, ?, ?, ?, ?, ?,
-			?, ?,
+			?, ?, ?, ?,
 			?, ?, ?, ?, ?, ?, ?,
-			?, ?, ?, ?, ?, ?,
+			?, ?,
+			?, ?, ?, ?, ?,
 			?, ?, ?, ?
 		)`,
 		record.RecordID(), record.Timestamp().Format(time.RFC3339Nano),
-		action, nullStr(target), provenance.Producer, details, string(payloadJSON), severityValue,
+		action, legacyTarget, legacyActor, legacyDetails, legacyStructured, legacySeverity,
 		nullStr(correlation.RunID), nullStr(correlation.TraceID), nullStr(correlation.RequestID),
-		nullStr(correlation.SessionID), nullStr(correlation.AgentInstanceID), nullStr(correlation.PolicyID),
-		nullStr(correlation.ToolInvocationID),
-		version.SchemaVersion, nullStr(provenance.ConfigDigest),
-		provenance.ConfigGeneration, provenance.BinaryVersion,
+		nullStr(correlation.SessionID), nullStr(correlation.TurnID), legacyAgentName,
+		nullStr(correlation.AgentInstanceID), nullStr(correlation.PolicyID), legacyDestinationApp,
+		legacyToolName, legacyToolID,
+		legacySchemaVersion, legacyContentHash, legacyGeneration, legacyBinaryVersion,
 		nullStr(correlation.AgentID), nullStr(correlation.SidecarInstanceID),
-		nullStr(record.Connector()), nullBool(enforced),
+		nullStr(record.Connector()), legacyStepIndex, legacyEnforced, legacyRulePackDir,
 		string(record.Bucket()), string(record.EventName()), string(record.Source()), string(record.Signal()),
 		record.BucketCatalogVersion(), string(payloadJSON), string(projectedEnvelope),
 		record.SchemaVersion(), projectionHash,
 		metadata.RedactionProfile, boolInt(record.Mandatory()),
-		nullStr(correlation.TurnID), nullStr(correlation.EvaluationID), nullStr(correlation.ScanID),
+		nullStr(correlation.EvaluationID), nullStr(correlation.ScanID),
 		nullStr(correlation.FindingOccurrenceID), nullStr(correlation.EnforcementActionID),
 		nullStr(payloadHMAC), nullStr(integrityAlgorithm), nullStr(integrityKeyID),
 	)

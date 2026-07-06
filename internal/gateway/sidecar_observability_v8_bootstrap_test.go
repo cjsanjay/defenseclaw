@@ -6,6 +6,8 @@ package gateway
 import (
 	"bytes"
 	"context"
+	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -186,6 +188,124 @@ func TestSidecarBootstrapLocalObservabilityCanaryReachesAgent360Projection(t *te
 		t.Fatalf("Agent360 compatibility aliases = %q/%q",
 			gatewayProtoAttribute(root.Attributes, "defenseclaw.agent.type"),
 			gatewayProtoAttribute(root.Attributes, "gen_ai.agent.type"))
+	}
+}
+
+func TestSidecarBootstrapControlPlaneActionPersistsAndRoutesExactlyOnce(t *testing.T) {
+	requests := make(chan []byte, 8)
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		body, _ := io.ReadAll(request.Body)
+		requests <- append([]byte(nil), body...)
+		writer.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	fixture := newSidecarV8BootstrapFixture(t, 8, "")
+	raw := []byte(fmt.Sprintf(
+		"config_version: 8\ndata_dir: %q\nobservability:\n  destinations:\n    - name: control-plane-http\n      kind: http_jsonl\n      endpoint: %q\n      network_safety:\n        allow_private_networks: true\n      batch:\n        scheduled_delay_ms: 1\n",
+		fixture.dataDir,
+		server.URL,
+	))
+	bound, err := fixture.sidecar.BootstrapObservabilityRuntime(
+		t.Context(), fixture.configPath, raw,
+	)
+	if err != nil || !bound {
+		t.Fatalf("bootstrap bound=%t error=%v", bound, err)
+	}
+	if err := fixture.logger.LogActionCtx(
+		audit.ContextWithEnvelope(context.Background(), audit.CorrelationEnvelope{
+			RunID: "control-plane-run", RequestID: "control-plane-request",
+		}),
+		string(audit.ActionConfigUpdate),
+		"config.yaml",
+		"generation applied",
+	); err != nil {
+		t.Fatalf("LogActionCtx: %v", err)
+	}
+
+	rows, err := fixture.store.ListEvents(100)
+	if err != nil {
+		t.Fatalf("list local audit rows: %v", err)
+	}
+	var row audit.Event
+	matches := 0
+	for _, candidate := range rows {
+		if candidate.RequestID == "control-plane-request" {
+			row = candidate
+			matches++
+		}
+	}
+	if matches != 1 {
+		t.Fatalf("local control-plane occurrence rows=%d, want exactly 1", matches)
+	}
+	if row.Action != string(audit.ActionConfigUpdate) {
+		t.Fatalf("local compatibility action=%q", row.Action)
+	}
+	reader, err := sql.Open("sqlite", fixture.store.DatabasePath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close()
+	var bucket, eventName, projectedRecord string
+	var mandatory int
+	if err := reader.QueryRowContext(
+		t.Context(),
+		`SELECT bucket, event_name, mandatory, projected_record_json FROM audit_events WHERE id = ?`,
+		row.ID,
+	).Scan(&bucket, &eventName, &mandatory, &projectedRecord); err != nil {
+		t.Fatalf("read local canonical control-plane row: %v", err)
+	}
+	if bucket != string(observability.BucketComplianceActivity) ||
+		eventName != observability.TelemetryEventConfigChangeApplied ||
+		mandatory != 1 || projectedRecord == "" {
+		t.Fatalf("local canonical control-plane fields=%q/%q/%d/%t",
+			bucket, eventName, mandatory, projectedRecord != "")
+	}
+
+	deadline := time.NewTimer(2 * time.Second)
+	defer deadline.Stop()
+	remoteMatches := 0
+	for remoteMatches == 0 {
+		select {
+		case requestBody := <-requests:
+			for _, line := range bytes.Split(bytes.TrimSpace(requestBody), []byte{'\n'}) {
+				if len(line) == 0 {
+					continue
+				}
+				var projected map[string]any
+				if err := json.Unmarshal(line, &projected); err != nil {
+					t.Fatalf("decode HTTP JSONL projection: %v", err)
+				}
+				if projected["record_id"] != row.ID {
+					continue
+				}
+				remoteMatches++
+				if projected["bucket"] != string(observability.BucketComplianceActivity) ||
+					projected["event_name"] != observability.TelemetryEventConfigChangeApplied ||
+					projected["action"] != string(audit.ActionConfigUpdate) {
+					t.Fatalf("remote canonical control-plane projection=%#v", projected)
+				}
+				projection, ok := projected["projection"].(map[string]any)
+				if !ok || projection["redaction_profile"] != "none" {
+					t.Fatalf("default remote projection metadata=%#v", projection)
+				}
+			}
+		case <-deadline.C:
+			t.Fatal("HTTP JSONL destination did not receive the control-plane record")
+		}
+	}
+	select {
+	case requestBody := <-requests:
+		for _, line := range bytes.Split(bytes.TrimSpace(requestBody), []byte{'\n'}) {
+			var projected map[string]any
+			if json.Unmarshal(line, &projected) == nil && projected["record_id"] == row.ID {
+				remoteMatches++
+			}
+		}
+	case <-time.After(50 * time.Millisecond):
+	}
+	if remoteMatches != 1 {
+		t.Fatalf("remote control-plane deliveries=%d, want exactly 1", remoteMatches)
 	}
 }
 

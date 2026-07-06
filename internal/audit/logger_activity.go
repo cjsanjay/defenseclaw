@@ -172,13 +172,20 @@ func (l *Logger) logActivityImpl(in ActivityInput) error {
 		BinaryVersion:     prov.BinaryVersion,
 		SidecarInstanceID: ProcessAgentInstanceID(),
 	}
+	stampAuditEventEnvelope(&auditEv)
 	auditEv = sanitizeEvent(auditEv)
-	if err := l.store.LogEvent(auditEv); err != nil {
-		_, otel, _ := l.snapshot()
-		if otel != nil {
-			otel.RecordAuditDBError(context.Background(), "insert_activity_audit")
+	handledV8, emitErr := l.emitControlPlaneV8(context.Background(), auditEv)
+	if emitErr != nil {
+		return emitErr
+	}
+	if !handledV8 {
+		if err := l.store.LogEvent(auditEv); err != nil {
+			_, otel, _ := l.snapshot()
+			if otel != nil {
+				otel.RecordAuditDBError(context.Background(), "insert_activity_audit")
+			}
+			return err
 		}
-		return err
 	}
 
 	sinksMgr, otel, structured := l.snapshot()

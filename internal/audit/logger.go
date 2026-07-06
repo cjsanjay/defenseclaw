@@ -153,6 +153,10 @@ type Logger struct {
 	sinks      *sinks.Manager
 	otel       *telemetry.Provider
 	structured StructuredEmitter
+	// controlPlaneV8 is an optional cycle-free adapter to the unified v8
+	// runtime. The runtime package imports audit for event-history persistence,
+	// so audit owns this narrow interface rather than importing runtime back.
+	controlPlaneV8 ControlPlaneV8Emitter
 	// gwWriter is optional: when set, scan completions emit EventScan /
 	// EventScanFinding rows through the gateway JSONL choke point.
 	gwWriter *gatewaylog.Writer
@@ -208,6 +212,27 @@ func (l *Logger) SetStructuredEmitter(e StructuredEmitter) {
 	l.mu.Lock()
 	l.structured = e
 	l.mu.Unlock()
+}
+
+// SetControlPlaneV8Emitter binds the generated administrative producer path to
+// the unified v8 runtime. A nil emitter preserves the complete v7 path.
+func (l *Logger) SetControlPlaneV8Emitter(emitter ControlPlaneV8Emitter) {
+	if l == nil {
+		return
+	}
+	l.mu.Lock()
+	l.controlPlaneV8 = emitter
+	l.mu.Unlock()
+}
+
+func (l *Logger) controlPlaneV8Snapshot() ControlPlaneV8Emitter {
+	if l == nil {
+		return nil
+	}
+	l.mu.RLock()
+	emitter := l.controlPlaneV8
+	l.mu.RUnlock()
+	return emitter
 }
 
 // SetGatewayLogWriter installs the gateway JSONL writer used for v7
@@ -578,7 +603,7 @@ func (l *Logger) LogAction(action, target, details string) error {
 // their ctx will not carry an envelope (EnvelopeFromContext returns
 // the zero value, which the auto-fill treats as "no override").
 func (l *Logger) LogActionCtx(ctx context.Context, action, target, details string) error {
-	return l.logActionWithEnvelope(EnvelopeFromContext(ctx), action, target, details)
+	return l.logActionWithEnvelopeContext(ctx, EnvelopeFromContext(ctx), action, target, details, "INFO")
 }
 
 // LogActionWithTrace persists an action event with an OTel trace ID for
@@ -638,7 +663,7 @@ func (l *Logger) LogActionSeverityConnector(action, target, details, severity, c
 // SQLite, sinks, and OTel — a regression in one surface can no longer
 // diverge from the others.
 func (l *Logger) logActionWithEnvelope(env CorrelationEnvelope, action, target, details string) error {
-	return l.logActionWithEnvelopeSeverity(env, action, target, details, "INFO")
+	return l.logActionWithEnvelopeContext(context.Background(), env, action, target, details, "INFO")
 }
 
 // logActionWithEnvelopeSeverity is logActionWithEnvelope with a caller-chosen
@@ -646,6 +671,14 @@ func (l *Logger) logActionWithEnvelope(env CorrelationEnvelope, action, target, 
 // path is unchanged; only call sites that explicitly need a non-INFO row
 // (via LogActionSeverityConnector) reach this with a different value.
 func (l *Logger) logActionWithEnvelopeSeverity(env CorrelationEnvelope, action, target, details, severity string) error {
+	return l.logActionWithEnvelopeContext(context.Background(), env, action, target, details, severity)
+}
+
+func (l *Logger) logActionWithEnvelopeContext(
+	ctx context.Context,
+	env CorrelationEnvelope,
+	action, target, details, severity string,
+) error {
 	if severity == "" {
 		severity = "INFO"
 	}
@@ -666,7 +699,14 @@ func (l *Logger) logActionWithEnvelopeSeverity(env CorrelationEnvelope, action, 
 	applyEnvelope(&event, env)
 	stampAuditEventEnvelope(&event)
 	event = sanitizeEvent(event)
-	storeErr := l.store.LogEvent(event)
+	handledV8, emitErr := l.emitControlPlaneV8(ctx, event)
+	if emitErr != nil {
+		return emitErr
+	}
+	var storeErr error
+	if !handledV8 {
+		storeErr = l.store.LogEvent(event)
+	}
 	if storeErr != nil {
 		if otel != nil {
 			otel.RecordAuditDBError(context.Background(), "insert_event")
