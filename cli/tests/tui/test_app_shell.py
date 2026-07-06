@@ -22,6 +22,11 @@ import pytest
 from defenseclaw.config import RegistrySource
 from defenseclaw.db import Store
 from defenseclaw.models import Counts, Event
+from defenseclaw.observability.v8_status import (
+    V8BucketStatus,
+    V8DestinationStatus,
+    V8OperatorStatus,
+)
 from defenseclaw.tui.app import (
     _DEFENSECLAW_LOGO,
     DefenseClawTUI,
@@ -29,6 +34,7 @@ from defenseclaw.tui.app import (
     _enforcement_label,
     _event_histogram,
     _fetch_ai_usage,
+    _fetch_v8_operator_status,
     _overview_config,
     _policy_posture,
 )
@@ -121,6 +127,103 @@ async def test_overview_renders_observability_destination_panel(tmp_path) -> Non
     assert "75.0% (3/4)" in rendered
     assert "api.example.test" in rendered
     assert "/otel/traces" in rendered
+
+
+@pytest.mark.asyncio
+async def test_overview_renders_canonical_v8_policy_and_bounded_live_health(tmp_path) -> None:
+    from rich.console import Console
+
+    overview = OverviewPanelModel(OverviewConfig(data_dir=str(tmp_path)), version="test")
+    overview.set_observability_status(
+        V8OperatorStatus(
+            source=str(tmp_path / "config.yaml"),
+            data_dir=str(tmp_path),
+            plan_digest="a" * 64,
+            bucket_catalog_version=1,
+            retention_days=0,
+            local_path=str(tmp_path / "audit.db"),
+            judge_bodies_path=str(tmp_path / "judge.db"),
+            destinations=(
+                V8DestinationStatus(
+                    name="collector",
+                    kind="otlp",
+                    enabled=True,
+                    generated=False,
+                    capabilities=("logs", "traces", "metrics"),
+                    selected_signals=("logs", "traces", "metrics"),
+                    policy_form="capability_default",
+                    endpoint="https://collector.example.test/v1/traces",
+                    route_count=1,
+                    buckets=("platform.health",),
+                    redaction_profiles=("none",),
+                ),
+            ),
+            buckets=(
+                V8BucketStatus(
+                    "platform.health",
+                    ("logs", "traces", "metrics"),
+                    "none",
+                ),
+            ),
+            warnings=(),
+            judge_bodies_enabled=False,
+        )
+    )
+    overview.set_health(
+        HealthSnapshot(
+            telemetry=SubsystemHealth(
+                state="running",
+                last_error="Authorization: Bearer must-not-render",
+                details={
+                    "destination": "collector",
+                    "state": "degraded",
+                    "reason": "queue_full",
+                    "failure": "retryable_delivery",
+                    "headers": {"authorization": "must-not-render"},
+                },
+            )
+        )
+    )
+    app = DefenseClawTUI(overview_model=overview)
+
+    async with app.run_test(size=(260, 55)) as pilot:
+        await pilot.pause()
+        console = Console(width=260, height=100, record=True)
+        console.print(app._overview_renderable())
+        rendered = console.export_text()
+
+    assert "Local SQLite · retention=unbounded · controller=unavailable · judge capture=disabled" in rendered
+    assert "collector" in rendered
+    assert "enabled" in rendered
+    assert "degraded (queue_full)" in rendered
+    assert "logs,traces,metrics" in rendered
+    assert "unredacted (none)" in rendered
+    assert "unavailable" in rendered
+    assert "https://collector.example.test/v1/traces" in rendered
+    assert "must-not-render" not in rendered
+    assert "Authorization" not in rendered
+
+
+def test_v8_tui_status_loader_preserves_legacy_and_bounds_invalid_source_errors(tmp_path) -> None:
+    config = SimpleNamespace(data_dir=str(tmp_path))
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("config_version: 7\n")
+    assert _fetch_v8_operator_status(config, tmp_path) == (None, "")
+
+    config_path.write_text(
+        "config_version: 8\n"
+        "observability:\n"
+        "  destinations:\n"
+        "    - name: collector\n"
+        "      kind: otlp\n"
+        "      endpoint: https://user:secret@example.test/?token=must-not-render\n"
+        "      unsupported: must-not-render\n"
+    )
+    status, error = _fetch_v8_operator_status(config, tmp_path)
+    assert status is None
+    assert error.startswith("invalid v8 configuration at $")
+    assert "must-not-render" not in error
+    assert "user:secret" not in error
 
 
 @pytest.mark.asyncio

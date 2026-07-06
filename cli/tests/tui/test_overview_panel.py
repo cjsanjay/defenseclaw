@@ -14,6 +14,11 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
+from defenseclaw.observability.v8_status import (
+    V8BucketStatus,
+    V8DestinationStatus,
+    V8OperatorStatus,
+)
 from defenseclaw.tui.panels.ai_discovery import AIUsageSignal, AIUsageSnapshot, AIUsageSummary
 from defenseclaw.tui.panels.overview import (
     MAX_AI_DISCOVERY_OVERVIEW_ROWS,
@@ -217,6 +222,131 @@ def test_overview_observability_rows_combine_otel_and_audit_sinks() -> None:
     assert "user:secret" not in repr(rows)
     assert "api_key=secret" not in repr(rows)
     assert "token=secret" not in repr(rows)
+
+
+def test_overview_v8_rows_merge_policy_and_exact_live_health_without_inference() -> None:
+    model = _model()
+    model.set_observability_status(
+        V8OperatorStatus(
+            source="/tmp/config.yaml",
+            data_dir="/tmp/dc",
+            plan_digest="a" * 64,
+            bucket_catalog_version=1,
+            retention_days=0,
+            local_path="/tmp/dc/audit.db",
+            judge_bodies_path="/tmp/dc/judge.db",
+            destinations=(
+                V8DestinationStatus(
+                    name="local-sqlite",
+                    kind="sqlite",
+                    enabled=True,
+                    generated=True,
+                    capabilities=("logs",),
+                    selected_signals=("logs",),
+                    policy_form="implicit_local",
+                    endpoint="/tmp/dc/audit.db",
+                    route_count=1,
+                    buckets=("compliance.activity", "model.io"),
+                    redaction_profiles=("none", "strict"),
+                ),
+                V8DestinationStatus(
+                    name="collector",
+                    kind="otlp",
+                    enabled=True,
+                    generated=False,
+                    capabilities=("logs", "traces", "metrics"),
+                    selected_signals=("logs", "traces", "metrics"),
+                    policy_form="capability_default",
+                    endpoint="https://collector.example.test/v1/traces",
+                    route_count=1,
+                    buckets=("compliance.activity", "model.io"),
+                    redaction_profiles=("none",),
+                ),
+            ),
+            buckets=(
+                V8BucketStatus("compliance.activity", ("logs", "traces", "metrics"), "none"),
+                V8BucketStatus("model.io", ("logs", "traces", "metrics"), "strict"),
+            ),
+            warnings=(),
+            judge_bodies_enabled=False,
+        )
+    )
+    model.set_health(
+        HealthSnapshot(
+            telemetry=SubsystemHealth(
+                state="running",
+                last_error="Bearer must-not-render",
+                details={
+                    "destinations": [
+                        {
+                            "name": "collector",
+                            "state": "degraded",
+                            "reason": "queue_full",
+                            "queue_items": 4,
+                            "max_queue_items": 16,
+                            "queue_bytes": 2048,
+                            "max_queue_bytes": 8192,
+                            "queue_dropped": 2,
+                            "last_success": "2026-07-06T10:00:00Z",
+                            "last_failure": "2026-07-06T10:01:00Z",
+                            "last_error_class": "retryable_delivery",
+                            "endpoint": "https://user:secret@evil.invalid/?token=secret",
+                        }
+                    ],
+                    "retention_state": "degraded",
+                    "retention_failure": "run_failed",
+                },
+            )
+        )
+    )
+
+    local, collector = model.observability_destination_rows()
+    assert local.target == "v8"
+    assert local.policy_state == "enabled"
+    assert local.state == "unavailable"
+    assert local.signals == "logs"
+    assert local.buckets == "2/2"
+    assert local.redaction == "mixed: none, strict"
+    assert local.queue == "unavailable"
+    assert local.endpoint == "/tmp/dc/audit.db"
+    assert collector.state == "degraded"
+    assert collector.health_reason == "queue_full"
+    assert collector.redaction == "unredacted (none)"
+    assert collector.queue == "4/16 items, 2.0 KiB/8.0 KiB, 2 dropped"
+    assert collector.activity == ("ok 2026-07-06T10:00:00Z; error 2026-07-06T10:01:00Z (retryable_delivery)")
+    assert collector.endpoint == "https://collector.example.test/v1/traces"
+    assert "must-not-render" not in repr((local, collector))
+    assert "user:secret" not in repr((local, collector))
+
+    storage = model.observability_storage_status()
+    assert storage is not None
+    assert storage.retention == "unbounded"
+    assert storage.judge_capture == "disabled"
+    assert storage.retention_health == "degraded"
+    assert storage.retention_failure == "run_failed"
+
+
+def test_overview_legacy_destination_rendering_is_unchanged_without_v8_status() -> None:
+    model = _model()
+    model.set_health(
+        HealthSnapshot(
+            telemetry=SubsystemHealth(
+                details={
+                    "destinations": [
+                        {
+                            "name": "legacy",
+                            "enabled": True,
+                            "endpoint": "127.0.0.1:4317",
+                            "signals": "traces",
+                        }
+                    ]
+                }
+            )
+        )
+    )
+    assert model.observability_storage_status() is None
+    assert model.observability_destination_rows()[0].target == "otel"
+    assert model.observability_destination_rows()[0].state == "enabled"
 
 
 def test_agent_detail_rolls_up_connectors_in_multi_connector() -> None:

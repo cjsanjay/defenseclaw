@@ -19,9 +19,13 @@ import pytest
 from defenseclaw.observability.v8_config import V8ConfigError
 from defenseclaw.observability.v8_status import (
     V8BucketStatus,
+    V8DestinationHealth,
     V8DestinationStatus,
     V8OperatorStatus,
+    destination_health_from_gateway,
+    inspect_v8_operator_status,
     operator_status_from_effective,
+    retention_health_from_gateway,
     source_is_v8,
 )
 
@@ -123,8 +127,13 @@ def _effective() -> dict[str, object]:
 
 
 def test_operator_status_preserves_effective_capabilities_routes_and_redaction() -> None:
+    effective = _effective()
+    assert isinstance(effective["destinations"], list)
+    effective["destinations"][1]["transport"]["endpoint"] = (
+        "https://user:secret@collector.example.test/v1/traces?token=must-not-render"
+    )
     status = operator_status_from_effective(
-        _effective(),
+        effective,
         source="/tmp/config.yaml",
         data_dir="/tmp",
         plan_digest="a" * 64,
@@ -152,11 +161,13 @@ def test_operator_status_preserves_effective_capabilities_routes_and_redaction()
         "platform.health",
     )
     assert collector.redaction_label == "unredacted (none)"
-    assert collector.endpoint == "https://collector.example.test"
+    assert collector.endpoint == "https://collector.example.test/v1/traces"
     assert jsonl.route_count == 2
     assert jsonl.buckets == ("compliance.activity",)
     assert jsonl.redaction_label == "redacted: strict"
     assert "authorization" not in repr(status)
+    assert "must-not-render" not in repr(status)
+    assert "user:secret" not in repr(status)
 
 
 def test_operator_status_reports_unbounded_retention() -> None:
@@ -165,6 +176,133 @@ def test_operator_status_reports_unbounded_retention() -> None:
     effective["local"]["retention_days"] = 0
     status = operator_status_from_effective(effective, source="x", data_dir="y", plan_digest="z")
     assert status.unbounded_retention
+
+
+def test_destination_health_accepts_only_bounded_content_free_fields() -> None:
+    health = destination_health_from_gateway(
+        {
+            "telemetry": {
+                "details": {
+                    "destinations": [
+                        {
+                            "name": "collector",
+                            "state": "degraded",
+                            "reason": "queue_full",
+                            "queue": {
+                                "items": 7,
+                                "max_items": 20,
+                                "bytes": 2048,
+                                "max_bytes": 4096,
+                            },
+                            "counters": {"dropped": 3},
+                            "last_success_at": "2026-07-06T12:00:00Z",
+                            "last_failure_at": "2026-07-06T12:01:00Z",
+                            "last_error_code": "retryable_delivery",
+                            "last_error": "Authorization: Bearer must-not-render",
+                            "headers": {"authorization": "must-not-render"},
+                            "endpoint": "https://user:secret@example.test/?token=secret",
+                        }
+                    ]
+                }
+            }
+        }
+    )
+
+    assert health == {
+        "collector": V8DestinationHealth(
+            name="collector",
+            state="degraded",
+            reason="queue_full",
+            queue_items=7,
+            queue_bytes=2048,
+            queue_max_items=20,
+            queue_max_bytes=4096,
+            dropped=3,
+            last_success="2026-07-06T12:00:00Z",
+            last_failure="2026-07-06T12:01:00Z",
+            last_error_class="retryable_delivery",
+        )
+    }
+    assert health["collector"].queue_label == "7/20 items, 2.0 KiB/4.0 KiB, 3 dropped"
+    assert health["collector"].activity_label == (
+        "ok 2026-07-06T12:00:00Z; error 2026-07-06T12:01:00Z (retryable_delivery)"
+    )
+    assert "must-not-render" not in repr(health)
+    assert "secret" not in repr(health)
+
+
+def test_destination_health_current_transition_and_retention_are_not_inferred() -> None:
+    payload = {
+        "telemetry": {
+            "state": "running",
+            "last_error": "https://secret.example.test",
+            "details": {
+                "destination": "galileo",
+                "state": "failing",
+                "failure": "partial_success",
+                "retention_state": "degraded",
+                "retention_failure": "run_failed",
+            },
+        }
+    }
+    result = destination_health_from_gateway(payload)
+    assert result["galileo"].state == "failing"
+    assert result["galileo"].last_error_class == "partial_success"
+    assert result["galileo"].queue_label == "unavailable"
+    assert result["galileo"].activity_label == "error partial_success"
+    assert retention_health_from_gateway(payload) == ("degraded", "run_failed")
+
+    assert destination_health_from_gateway({"telemetry": {"state": "running", "details": {}}}) == {}
+
+
+def test_destination_health_redacts_legacy_delivery_error_but_preserves_times() -> None:
+    result = destination_health_from_gateway(
+        {
+            "details": {
+                "destinations": [
+                    {
+                        "name": "galileo",
+                        "delivery": {
+                            "last_attempt_at": "2026-07-06T12:01:00Z",
+                            "last_success_at": "2026-07-06T12:00:00Z",
+                            "last_error": (
+                                "rpc failed for https://user:secret@example.test/?token=must-not-render"
+                            ),
+                        },
+                    }
+                ]
+            }
+        }
+    )["galileo"]
+
+    assert result.last_success == "2026-07-06T12:00:00Z"
+    assert result.last_failure == "2026-07-06T12:01:00Z"
+    assert result.last_error_class == "details_redacted"
+    assert result.activity_label == (
+        "ok 2026-07-06T12:00:00Z; error 2026-07-06T12:01:00Z (details_redacted)"
+    )
+    assert "must-not-render" not in repr(result)
+    assert "user:secret" not in repr(result)
+
+
+def test_destination_health_rejects_unbounded_or_malformed_values() -> None:
+    result = destination_health_from_gateway(
+        {
+            "details": {
+                "destination": "collector",
+                "state": "RUNNING",
+                "reason": "contains spaces and https://secret.example.test",
+                "queue_items": -1,
+                "queue_bytes": "4",
+                "last_success": "yesterday",
+                "last_error": "must-not-render",
+            }
+        }
+    )["collector"]
+    assert result.state == ""
+    assert result.reason == ""
+    assert result.queue_label == "unavailable"
+    assert result.activity_label == "unavailable"
 
 
 def test_operator_status_accepts_canonical_null_warning_slice() -> None:
@@ -208,6 +346,22 @@ def test_source_is_v8_does_not_downgrade_invalid_v8_to_v7(tmp_path: Path) -> Non
 
 def test_missing_source_is_not_v8(tmp_path: Path) -> None:
     assert not source_is_v8(tmp_path / "missing.yaml")
+
+
+def test_inspect_status_preserves_effective_judge_capture_default_and_override(tmp_path: Path) -> None:
+    path = tmp_path / "config.yaml"
+    wire = SimpleNamespace(
+        effective=_effective(),
+        source=str(path),
+        data_dir=str(tmp_path),
+        plan_digest="a" * 64,
+    )
+    with patch("defenseclaw.observability.v8_status.inspect_v8_config", return_value=wire):
+        path.write_text("config_version: 8\nobservability: {}\n")
+        assert inspect_v8_operator_status(path).judge_bodies_enabled is True
+
+        path.write_text("config_version: 8\nguardrail:\n  retain_judge_bodies: false\nobservability: {}\n")
+        assert inspect_v8_operator_status(path).judge_bodies_enabled is False
 
 
 def test_doctor_v8_dispatch_renders_retention_destinations_and_warnings(tmp_path: Path) -> None:
@@ -287,3 +441,78 @@ def test_doctor_invalid_v8_never_falls_back_to_legacy_destination_reader(tmp_pat
     legacy.assert_not_called()
     assert result.failed == 1
     assert result.checks[0]["label"] == "Observability v8 configuration"
+
+
+def test_doctor_v8_renders_bounded_live_health_and_never_raw_error_text() -> None:
+    from defenseclaw.commands.cmd_doctor import (
+        _check_observability_v8_status,
+        _DoctorResult,
+    )
+
+    status = V8OperatorStatus(
+        source="/tmp/config.yaml",
+        data_dir="/tmp",
+        plan_digest="a" * 64,
+        bucket_catalog_version=1,
+        retention_days=30,
+        local_path="/tmp/audit.db",
+        judge_bodies_path="/tmp/judge.db",
+        destinations=(
+            V8DestinationStatus(
+                name="collector",
+                kind="otlp",
+                enabled=True,
+                generated=False,
+                capabilities=("logs", "traces", "metrics"),
+                selected_signals=("logs", "traces", "metrics"),
+                policy_form="capability_default",
+                endpoint="https://collector.example.test",
+                route_count=1,
+                buckets=("platform.health",),
+                redaction_profiles=("none",),
+            ),
+        ),
+        buckets=(V8BucketStatus("platform.health", ("logs", "traces", "metrics"), "none"),),
+        warnings=(),
+        judge_bodies_enabled=False,
+    )
+    result = _DoctorResult()
+    _check_observability_v8_status(
+        status,
+        result,
+        live_health={
+            "telemetry": {
+                "last_error": "Authorization Bearer must-not-render",
+                "details": {
+                    "destinations": [
+                        {
+                            "name": "collector",
+                            "state": "degraded",
+                            "reason": "queue_full",
+                            "queue_items": 2,
+                            "max_queue_items": 10,
+                            "last_failure": "2026-07-06T12:00:00Z",
+                            "last_error_class": "retryable_delivery",
+                            "last_error": "must-not-render",
+                        }
+                    ],
+                    "retention_state": "degraded",
+                    "retention_failure": "run_failed",
+                },
+            }
+        },
+    )
+
+    checks = {item["label"]: item for item in result.checks}
+    assert checks["Judge-body store"]["detail"] == ("capture=disabled; retention=30 days; path=/tmp/judge.db")
+    destination = checks["Destination: collector"]
+    assert destination["status"] == "warn"
+    assert "health=degraded/queue_full" in destination["detail"]
+    assert "queue=2/10 items" in destination["detail"]
+    assert "last=error 2026-07-06T12:00:00Z (retryable_delivery)" in destination["detail"]
+    assert checks["Retention controller"] == {
+        "status": "warn",
+        "label": "Retention controller",
+        "detail": "degraded; failure=run_failed",
+    }
+    assert "must-not-render" not in repr(result.checks)

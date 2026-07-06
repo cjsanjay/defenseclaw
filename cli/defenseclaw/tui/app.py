@@ -743,6 +743,8 @@ class DefenseClawTUI(App[None]):
         self._credentials_refresh_running = False
         self._health_poll_running = False
         self._ai_usage_poll_running = False
+        self._observability_status_load_running = False
+        self._observability_status_reload_pending = False
         # Fingerprints of the last payload pushed into the body and
         # detail ``Static`` widgets. Textual's ``Static.update`` forces
         # a layout pass even when the content is byte-for-byte
@@ -1393,6 +1395,7 @@ class DefenseClawTUI(App[None]):
         # let the interval keep it fresh.
         self.set_interval(3.0, self._schedule_health_poll)
         self._schedule_health_poll()
+        self._schedule_observability_status_load()
         self._schedule_ai_usage_poll()
         # Mirror Go's loadCredentialsCmd dispatched from Init(): load
         # the credential snapshot once on mount (and again every 60 s)
@@ -6771,39 +6774,100 @@ class DefenseClawTUI(App[None]):
         """Full-width inventory of runtime-loaded telemetry destinations."""
 
         rows = self.overview_model.observability_destination_rows()
+        storage = self.overview_model.observability_storage_status()
+        status_error = self.overview_model.observability_status_error
         if rows:
             table = Table.grid(padding=(0, 2), expand=True)
-            table.add_column(no_wrap=True, min_width=18)  # NAME
-            table.add_column(no_wrap=True, min_width=11)  # TARGET
-            table.add_column(no_wrap=True, min_width=16)  # SCOPE
-            table.add_column(no_wrap=True, min_width=12)  # KIND
-            table.add_column(no_wrap=True, min_width=10)  # STATE
-            table.add_column(no_wrap=True, min_width=18)  # SIGNALS
-            table.add_column(no_wrap=True, min_width=13)  # ROUTING
-            table.add_column(overflow="ellipsis")  # ENDPOINT
-            table.add_row(
-                Text("NAME", style=TOKENS.text_secondary),
-                Text("TARGET", style=TOKENS.text_secondary),
-                Text("SCOPE", style=TOKENS.text_secondary),
-                Text("KIND/PRESET", style=TOKENS.text_secondary),
-                Text("STATE", style=TOKENS.text_secondary),
-                Text("SIGNALS", style=TOKENS.text_secondary),
-                Text("ROUTING", style=TOKENS.text_secondary),
-                Text("ENDPOINT", style=TOKENS.text_secondary),
-            )
-            for row in rows:
-                color = state_color(row.state)
+            if storage is not None:
+                for width in (18, 12, 9, 14, 18, 9, 21, 20, 24):
+                    table.add_column(no_wrap=True, min_width=width)
+                table.add_column(overflow="ellipsis")
                 table.add_row(
-                    Text(row.name, style=TOKENS.text_primary),
-                    Text(row.target, style=TOKENS.text_secondary),
-                    Text(row.scope, style=TOKENS.text_secondary),
-                    Text(row.kind, style=TOKENS.text_secondary),
-                    Text(row.state, style=color),
-                    Text(row.signals, style=TOKENS.text_secondary),
-                    Text(row.routing or "—", style=TOKENS.accent_cyan),
-                    Text(row.endpoint, style=TOKENS.text_muted, overflow="ellipsis"),
+                    *(
+                        Text(label, style=TOKENS.text_secondary)
+                        for label in (
+                            "NAME",
+                            "KIND",
+                            "POLICY",
+                            "HEALTH",
+                            "SIGNALS",
+                            "BUCKETS",
+                            "REDACTION",
+                            "QUEUE",
+                            "LAST RESULT",
+                            "TARGET",
+                        )
+                    )
+                )
+                for row in rows:
+                    health = row.state
+                    if row.health_reason:
+                        health += f" ({row.health_reason})"
+                    table.add_row(
+                        Text(row.name, style=TOKENS.text_primary),
+                        Text(row.kind, style=TOKENS.text_secondary),
+                        Text(row.policy_state, style=state_color(row.policy_state)),
+                        Text(health, style=state_color(row.state)),
+                        Text(row.signals, style=TOKENS.text_secondary),
+                        Text(row.buckets, style=TOKENS.text_secondary),
+                        Text(row.redaction, style=TOKENS.accent_cyan),
+                        Text(row.queue, style=TOKENS.text_secondary),
+                        Text(row.activity, style=TOKENS.text_secondary),
+                        Text(row.endpoint, style=TOKENS.text_muted, overflow="ellipsis"),
+                    )
+            else:
+                table.add_column(no_wrap=True, min_width=18)  # NAME
+                table.add_column(no_wrap=True, min_width=11)  # TARGET
+                table.add_column(no_wrap=True, min_width=16)  # SCOPE
+                table.add_column(no_wrap=True, min_width=12)  # KIND
+                table.add_column(no_wrap=True, min_width=10)  # STATE
+                table.add_column(no_wrap=True, min_width=18)  # SIGNALS
+                table.add_column(no_wrap=True, min_width=13)  # ROUTING
+                table.add_column(overflow="ellipsis")  # ENDPOINT
+                table.add_row(
+                    Text("NAME", style=TOKENS.text_secondary),
+                    Text("TARGET", style=TOKENS.text_secondary),
+                    Text("SCOPE", style=TOKENS.text_secondary),
+                    Text("KIND/PRESET", style=TOKENS.text_secondary),
+                    Text("STATE", style=TOKENS.text_secondary),
+                    Text("SIGNALS", style=TOKENS.text_secondary),
+                    Text("ROUTING", style=TOKENS.text_secondary),
+                    Text("ENDPOINT", style=TOKENS.text_secondary),
+                )
+                for row in rows:
+                    color = state_color(row.state)
+                    table.add_row(
+                        Text(row.name, style=TOKENS.text_primary),
+                        Text(row.target, style=TOKENS.text_secondary),
+                        Text(row.scope, style=TOKENS.text_secondary),
+                        Text(row.kind, style=TOKENS.text_secondary),
+                        Text(row.state, style=color),
+                        Text(row.signals, style=TOKENS.text_secondary),
+                        Text(row.routing or "—", style=TOKENS.accent_cyan),
+                        Text(row.endpoint, style=TOKENS.text_muted, overflow="ellipsis"),
+                    )
+            prefix: list[RenderableType] = []
+            if storage is not None:
+                retention_health = storage.retention_health or "unavailable"
+                if storage.retention_failure:
+                    retention_health += f" ({storage.retention_failure})"
+                prefix.append(
+                    Text(
+                        "Local SQLite · "
+                        f"retention={storage.retention} · controller={retention_health} · "
+                        f"judge capture={storage.judge_capture}",
+                        style=TOKENS.text_secondary,
+                    )
+                )
+                prefix.append(
+                    Text(
+                        f"Event history: {storage.local_path} · Judge bodies: {storage.judge_bodies_path}",
+                        style=TOKENS.text_muted,
+                        overflow="ellipsis",
+                    )
                 )
             body: RenderableType = Group(
+                *prefix,
                 table,
                 Text(
                     "Names are identities: a new name adds a route; the same name updates it. "
@@ -6812,11 +6876,13 @@ class DefenseClawTUI(App[None]):
                 ),
             )
         else:
-            body = Text(
-                "No runtime-loaded destinations. Configure one in 0 Setup → "
-                "Observability / Galileo, then restart the gateway.",
-                style=TOKENS.text_secondary,
+            message = (
+                f"Canonical observability status unavailable: {status_error}"
+                if status_error
+                else "No runtime-loaded destinations. Configure one in 0 Setup → "
+                "Observability / Galileo, then restart the gateway."
             )
+            body = Text(message, style=TOKENS.text_secondary)
         return Panel(
             body,
             title=Text(
@@ -6860,11 +6926,52 @@ class DefenseClawTUI(App[None]):
         """Plain-text equivalent of the observability destination panel."""
 
         rows = self.overview_model.observability_destination_rows()
+        storage = self.overview_model.observability_storage_status()
         if not rows:
+            message = (
+                f"Canonical observability status unavailable: "
+                f"{rich_escape(self.overview_model.observability_status_error)}"
+                if self.overview_model.observability_status_error
+                else "No runtime-loaded destinations. Configure one in 0 Setup → "
+                "Observability / Galileo, then restart the gateway."
+            )
             return (
                 f"[bold {TOKENS.accent_cyan}]OBSERVABILITY DESTINATIONS · RUNTIME[/]\n"
-                "  No runtime-loaded destinations. Configure one in 0 Setup → "
-                "Observability / Galileo, then restart the gateway.\n\n"
+                f"  {message}\n\n"
+            )
+        if storage is not None:
+            retention_health = storage.retention_health or "unavailable"
+            if storage.retention_failure:
+                retention_health += f" ({storage.retention_failure})"
+            lines = [
+                "  Local SQLite · "
+                f"retention={storage.retention} · controller={retention_health} · "
+                f"judge capture={storage.judge_capture}",
+                f"  Event history: {rich_escape(storage.local_path)} · "
+                f"Judge bodies: {rich_escape(storage.judge_bodies_path)}",
+                "",
+                f"  {'NAME':<20}{'KIND':<14}{'POLICY':<11}{'HEALTH':<22}"
+                f"{'SIGNALS':<20}{'BUCKETS':<10}{'REDACTION':<24}{'QUEUE':<22}LAST RESULT / TARGET",
+            ]
+            for row in rows:
+                health = row.state
+                if row.health_reason:
+                    health += f" ({row.health_reason})"
+                lines.append(
+                    f"  {rich_escape(row.name[:19]):<20}{rich_escape(row.kind[:13]):<14}"
+                    f"{rich_escape(row.policy_state[:10]):<11}{rich_escape(health[:21]):<22}"
+                    f"{rich_escape(row.signals[:19]):<20}{rich_escape(row.buckets[:9]):<10}"
+                    f"{rich_escape(row.redaction[:23]):<24}{rich_escape(row.queue[:21]):<22}"
+                    f"{rich_escape(row.activity)} · {rich_escape(row.endpoint)}"
+                )
+            lines.append(
+                "  Missing live queue/timestamp fields are shown as unavailable; "
+                "no health is inferred from config."
+            )
+            return (
+                f"[bold {TOKENS.accent_cyan}]OBSERVABILITY DESTINATIONS · RUNTIME[/]\n"
+                + "\n".join(lines)
+                + "\n\n"
             )
         lines = [
             f"  {'NAME':<20}{'TARGET':<14}{'SCOPE':<20}{'KIND/PRESET':<16}{'STATE':<11}"
@@ -8831,6 +8938,8 @@ class DefenseClawTUI(App[None]):
         # readiness so rows flip on the same tick.
         self._refresh_models_from_disk()
         self._sync_setup_readiness()
+        self.overview_model.set_observability_status(None)
+        self._schedule_observability_status_load()
 
     def _schedule_credentials_refresh(self) -> None:
         """Dispatch a credential refresh as a Textual worker.
@@ -9470,6 +9579,21 @@ class DefenseClawTUI(App[None]):
             thread=False,
         )
 
+    def _schedule_observability_status_load(self) -> None:
+        """Load the canonical masked v8 plan off the Textual event loop."""
+
+        if self.config is None or getattr(self, "_app_shutting_down", False):
+            return
+        if self._observability_status_load_running:
+            self._observability_status_reload_pending = True
+            return
+        self._observability_status_load_running = True
+        self.run_worker(
+            self._load_observability_status_once(),
+            exclusive=False,
+            thread=False,
+        )
+
     def _schedule_ai_usage_poll(self) -> None:
         """Kick off a non-blocking ``/api/v1/ai-usage`` fetch."""
 
@@ -9492,6 +9616,27 @@ class DefenseClawTUI(App[None]):
             await self._poll_health()
         finally:
             self._health_poll_running = False
+
+    async def _load_observability_status_once(self) -> None:
+        try:
+            status, error = await asyncio.to_thread(
+                _fetch_v8_operator_status,
+                self.config,
+                self.data_dir,
+            )
+            if not self._observability_status_reload_pending:
+                self.overview_model.set_observability_status(status, error=error)
+                if self.active_panel == "overview" and not self.help_open:
+                    self._schedule_overview_sampled_refresh()
+        finally:
+            self._observability_status_load_running = False
+            if self._observability_status_reload_pending and not getattr(
+                self,
+                "_app_shutting_down",
+                False,
+            ):
+                self._observability_status_reload_pending = False
+                self._schedule_observability_status_load()
 
     async def _poll_ai_usage_once(self, *, force_render: bool) -> None:
         try:
@@ -9855,6 +10000,43 @@ def _fetch_gateway_health(config: object | None) -> HealthSnapshot | None:
     except Exception:  # noqa: BLE001 — offline / unauthenticated gateway is normal
         return None
     return _health_snapshot_from_mapping(payload)
+
+
+def _fetch_v8_operator_status(
+    config: object | None,
+    data_dir: str | Path | None,
+) -> tuple[Any | None, str]:
+    """Return canonical masked v8 policy, preserving legacy TUI behavior.
+
+    The Go helper may take several seconds on a cold install, so callers run
+    this function in a worker thread. Exact non-v8 sources return ``(None,
+    "")`` and continue through the established runtime-health rendering path.
+    """
+
+    if config is None:
+        return None, ""
+    try:
+        from defenseclaw.config import config_path_for_data_dir
+        from defenseclaw.observability.v8_status import (
+            inspect_v8_operator_status,
+            source_is_v8,
+        )
+
+        path = config_path_for_data_dir(data_dir)
+        if not source_is_v8(path):
+            return None, ""
+        return inspect_v8_operator_status(path), ""
+    except Exception as exc:  # noqa: BLE001 - Overview degrades to a bounded diagnostic.
+        # Configuration errors can contain an offending endpoint or scalar.
+        # Keep only the validator-owned path/keyword; arbitrary exception text
+        # never crosses into the TUI.
+        path = getattr(exc, "path", "")
+        keyword = getattr(exc, "keyword", "")
+        if isinstance(path, str) and isinstance(keyword, str) and path and keyword:
+            safe_path = re.sub(r"[^A-Za-z0-9_.$\[\]-]", "?", path)[:256]
+            safe_keyword = re.sub(r"[^A-Za-z0-9_.-]", "?", keyword)[:64]
+            return None, f"invalid v8 configuration at {safe_path} ({safe_keyword})"
+        return None, "canonical v8 status could not be loaded; run defenseclaw observability validate"
 
 
 def _fetch_ai_usage(config: object | None) -> AIUsageSnapshot | None:

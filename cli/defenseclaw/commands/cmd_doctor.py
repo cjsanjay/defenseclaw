@@ -633,7 +633,7 @@ def _subsystem_expected_enabled(cfg, sub: str) -> bool | None:
     return None
 
 
-def _check_sidecar(cfg, r: _DoctorResult) -> None:
+def _check_sidecar(cfg, r: _DoctorResult) -> dict | None:
     bind = "127.0.0.1"
     if getattr(cfg, "openshell", None) and cfg.openshell.is_standalone():
         bind = getattr(cfg.guardrail, "host", None) or bind
@@ -644,6 +644,8 @@ def _check_sidecar(cfg, r: _DoctorResult) -> None:
 
         try:
             health = json.loads(body)
+            if not isinstance(health, dict):
+                raise TypeError("health response is not an object")
             subsystems = ["gateway", "watcher", "guardrail", "api", "telemetry", "splunk", "sandbox"]
             stale_hint_printed = False
             for sub in subsystems:
@@ -702,10 +704,12 @@ def _check_sidecar(cfg, r: _DoctorResult) -> None:
                         _emit("skip", f"  └─ {sub}", detail_msg, r=r)
                 else:
                     _emit("fail", f"  └─ {sub}", state, r=r)
+            return health
         except (json.JSONDecodeError, TypeError):
             _emit("warn", "Sidecar health JSON", "could not parse /health response", r=r)
     else:
         _emit("fail", "Sidecar API", f"not reachable on port {cfg.gateway.api_port}", r=r)
+    return None
 
 
 def _check_openclaw_gateway(cfg, r: _DoctorResult) -> None:
@@ -2505,7 +2509,7 @@ def _check_cisco_ai_defense(cfg, r: _DoctorResult) -> None:
         _emit_aid_hint(f"endpoint: {endpoint}")
 
 
-def _check_observability(cfg, r: _DoctorResult) -> None:
+def _check_observability(cfg, r: _DoctorResult, *, live_health: dict | None = None) -> None:
     """Inspect the active observability configuration without exporting data.
 
     Exact-v8 sources are rendered from the masked canonical Go effective plan,
@@ -2538,7 +2542,7 @@ def _check_observability(cfg, r: _DoctorResult) -> None:
         except (ConfigInspectError, ValueError) as exc:
             _emit("fail", "Observability v8 effective plan", str(exc), r=r)
             return
-        _check_observability_v8_status(status, r)
+        _check_observability_v8_status(status, r, live_health=live_health)
         return
 
     from defenseclaw.observability import list_destinations
@@ -2578,8 +2582,18 @@ def _check_observability(cfg, r: _DoctorResult) -> None:
             _emit("warn", label, f"no probe for kind '{d.kind}'", r=r)
 
 
-def _check_observability_v8_status(status, r: _DoctorResult) -> None:
+def _check_observability_v8_status(
+    status,
+    r: _DoctorResult,
+    *,
+    live_health: dict | None = None,
+) -> None:
     """Render one canonical v8 operator snapshot into doctor checks."""
+
+    from defenseclaw.observability.v8_status import (
+        destination_health_from_gateway,
+        retention_health_from_gateway,
+    )
 
     retention = "unbounded" if status.unbounded_retention else f"{status.retention_days} days"
     local_path = status.local_path or "built-in data directory"
@@ -2593,10 +2607,12 @@ def _check_observability_v8_status(status, r: _DoctorResult) -> None:
         _emit(
             "pass",
             "Judge-body store",
-            f"configured separately at {status.judge_bodies_path}",
+            f"capture={'enabled' if status.judge_bodies_enabled else 'disabled'}; "
+            f"retention={retention}; path={status.judge_bodies_path}",
             r=r,
         )
 
+    destination_health = destination_health_from_gateway(live_health)
     for destination in status.destinations:
         signals = ",".join(destination.selected_signals) or "none"
         detail = (
@@ -2605,10 +2621,36 @@ def _check_observability_v8_status(status, r: _DoctorResult) -> None:
         )
         if destination.endpoint:
             detail += f"; target={destination.endpoint}"
+        live = destination_health.get(destination.name)
+        tag = "pass" if destination.enabled else "skip"
+        if destination.enabled and live is not None:
+            live_state = live.state or "unavailable"
+            detail += f"; health={live_state}"
+            if live.reason:
+                detail += f"/{live.reason}"
+            detail += f"; queue={live.queue_label}; last={live.activity_label}"
+            if live_state in {"degraded", "initializing", "draining"}:
+                tag = "warn"
+            elif live_state in {"failing", "stopped", "disabled"}:
+                tag = "fail"
+        elif destination.enabled and destination.kind != "sqlite":
+            detail += "; health=unavailable; queue=unavailable; last=unavailable"
         _emit(
-            "pass" if destination.enabled else "skip",
+            tag,
             f"Destination: {destination.name}",
             detail if destination.enabled else f"disabled; {detail}",
+            r=r,
+        )
+
+    retention_state, retention_failure = retention_health_from_gateway(live_health)
+    if retention_state:
+        detail = retention_state
+        if retention_failure:
+            detail += f"; failure={retention_failure}"
+        _emit(
+            "warn" if retention_state in {"degraded", "stopped"} else "pass",
+            "Retention controller",
+            detail,
             r=r,
         )
 
@@ -3248,7 +3290,7 @@ def doctor(
 
     if not json_out:
         _doctor_subsection("Services")
-    _check_sidecar(cfg, r)
+    sidecar_health = _check_sidecar(cfg, r)
     _check_gateway_token_env_alignment(cfg, r)
     _check_gateway_token_drift(cfg, r)
     _check_gateway_home_mismatch(cfg, r)
@@ -3300,7 +3342,7 @@ def doctor(
     _check_registry_credentials(cfg, r)
     if not json_out:
         _doctor_subsection("Observability")
-    _check_observability(cfg, r)
+    _check_observability(cfg, r, live_health=sidecar_health)
     if not json_out:
         _doctor_subsection("Webhooks")
     _check_webhooks(cfg, r)

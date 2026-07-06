@@ -17,6 +17,11 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
 
 from defenseclaw.observability.display import redact_endpoint_for_display
+from defenseclaw.observability.v8_status import (
+    V8OperatorStatus,
+    destination_health_from_gateway,
+    retention_health_from_gateway,
+)
 from defenseclaw.tui.services import connector_filter
 from defenseclaw.tui.services.ai_discovery_state import AIUsageSignal, AIUsageSnapshot
 
@@ -267,13 +272,29 @@ class ObservabilityDestinationRow:
     """One runtime-loaded OTel destination or audit sink for Overview."""
 
     name: str
-    target: Literal["otel", "audit_sinks"]
+    target: Literal["otel", "audit_sinks", "v8"]
     scope: str
     kind: str
     state: str
     signals: str
     endpoint: str
     routing: str = ""
+    policy_state: str = ""
+    buckets: str = ""
+    redaction: str = ""
+    queue: str = ""
+    activity: str = ""
+    health_reason: str = ""
+
+
+@dataclass(frozen=True)
+class ObservabilityStorageStatus:
+    retention: str
+    judge_capture: str
+    local_path: str
+    judge_bodies_path: str
+    retention_health: str = ""
+    retention_failure: str = ""
 
 
 @dataclass(frozen=True)
@@ -367,6 +388,8 @@ class OverviewPanelModel:
         self.ai_usage: AIUsageSnapshot | None = None
         self.ai_usage_sorted: tuple[AIUsageSignal, ...] = ()
         self.skill_scanner_available = True
+        self.observability_status: V8OperatorStatus | None = None
+        self.observability_status_error = ""
 
     def set_cfg(self, cfg: OverviewConfig | None) -> None:
         """Hot-swap the cached config snapshot (e.g. after ``setup``).
@@ -396,6 +419,17 @@ class OverviewPanelModel:
 
     def set_skill_scanner_available(self, available: bool) -> None:
         self.skill_scanner_available = available
+
+    def set_observability_status(
+        self,
+        status: V8OperatorStatus | None,
+        *,
+        error: str = "",
+    ) -> None:
+        """Install the canonical masked v8 policy snapshot used by Overview."""
+
+        self.observability_status = status
+        self.observability_status_error = error.strip()
 
     def action_intent(self, key: str) -> OverviewCommandIntent | None:
         if key == "m":
@@ -934,6 +968,16 @@ class OverviewPanelModel:
     def telemetry_detail(self) -> str:
         """Summarize named OTLP destinations without exposing headers."""
 
+        if self.observability_status is not None:
+            rows = self._v8_observability_destination_rows()
+            labels = [
+                f"{row.name} ({row.state})"
+                for row in rows
+                if row.policy_state == "enabled"
+            ]
+            count = len(labels)
+            suffix = f": {', '.join(labels)}" if labels else ""
+            return f"{count} destination{'s' if count != 1 else ''}{suffix}"
         if self.health is None:
             return ""
         details = self.health.telemetry.details
@@ -999,6 +1043,8 @@ class OverviewPanelModel:
         keeps ``target`` and process/global/connector ``scope`` explicit.
         """
 
+        if self.observability_status is not None:
+            return self._v8_observability_destination_rows()
         if self.health is None:
             return ()
 
@@ -1089,6 +1135,66 @@ class OverviewPanelModel:
                     )
                 )
         return tuple(rows)
+
+    def _v8_observability_destination_rows(self) -> tuple[ObservabilityDestinationRow, ...]:
+        """Merge canonical v8 policy with only positively observed live health."""
+
+        status = self.observability_status
+        if status is None:
+            return ()
+        health = destination_health_from_gateway(
+            {"details": self.health.telemetry.details} if self.health is not None else None
+        )
+        rows: list[ObservabilityDestinationRow] = []
+        for destination in status.destinations:
+            live = health.get(destination.name)
+            state = live.state if live is not None and live.state else ""
+            if not state:
+                state = "disabled" if not destination.enabled else "unavailable"
+            reason = ""
+            if live is not None:
+                reason = live.reason or live.last_error_class
+            endpoint = destination.endpoint or "—"
+            display_endpoint = (
+                endpoint if destination.kind in {"sqlite", "jsonl"} else redact_endpoint_for_display(endpoint)
+            )
+            rows.append(
+                ObservabilityDestinationRow(
+                    name=destination.name,
+                    target="v8",
+                    scope="local" if destination.kind == "sqlite" else "process",
+                    kind=destination.kind,
+                    state=state,
+                    signals=",".join(destination.selected_signals) or "none",
+                    endpoint=display_endpoint,
+                    policy_state="enabled" if destination.enabled else "disabled",
+                    buckets=f"{len(destination.buckets)}/{len(status.buckets)}",
+                    redaction=destination.redaction_label,
+                    queue=live.queue_label if live is not None else "unavailable",
+                    activity=live.activity_label if live is not None else "unavailable",
+                    health_reason=reason,
+                )
+            )
+        return tuple(rows)
+
+    def observability_storage_status(self) -> ObservabilityStorageStatus | None:
+        """Return v8 retention/judge policy plus bounded live controller state."""
+
+        status = self.observability_status
+        if status is None:
+            return None
+        health_state, health_failure = retention_health_from_gateway(
+            {"details": self.health.telemetry.details} if self.health is not None else None
+        )
+        retention = "unbounded" if status.unbounded_retention else f"{status.retention_days} days"
+        return ObservabilityStorageStatus(
+            retention=retention,
+            judge_capture="enabled" if status.judge_bodies_enabled else "disabled",
+            local_path=status.local_path or "built-in data directory",
+            judge_bodies_path=status.judge_bodies_path or "built-in data directory",
+            retention_health=health_state,
+            retention_failure=health_failure,
+        )
 
 
 def gateway_health_is_broken(state: str) -> bool:
@@ -1460,6 +1566,7 @@ __all__ = [
     "OverviewNotice",
     "OverviewPanelModel",
     "ObservabilityDestinationRow",
+    "ObservabilityStorageStatus",
     "QUICK_ACTIONS",
     "RenderedDoctorCheck",
     "STALENESS_WINDOW",
