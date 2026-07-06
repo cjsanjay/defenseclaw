@@ -73,6 +73,12 @@ func (tracker *compositeListenerTracker) listener(t *testing.T, index int) net.L
 	return tracker.listeners[index]
 }
 
+func (tracker *compositeListenerTracker) count() int {
+	tracker.mu.Lock()
+	defer tracker.mu.Unlock()
+	return len(tracker.listeners)
+}
+
 func compositePipelinePlan(
 	t *testing.T,
 	directory string,
@@ -145,7 +151,7 @@ func scrapeCompositePrometheus(t *testing.T, listener net.Listener) string {
 	return string(body)
 }
 
-func TestGenerationPipelineFactoryRuntimeGraphFanoutReloadAndGlobalIsolation(t *testing.T) {
+func TestGenerationPipelineFactoryRuntimeGraphFanoutRestartRequiredAndGlobalIsolation(t *testing.T) {
 	firstCapture := &otlpGenerationCapture{}
 	firstServer := &http.Server{Handler: http.HandlerFunc(firstCapture.handler)}
 	firstListener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -236,55 +242,79 @@ func TestGenerationPipelineFactoryRuntimeGraphFanoutReloadAndGlobalIsolation(t *
 		t.Fatal("OTLP trace processor did not export the targeted canary")
 	}
 
+	firstGraph := manager.Active()
+	if firstGraph == nil {
+		t.Fatal("first active graph is nil")
+	}
+	if firstGraph.Generation() != 1 || firstGraph.Digest() != firstPlan.Digest() {
+		t.Fatalf("first active graph=%p generation/digest=%d/%q", firstGraph, firstGraph.Generation(), firstGraph.Digest())
+	}
+	firstPrometheusAddress := listeners.listener(t, 0).Addr().String()
 	secondPlan := compositePipelinePlan(t, directory, "http://"+secondListener.Addr().String())
 	result, reloadErr := manager.Reload(t.Context(), runtimegraph.ConfigFromPlan(secondPlan, false))
-	if reloadErr != nil || result.Status() != runtimegraph.ReloadApplied {
-		t.Fatalf("reload=%s error=%v", result.Status(), reloadErr)
+	reloadField := ""
+	if reloadErr != nil {
+		reloadField = reloadErr.FieldPath()
 	}
-	if firstProvider.Enabled() || firstProvider.DestinationAcknowledgedCanaryTrace("otlp-all", traceID) {
-		t.Fatal("retired generation retained provider intake or canary acknowledgement")
+	if reloadErr == nil || reloadErr.Code() != runtimegraph.ErrorRestartRequired ||
+		reloadErr.FieldPath() != "observability.destinations.prometheus.listen" ||
+		result.Status() != runtimegraph.ReloadRejected || result.ActiveGraph() != firstGraph ||
+		manager.Active() != firstGraph {
+		t.Fatalf("reload=%s active=%p first=%p error=%v field=%q", result.Status(), result.ActiveGraph(), firstGraph, reloadErr, reloadField)
 	}
-	if connection, dialErr := net.DialTimeout("tcp", listeners.listener(t, 0).Addr().String(), 250*time.Millisecond); dialErr == nil {
-		_ = connection.Close()
-		t.Fatal("retired generation left the Prometheus listener accepting connections")
+	if listeners.count() != 1 {
+		t.Fatalf("restart-required reload prepared %d Prometheus listeners, want the original listener only", listeners.count())
 	}
-	_, firstMetrics, _ := firstCapture.snapshot()
-	if len(firstMetrics) == 0 {
-		t.Fatal("runtime retirement did not flush the independent OTLP metric reader")
+	factory.canaryMu.RLock()
+	_, preparedSecondGeneration := factory.canary[2]
+	factory.canaryMu.RUnlock()
+	if preparedSecondGeneration {
+		t.Fatal("restart-required reload prepared an OTLP candidate generation")
 	}
-
-	secondProvider, secondLease := compositeProviderFromManager(t, manager)
-	secondDigest, secondGeneration, bound := secondProvider.V8PlanBinding()
-	if !bound || secondProvider == firstProvider || secondDigest != secondPlan.Digest() || secondGeneration != 2 {
-		t.Fatalf("second provider binding/identity=%q/%d/%v same=%v", secondDigest, secondGeneration, bound, secondProvider == firstProvider)
+	secondTraces, secondMetrics, secondHeaders := secondCapture.snapshot()
+	if len(secondTraces) != 0 || len(secondMetrics) != 0 || len(secondHeaders) != 0 {
+		t.Fatalf("restart-required reload reached replacement OTLP endpoint: traces=%d metrics=%d requests=%d", len(secondTraces), len(secondMetrics), len(secondHeaders))
 	}
-	secondProvider.RecordAgentDiscovery(t.Context(), "cli", false, "ok", 1, 1, 1)
-	secondCanary, err := secondProvider.EmitV8GeneratedCanary(t.Context(), secondLease, "otlp-all")
-	secondLease.Release()
+	if !firstProvider.Enabled() || !firstProvider.DestinationAcknowledgedCanaryTrace("otlp-all", traceID) {
+		t.Fatal("restart-required reload retired the active provider or lost its canary acknowledgement")
+	}
+	activeProvider, activeLease := compositeProviderFromManager(t, manager)
+	if activeProvider != firstProvider {
+		activeLease.Release()
+		t.Fatal("restart-required reload replaced the generation-owned provider")
+	}
+	activeProvider.RecordAgentDiscovery(t.Context(), "cli", false, "ok", 1, 1, 1)
+	activeCanary, err := activeProvider.EmitV8GeneratedCanary(t.Context(), activeLease, "otlp-all")
+	activeLease.Release()
 	if err != nil {
 		t.Fatal(err)
 	}
-	secondTraceID := secondCanary.TraceID
-	if !secondCanary.Acknowledged || secondCanary.Generation != 2 {
-		t.Fatalf("second canary=%+v", secondCanary)
+	if !activeCanary.Acknowledged || activeCanary.Generation != 1 ||
+		!activeProvider.DestinationAcknowledgedCanaryTrace("otlp-all", activeCanary.TraceID) {
+		t.Fatalf("active canary after rejected reload=%+v", activeCanary)
 	}
-	if !secondProvider.DestinationAcknowledgedCanaryTrace("otlp-all", secondTraceID) ||
-		secondProvider.DestinationAcknowledgedCanaryTrace("otlp-all", traceID) {
-		t.Fatal("canary acknowledgement crossed runtime generations")
-	}
-	secondPromBody := scrapeCompositePrometheus(t, listeners.listener(t, 1))
-	if !strings.Contains(secondPromBody, "defenseclaw_agent_discovery_runs_total") {
-		t.Fatalf("replacement Prometheus reader did not collect the v8 metric:\n%s", secondPromBody)
+	activePromBody := scrapeCompositePrometheus(t, listeners.listener(t, 0))
+	if !strings.Contains(activePromBody, "defenseclaw_agent_discovery_runs_total") {
+		t.Fatalf("rejected reload stopped the active Prometheus reader:\n%s", activePromBody)
 	}
 
 	if closeErr := manager.Close(t.Context()); closeErr != nil {
 		t.Fatal(closeErr)
 	}
 	closed = true
-	_, secondMetrics, _ := secondCapture.snapshot()
-	if len(secondMetrics) == 0 || secondProvider.Enabled() ||
-		secondProvider.DestinationAcknowledgedCanaryTrace("otlp-all", secondTraceID) {
-		t.Fatal("graph close did not flush and retire the replacement generation")
+	_, firstMetrics, _ := firstCapture.snapshot()
+	if len(firstMetrics) == 0 || firstProvider.Enabled() ||
+		firstProvider.DestinationAcknowledgedCanaryTrace("otlp-all", traceID) ||
+		firstProvider.DestinationAcknowledgedCanaryTrace("otlp-all", activeCanary.TraceID) {
+		t.Fatal("graph close did not flush and retire the original active generation")
+	}
+	if connection, dialErr := net.DialTimeout("tcp", firstPrometheusAddress, 250*time.Millisecond); dialErr == nil {
+		_ = connection.Close()
+		t.Fatal("graph close left the original Prometheus listener accepting connections")
+	}
+	secondTraces, secondMetrics, secondHeaders = secondCapture.snapshot()
+	if len(secondTraces) != 0 || len(secondMetrics) != 0 || len(secondHeaders) != 0 {
+		t.Fatalf("graph close reached replacement OTLP endpoint: traces=%d metrics=%d requests=%d", len(secondTraces), len(secondMetrics), len(secondHeaders))
 	}
 	if otel.GetTracerProvider() != traceGlobal || otel.GetMeterProvider() != metricGlobal {
 		t.Fatal("generation pipeline lifecycle mutated an OTel process global")
