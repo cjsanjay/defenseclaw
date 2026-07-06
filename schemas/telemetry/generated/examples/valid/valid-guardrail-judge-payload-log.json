@@ -3,7 +3,7 @@
     "artifact": "examples/valid/valid-guardrail-judge-payload-log.json",
     "authority": "candidate-not-public-authority",
     "generator": "defenseclaw-telemetry-candidate-renderer-v1",
-    "materialized_view_sha256": "821c97be7e55456b01d7c2cdc67db0af2822fce6da08c35b1db6b79a8d6bae79",
+    "materialized_view_sha256": "ce64338267f3801c32cf6c530fca5acac6b47aa3aa56f199666a1bb1694b8797",
     "registry_version": 1
   },
   "base_example": null,
@@ -61,7 +61,7 @@
     "/defenseclaw.judge.latency_ms": "metadata"
   },
   "id": "valid-guardrail-judge-payload-log",
-  "materialized_view_sha256": "821c97be7e55456b01d7c2cdc67db0af2822fce6da08c35b1db6b79a8d6bae79",
+  "materialized_view_sha256": "ce64338267f3801c32cf6c530fca5acac6b47aa3aa56f199666a1bb1694b8797",
   "mutation": null,
   "record": {
     "body": {

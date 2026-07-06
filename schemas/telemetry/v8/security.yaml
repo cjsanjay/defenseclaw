@@ -2429,6 +2429,12 @@ groups:
       disposition: preserved
       details:
         missing_data: never fabricate absent values
+    - source: galileo-rich-v2
+      disposition: explicitly_ineligible
+      details:
+        reason: Galileo has no approval shape for native approval resolution spans.
+        unsupported_shape: approval
+        fabrication: forbidden
 - id: span.finding.enrich
   type: span
   brief: Canonical span.finding.enrich bounded operation.

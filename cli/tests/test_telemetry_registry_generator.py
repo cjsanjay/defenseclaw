@@ -9353,13 +9353,27 @@ def test_core_runtime_span_context_cost_and_compatibility_contracts_are_exact() 
     assert ineligible.disposition == "explicitly_ineligible"
     assert ineligible.details["fabrication"] == "forbidden"
     assert "gen_ai.operation.name=invoke_agent" in ineligible.details["missing_required_semantics"]
-    assert groups["span.agent.invoke"].compatibility_profiles == (
-        "galileo-rich-v2",
-        "openinference-v1",
-        "local-observability-v1",
+    approval = groups["span.approval.resolve"]
+    assert approval.compatibility_profiles == ("local-observability-v1",)
+    approval_ineligible = next(
+        binding for binding in approval.legacy_bindings or () if binding.source == "galileo-rich-v2"
     )
-    assert "galileo-rich-v2" in (groups["span.model.chat"].compatibility_profiles or ())
-    assert "galileo-rich-v2" in (groups["span.tool.execute"].compatibility_profiles or ())
+    assert approval_ineligible.disposition == "explicitly_ineligible"
+    assert approval_ineligible.details == {
+        "reason": "Galileo has no approval shape for native approval resolution spans.",
+        "unsupported_shape": "approval",
+        "fabrication": "forbidden",
+    }
+    assert {
+        family_id for family_id, family in groups.items() if "galileo-rich-v2" in (family.compatibility_profiles or ())
+    } == {
+        "span.agent.invoke",
+        "span.guardrail.judge",
+        "span.model.chat",
+        "span.retrieval.search",
+        "span.tool.execute",
+        "span.workflow.run",
+    }
 
 
 @pytest.mark.parametrize(

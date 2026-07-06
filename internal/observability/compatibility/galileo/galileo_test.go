@@ -45,6 +45,11 @@ func TestGeneratedProfileExactlyCoversImplementedShapes(t *testing.T) {
 	if len(manifest.Families) != len(want) {
 		t.Fatalf("generated Galileo family count = %d, want %d", len(manifest.Families), len(want))
 	}
+	for _, ineligible := range []string{"span.agent.transition", "span.approval.resolve"} {
+		if profilemanifest.Eligible(ProfileID, observability.SignalTraces, observability.EventName(ineligible)) {
+			t.Fatalf("generated Galileo profile admitted explicitly ineligible family %q", ineligible)
+		}
+	}
 	for _, family := range manifest.Families {
 		shape, ok := want[family.FamilyID]
 		if !ok || family.Signal != observability.SignalTraces ||
@@ -273,6 +278,30 @@ func TestProjectRejectsSchemaMissAndNativeNonGalileoShapes(t *testing.T) {
 	}, redaction.ProfileNone)
 	if got := Project(nativeGuardrail, Limits{}); got.Reason() != ReasonUnsupportedShape {
 		t.Fatalf("native guardrail reason = %q", got.Reason())
+	}
+
+	for _, test := range []struct {
+		name     string
+		bucket   observability.Bucket
+		family   observability.EventName
+		spanName string
+	}{
+		{name: "agent transition", bucket: observability.BucketAgentLifecycle, family: "span.agent.transition", spanName: "agent.transition approval"},
+		{name: "approval resolution", bucket: observability.BucketEnforcementAction, family: "span.approval.resolve", spanName: "exec.approval"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			projection := projectRecord(t, test.bucket, test.family, test.spanName, map[string]any{
+				"kind": "INTERNAL", "attributes": map[string]any{
+					"gen_ai.operation.name": "invoke_agent", "gen_ai.provider.name": "openai",
+					"gen_ai.agent.name": "invented-shape", "gen_ai.input.messages": messages("user", "x"),
+					"gen_ai.output.messages": messages("assistant", "y"),
+				},
+			}, redaction.ProfileNone)
+			got := Project(projection, Limits{})
+			if got.Eligible() || got.Reason() != ReasonUnsupportedShape {
+				t.Fatalf("explicitly ineligible result = eligible:%v reason:%q", got.Eligible(), got.Reason())
+			}
+		})
 	}
 
 	wrongOperation := projectRecord(t, observability.BucketAgentLifecycle, "span.agent.invoke", "invoke_agent a", map[string]any{

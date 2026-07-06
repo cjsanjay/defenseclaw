@@ -2695,7 +2695,8 @@ def test_generated_compatibility_profiles_are_digest_bound_exact_and_explicit(
 
     galileo = documents["galileo-rich-v2"]
     assert galileo["runtime_projection"]["status"] == "available"
-    assert {item["family_id"]: item["projection"]["shape"] for item in galileo["families"]} == {
+    galileo_families = {item["family_id"]: item["projection"]["shape"] for item in galileo["families"]}
+    assert galileo_families == {
         "span.agent.invoke": "agent",
         "span.guardrail.judge": "llm",
         "span.model.chat": "llm",
@@ -2703,6 +2704,7 @@ def test_generated_compatibility_profiles_are_digest_bound_exact_and_explicit(
         "span.tool.execute": "tool",
         "span.workflow.run": "workflow",
     }
+    assert {"span.agent.transition", "span.approval.resolve"}.isdisjoint(galileo_families)
 
     local = documents["local-observability-v1"]
     assert local["runtime_projection"]["status"] == "available"
