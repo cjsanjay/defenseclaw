@@ -81,6 +81,7 @@ func buildInboundCatalog(source generatedInboundCatalogSource) (InboundCatalog, 
 		targetByID:      make(map[string]int, len(source.targets)),
 		markerByKey:     make(map[inboundMarkerLookupKey]int, len(source.markers)),
 		echoByIdentity:  make(map[inboundEchoLookupKey]int, len(source.echoes)),
+		echoByWire:      make(map[inboundEchoWireLookupKey]int, len(source.echoes)),
 		contextByID:     make(map[string]int, len(source.contexts)),
 		contextByFamily: make(map[string]int, len(source.contexts)),
 		policies:        source.policies,
@@ -536,8 +537,22 @@ func buildInboundEchoes(snapshot *inboundCatalogSnapshot, echoes []generatedInbo
 		if _, duplicate := snapshot.echoByIdentity[key]; duplicate {
 			return invalidInboundCatalog("duplicate echo-recognizer identity")
 		}
+		wireKey := inboundEchoWireLookupKey{signal: signal}
+		switch signal {
+		case SignalLogs, SignalTraces:
+			wireKey.bucket = Bucket(input.Bucket)
+			wireKey.eventOrFamily = EventName(input.EventName)
+		case SignalMetrics:
+			wireKey.instrumentName = input.InstrumentName
+		default:
+			return invalidInboundCatalog("invalid echo-recognizer signal")
+		}
+		if _, duplicate := snapshot.echoByWire[wireKey]; duplicate {
+			return invalidInboundCatalog("duplicate echo-recognizer wire identity")
+		}
 		index := len(snapshot.echoes)
 		snapshot.echoByIdentity[key] = index
+		snapshot.echoByWire[wireKey] = index
 		snapshot.echoes = append(snapshot.echoes, inboundEchoEntry{
 			id: input.ID, signal: signal, family: input.Family, bucket: Bucket(input.Bucket),
 			eventName: EventName(input.EventName), instrumentName: input.InstrumentName,

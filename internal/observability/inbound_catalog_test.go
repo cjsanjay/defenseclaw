@@ -79,6 +79,16 @@ func TestInboundCatalogGeneratedInventoryAndCrossReferences(t *testing.T) {
 		if !ok || resolved.ID() != echo.id {
 			t.Fatalf("echo recognizer %q did not round trip", echo.id)
 		}
+		var wire InboundEchoRecognizer
+		switch echo.signal {
+		case SignalLogs, SignalTraces:
+			wire, ok = catalog.EchoRecognizerForWireIdentity(echo.signal, echo.bucket, echo.eventName, "")
+		case SignalMetrics:
+			wire, ok = catalog.EchoRecognizerForWireIdentity(echo.signal, "", "", echo.instrumentName)
+		}
+		if !ok || wire.ID() != echo.id {
+			t.Fatalf("echo wire identity %q did not round trip", echo.id)
+		}
 	}
 	for _, context := range catalog.snapshot.contexts {
 		byID, ok := catalog.ImportContext(context.id)
@@ -138,6 +148,16 @@ func TestInboundCatalogSourceFilteringIsExact(t *testing.T) {
 	}
 	if echo, ok := catalog.EchoRecognizer(SignalLogs, "unknown", BucketDiagnostic, "unknown", ""); ok || echo.ID() != "" {
 		t.Fatalf("unknown echo returned (%q, %v)", echo.ID(), ok)
+	}
+	if echo, ok := catalog.EchoRecognizerForWireIdentity(SignalLogs, BucketDiagnostic, "unknown", "irrelevant"); ok || echo.ID() != "" {
+		t.Fatalf("log wire echo accepted irrelevant instrument (%q, %v)", echo.ID(), ok)
+	}
+	if echo, ok := catalog.EchoRecognizerForWireIdentity(SignalMetrics, BucketModelIO, "metric.ignored", "gen_ai.client.operation.duration"); ok || echo.ID() != "" {
+		t.Fatalf("metric wire echo accepted irrelevant bucket/event (%q, %v)", echo.ID(), ok)
+	}
+	histogramEcho, ok := catalog.EchoRecognizerForWireIdentity(SignalMetrics, "", "", "gen_ai.client.operation.duration")
+	if !ok || histogramEcho.Family() != "metric.gen_ai.client.operation.duration" {
+		t.Fatalf("non-reversible metric echo = (%q, %q, %v)", histogramEcho.ID(), histogramEcho.Family(), ok)
 	}
 	if context, ok := catalog.ImportContext("unknown"); ok || context.ID() != "" {
 		t.Fatalf("unknown context returned (%q, %v)", context.ID(), ok)
@@ -402,6 +422,13 @@ func TestInboundCatalogRejectsMalformedOrDuplicateGeneratedData(t *testing.T) {
 			name: "duplicate native marker",
 			mutate: func(source *generatedInboundCatalogSource) {
 				source.markers[1].ID = source.markers[0].ID
+			},
+		},
+		{
+			name: "duplicate echo wire identity",
+			mutate: func(source *generatedInboundCatalogSource) {
+				source.echoes[1].Bucket = source.echoes[0].Bucket
+				source.echoes[1].EventName = source.echoes[0].EventName
 			},
 		},
 		{

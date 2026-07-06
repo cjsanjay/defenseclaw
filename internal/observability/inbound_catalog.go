@@ -228,6 +228,7 @@ type inboundCatalogSnapshot struct {
 	targetByID      map[string]int
 	markerByKey     map[inboundMarkerLookupKey]int
 	echoByIdentity  map[inboundEchoLookupKey]int
+	echoByWire      map[inboundEchoWireLookupKey]int
 	contextByID     map[string]int
 	contextByFamily map[string]int
 	policies        InboundTerminalPolicies
@@ -456,6 +457,42 @@ func (catalog InboundCatalog) EchoRecognizer(
 		return InboundEchoRecognizer{}, false
 	}
 	return InboundEchoRecognizer{snapshot: catalog.snapshot, index: index}, ok
+}
+
+// EchoRecognizerForWireIdentity resolves only fields available on the OTLP
+// wire before canonical import. Logs use bucket+event, traces use
+// bucket+family-marker, and metrics use instrument name. Irrelevant components
+// must be empty and are never interpreted as wildcards.
+func (catalog InboundCatalog) EchoRecognizerForWireIdentity(
+	signal Signal,
+	bucket Bucket,
+	eventOrFamily EventName,
+	instrumentName string,
+) (InboundEchoRecognizer, bool) {
+	if catalog.snapshot == nil {
+		return InboundEchoRecognizer{}, false
+	}
+	key := inboundEchoWireLookupKey{signal: signal}
+	switch signal {
+	case SignalLogs, SignalTraces:
+		if !IsBucket(bucket) || eventOrFamily.Validate() != nil || instrumentName != "" {
+			return InboundEchoRecognizer{}, false
+		}
+		key.bucket = bucket
+		key.eventOrFamily = eventOrFamily
+	case SignalMetrics:
+		if bucket != "" || eventOrFamily != "" || !IsStableToken(instrumentName) {
+			return InboundEchoRecognizer{}, false
+		}
+		key.instrumentName = instrumentName
+	default:
+		return InboundEchoRecognizer{}, false
+	}
+	index, ok := catalog.snapshot.echoByWire[key]
+	if !ok {
+		return InboundEchoRecognizer{}, false
+	}
+	return InboundEchoRecognizer{snapshot: catalog.snapshot, index: index}, true
 }
 
 func (catalog InboundCatalog) ImportContext(id string) (InboundImportContext, bool) {
@@ -799,6 +836,13 @@ type inboundEchoLookupKey struct {
 	family         string
 	bucket         Bucket
 	eventName      EventName
+	instrumentName string
+}
+
+type inboundEchoWireLookupKey struct {
+	signal         Signal
+	bucket         Bucket
+	eventOrFamily  EventName
 	instrumentName string
 }
 
