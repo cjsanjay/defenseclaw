@@ -218,6 +218,45 @@ func TestEmitGatewayEvent_JudgeAttributes(t *testing.T) {
 	}
 }
 
+func TestEmitGatewayEvent_JudgeFailureAttributesStayTruthful(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		class     gatewaylog.JudgeFailureClass
+		wantParse bool
+	}{
+		{name: "provider", class: gatewaylog.JudgeFailureProvider},
+		{name: "empty response", class: gatewaylog.JudgeFailureEmptyResponse},
+		{name: "output parse", class: gatewaylog.JudgeFailureOutputParse, wantParse: true},
+	} {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			p, exp := newProviderWithLogCapture(t)
+			payload := &gatewaylog.JudgePayload{
+				Kind: "injection", Action: "error", FailureClass: test.class,
+				ErrorSummary: "bounded failure summary",
+			}
+			if test.wantParse {
+				payload.ParseError = "bounded failure summary"
+			}
+			p.EmitGatewayEvent(gatewaylog.Event{
+				Timestamp: time.Now(), EventType: gatewaylog.EventJudge,
+				Severity: gatewaylog.SeverityHigh, Judge: payload,
+			})
+			record := exp.snapshot()[0]
+			if got := attrValue(record, "defenseclaw.judge.error_summary"); got != payload.ErrorSummary {
+				t.Fatalf("error_summary = %q", got)
+			}
+			gotParse := attrValue(record, "defenseclaw.judge.parse_error")
+			if test.wantParse && gotParse != payload.ParseError {
+				t.Fatalf("parse_error = %q", gotParse)
+			}
+			if !test.wantParse && gotParse != "" {
+				t.Fatalf("non-parse failure emitted parse_error = %q", gotParse)
+			}
+		})
+	}
+}
+
 func TestEmitGatewayEvent_LifecycleAttributes(t *testing.T) {
 	p, exp := newProviderWithLogCapture(t)
 	p.EmitGatewayEvent(gatewaylog.Event{
@@ -597,7 +636,18 @@ func TestRecordGatewayEvent_UpdatesMetrics(t *testing.T) {
 	})
 	p.RecordGatewayEvent(gatewaylog.Event{
 		EventType: gatewaylog.EventJudge, Severity: gatewaylog.SeverityHigh,
-		Judge: &gatewaylog.JudgePayload{Kind: "injection", Action: "error", ParseError: "json"},
+		Judge: &gatewaylog.JudgePayload{Kind: "injection", Action: "error",
+			FailureClass: gatewaylog.JudgeFailureProvider, ErrorSummary: "provider unavailable"},
+	})
+	p.RecordGatewayEvent(gatewaylog.Event{
+		EventType: gatewaylog.EventJudge, Severity: gatewaylog.SeverityHigh,
+		Judge: &gatewaylog.JudgePayload{Kind: "injection", Action: "error",
+			FailureClass: gatewaylog.JudgeFailureEmptyResponse, ErrorSummary: "empty-response"},
+	})
+	p.RecordGatewayEvent(gatewaylog.Event{
+		EventType: gatewaylog.EventJudge, Severity: gatewaylog.SeverityHigh,
+		Judge: &gatewaylog.JudgePayload{Kind: "injection", Action: "error",
+			FailureClass: gatewaylog.JudgeFailureOutputParse, ErrorSummary: "parse-failed", ParseError: "parse-failed"},
 	})
 	p.RecordGatewayEvent(gatewaylog.Event{
 		EventType: gatewaylog.EventError, Severity: gatewaylog.SeverityHigh,
@@ -611,12 +661,20 @@ func TestRecordGatewayEvent_UpdatesMetrics(t *testing.T) {
 	}
 
 	counts := map[string]int64{}
+	judgeErrorReasons := map[string]int64{}
 	for _, sm := range rm.ScopeMetrics {
 		for _, m := range sm.Metrics {
 			switch data := m.Data.(type) {
 			case metricdata.Sum[int64]:
 				for _, dp := range data.DataPoints {
 					counts[m.Name] += dp.Value
+					if m.Name == "defenseclaw.gateway.judge.errors" {
+						for _, attr := range dp.Attributes.ToSlice() {
+							if string(attr.Key) == "judge.reason" {
+								judgeErrorReasons[attr.Value.AsString()] += dp.Value
+							}
+						}
+					}
 				}
 			case metricdata.Histogram[float64]:
 				counts[m.Name] += int64(data.DataPoints[0].Count)
@@ -624,17 +682,23 @@ func TestRecordGatewayEvent_UpdatesMetrics(t *testing.T) {
 		}
 	}
 
-	// 2 verdicts total, 2 judge invocations, 1 judge error, 1 gateway error.
+	// 2 verdicts total, 4 judge invocations, 3 classified judge errors, and
+	// 1 gateway error.
 	expectations := map[string]int64{
 		"defenseclaw.gateway.verdicts":          2,
-		"defenseclaw.gateway.judge.invocations": 2,
-		"defenseclaw.gateway.judge.errors":      1,
+		"defenseclaw.gateway.judge.invocations": 4,
+		"defenseclaw.gateway.judge.errors":      3,
 		"defenseclaw.gateway.errors":            1,
 	}
 	for name, want := range expectations {
 		if got, ok := counts[name]; !ok || got != want {
 			t.Errorf("metric %s=%d ok=%v want %d (all counts: %+v)",
 				name, got, ok, want, counts)
+		}
+	}
+	for reason, want := range map[string]int64{"provider": 1, "empty_response": 1, "parse": 1} {
+		if got := judgeErrorReasons[reason]; got != want {
+			t.Errorf("judge errors reason=%q = %d, want %d (all reasons: %+v)", reason, got, want, judgeErrorReasons)
 		}
 	}
 	// judge.latency is a histogram — we expect at least one observation.

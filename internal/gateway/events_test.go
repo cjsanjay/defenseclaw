@@ -351,6 +351,23 @@ func TestEmitEvent_DoesNotMutateCallerPayloads(t *testing.T) {
 	}
 }
 
+func TestEmitJudge_MalformedFailureClassificationFailsClosed(t *testing.T) {
+	events := withCapturedEvents(t)
+	emitJudge(t.Context(), "injection", "judge-model", gatewaylog.DirectionPrompt,
+		16, 2, "error", gatewaylog.SeverityHigh, "provider unavailable", "raw response",
+		JudgeEmitOpts{})
+
+	if len(*events) != 1 || (*events)[0].EventType != gatewaylog.EventError || (*events)[0].Error == nil {
+		t.Fatalf("malformed classification events = %#v, want one EventError", *events)
+	}
+	if (*events)[0].Error.Code != string(gatewaylog.ErrCodeLLMBridgeError) {
+		t.Fatalf("failure code = %q", (*events)[0].Error.Code)
+	}
+	if (*events)[0].Judge != nil || strings.Contains((*events)[0].Error.Message, "raw response") {
+		t.Fatalf("malformed classification exposed judge content: %#v", (*events)[0])
+	}
+}
+
 func TestCategoriesOf(t *testing.T) {
 	tests := []struct {
 		name string

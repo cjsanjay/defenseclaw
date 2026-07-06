@@ -99,8 +99,10 @@ type judgePersistJob struct {
 	enqueuedAt time.Time
 }
 
-// JudgeStore persists LLM judge bodies asynchronously through a
-// bounded buffered channel + single-writer goroutine.
+// JudgeStore emits LLM judge completions asynchronously through a bounded
+// buffered channel + single-writer goroutine. The body store is optional:
+// canonical completion logging is always driven by logger when present, while
+// raw-response persistence is attempted only when store is non-nil.
 //
 // Why async: the legacy synchronous path fired two SQLite writes
 // (judge_responses INSERT, then audit_events INSERT via
@@ -115,8 +117,8 @@ type judgePersistJob struct {
 //   - drops with telemetry instead of blocking when the queue is
 //     full, so the proxy SLO is always respected.
 type JudgeStore struct {
-	store  JudgeBodyInserter
-	logger *audit.Logger // fan-out for redacted summary; may be nil in tests
+	store  JudgeBodyInserter // optional forensic-body sink
+	logger *audit.Logger     // canonical completion fan-out; optional in body-only tests
 
 	queue chan judgePersistJob
 
@@ -152,16 +154,16 @@ type JudgeStore struct {
 	shutdownTimeout  time.Duration
 }
 
-// NewJudgeStore wires the async queue on top of the supplied audit
-// store. queueDepth <= 0 falls back to defaultJudgePersistQueueDepth.
+// NewJudgeStore wires the async completion queue. queueDepth <= 0 falls back to
+// defaultJudgePersistQueueDepth. At least one output is required: store enables
+// optional forensic-body persistence and logger enables canonical completion
+// emission. Passing neither returns nil.
 //
-// logger may be nil when the caller does not want the redacted
-// audit fan-out (e.g. unit tests). Passing a real *audit.Logger
-// ensures every retained body also produces an `llm-judge-response`
-// audit event that flows through the normal sink pipeline (Splunk,
-// OTLP, webhooks).
+// Production always supplies logger. Retention-off production supplies a nil
+// store, so allow/block/error completions still flow through the canonical
+// runtime without creating judge_responses rows.
 func NewJudgeStore(store JudgeBodyInserter, logger *audit.Logger, queueDepth int) *JudgeStore {
-	if store == nil {
+	if store == nil && logger == nil {
 		return nil
 	}
 	if queueDepth <= 0 {
@@ -182,6 +184,10 @@ func NewJudgeStore(store JudgeBodyInserter, logger *audit.Logger, queueDepth int
 	go js.run()
 	return js
 }
+
+// RetainsJudgeBodies reports whether this queue has a forensic-body sink.
+// Canonical completion logging is deliberately independent of this value.
+func (j *JudgeStore) RetainsJudgeBodies() bool { return j != nil && j.store != nil }
 
 // NewJudgeStoreFromBodyStore constructs a JudgeStore that writes
 // judge bodies to the Phase 4 dedicated *audit.JudgeBodyStore. This
@@ -213,10 +219,12 @@ func openAuthoritativeJudgeBodyStore(ctx context.Context, path string, legacy *a
 // PersistJudgeEvent is the public API the gateway emit paths use. It
 // performs the cheap, per-call work synchronously (capture the
 // request-scoped identifiers off ctx) and hands the rest of the
-// build + INSERT to the background worker. RawResponse == "" is the
-// "retention off / no-op" guard, identical to the synchronous path.
+// build + optional body INSERT to the background worker. Every queued job is
+// eligible for canonical completion fan-out even when store is nil or
+// RawResponse is empty. This makes observability independent of the forensic
+// retention policy.
 func (j *JudgeStore) PersistJudgeEvent(ctx context.Context, dir gatewaylog.Direction, p gatewaylog.JudgePayload, toolName, toolID, policyID, destinationApp string) error {
-	if j == nil || j.store == nil || p.RawResponse == "" {
+	if j == nil {
 		return nil
 	}
 	if ctx == nil {
@@ -382,21 +390,19 @@ func (j *JudgeStore) run() {
 	}
 }
 
-// flushBatch commits the buffered jobs in a single SQLite
-// transaction.
+// flushBatch attempts optional body persistence and then emits every canonical
+// completion exactly once. Body persistence runs first so a successful body is
+// durable before its completion is exported, but body failure never suppresses
+// the ordinary completion: the two are separate retention domains.
 //
 // Three failure modes the worker has to surface honestly:
 //
-//   - BeginJudgeBatch failed → the whole batch is lost; every job
-//     records a drop with reason="tx_begin_failed".
+//   - BeginJudgeBatch failed → every body records a drop with
+//     reason="tx_begin_failed"; canonical completions still emit.
 //   - Per-row Insert failed → that row's body never landed; drop
-//     with reason="insert_failed" and we MUST NOT fan out the
-//     redacted audit row, otherwise SIEM rows out-live their
-//     forensic body. This is the partial-failure case the original
-//     implementation silently lost.
+//     with reason="insert_failed"; canonical completion still emits.
 //   - Commit failed → every row in the batch is rolled back; drop
-//     all with reason="tx_commit_failed" and skip fan-out for the
-//     whole batch.
+//     all bodies with reason="tx_commit_failed"; canonical completions emit.
 //
 // Errors are logged once at the source (via the audit logger so
 // operators see a structured event, not a stderr line) and never
@@ -407,6 +413,15 @@ func (j *JudgeStore) run() {
 // can never pin the worker longer than one Shutdown window —
 // keeping the use-after-close blast radius bounded.
 func (j *JudgeStore) flushBatch(parent context.Context, jobs []judgePersistJob) {
+	// Completion fan-out is independent from the optional forensic body. Defer
+	// it so every body failure/rollback return below still emits once, after the
+	// body attempt and its bounded health signal have completed.
+	if j.logger != nil {
+		defer j.fanoutAuditBatch(jobs)
+	}
+	if j.store == nil {
+		return
+	}
 	if parent == nil {
 		parent = context.Background()
 	}
@@ -426,8 +441,7 @@ func (j *JudgeStore) flushBatch(parent context.Context, jobs []judgePersistJob) 
 		return
 	}
 
-	// Track each job's outcome so post-commit fan-out only fires for
-	// rows that actually made it to disk.
+	// Track successful body inserts for body-persistence telemetry only.
 	committed := make([]judgePersistJob, 0, len(jobs))
 	for _, jb := range jobs {
 		row := buildJudgeRow(jb)
@@ -454,11 +468,10 @@ func (j *JudgeStore) flushBatch(parent context.Context, jobs []judgePersistJob) 
 			"batch_size":      strconv.Itoa(len(jobs)),
 			"committed_count": strconv.Itoa(len(committed)),
 		})
-		// A failed Commit means the whole tx rolled back — every job
-		// (including the ones whose per-row Insert succeeded inside
-		// the tx) is now lost. Record drops for the full batch so
-		// dashboards reflect reality, and skip the audit fan-out:
-		// SIEM rows must never out-race the local forensic copy.
+		// A failed Commit means every optional body row rolled back,
+		// including rows whose Insert succeeded inside the transaction.
+		// Record a body-persistence drop for the full batch. The deferred
+		// canonical fan-out still emits every completion exactly once.
 		reason := "tx_commit_failed"
 		if j.shutdownRequested.Load() && ctx.Err() != nil {
 			reason = "shutdown"
@@ -467,15 +480,15 @@ func (j *JudgeStore) flushBatch(parent context.Context, jobs []judgePersistJob) 
 		return
 	}
 	telemetry.RecordJudgePersistBatchSize(ctx, int64(len(committed)))
+}
 
-	// Fan out the redacted summary AFTER the body commit succeeds so
-	// SIEM rows never out-race the local forensic copy. Iterate over
-	// `committed` (not `jobs`) so a row that failed its INSERT but
-	// landed inside an otherwise-successful batch does not produce a
-	// dangling audit_events row.
-	if j.logger != nil {
-		for _, jb := range committed {
-			j.fanoutAudit(jb)
+func (j *JudgeStore) fanoutAuditBatch(jobs []judgePersistJob) {
+	for _, jb := range jobs {
+		if err := j.fanoutAudit(jb); err != nil {
+			j.logErrorEvent("judge_audit.emit", err, map[string]string{
+				"failure_class": string(jb.payload.FailureClass),
+				"kind":          jb.payload.Kind,
+			})
 		}
 	}
 }
@@ -495,9 +508,9 @@ func recordJudgePersistDrops(jobs []judgePersistJob, reason string) {
 func (j *JudgeStore) logErrorEvent(action string, err error, details map[string]string) {
 	if j.logger != nil {
 		parts := make([]string, 0, 1+len(details))
-		parts = append(parts, "error="+err.Error())
+		parts = append(parts, "error="+boundedJudgeHealthValue(err.Error(), 4096))
 		for k, v := range details {
-			parts = append(parts, k+"="+v)
+			parts = append(parts, boundedJudgeHealthValue(k, 128)+"="+boundedJudgeHealthValue(v, 256))
 		}
 		_ = j.logger.LogEvent(audit.Event{
 			Action:   action,
@@ -507,13 +520,22 @@ func (j *JudgeStore) logErrorEvent(action string, err error, details map[string]
 		})
 		return
 	}
-	fmt.Fprintf(os.Stderr, "[judge_store] %s: %v (%v)\n", action, err, details)
+	fmt.Fprintf(os.Stderr, "[judge_store] %s: %s\n", boundedJudgeHealthValue(action, 128),
+		boundedJudgeHealthValue(err.Error(), 4096))
+}
+
+func boundedJudgeHealthValue(value string, maxBytes int) string {
+	value = strings.ToValidUTF8(value, "\uFFFD")
+	if maxBytes > 0 && len(value) > maxBytes {
+		return truncateToRuneBoundary(value, maxBytes)
+	}
+	return value
 }
 
 // fanoutAudit emits the redacted audit event for one job. Mirrors
 // the historical sidecar closure (sidecar.go:354-374) so existing
 // sink consumers see no behavioral change.
-func (j *JudgeStore) fanoutAudit(jb judgePersistJob) {
+func (j *JudgeStore) fanoutAudit(jb judgePersistJob) error {
 	env := audit.MergeEnvelope(audit.EnvelopeFromContext(jb.ctx), audit.CorrelationEnvelope{
 		ToolName:       jb.toolName,
 		ToolID:         jb.toolID,
@@ -526,27 +548,21 @@ func (j *JudgeStore) fanoutAudit(jb judgePersistJob) {
 		Actor:    "defenseclaw-gateway",
 		Severity: string(jb.payload.Severity),
 		Details: fmt.Sprintf(
-			"kind=%s direction=%s action=%s latency_ms=%d input_bytes=%d parse_error=%q",
-			jb.payload.Kind, jb.dir, jb.payload.Action, jb.payload.LatencyMs, jb.payload.InputBytes, jb.payload.ParseError,
+			"kind=%s direction=%s action=%s latency_ms=%d input_bytes=%d failure_class=%s error_summary=%q parse_error=%q",
+			jb.payload.Kind, jb.dir, jb.payload.Action, jb.payload.LatencyMs, jb.payload.InputBytes,
+			jb.payload.FailureClass, jb.payload.ErrorSummary, jb.payload.ParseError,
 		),
 	}
 	audit.ApplyEnvelope(&evt, env)
-	switch strings.ToLower(strings.TrimSpace(jb.payload.Action)) {
-	case "allow", "block":
-		_ = j.logger.LogJudgeCompletion(jb.ctx, evt, audit.JudgeCompletionInput{
-			Kind:       jb.payload.Kind,
-			Action:     jb.payload.Action,
-			LatencyMS:  jb.payload.LatencyMs,
-			InputBytes: int64(jb.payload.InputBytes),
-			ParseError: jb.payload.ParseError,
-		})
-	default:
-		// guardrail.judge.completed currently has exact outcomes only for
-		// allow and block. Provider, empty-response, and parse failures use
-		// action=error in production; preserve their v7 audit row until the
-		// canonical family adds a failed outcome rather than inventing one.
-		_ = j.logger.LogEvent(evt)
-	}
+	return j.logger.LogJudgeCompletion(jb.ctx, evt, audit.JudgeCompletionInput{
+		Kind:         jb.payload.Kind,
+		Action:       jb.payload.Action,
+		LatencyMS:    jb.payload.LatencyMs,
+		InputBytes:   int64(jb.payload.InputBytes),
+		FailureClass: jb.payload.FailureClass,
+		ErrorSummary: jb.payload.ErrorSummary,
+		ParseError:   jb.payload.ParseError,
+	})
 }
 
 // buildJudgeRow assembles the audit.JudgeResponse from the queued

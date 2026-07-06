@@ -187,6 +187,30 @@ const (
 	SeverityCritical Severity = "CRITICAL"
 )
 
+// JudgeFailureClass is the closed, internal reason vocabulary for a judge
+// invocation whose terminal action is "error". Keep this classification
+// separate from ErrorSummary: the class is safe for bounded metric labels,
+// while the summary remains centrally redacted free-form diagnostic text.
+type JudgeFailureClass string
+
+const (
+	JudgeFailureProvider      JudgeFailureClass = "provider"
+	JudgeFailureEmptyResponse JudgeFailureClass = "empty_response"
+	JudgeFailureOutputParse   JudgeFailureClass = "output_parse"
+)
+
+// Valid reports whether the value is one of the terminal judge-error classes.
+// The empty value is deliberately invalid here: successful allow/block results
+// carry no failure class, while action=error must always name one.
+func (class JudgeFailureClass) Valid() bool {
+	switch class {
+	case JudgeFailureProvider, JudgeFailureEmptyResponse, JudgeFailureOutputParse:
+		return true
+	default:
+		return false
+	}
+}
+
 // Stage identifies which stage of the guardrail pipeline produced a
 // Verdict. "final" is the composed result returned to the caller.
 type Stage string
@@ -557,15 +581,20 @@ type Finding struct {
 // populated when guardrail.retain_judge_bodies is true — operators
 // opt in because raw bodies can echo user PII.
 type JudgePayload struct {
-	Kind        string    `json:"kind"` // injection | pii | tool_injection
-	Model       string    `json:"model"`
-	InputBytes  int       `json:"input_bytes"`
-	LatencyMs   int64     `json:"latency_ms"`
-	Action      string    `json:"action,omitempty"`
-	Severity    Severity  `json:"severity,omitempty"`
-	Findings    []Finding `json:"findings,omitempty"`
-	RawResponse string    `json:"raw_response,omitempty"`
-	ParseError  string    `json:"parse_error,omitempty"`
+	Kind         string            `json:"kind"` // injection | pii | tool_injection
+	Model        string            `json:"model"`
+	InputBytes   int               `json:"input_bytes"`
+	LatencyMs    int64             `json:"latency_ms"`
+	Action       string            `json:"action,omitempty"`
+	Severity     Severity          `json:"severity,omitempty"`
+	Findings     []Finding         `json:"findings,omitempty"`
+	RawResponse  string            `json:"raw_response,omitempty"`
+	FailureClass JudgeFailureClass `json:"failure_class,omitempty"`
+	ErrorSummary string            `json:"error_summary,omitempty"`
+	// ParseError is populated only when FailureClass is output_parse. Provider
+	// and empty-response failures use ErrorSummary without pretending that a
+	// parser observed malformed model output.
+	ParseError string `json:"parse_error,omitempty"`
 	// InputHash is the SHA-256 of the inspected judge *input*
 	// (the prompt/request bytes the judge was asked to evaluate),
 	// hex-encoded with the "sha256:" prefix when populated.

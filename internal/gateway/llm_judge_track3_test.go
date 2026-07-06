@@ -6,6 +6,7 @@ package gateway
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -175,14 +176,69 @@ func TestRunInjectionJudge_ParseErrorEmitsErrorEvent(t *testing.T) {
 	if v == nil || !v.JudgeFailed {
 		t.Fatalf("expected error verdict, got %+v", v)
 	}
-	var sawErr bool
+	var sawErr, sawJudge bool
 	for _, e := range *capture {
 		if e.EventType == gatewaylog.EventError && e.Error != nil &&
 			e.Error.Code == string(gatewaylog.ErrCodeLLMBridgeError) {
 			sawErr = true
 		}
+		if e.EventType == gatewaylog.EventJudge && e.Judge != nil {
+			sawJudge = true
+			if e.Judge.FailureClass != gatewaylog.JudgeFailureOutputParse ||
+				e.Judge.ErrorSummary == "" || e.Judge.ParseError != e.Judge.ErrorSummary {
+				t.Fatalf("parse failure payload = %#v", e.Judge)
+			}
+			if e.Judge.ErrorSummary == "parse-failed" {
+				t.Fatal("central event redaction did not scrub parse failure summary")
+			}
+		}
 	}
 	if !sawErr {
 		t.Fatalf("expected EventError LLM_BRIDGE_ERROR, events=%d", len(*capture))
+	}
+	if !sawJudge {
+		t.Fatalf("expected classified EventJudge, events=%d", len(*capture))
+	}
+}
+
+func TestRunInjectionJudge_NonParseFailureClassifications(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		mock    *mockLLMProvider
+		class   gatewaylog.JudgeFailureClass
+		summary string
+	}{
+		{name: "provider", mock: &mockLLMProvider{err: errors.New("provider unavailable")},
+			class: gatewaylog.JudgeFailureProvider, summary: "provider unavailable"},
+		{name: "empty response", mock: &mockLLMProvider{response: &ChatResponse{}},
+			class: gatewaylog.JudgeFailureEmptyResponse, summary: "empty-response"},
+	} {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			capture := withCapturedEvents(t)
+			judge := &LLMJudge{
+				cfg: &config.JudgeConfig{Enabled: true, Injection: true}, model: "m",
+				provider: test.mock, rp: &guardrail.RulePack{},
+			}
+			verdict := judge.runInjectionJudge(t.Context(), strings.Repeat("p", 25)+" x")
+			if verdict == nil || !verdict.JudgeFailed {
+				t.Fatalf("expected error verdict, got %+v", verdict)
+			}
+			var got *gatewaylog.JudgePayload
+			for index := range *capture {
+				if (*capture)[index].EventType == gatewaylog.EventJudge {
+					got = (*capture)[index].Judge
+				}
+			}
+			if got == nil || got.FailureClass != test.class || got.ErrorSummary == "" {
+				t.Fatalf("classified judge payload = %#v", got)
+			}
+			if got.ErrorSummary == test.summary {
+				t.Fatal("central event redaction did not scrub judge failure summary")
+			}
+			if got.ParseError != "" {
+				t.Fatalf("non-parse failure emitted parse_error = %q", got.ParseError)
+			}
+		})
 	}
 }

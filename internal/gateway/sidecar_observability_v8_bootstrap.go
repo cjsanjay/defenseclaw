@@ -292,7 +292,7 @@ func (s *Sidecar) prepareObservabilityV8Runtime(
 		DiscoverySource: cfg.DiscoverySource, DeviceKeyFile: cfg.Gateway.DeviceKeyFile,
 		GenerationPipelines: destinationFactory.GenerationPipelineFactory(prometheus.Options{}),
 	})
-	retainJudgeBodies := s.judgeStore != nil
+	retainJudgeBodies := s.judgeStore != nil && s.judgeStore.RetainsJudgeBodies()
 	runtime, err := observabilityruntime.New(
 		ctx,
 		runtimegraph.ConfigFromPlan(compiled.Plan, retainJudgeBodies),

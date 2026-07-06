@@ -24,6 +24,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/defenseclaw/defenseclaw/internal/gatewaylog"
 	"github.com/defenseclaw/defenseclaw/internal/observability"
 	"github.com/defenseclaw/defenseclaw/internal/observability/router"
 )
@@ -32,11 +33,13 @@ import (
 // It deliberately has no finding fields: a judge result is an evaluation, not
 // evidence that a separately identified security finding was persisted.
 type JudgeCompletionInput struct {
-	Kind       string
-	Action     string
-	LatencyMS  int64
-	InputBytes int64
-	ParseError string
+	Kind         string
+	Action       string
+	LatencyMS    int64
+	InputBytes   int64
+	FailureClass gatewaylog.JudgeFailureClass
+	ErrorSummary string
+	ParseError   string
 }
 
 // EnforcementQuarantineAppliedInput describes one successful quarantine state
@@ -136,12 +139,17 @@ func (l *Logger) emitJudgeCompletionV8(
 			if input.ParseError != "" {
 				parseError = observability.Present(input.ParseError)
 			}
+			errorSummary := observability.Absent[string]()
+			if input.ErrorSummary != "" {
+				errorSummary = observability.Present(input.ErrorSummary)
+			}
 			record, buildErr := builder.BuildLogGuardrailJudgeCompleted(observability.LogGuardrailJudgeCompletedInput{
 				Envelope: envelope, Severity: severity, LogLevel: logLevel, Outcome: judgeOutcome,
 				DefenseClawPolicyID:  optionalControlPlaneV8Identifier(event.PolicyID),
 				DefenseClawJudgeKind: input.Kind, DefenseClawJudgeAction: outcome,
 				DefenseClawJudgeLatencyMs: input.LatencyMS, DefenseClawJudgeInputBytes: input.InputBytes,
-				DefenseClawJudgeParseError: parseError, ConditionJudgeOutputParseFailed: input.ParseError != "",
+				DefenseClawJudgeParseError: parseError, DefenseClawJudgeErrorSummary: errorSummary,
+				ConditionJudgeOutputParseFailed: input.FailureClass == gatewaylog.JudgeFailureOutputParse,
 			})
 			return verifyRuntimeV8Record(record, buildErr, event, false)
 		},
@@ -310,14 +318,37 @@ func validateJudgeCompletionInput(input JudgeCompletionInput) error {
 	if strings.TrimSpace(input.Kind) == "" || len(input.Kind) > 4096 || !utf8.ValidString(input.Kind) {
 		return fmt.Errorf("audit: judge kind is required")
 	}
-	if _, _, ok := judgeCompletionOutcome(input.Action); !ok {
-		return fmt.Errorf("audit: judge action must be allow or block")
+	action, _, ok := judgeCompletionOutcome(input.Action)
+	if !ok {
+		return fmt.Errorf("audit: judge action must be allow, block, or error")
 	}
 	if input.LatencyMS < 0 || input.InputBytes < 0 {
 		return fmt.Errorf("audit: judge measurements must not be negative")
 	}
+	if len(input.ErrorSummary) > 65536 || !utf8.ValidString(input.ErrorSummary) {
+		return fmt.Errorf("audit: judge error summary is invalid")
+	}
 	if len(input.ParseError) > 65536 || !utf8.ValidString(input.ParseError) {
 		return fmt.Errorf("audit: judge parse error is invalid")
+	}
+	if action != "error" {
+		if input.FailureClass != "" || input.ErrorSummary != "" || input.ParseError != "" {
+			return fmt.Errorf("audit: successful judge result must not carry failure metadata")
+		}
+		return nil
+	}
+	if !input.FailureClass.Valid() {
+		return fmt.Errorf("audit: judge error failure class is invalid")
+	}
+	if strings.TrimSpace(input.ErrorSummary) == "" {
+		return fmt.Errorf("audit: judge error summary is required")
+	}
+	if input.FailureClass == gatewaylog.JudgeFailureOutputParse {
+		if strings.TrimSpace(input.ParseError) == "" {
+			return fmt.Errorf("audit: output-parse judge failure requires parse error")
+		}
+	} else if input.ParseError != "" {
+		return fmt.Errorf("audit: parse error is forbidden for non-parse judge failure")
 	}
 	return nil
 }
@@ -339,6 +370,8 @@ func judgeCompletionOutcome(action string) (string, observability.Outcome, bool)
 		return "allow", observability.OutcomeAllowed, true
 	case "block":
 		return "block", observability.OutcomeBlocked, true
+	case "error":
+		return "error", observability.OutcomeFailed, true
 	default:
 		return "", "", false
 	}

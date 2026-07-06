@@ -20,6 +20,7 @@ import (
 
 	"github.com/defenseclaw/defenseclaw/internal/audit"
 	"github.com/defenseclaw/defenseclaw/internal/gatewaylog"
+	"github.com/defenseclaw/defenseclaw/internal/observability"
 	"github.com/defenseclaw/defenseclaw/internal/observability/router"
 	"github.com/defenseclaw/defenseclaw/internal/telemetry"
 )
@@ -55,17 +56,33 @@ type fakeBatch struct {
 var errFakeInsert = errors.New("fakeInserter: synthetic insert failure")
 var errFakeCommit = errors.New("fakeInserter: synthetic commit failure")
 
-type unexpectedJudgeRuntimeV8Emitter struct {
-	calls int
+type captureJudgeRuntimeV8Emitter struct {
+	mu      sync.Mutex
+	records []observability.Record
 }
 
-func (e *unexpectedJudgeRuntimeV8Emitter) EmitRuntimeV8(
-	context.Context,
-	router.Metadata,
-	audit.RuntimeV8Builder,
+func (e *captureJudgeRuntimeV8Emitter) EmitRuntimeV8(
+	_ context.Context,
+	_ router.Metadata,
+	build audit.RuntimeV8Builder,
 ) (audit.RuntimeV8EmitOutcome, error) {
-	e.calls++
-	return audit.RuntimeV8EmitOutcome{}, errors.New("unexpected canonical judge emission")
+	record, err := build(audit.RuntimeV8BuildContext{
+		ConfigGeneration: 1,
+		ConfigDigest:     "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+	}, router.AdmissionOrdinary)
+	if err != nil {
+		return audit.RuntimeV8EmitOutcome{}, err
+	}
+	e.mu.Lock()
+	e.records = append(e.records, record.Clone())
+	e.mu.Unlock()
+	return audit.RuntimeV8EmitOutcome{Admission: router.AdmissionOrdinary, LocalPersisted: true}, nil
+}
+
+func (e *captureJudgeRuntimeV8Emitter) snapshot() []observability.Record {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return append([]observability.Record(nil), e.records...)
 }
 
 func (f *fakeInserter) InsertJudgeResponse(_ audit.JudgeResponse) error {
@@ -145,8 +162,8 @@ func (f *fakeInserter) failureSnapshot() (insertErrors, committedRows int) {
 	return f.insertErrors, f.committedRows
 }
 
-// makeJob is a tiny helper that returns a minimal non-empty payload
-// so the queue does not no-op on the "empty raw" guard.
+// makeJob returns the minimal retained-body payload used by the optional
+// body-persistence queue tests.
 func makeJob(t *testing.T) (gatewaylog.JudgePayload, gatewaylog.Direction) {
 	t.Helper()
 	return gatewaylog.JudgePayload{
@@ -159,54 +176,87 @@ func makeJob(t *testing.T) (gatewaylog.JudgePayload, gatewaylog.Direction) {
 	}, gatewaylog.DirectionPrompt
 }
 
-// TestJudgeStore_ErrorActionPreservesLegacyAudit verifies the production
-// fan-out path for provider, empty-response, and parse failures. The canonical
-// guardrail.judge.completed family currently has no failed/error outcome, so
-// these events must remain on the v7 path even when the v8 runtime is bound.
-func TestJudgeStore_ErrorActionPreservesLegacyAudit(t *testing.T) {
-	auditStore, err := audit.NewStore(filepath.Join(t.TempDir(), "audit.db"))
-	if err != nil {
-		t.Fatalf("audit.NewStore: %v", err)
-	}
-	t.Cleanup(func() { _ = auditStore.Close() })
-	if err := auditStore.Init(); err != nil {
-		t.Fatalf("audit.Init: %v", err)
-	}
-	logger := audit.NewLogger(auditStore)
-	runtime := &unexpectedJudgeRuntimeV8Emitter{}
-	logger.SetRuntimeV8Emitter(runtime)
+// TestJudgeStore_ErrorActionsEmitOneCanonicalFailedLog verifies that every
+// closed failure class uses the generated guardrail.judge.completed family,
+// never resurrects the v7 audit path, and only marks actual output parse
+// failures with defenseclaw.judge.parse_error.
+func TestJudgeStore_ErrorActionsEmitOneCanonicalFailedLog(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		class      gatewaylog.JudgeFailureClass
+		summary    string
+		parseError string
+	}{
+		{name: "provider", class: gatewaylog.JudgeFailureProvider, summary: "provider unavailable"},
+		{name: "empty response", class: gatewaylog.JudgeFailureEmptyResponse, summary: "empty-response"},
+		{name: "output parse", class: gatewaylog.JudgeFailureOutputParse, summary: "parse-failed", parseError: "parse-failed"},
+	} {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			auditStore, err := audit.NewStore(filepath.Join(t.TempDir(), "audit.db"))
+			if err != nil {
+				t.Fatalf("audit.NewStore: %v", err)
+			}
+			t.Cleanup(func() { _ = auditStore.Close() })
+			if err := auditStore.Init(); err != nil {
+				t.Fatalf("audit.Init: %v", err)
+			}
+			logger := audit.NewLogger(auditStore)
+			runtime := &captureJudgeRuntimeV8Emitter{}
+			logger.SetRuntimeV8Emitter(runtime)
 
-	store := &JudgeStore{logger: logger}
-	store.fanoutAudit(judgePersistJob{
-		ctx: context.Background(),
-		dir: gatewaylog.DirectionPrompt,
-		payload: gatewaylog.JudgePayload{
-			Kind:       "injection",
-			Model:      "test-model",
-			Action:     "error",
-			Severity:   gatewaylog.SeverityMedium,
-			LatencyMs:  12,
-			InputBytes: 37,
-			ParseError: "provider unavailable",
-		},
-	})
+			store := &JudgeStore{logger: logger}
+			if err := store.fanoutAudit(judgePersistJob{
+				ctx: context.Background(),
+				dir: gatewaylog.DirectionPrompt,
+				payload: gatewaylog.JudgePayload{
+					Kind: "injection", Model: "test-model", Action: "error",
+					Severity: gatewaylog.SeverityMedium, LatencyMs: 12, InputBytes: 37,
+					FailureClass: test.class, ErrorSummary: test.summary, ParseError: test.parseError,
+				},
+			}); err != nil {
+				t.Fatalf("fanoutAudit: %v", err)
+			}
 
-	if runtime.calls != 0 {
-		t.Fatalf("canonical runtime calls = %d, want 0 for unsupported error outcome", runtime.calls)
+			records := runtime.snapshot()
+			if len(records) != 1 {
+				t.Fatalf("canonical records = %d, want exactly 1", len(records))
+			}
+			record := records[0]
+			if record.EventName() != observability.EventName(observability.TelemetryEventGuardrailJudgeCompleted) ||
+				record.Outcome() != observability.OutcomeFailed {
+				t.Fatalf("canonical identity/outcome = %q/%q", record.EventName(), record.Outcome())
+			}
+			body := judgeCanonicalAttributes(t, record)
+			if body["defenseclaw.judge.error_summary"] != test.summary {
+				t.Fatalf("error_summary = %#v, want %q", body["defenseclaw.judge.error_summary"], test.summary)
+			}
+			parseValue, parsePresent := body["defenseclaw.judge.parse_error"]
+			if test.parseError == "" && parsePresent {
+				t.Fatalf("non-parse failure emitted parse_error = %#v", parseValue)
+			}
+			if test.parseError != "" && parseValue != test.parseError {
+				t.Fatalf("parse_error = %#v, want %q", parseValue, test.parseError)
+			}
+			events, err := auditStore.ListEvents(10)
+			if err != nil || len(events) != 0 {
+				t.Fatalf("legacy audit rows = %d err=%v, want 0", len(events), err)
+			}
+		})
 	}
-	events, err := auditStore.ListEvents(10)
+}
+
+func judgeCanonicalAttributes(t *testing.T, record observability.Record) map[string]any {
+	t.Helper()
+	body, ok := record.Body()
+	if !ok {
+		t.Fatal("canonical judge record has no body")
+	}
+	object, err := body.Object()
 	if err != nil {
-		t.Fatalf("ListEvents: %v", err)
+		t.Fatalf("judge body: %v", err)
 	}
-	if len(events) != 1 {
-		t.Fatalf("audit rows = %d, want exactly 1 legacy row", len(events))
-	}
-	if events[0].Action != string(audit.ActionLLMJudgeResponse) ||
-		!strings.Contains(events[0].Details, "action=error") ||
-		!strings.Contains(events[0].Details, "parse_error=<redacted") ||
-		strings.Contains(events[0].Details, "provider unavailable") {
-		t.Fatalf("legacy judge audit row = %#v", events[0])
-	}
+	return object
 }
 
 // TestJudgeStore_DropsOnFullQueue: when the worker is blocked and
@@ -331,27 +381,100 @@ func TestJudgeStore_ShutdownDrains(t *testing.T) {
 	}
 }
 
-// TestJudgeStore_EmptyRawSkipsQueue: payload with empty RawResponse
-// must short-circuit before touching the channel — otherwise a
-// "retention off" deployment would silently fill the queue with
-// no-op rows.
-func TestJudgeStore_EmptyRawSkipsQueue(t *testing.T) {
+// TestJudgeStore_EmptyRawQueuesFailureMetadata proves an enabled body sink can
+// persist a metadata-only row when the judge failed before returning a body.
+// Provider and empty-response failures must reach canonical fan-out even though
+// there is no raw response to retain.
+func TestJudgeStore_EmptyRawQueuesFailureMetadata(t *testing.T) {
 	fi := &fakeInserter{}
-	js := NewJudgeStore(fi, nil, 16)
-	defer func() { _ = js.Shutdown(context.Background()) }()
+	auditStore, err := audit.NewStore(filepath.Join(t.TempDir(), "audit.db"))
+	if err != nil {
+		t.Fatalf("audit.NewStore: %v", err)
+	}
+	t.Cleanup(func() { _ = auditStore.Close() })
+	if err := auditStore.Init(); err != nil {
+		t.Fatalf("audit.Init: %v", err)
+	}
+	logger := audit.NewLogger(auditStore)
+	runtime := &captureJudgeRuntimeV8Emitter{}
+	logger.SetRuntimeV8Emitter(runtime)
+	js := NewJudgeStore(fi, logger, 16)
 
 	empty := gatewaylog.JudgePayload{
-		Kind:        "injection",
-		Model:       "test",
-		RawResponse: "",
+		Kind: "injection", Model: "test", Action: "error", Severity: gatewaylog.SeverityHigh,
+		FailureClass: gatewaylog.JudgeFailureProvider, ErrorSummary: "provider unavailable",
 	}
-	_ = js.PersistJudgeEvent(context.Background(), gatewaylog.DirectionPrompt, empty, "", "", "", "")
+	if err := js.PersistJudgeEvent(context.Background(), gatewaylog.DirectionPrompt, empty, "", "", "", ""); err != nil {
+		t.Fatalf("PersistJudgeEvent: %v", err)
+	}
+	if err := js.Shutdown(context.Background()); err != nil {
+		t.Fatalf("Shutdown: %v", err)
+	}
 
-	// Give the worker a moment to (not) process anything.
-	time.Sleep(50 * time.Millisecond)
+	if begins, inserts, commits := fi.snapshot(); begins != 1 || inserts != 1 || commits != 1 {
+		t.Fatalf("metadata-only queue writes = begins:%d inserts:%d commits:%d, want 1/1/1", begins, inserts, commits)
+	}
+	records := runtime.snapshot()
+	if len(records) != 1 || records[0].Outcome() != observability.OutcomeFailed {
+		t.Fatalf("metadata-only canonical records = %#v", records)
+	}
+}
 
-	if begins, inserts, _ := fi.snapshot(); begins != 0 || inserts != 0 {
-		t.Fatalf("empty raw must skip queue: begins=%d inserts=%d", begins, inserts)
+func TestJudgeStore_RetentionOffStillEmitsCanonicalCompletions(t *testing.T) {
+	auditStore, err := audit.NewStore(filepath.Join(t.TempDir(), "audit.db"))
+	if err != nil {
+		t.Fatalf("audit.NewStore: %v", err)
+	}
+	t.Cleanup(func() { _ = auditStore.Close() })
+	if err := auditStore.Init(); err != nil {
+		t.Fatalf("audit.Init: %v", err)
+	}
+	logger := audit.NewLogger(auditStore)
+	runtime := &captureJudgeRuntimeV8Emitter{}
+	logger.SetRuntimeV8Emitter(runtime)
+	js := NewJudgeStore(nil, logger, 16)
+	if js == nil || js.RetainsJudgeBodies() {
+		t.Fatalf("retention-off queue = %#v retains=%t", js, js != nil && js.RetainsJudgeBodies())
+	}
+	SetJudgeResponseStore(js)
+	t.Cleanup(func() { SetJudgeResponseStore(nil) })
+
+	emitJudge(t.Context(), "injection", "judge-model", gatewaylog.DirectionPrompt,
+		10, 1, "allow", gatewaylog.SeverityInfo, "", "raw allow response", JudgeEmitOpts{})
+	emitJudge(t.Context(), "injection", "judge-model", gatewaylog.DirectionPrompt,
+		11, 2, "block", gatewaylog.SeverityHigh, "", "raw block response", JudgeEmitOpts{})
+	emitJudge(t.Context(), "injection", "judge-model", gatewaylog.DirectionPrompt,
+		12, 3, "error", gatewaylog.SeverityHigh, "provider unavailable", "",
+		JudgeEmitOpts{FailureClass: gatewaylog.JudgeFailureProvider})
+	if err := js.Shutdown(t.Context()); err != nil {
+		t.Fatalf("Shutdown: %v", err)
+	}
+	SetJudgeResponseStore(nil)
+
+	records := runtime.snapshot()
+	if len(records) != 3 {
+		t.Fatalf("canonical records = %d, want 3", len(records))
+	}
+	wantOutcomes := []observability.Outcome{
+		observability.OutcomeAllowed, observability.OutcomeBlocked, observability.OutcomeFailed,
+	}
+	for index, record := range records {
+		if record.EventName() != observability.EventName(observability.TelemetryEventGuardrailJudgeCompleted) ||
+			record.Outcome() != wantOutcomes[index] {
+			t.Fatalf("record[%d] identity/outcome = %q/%q", index, record.EventName(), record.Outcome())
+		}
+		body := judgeCanonicalAttributes(t, record)
+		for _, forbidden := range []string{"raw allow response", "raw block response"} {
+			for _, value := range body {
+				if text, ok := value.(string); ok && strings.Contains(text, forbidden) {
+					t.Fatalf("record[%d] leaked raw body through canonical fields", index)
+				}
+			}
+		}
+	}
+	legacy, err := auditStore.ListEvents(10)
+	if err != nil || len(legacy) != 0 {
+		t.Fatalf("retention-off legacy rows = %d err=%v, want 0", len(legacy), err)
 	}
 }
 
@@ -419,8 +542,8 @@ func TestJudgeStore_LongCallerDeadlineCannotExtendShutdownCap(t *testing.T) {
 	}
 }
 
-// TestJudgeStore_NilSafePaths covers the API guards: nil store, nil
-// JudgeStore, and empty RawResponse must never panic.
+// TestJudgeStore_NilSafePaths covers the API guards: a nil body store and nil
+// logger produce no queue, and nil JudgeStore methods never panic.
 func TestJudgeStore_NilSafePaths(t *testing.T) {
 	if js := NewJudgeStore(nil, nil, 16); js != nil {
 		t.Fatalf("NewJudgeStore(nil) must return nil")
@@ -626,9 +749,9 @@ func batchSizeHistogramCount(rm metricdata.ResourceMetrics) uint64 {
 //
 //  1. record exactly one "insert_failed" drop per failed row,
 //  2. commit the rows that *did* INSERT successfully, and
-//  3. NOT fan out an audit summary for the failed rows (otherwise
-//     SIEM rows can exist without a matching judge_responses body —
-//     the very correlation invariant the design depends on).
+//  3. emit one canonical completion for every invocation, including rows whose
+//     optional forensic body failed. Body retention and ordinary observability
+//     are separate domains.
 //
 // We drive 10 jobs through a fake that fails every 3rd insert (rows
 // 3, 6, 9 — three drops, seven committed) and assert all three
@@ -647,6 +770,8 @@ func TestJudgeStore_PartialInsertFailureCountsDrops(t *testing.T) {
 	}
 	logger := audit.NewLogger(auditStore)
 	t.Cleanup(func() { logger.Close() })
+	runtime := &captureJudgeRuntimeV8Emitter{}
+	logger.SetRuntimeV8Emitter(runtime)
 
 	fi := &fakeInserter{failEveryNthInsert: 3}
 	// queueDepth must be large enough that ALL ten enqueues land in
@@ -693,13 +818,14 @@ func TestJudgeStore_PartialInsertFailureCountsDrops(t *testing.T) {
 		t.Fatalf("drops(reason=insert_failed) = %d, want %d (regression: H1 partial-batch lost rows)", got, wantFailed)
 	}
 
-	// The audit logger should have received exactly one
-	// `llm-judge-response` row per *committed* row — never per job.
-	// This is the SIEM-vs-body parity invariant the H1 fix protects.
-	fanoutCount := countAuditAction(t, auditStore, "llm-judge-response")
-	if fanoutCount != N-wantFailed {
-		t.Fatalf("audit_events fan-out rows = %d, want %d (regression: fan-out emitted for uncommitted jobs)",
-			fanoutCount, N-wantFailed)
+	if records := runtime.snapshot(); len(records) != N {
+		t.Fatalf("canonical completions = %d, want %d despite %d body failures", len(records), N, wantFailed)
+	}
+	if got := countAuditAction(t, auditStore, "judge_persist.insert"); got != wantFailed {
+		t.Fatalf("body failure health rows = %d, want %d", got, wantFailed)
+	}
+	if got := countAuditAction(t, auditStore, "llm-judge-response"); got != 0 {
+		t.Fatalf("legacy judge rows = %d, want 0 after canonical decision", got)
 	}
 }
 
@@ -722,11 +848,9 @@ func countAuditAction(t *testing.T, s *audit.Store, action string) int {
 }
 
 // TestJudgeStore_CommitFailureRollsBackEntireBatch covers the partial-
-// commit-failure path in flushBatch: when tx.Commit returns an error
-// the WHOLE batch is lost (SQLite rolled back per the API contract).
-// Every job must record a "tx_commit_failed" drop AND no audit
-// fan-out may fire — otherwise SIEM dashboards show verdicts whose
-// supporting body was never persisted.
+// commit-failure path in flushBatch: when tx.Commit returns an error the WHOLE
+// optional body batch is lost. Every body records a "tx_commit_failed" drop,
+// one bounded health row is emitted, and every canonical completion survives.
 func TestJudgeStore_CommitFailureRollsBackEntireBatch(t *testing.T) {
 	reader := installTestProvider(t)
 
@@ -741,6 +865,8 @@ func TestJudgeStore_CommitFailureRollsBackEntireBatch(t *testing.T) {
 	}
 	logger := audit.NewLogger(auditStore)
 	t.Cleanup(func() { logger.Close() })
+	runtime := &captureJudgeRuntimeV8Emitter{}
+	logger.SetRuntimeV8Emitter(runtime)
 
 	fi := &fakeInserter{failCommit: true}
 	js := NewJudgeStore(fi, logger, 32)
@@ -761,20 +887,37 @@ func TestJudgeStore_CommitFailureRollsBackEntireBatch(t *testing.T) {
 		t.Fatalf("drops(reason=tx_commit_failed) = %d, want %d", got, N)
 	}
 
-	if fanoutCount := countAuditAction(t, auditStore, "llm-judge-response"); fanoutCount != 0 {
-		t.Fatalf("fan-out fired despite commit failure: %d rows (SIEM/body parity broken)", fanoutCount)
+	if records := runtime.snapshot(); len(records) != N {
+		t.Fatalf("canonical completions = %d, want %d despite commit failure", len(records), N)
+	}
+	if got := countAuditAction(t, auditStore, "judge_persist.commit"); got != 1 {
+		t.Fatalf("commit failure health rows = %d, want 1", got)
+	}
+	if got := countAuditAction(t, auditStore, "llm-judge-response"); got != 0 {
+		t.Fatalf("legacy judge rows = %d, want 0 after canonical decision", got)
 	}
 }
 
 // TestJudgeStore_BeginFailureAccountsAllJobs guards the third failure
-// mode: BeginJudgeBatch itself errored. Every job must record a
-// "tx_begin_failed" drop. The audit fan-out is unreachable since the
-// whole batch never made it past the begin call.
+// mode: BeginJudgeBatch itself errored. Every optional body records a
+// "tx_begin_failed" drop, health is surfaced once, and canonical completions
+// still emit.
 func TestJudgeStore_BeginFailureAccountsAllJobs(t *testing.T) {
 	reader := installTestProvider(t)
+	auditStore, err := audit.NewStore(filepath.Join(t.TempDir(), "audit.db"))
+	if err != nil {
+		t.Fatalf("audit.NewStore: %v", err)
+	}
+	t.Cleanup(func() { _ = auditStore.Close() })
+	if err := auditStore.Init(); err != nil {
+		t.Fatalf("audit.Init: %v", err)
+	}
+	logger := audit.NewLogger(auditStore)
+	runtime := &captureJudgeRuntimeV8Emitter{}
+	logger.SetRuntimeV8Emitter(runtime)
 
 	fi := &fakeInserter{beginErr: errors.New("synthetic begin failure")}
-	js := NewJudgeStore(fi, nil, 16)
+	js := NewJudgeStore(fi, logger, 16)
 	payload, dir := makeJob(t)
 	const N = 5
 	for i := 0; i < N; i++ {
@@ -790,6 +933,12 @@ func TestJudgeStore_BeginFailureAccountsAllJobs(t *testing.T) {
 	}
 	if got := dropReasonCount(t, rm, "tx_begin_failed"); got != int64(N) {
 		t.Fatalf("drops(reason=tx_begin_failed) = %d, want %d", got, N)
+	}
+	if records := runtime.snapshot(); len(records) != N {
+		t.Fatalf("canonical completions = %d, want %d despite begin failure", len(records), N)
+	}
+	if got := countAuditAction(t, auditStore, "judge_persist.begin_batch"); got != 1 {
+		t.Fatalf("begin failure health rows = %d, want 1", got)
 	}
 }
 

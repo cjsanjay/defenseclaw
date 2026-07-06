@@ -52,6 +52,8 @@ func writePretty(w io.Writer, e Event) {
 		parse := ""
 		if j.ParseError != "" {
 			parse = " parse_err=" + j.ParseError
+		} else if j.ErrorSummary != "" {
+			parse = " error=" + j.ErrorSummary
 		}
 		fmt.Fprintf(w, "%s [judge:%s] model=%s dir=%s action=%s sev=%s in=%dB lat=%dms%s\n",
 			ts, j.Kind, j.Model, e.Direction, j.Action, j.Severity, j.InputBytes, j.LatencyMs, parse)

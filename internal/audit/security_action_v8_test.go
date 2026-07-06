@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/defenseclaw/defenseclaw/internal/gatewaylog"
 	"github.com/defenseclaw/defenseclaw/internal/observability"
 	"github.com/defenseclaw/defenseclaw/internal/observability/router"
 )
@@ -87,12 +88,20 @@ func TestJudgeCompletionGeneratedMappingsPersistExactlyOnce(t *testing.T) {
 		name       string
 		action     string
 		severity   string
+		failure    gatewaylog.JudgeFailureClass
+		error      string
 		parseError string
 		outcome    observability.Outcome
 		want       observability.Severity
 	}{
 		{name: "clean allow", action: "allow", severity: "NONE", outcome: observability.OutcomeAllowed, want: observability.SeverityInfo},
-		{name: "fail-closed block", action: "block", severity: "HIGH", parseError: "invalid judge JSON", outcome: observability.OutcomeBlocked, want: observability.SeverityHigh},
+		{name: "policy block", action: "block", severity: "HIGH", outcome: observability.OutcomeBlocked, want: observability.SeverityHigh},
+		{name: "provider failure", action: "error", severity: "HIGH", failure: gatewaylog.JudgeFailureProvider,
+			error: "provider unavailable", outcome: observability.OutcomeFailed, want: observability.SeverityHigh},
+		{name: "empty response", action: "error", severity: "HIGH", failure: gatewaylog.JudgeFailureEmptyResponse,
+			error: "empty-response", outcome: observability.OutcomeFailed, want: observability.SeverityHigh},
+		{name: "output parse failure", action: "error", severity: "HIGH", failure: gatewaylog.JudgeFailureOutputParse,
+			error: "parse-failed", parseError: "parse-failed", outcome: observability.OutcomeFailed, want: observability.SeverityHigh},
 	} {
 		test := test
 		t.Run(test.name, func(t *testing.T) {
@@ -108,7 +117,7 @@ func TestJudgeCompletionGeneratedMappingsPersistExactlyOnce(t *testing.T) {
 			}
 			if err := logger.LogJudgeCompletion(ContextWithEnvelope(context.Background(), env), event, JudgeCompletionInput{
 				Kind: "injection", Action: test.action, LatencyMS: 17, InputBytes: 2048,
-				ParseError: test.parseError,
+				FailureClass: test.failure, ErrorSummary: test.error, ParseError: test.parseError,
 			}); err != nil {
 				t.Fatalf("LogJudgeCompletion: %v", err)
 			}
@@ -142,6 +151,13 @@ func TestJudgeCompletionGeneratedMappingsPersistExactlyOnce(t *testing.T) {
 				}
 			} else if body["defenseclaw.judge.parse_error"] != test.parseError {
 				t.Fatalf("judge parse_error = %#v", body["defenseclaw.judge.parse_error"])
+			}
+			if test.error == "" {
+				if _, present := body["defenseclaw.judge.error_summary"]; present {
+					t.Fatalf("successful judge emitted error_summary: %#v", body)
+				}
+			} else if body["defenseclaw.judge.error_summary"] != test.error {
+				t.Fatalf("judge error_summary = %#v", body["defenseclaw.judge.error_summary"])
 			}
 			correlation := record.Correlation()
 			assertControlPlaneCorrelation(t, correlation, env)
@@ -330,6 +346,34 @@ func TestTypedSecurityActionsFailClosedWhenRequiredV8FactsAreMissing(t *testing.
 			return logger.LogJudgeCompletion(context.Background(), Event{
 				Action: string(ActionLLMJudgeResponse), Severity: "HIGH",
 			}, JudgeCompletionInput{Kind: "injection", Action: "review"})
+		}},
+		{name: "judge error missing class", log: func(logger *Logger) error {
+			return logger.LogJudgeCompletion(context.Background(), Event{
+				Action: string(ActionLLMJudgeResponse), Severity: "HIGH",
+			}, JudgeCompletionInput{Kind: "injection", Action: "error", ErrorSummary: "provider unavailable"})
+		}},
+		{name: "judge malformed failure class", log: func(logger *Logger) error {
+			return logger.LogJudgeCompletion(context.Background(), Event{
+				Action: string(ActionLLMJudgeResponse), Severity: "HIGH",
+			}, JudgeCompletionInput{Kind: "injection", Action: "error", FailureClass: "network-ish", ErrorSummary: "provider unavailable"})
+		}},
+		{name: "judge provider classified as parse", log: func(logger *Logger) error {
+			return logger.LogJudgeCompletion(context.Background(), Event{
+				Action: string(ActionLLMJudgeResponse), Severity: "HIGH",
+			}, JudgeCompletionInput{Kind: "injection", Action: "error", FailureClass: gatewaylog.JudgeFailureProvider,
+				ErrorSummary: "provider unavailable", ParseError: "provider unavailable"})
+		}},
+		{name: "judge parse class missing parse detail", log: func(logger *Logger) error {
+			return logger.LogJudgeCompletion(context.Background(), Event{
+				Action: string(ActionLLMJudgeResponse), Severity: "HIGH",
+			}, JudgeCompletionInput{Kind: "injection", Action: "error", FailureClass: gatewaylog.JudgeFailureOutputParse,
+				ErrorSummary: "parse-failed"})
+		}},
+		{name: "judge success with failure metadata", log: func(logger *Logger) error {
+			return logger.LogJudgeCompletion(context.Background(), Event{
+				Action: string(ActionLLMJudgeResponse), Severity: "INFO",
+			}, JudgeCompletionInput{Kind: "injection", Action: "allow", FailureClass: gatewaylog.JudgeFailureProvider,
+				ErrorSummary: "impossible"})
 		}},
 		{name: "enforcement id", log: func(logger *Logger) error {
 			return logger.LogEnforcementQuarantineApplied(context.Background(), Event{

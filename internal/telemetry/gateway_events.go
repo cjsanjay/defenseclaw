@@ -103,22 +103,31 @@ func (p *Provider) RecordGatewayEvent(e gatewaylog.Event) {
 		))
 		p.metrics.judgeLatency.Record(ctx, float64(e.Judge.LatencyMs),
 			metric.WithAttributes(attribute.String("judge.kind", e.Judge.Kind)))
-		if e.Judge.Action == "error" || e.Judge.ParseError != "" {
+		if e.Judge.Action == "error" {
 			// Label set is intentionally small (kind + reason
-			// class) to keep the time series bounded. The raw
-			// parse-error string is redacted and may embed a
+			// class) to keep the time series bounded. The free-form
+			// error summary is redacted and may embed a
 			// hash prefix, which would otherwise explode the
 			// counter's cardinality to one series per unique
 			// redacted value. The detailed reason lives in
 			// the log record emitted below.
-			reason := "provider"
-			if e.Judge.ParseError != "" {
+			var reason string
+			switch e.Judge.FailureClass {
+			case gatewaylog.JudgeFailureProvider:
+				reason = "provider"
+			case gatewaylog.JudgeFailureEmptyResponse:
+				reason = "empty_response"
+			case gatewaylog.JudgeFailureOutputParse:
 				reason = "parse"
 			}
-			p.metrics.judgeErrors.Add(ctx, 1, metric.WithAttributes(
-				attribute.String("judge.kind", e.Judge.Kind),
-				attribute.String("judge.reason", reason),
-			))
+			// A malformed internal classification fails closed instead of
+			// being guessed as a provider error and polluting a valid series.
+			if reason != "" {
+				p.metrics.judgeErrors.Add(ctx, 1, metric.WithAttributes(
+					attribute.String("judge.kind", e.Judge.Kind),
+					attribute.String("judge.reason", reason),
+				))
+			}
 		}
 	case gatewaylog.EventError:
 		if e.Error == nil {
@@ -376,6 +385,9 @@ func (p *Provider) EmitGatewayEventWithContext(ctx context.Context, e gatewaylog
 			)
 			if j.ParseError != "" {
 				attrs = append(attrs, log.String("defenseclaw.judge.parse_error", j.ParseError))
+			}
+			if j.ErrorSummary != "" {
+				attrs = append(attrs, log.String("defenseclaw.judge.error_summary", j.ErrorSummary))
 			}
 		}
 	case gatewaylog.EventLifecycle:

@@ -113,10 +113,10 @@ type Sidecar struct {
 	// verdict cache. nil when guardrail.judge.enabled is false.
 	judge *LLMJudge
 
-	// judgeStore is the async judge-body persistence queue.
-	// Non-nil only when guardrail.retain_judge_bodies is on.
-	// Sidecar.Run drains it on shutdown so queued bodies survive
-	// SIGTERM.
+	// judgeStore is the async judge completion queue. It remains active when
+	// guardrail.retain_judge_bodies is off so canonical allow/block/error logs
+	// are policy-independent; its optional body inserter is enabled only when
+	// retention is on. Sidecar.Run drains it on shutdown.
 	judgeStore *JudgeStore
 
 	// judgeBodyStore is the Phase 4 split-out SQLite database
@@ -368,6 +368,10 @@ func NewSidecar(cfg *config.Config, store *audit.Store, logger *audit.Logger, sh
 		logger.SetStructuredEmitter(newAuditBridge(events))
 		logger.SetGatewayLogWriter(events)
 	}
+	var (
+		judgeStore     *JudgeStore
+		judgeBodyStore *audit.JudgeBodyStore
+	)
 	cleanupFailedConstruction := func() {
 		alertCancel()
 		client.OnEvent = previousClientOnEvent
@@ -381,26 +385,35 @@ func NewSidecar(cfg *config.Config, store *audit.Store, logger *audit.Logger, sh
 		if webhooks != nil {
 			webhooks.Close()
 		}
+		SetJudgeResponseStore(nil)
+		if judgeStore != nil {
+			_ = shutdownJudgeStore(judgeStore)
+		}
+		if judgeBodyStore != nil {
+			_ = judgeBodyStore.Close()
+		}
 		SetEventWriter(nil)
 		SetEgressTelemetry(nil)
 		_ = events.Close()
 	}
 
-	// Phase 3: persist judge bodies to the local SQLite audit store
-	// AND emit a structured audit event so every configured sink
-	// (Splunk HEC, OTLP logs, webhook JSONL) sees a redacted summary.
+	// Phase 3: always enqueue structured judge completions so every configured
+	// sink sees the canonical summary. Raw body persistence is a separate,
+	// optional side effect controlled by retain_judge_bodies.
 	//
-	// Retention defaults to on (see viper.SetDefault); operators who
-	// opt out via config or DEFENSECLAW_PERSIST_JUDGE=0 get neither the
-	// SQLite row nor the audit fan-out. The raw body is only touched
+	// Retention defaults to on (see viper.SetDefault); operators who opt out via
+	// config or DEFENSECLAW_PERSIST_JUDGE=0 get no judge_responses body row but
+	// retain the canonical completion. The raw body is only touched
 	// inside this process — emitJudge redacts RawResponse before it
 	// flows into gateway.jsonl / sinks, and the InsertJudgeResponse
 	// body stays on disk under the same ACLs as the rest of the data
 	// directory.
-	var (
-		judgeStore     *JudgeStore
-		judgeBodyStore *audit.JudgeBodyStore
-	)
+	queueDepth := cfg.Guardrail.JudgePersistQueueDepth
+	if v := strings.TrimSpace(os.Getenv("DEFENSECLAW_JUDGE_PERSIST_QUEUE_SIZE")); v != "" {
+		if parsed, err := strconv.Atoi(v); err == nil && parsed > 0 {
+			queueDepth = parsed
+		}
+	}
 	legacyJudgeBodies := false
 	if store != nil {
 		var legacyErr error
@@ -411,16 +424,6 @@ func NewSidecar(cfg *config.Config, store *audit.Store, logger *audit.Logger, sh
 		}
 	}
 	if (retainJudge || legacyJudgeBodies) && store != nil {
-		// Resolve the queue depth. Precedence: env override > config
-		// value > built-in default. The env override mirrors the
-		// DEFENSECLAW_PERSIST_JUDGE pattern so operators have a
-		// no-rebuild knob during incident response.
-		queueDepth := cfg.Guardrail.JudgePersistQueueDepth
-		if v := strings.TrimSpace(os.Getenv("DEFENSECLAW_JUDGE_PERSIST_QUEUE_SIZE")); v != "" {
-			if parsed, err := strconv.Atoi(v); err == nil && parsed > 0 {
-				queueDepth = parsed
-			}
-		}
 		// V8 cutover: judge bodies live exclusively in the dedicated
 		// SQLite file. The cutover constructor blocks reads/writes until
 		// every legacy row has committed and verified by stable ID. Any
@@ -444,17 +447,16 @@ func NewSidecar(cfg *config.Config, store *audit.Store, logger *audit.Logger, sh
 				Details:  "path=" + bodyDBPath,
 			})
 		}
-		// Async judge persistence: rows queue on a buffered channel
-		// and flush in batched transactions on a dedicated worker.
-		// See internal/gateway/judge_store.go for the design notes;
-		// the legacy synchronous callback that used to live here is
-		// gone — its dropped writes under
-		// burst load were the motivating bug for this fix.
-		if retainJudge {
-			judgeStore = NewJudgeStore(&judgeBodyStoreInserter{s: bs}, logger, queueDepth)
-			SetJudgeResponseStore(judgeStore)
-		}
 	}
+	var bodyInserter JudgeBodyInserter
+	if retainJudge && judgeBodyStore != nil {
+		bodyInserter = &judgeBodyStoreInserter{s: judgeBodyStore}
+	}
+	// One bounded queue owns completion ordering in both retention modes. With
+	// bodyInserter nil it emits canonical summaries only; with an inserter it
+	// attempts the body transaction first and then emits the same summary.
+	judgeStore = NewJudgeStore(bodyInserter, logger, queueDepth)
+	SetJudgeResponseStore(judgeStore)
 
 	// Boot path — no request context exists yet. Writer.Emit stamps
 	// sidecar_instance_id; run_id is inherited from the env var via
@@ -805,9 +807,9 @@ func (s *Sidecar) Run(ctx context.Context) (runErr error) {
 	if err := s.closeOwnedObservabilityV8Runtime(); err != nil {
 		return err
 	}
-	// Drain the async judge-persistence queue BEFORE the audit DB
-	// handle is closed: any rows still buffered after a SIGTERM
-	// must land in SQLite or they are lost forever. Shutdown
+	// Drain the async judge completion queue BEFORE the audit DB handle is
+	// closed: canonical summaries and any enabled body rows still buffered after
+	// SIGTERM must be processed. Shutdown
 	// bounds the wait to judgePersistShutdownTimeout (5s) so a
 	// pathological DB doesn't wedge the process; drops still
 	// surface as defenseclaw.judge.persist.drops with

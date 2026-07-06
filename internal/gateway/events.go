@@ -44,16 +44,16 @@ var (
 	gatewayEventsMu sync.RWMutex
 	gatewayEvents   *gatewaylog.Writer
 
-	// judgeResponseStore is the sole authoritative raw judge-body writer.
-	// When nil, emitJudge still emits its centrally redacted metadata event
-	// but raw-body persistence is disabled; there is no callback fallback.
+	// judgeResponseStore is the process-wide bounded completion queue. Its body
+	// inserter is optional, so canonical judge logs remain active when forensic
+	// response retention is disabled.
 	judgeResponseStoreMu sync.RWMutex
 	judgeResponseStore   *JudgeStore
 )
 
-// SetJudgeResponseStore installs the sole v8 SQLite writer for retained judge
-// bodies. Passing nil disables raw-body persistence without affecting the
-// redacted guardrail/judge metadata event.
+// SetJudgeResponseStore installs the bounded judge completion queue. Passing
+// nil disables queued canonical completion and optional body persistence; the
+// redacted gateway event remains independent.
 func SetJudgeResponseStore(js *JudgeStore) {
 	judgeResponseStoreMu.Lock()
 	defer judgeResponseStoreMu.Unlock()
@@ -209,11 +209,18 @@ func emitEvent(ctx context.Context, e gatewaylog.Event) {
 		cp := *j
 		// RawResponse routinely echoes the triggering
 		// prompt verbatim — sinks must only ever see the
-		// redacted form. ParseError is short caller-owned
-		// metadata but we redact it too in case a parser
+		// redacted form. ErrorSummary and ParseError are caller-owned
+		// diagnostics, so redact them too in case a provider or parser
 		// embeds a snippet of the offending body.
-		cp.RawResponse = redaction.ForSinkString(cp.RawResponse)
-		cp.ParseError = redaction.ForSinkString(cp.ParseError)
+		if cp.RawResponse != "" {
+			cp.RawResponse = redaction.ForSinkString(cp.RawResponse)
+		}
+		if cp.ErrorSummary != "" {
+			cp.ErrorSummary = redaction.ForSinkString(cp.ErrorSummary)
+		}
+		if cp.ParseError != "" {
+			cp.ParseError = redaction.ForSinkString(cp.ParseError)
+		}
 		e.Judge = &cp
 	}
 	if er := e.Error; er != nil {
@@ -325,6 +332,10 @@ type JudgeEmitOpts struct {
 	ToolID         string
 	PolicyID       string
 	DestinationApp string
+	// FailureClass is required exactly when action is "error". It is a
+	// closed, low-cardinality classification; the positional failureSummary
+	// argument remains the centrally-redacted diagnostic detail.
+	FailureClass gatewaylog.JudgeFailureClass
 	// InputContent, when non-empty, is the inspected judge input
 	// (the prompt/request text the judge was asked to evaluate).
 	// emitJudge computes its sha256 digest and stores the result in
@@ -349,23 +360,43 @@ func emitJudge(
 	latencyMs int64,
 	action string,
 	severity gatewaylog.Severity,
-	parseError string,
+	failureSummary string,
 	raw string,
 	opts JudgeEmitOpts,
 ) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	action = strings.ToLower(strings.TrimSpace(action))
+	failureSummary = strings.ToValidUTF8(failureSummary, "\uFFFD")
+	if len(failureSummary) > 65536 {
+		failureSummary = truncateToRuneBoundary(failureSummary, 65536)
+	}
+	if action == "error" {
+		if !opts.FailureClass.Valid() || strings.TrimSpace(failureSummary) == "" {
+			emitError(ctx, string(gatewaylog.SubsystemGuardrail), string(gatewaylog.ErrCodeLLMBridgeError),
+				"judge error omitted a valid internal failure classification", nil)
+			return
+		}
+	} else if opts.FailureClass != "" || failureSummary != "" {
+		emitError(ctx, string(gatewaylog.SubsystemGuardrail), string(gatewaylog.ErrCodeLLMBridgeError),
+			"successful judge result carried failure-only metadata", nil)
+		return
+	}
 	payload := gatewaylog.JudgePayload{
-		Kind:        kind,
-		Model:       model,
-		InputBytes:  inputBytes,
-		LatencyMs:   latencyMs,
-		Action:      action,
-		Severity:    severity,
-		ParseError:  parseError,
-		RawResponse: raw,
-		Findings:    opts.Findings,
+		Kind:         kind,
+		Model:        model,
+		InputBytes:   inputBytes,
+		LatencyMs:    latencyMs,
+		Action:       action,
+		Severity:     severity,
+		FailureClass: opts.FailureClass,
+		ErrorSummary: failureSummary,
+		RawResponse:  raw,
+		Findings:     opts.Findings,
+	}
+	if opts.FailureClass == gatewaylog.JudgeFailureOutputParse {
+		payload.ParseError = failureSummary
 	}
 	// ("Judge input_hash is computed from the
 	// response body") closure: when callers supply the inspected
@@ -379,14 +410,11 @@ func emitJudge(
 		payload.InputHash = "sha256:" + hex.EncodeToString(sum[:])
 	}
 
-	// SQLite persistence runs first because emitEvent mutates its own
-	// shallow copy of the payload (it scrubs RawResponse before
-	// forwarding to the sinks pipeline). We want the local,
-	// operator-owned store to receive the un-redacted body — retention
-	// is explicit opt-in via guardrail.retain_judge_bodies and the SQLite
-	// file is already covered by the same filesystem ACLs as the rest
-	// of ~/.defenseclaw.
-	if js := activeJudgeStore(); js != nil && raw != "" {
+	// Queue the original payload before emitEvent scrubs its shallow copy. The
+	// worker always emits the canonical completion; only a queue configured with
+	// an optional body inserter writes RawResponse to the operator-owned SQLite
+	// file. Retention remains explicit and never changes completion visibility.
+	if js := activeJudgeStore(); js != nil {
 		_ = js.PersistJudgeEvent(ctx, direction, payload, opts.ToolName, opts.ToolID, opts.PolicyID, opts.DestinationApp)
 	}
 
