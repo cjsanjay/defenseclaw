@@ -65,6 +65,8 @@ from defenseclaw.config import (
     HILTConfig,
     PerConnectorGuardrailConfig,
     config_path_for_data_dir,
+    locked_config_yaml,
+    locked_file_update,
 )
 from defenseclaw.config import (
     load as load_config,
@@ -1745,6 +1747,11 @@ def _restore_dotenv_snapshot(path: str, payload: bytes | None, mode: int | None)
 
 
 def _write_dotenv(path: str, entries: dict[str, str]) -> None:
+    with locked_file_update(path):
+        _write_dotenv_locked(path, entries)
+
+
+def _write_dotenv_locked(path: str, entries: dict[str, str]) -> None:
     """Write entries to a .env file with mode 0600.
 
     Note: ``O_CREAT`` only applies the ``0o600`` mode on *initial*
@@ -1785,7 +1792,12 @@ def _config_trusted_bin_prefixes(cfg) -> list[str]:
     return [str(p).strip() for p in (values or []) if str(p).strip()]
 
 
-def _set_config_trusted_bin_prefixes(cfg, prefixes: list[str]) -> None:
+def _set_config_trusted_bin_prefixes(
+    cfg,
+    prefixes: list[str],
+    *,
+    locked_path: str | None = None,
+) -> None:
     ai = getattr(cfg, "ai_discovery", None)
     if ai is None:
         return
@@ -1799,7 +1811,10 @@ def _set_config_trusted_bin_prefixes(cfg, prefixes: list[str]) -> None:
         seen.add(key)
         deduped.append(key)
     ai.trusted_binary_prefixes = deduped
-    cfg.save()
+    if locked_path is None:
+        cfg.save()
+    else:
+        cfg._save_locked(locked_path)
 
 
 def _add_trusted_bin_prefix(prefix: str, data_dir: str, cfg=None) -> bool:
@@ -1983,47 +1998,11 @@ def trusted_paths_remove(app: AppContext, directory: str, as_json: bool) -> None
         )
         click.get_current_context().exit(1)
     data_dir = app.cfg.data_dir
-    config_entries = _config_trusted_bin_prefixes(app.cfg)
     target = (directory or "").strip()
-    kept_config = [
-        e for e in config_entries if e != target and agent_discovery.validate_trusted_prefix(e)[0] != resolved
-    ]
     dotenv_path = os.path.join(data_dir, ".env")
-    dotenv_snapshot, dotenv_mode = _snapshot_dotenv(dotenv_path)
-    existing = _parse_dotenv_snapshot(dotenv_snapshot)
-    current = existing.get("DEFENSECLAW_TRUSTED_BIN_PREFIXES", "")
-    entries = [p.strip() for p in current.split(os.pathsep) if p.strip()]
-    kept = [e for e in entries if e != target and agent_discovery.validate_trusted_prefix(e)[0] != resolved]
-    config_changed = len(kept_config) != len(config_entries)
-    dotenv_changed = len(kept) != len(entries)
-    if dotenv_changed:
-        new_val = os.pathsep.join(kept)
-        if new_val:
-            existing["DEFENSECLAW_TRUSTED_BIN_PREFIXES"] = new_val
-        else:
-            existing.pop("DEFENSECLAW_TRUSTED_BIN_PREFIXES", None)
-
-    removed = config_changed or dotenv_changed
-    try:
-        if dotenv_changed:
-            _write_dotenv(dotenv_path, existing)
-        if config_changed:
-            _set_config_trusted_bin_prefixes(app.cfg, kept_config)
-    except BaseException:
-        rollback_error = None
-        if dotenv_changed:
-            try:
-                _restore_dotenv_snapshot(dotenv_path, dotenv_snapshot, dotenv_mode)
-            except BaseException as exc:
-                if rollback_error is None:
-                    rollback_error = exc
-        if config_changed:
-            ai = getattr(app.cfg, "ai_discovery", None)
-            if ai is not None:
-                ai.trusted_binary_prefixes = config_entries
-        if rollback_error is not None:
-            raise rollback_error
-        raise
+    config_file = str(config_path_for_data_dir(data_dir))
+    with locked_config_yaml(config_file), locked_file_update(dotenv_path):
+        removed = _remove_trusted_path_files_locked(app, target, resolved, dotenv_path, config_file)
 
     process_entries = [
         value.strip()
@@ -2051,6 +2030,59 @@ def trusted_paths_remove(app: AppContext, directory: str, as_json: bool) -> None
         )
         click.get_current_context().exit(1)
     _emit_trusted_path_result(as_json, ok=True, path=resolved, message="removed from trusted prefixes")
+
+
+def _remove_trusted_path_files_locked(
+    app: AppContext,
+    target: str,
+    resolved: str,
+    dotenv_path: str,
+    config_file: str,
+) -> bool:
+    """Update config and dotenv while both sibling locks remain held."""
+
+    config_entries = _config_trusted_bin_prefixes(app.cfg)
+    kept_config = [
+        entry
+        for entry in config_entries
+        if entry != target and agent_discovery.validate_trusted_prefix(entry)[0] != resolved
+    ]
+    dotenv_snapshot, dotenv_mode = _snapshot_dotenv(dotenv_path)
+    existing = _parse_dotenv_snapshot(dotenv_snapshot)
+    current = existing.get("DEFENSECLAW_TRUSTED_BIN_PREFIXES", "")
+    entries = [p.strip() for p in current.split(os.pathsep) if p.strip()]
+    kept = [e for e in entries if e != target and agent_discovery.validate_trusted_prefix(e)[0] != resolved]
+    config_changed = len(kept_config) != len(config_entries)
+    dotenv_changed = len(kept) != len(entries)
+    if dotenv_changed:
+        new_val = os.pathsep.join(kept)
+        if new_val:
+            existing["DEFENSECLAW_TRUSTED_BIN_PREFIXES"] = new_val
+        else:
+            existing.pop("DEFENSECLAW_TRUSTED_BIN_PREFIXES", None)
+
+    removed = config_changed or dotenv_changed
+    try:
+        if dotenv_changed:
+            _write_dotenv_locked(dotenv_path, existing)
+        if config_changed:
+            _set_config_trusted_bin_prefixes(app.cfg, kept_config, locked_path=config_file)
+    except BaseException:
+        rollback_error = None
+        if dotenv_changed:
+            try:
+                _restore_dotenv_snapshot(dotenv_path, dotenv_snapshot, dotenv_mode)
+            except BaseException as exc:
+                if rollback_error is None:
+                    rollback_error = exc
+        if config_changed:
+            ai = getattr(app.cfg, "ai_discovery", None)
+            if ai is not None:
+                ai.trusted_binary_prefixes = config_entries
+        if rollback_error is not None:
+            raise rollback_error
+        raise
+    return removed
 
 
 def _emit_untrusted_prefix_setup_hints(resolved_binary: str, parent: str) -> None:
@@ -2270,6 +2302,11 @@ def _rotate_token_dotenv_path(app: AppContext) -> str:
 
 
 def _rotate_token_atomic_write(dotenv_path: str, new_token: str) -> None:
+    with locked_file_update(dotenv_path):
+        _rotate_token_atomic_write_locked(dotenv_path, new_token)
+
+
+def _rotate_token_atomic_write_locked(dotenv_path: str, new_token: str) -> None:
     """Rewrite the dotenv file with the new token, preserving every
     other line. Atomic via os.replace; mode 0o600.
 
@@ -9967,9 +10004,10 @@ def _save_secret_to_dotenv(key: str, value: str, data_dir: str) -> None:
     if not value:
         return
     dotenv_path = os.path.join(data_dir, ".env")
-    existing = _load_dotenv(dotenv_path)
-    existing[key] = value
-    _write_dotenv(dotenv_path, existing)
+    with locked_file_update(dotenv_path):
+        existing = _load_dotenv(dotenv_path)
+        existing[key] = value
+        _write_dotenv_locked(dotenv_path, existing)
     os.environ[key] = value
 
 

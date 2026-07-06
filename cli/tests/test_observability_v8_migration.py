@@ -110,6 +110,7 @@ def test_already_valid_v8_is_an_exact_noop() -> None:
     assert result.candidate == source
     assert result.changed is False
     assert result.already_v8 is True
+    assert result.effective_data_dir is None
     assert result.source_sha256 == hashlib.sha256(source).hexdigest()
     assert result.candidate_sha256 == result.source_sha256
     assert result.source_sha256 not in repr(result)
@@ -376,6 +377,7 @@ def test_absent_or_relative_data_dir_requires_explicit_absolute_effective_value(
         compatibility_selection=_TYPED_COMPATIBILITY,
     )
     jsonl = _destination(_document(result), "gateway-jsonl")
+    assert result.effective_data_dir == "/srv/defenseclaw"
     assert jsonl["path"] == "/srv/defenseclaw/gateway.jsonl"
     assert not str(jsonl["path"]).startswith("~")
     observability = _document(result)["observability"]
@@ -383,6 +385,14 @@ def test_absent_or_relative_data_dir_requires_explicit_absolute_effective_value(
         "path": "/srv/defenseclaw/audit.db",
         "judge_bodies_path": "/srv/defenseclaw/judge_bodies.db",
     }
+
+    normalized = convert_v7_observability_to_v8(
+        "config_version: 7\n",
+        {},
+        effective_data_dir="/srv/defenseclaw/../defenseclaw-v8",
+        compatibility_selection=_TYPED_COMPATIBILITY,
+    )
+    assert normalized.effective_data_dir == "/srv/defenseclaw-v8"
 
 
 @pytest.mark.parametrize(
@@ -509,6 +519,11 @@ audit_sinks:
     assert len(result.environment_edits) == 3
     assert {edit.value for edit in result.environment_edits} == {canary_token, canary_header, "safe-project"}
     assert all(edit.backup_required and edit.rollback_with_config for edit in result.environment_edits)
+    assert {reference.path for edit in result.environment_edits for reference in edit.references} == {
+        ("token_env",),
+        ("headers", "Authorization", "env"),
+        ("headers", "project", "env"),
+    }
     splunk = _destination(document, "splunk")
     assert str(splunk["token_env"]).startswith("DEFENSECLAW_MIGRATED_")
     otlp = _destination(document, "audit-otlp")
@@ -984,13 +999,35 @@ audit_sinks:
     same_destination = _destination(_document(same), "splunk")
     different_destination = _destination(_document(different), "splunk")
 
-    assert same.environment_edits == ()
+    assert len(same.environment_edits) == 1
+    assert same.environment_edits[0].name == first_edit.name
+    assert same.environment_edits[0].value == first_edit.value
     assert same_destination["token_env"] == first_edit.name
     assert len(different.environment_edits) == 1
     assert different.environment_edits[0].name != first_edit.name
     assert different_destination["token_env"] == different.environment_edits[0].name
     assert "current-secret" not in repr(different)
     assert "preexisting-different-secret" not in repr(different)
+
+
+def test_conversion_binds_only_consulted_environment_inputs_without_values() -> None:
+    canary = "environment-dependency-secret-canary"
+    result = _convert(
+        "config_version: 7\n",
+        {
+            "DEFENSECLAW_JSONL_DISABLE": "true",
+            "DEFENSECLAW_DISABLE_REDACTION": canary,
+            "UNRELATED_ENVIRONMENT_CANARY": "must-not-be-bound",
+        },
+    )
+
+    dependencies = {dependency.name: dependency for dependency in result.environment_dependencies}
+    assert "DEFENSECLAW_JSONL_DISABLE" in dependencies
+    assert "DEFENSECLAW_DISABLE_REDACTION" in dependencies
+    assert "UNRELATED_ENVIRONMENT_CANARY" not in dependencies
+    assert dependencies["DEFENSECLAW_DISABLE_REDACTION"].value_sha256 == hashlib.sha256(canary.encode()).hexdigest()
+    assert canary not in repr(result)
+    assert canary not in repr(result.environment_dependencies)
 
 
 @pytest.mark.parametrize(
@@ -1022,6 +1059,9 @@ audit_sinks:
 
     assert missing_destination[environment_field] != "EXISTING_REFERENCE"
     assert {edit.value for edit in missing.environment_edits} == {"inline-fallback-canary"}
+    assert {reference.path for edit in missing.environment_edits for reference in edit.references} == {
+        (environment_field,)
+    }
     assert available_destination[environment_field] == "EXISTING_REFERENCE"
     assert available.environment_edits == ()
     assert "inline-fallback-canary" not in missing.candidate.decode()

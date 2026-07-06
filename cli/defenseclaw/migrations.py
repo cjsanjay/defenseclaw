@@ -51,6 +51,7 @@ import click
 import yaml
 
 from defenseclaw import ux
+from defenseclaw.config import locked_file_update
 
 
 def _ver_tuple(v: str) -> tuple[int, ...]:
@@ -865,6 +866,16 @@ def _atomic_write_dotenv(path: str, kv: dict[str, str]) -> bool:
 
 
 def _dotenv_update_keys(
+    path: str,
+    *,
+    updates: dict[str, str] | None = None,
+    removes: tuple[str, ...] = (),
+) -> bool:
+    with locked_file_update(path):
+        return _dotenv_update_keys_locked(path, updates=updates, removes=removes)
+
+
+def _dotenv_update_keys_locked(
     path: str,
     *,
     updates: dict[str, str] | None = None,

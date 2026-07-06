@@ -2638,18 +2638,23 @@ class Config:
         refuses to reload.
         """
         path = str(config_path_for_data_dir(self.data_dir))
+        with locked_config_yaml(path):
+            self._save_locked(path)
+
+    def _save_locked(self, path: str) -> None:
+        """Persist using an already-held config lock."""
+
         dataclass_data = _config_to_dict(self)
         owned_keys = _owned_top_level_keys(self)
-        with locked_config_yaml(path):
-            existing = _load_existing_config_yaml(path)
-            merged = _merge_preserving_unmodeled(
-                existing,
-                dataclass_data,
-                owned_keys,
-                authoritative_base=self._loaded_authoritative_dicts,
-                owned_base=self._loaded_owned_nested_values,
-            )
-            write_config_yaml_secure(path, merged)
+        existing = _load_existing_config_yaml(path)
+        merged = _merge_preserving_unmodeled(
+            existing,
+            dataclass_data,
+            owned_keys,
+            authoritative_base=self._loaded_authoritative_dicts,
+            owned_base=self._loaded_owned_nested_values,
+        )
+        write_config_yaml_secure(path, merged)
 
 
 # ---------------------------------------------------------------------------
@@ -2658,8 +2663,8 @@ class Config:
 
 
 @contextmanager
-def locked_config_yaml(path: str):
-    """Hold an exclusive per-config lock for a read/merge/write cycle."""
+def locked_file_update(path: str):
+    """Hold the shared sibling lock for a complete file read/modify/write cycle."""
     directory = os.path.dirname(path) or "."
     os.makedirs(directory, exist_ok=True)
     lock_path = path + ".lock"
@@ -2681,6 +2686,14 @@ def locked_config_yaml(path: str):
             _unlock_file(lock)
     finally:
         lock.close()
+
+
+@contextmanager
+def locked_config_yaml(path: str):
+    """Hold an exclusive per-config lock for a read/merge/write cycle."""
+
+    with locked_file_update(path):
+        yield
 
 
 def write_config_yaml_secure(path: str, data: dict[str, Any]) -> None:

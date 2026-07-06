@@ -46,7 +46,12 @@ from urllib.parse import urlparse
 
 import yaml
 
-from defenseclaw.config import config_path_for_data_dir, locked_config_yaml, write_config_yaml_secure
+from defenseclaw.config import (
+    config_path_for_data_dir,
+    locked_config_yaml,
+    locked_file_update,
+    write_config_yaml_secure,
+)
 from defenseclaw.observability.presets import Preset, Signal, resolve_preset
 from defenseclaw.safety import sanitize_dotenv_value
 
@@ -1197,9 +1202,10 @@ def _apply_secret(
     if dry_run:
         return [f"{preset.token_env}: (would write to ~/.defenseclaw/.env)"]
     path = os.path.join(data_dir, DOTENV_FILE_NAME)
-    existing = _load_dotenv(path)
-    existing[preset.token_env] = secret_value
-    _write_dotenv(path, existing)
+    with locked_file_update(path):
+        existing = _load_dotenv(path)
+        existing[preset.token_env] = secret_value
+        _write_dotenv(path, existing)
     os.environ[preset.token_env] = secret_value
     return [f"{preset.token_env}: written to ~/.defenseclaw/.env"]
 

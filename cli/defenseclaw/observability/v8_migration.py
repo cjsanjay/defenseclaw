@@ -36,10 +36,11 @@ import copy
 import hashlib
 import ipaddress
 import math
+import os
 import re
 from collections import deque
-from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from collections.abc import Iterator, Mapping, Sequence
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Final
 from urllib.parse import urlsplit
@@ -177,6 +178,23 @@ class V8MigrationDependencyError(V8MigrationError):
 
 
 @dataclass(frozen=True)
+class EnvironmentReference:
+    """Exact candidate destination field that consumes a protected value."""
+
+    destination: str
+    path: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class EnvironmentDependency:
+    """One environment input whose exact presence/value influenced conversion."""
+
+    name: str
+    present: bool
+    value_sha256: str = field(repr=False)
+
+
+@dataclass(frozen=True)
 class EnvironmentEdit:
     """One secret-bearing ancillary edit for the caller-owned environment file.
 
@@ -187,6 +205,7 @@ class EnvironmentEdit:
     name: str
     value: str = field(repr=False)
     value_sha256: str = field(repr=False)
+    references: tuple[EnvironmentReference, ...] = ()
     operation: str = "set_if_absent"
     backup_required: bool = True
     rollback_with_config: bool = True
@@ -229,9 +248,39 @@ class V8MigrationResult:
     candidate_sha256: str = field(repr=False)
     changed: bool
     already_v8: bool
+    effective_data_dir: str | None
     warnings: tuple[str, ...]
     environment_edits: tuple[EnvironmentEdit, ...] = field(repr=False)
     summary: V8MigrationSummary
+    environment_dependencies: tuple[EnvironmentDependency, ...] = field(default=(), repr=False)
+
+
+class _TrackedEnvironment(Mapping[str, str]):
+    """Mapping that records only keys whose values affect the candidate."""
+
+    def __init__(self, source: Mapping[str, str]) -> None:
+        self._source = dict(source)
+        self._consulted: set[str] = set()
+
+    def __getitem__(self, key: str) -> str:
+        self._consulted.add(key)
+        return self._source[key]
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self._source)
+
+    def __len__(self) -> int:
+        return len(self._source)
+
+    def dependencies(self) -> tuple[EnvironmentDependency, ...]:
+        return tuple(
+            EnvironmentDependency(
+                name=name,
+                present=name in self._source,
+                value_sha256=_sha256(self._source.get(name, "").encode("utf-8")),
+            )
+            for name in sorted(self._consulted)
+        )
 
 
 @dataclass
@@ -245,6 +294,7 @@ class _Context:
     sensitive_value_bytes: int = field(default=0, repr=False)
     used_names: set[str] = field(default_factory=set)
     resource_migrations: list[str] = field(default_factory=list)
+    effective_data_dir: str = ""
     _comment_scrubber: _LiteralScrubber | None = field(default=None, repr=False)
 
     def warning(self, code: str) -> None:
@@ -376,6 +426,19 @@ def convert_v7_observability_to_v8(
     except (V8ConfigError, RecursionError, OverflowError):
         valid_v8 = None
     if valid_v8 is not None:
+        configured_data_dir = valid_v8.source.get("data_dir")
+        resolved_data_dir = (
+            configured_data_dir
+            if isinstance(configured_data_dir, str) and Path(configured_data_dir).is_absolute()
+            else effective_data_dir
+        )
+        # A pure already-v8 preview remains an exact no-op even when the caller
+        # has not resolved runtime defaults. Activation rejects the empty
+        # binding; the upgrade path always supplies the compiler-resolved root.
+        if not isinstance(resolved_data_dir, str) or not Path(resolved_data_dir).is_absolute():
+            resolved_data_dir = None
+        else:
+            resolved_data_dir = os.path.abspath(resolved_data_dir)
         summary = V8MigrationSummary(8, 8, 0, 0, 0, 0, "unchanged", "unchanged", "unchanged")
         return V8MigrationResult(
             candidate=raw,
@@ -383,6 +446,7 @@ def convert_v7_observability_to_v8(
             candidate_sha256=source_digest,
             changed=False,
             already_v8=True,
+            effective_data_dir=resolved_data_dir,
             warnings=(),
             environment_edits=(),
             summary=summary,
@@ -391,17 +455,18 @@ def convert_v7_observability_to_v8(
     document = _parse_v7(raw, source_name)
     selection = _resolve_compatibility_selection(compatibility_selection, source_name)
     source_version = int(document.get("config_version") or 7)
-    ctx = _Context(source_name, environment_copy, selection)
+    tracked_environment = _TrackedEnvironment(environment_copy)
+    ctx = _Context(source_name, tracked_environment, selection)
     _validate_supported_v7(document, ctx)
 
     redaction_disabled = _environment_true(
-        environment_copy.get("DEFENSECLAW_DISABLE_REDACTION", ""), _REDACTION_TRUE
+        tracked_environment.get("DEFENSECLAW_DISABLE_REDACTION", ""), _REDACTION_TRUE
     ) or (
         _mapping(document.get("privacy"), "$.privacy", ctx).get("disable_redaction") is True
         if "privacy" in document
         else False
     )
-    if _environment_true(environment_copy.get("DEFENSECLAW_DISABLE_REDACTION", ""), _REDACTION_TRUE):
+    if _environment_true(tracked_environment.get("DEFENSECLAW_DISABLE_REDACTION", ""), _REDACTION_TRUE):
         ctx.warning("environment_decision:DEFENSECLAW_DISABLE_REDACTION")
     profile = "none" if redaction_disabled else "legacy-v7"
     # Redacting v7 sources target the shipped immutable compatibility profile,
@@ -410,7 +475,7 @@ def convert_v7_observability_to_v8(
     observability, otlp_count, audit_count, local_state = _build_observability(
         document, profile, effective_data_dir, ctx
     )
-    retention, guardrail_value = _judge_retention(document, environment_copy, ctx)
+    retention, guardrail_value = _judge_retention(document, tracked_environment, ctx)
     candidate = _rewrite_source(raw, document, observability, guardrail_value, ctx)
 
     # Python validation is a fast parity gate. P7 must additionally compile the
@@ -444,9 +509,11 @@ def convert_v7_observability_to_v8(
         candidate_sha256=_sha256(candidate),
         changed=candidate != raw or bool(edits),
         already_v8=False,
+        effective_data_dir=ctx.effective_data_dir,
         warnings=tuple(sorted(ctx.warnings)),
         environment_edits=edits,
         summary=summary,
+        environment_dependencies=tracked_environment.dependencies(),
     )
 
 
@@ -1007,6 +1074,7 @@ def _build_observability(
 ) -> tuple[dict[str, Any], int, int, str]:
     result: dict[str, Any] = {}
     data_dir = _resolve_effective_data_dir(document, effective_data_dir, ctx)
+    ctx.effective_data_dir = data_dir
     otel = _mapping(document.get("otel"), "$.otel", ctx) if "otel" in document else {}
     ai_discovery = _mapping(document.get("ai_discovery"), "$.ai_discovery", ctx) if "ai_discovery" in document else {}
     ai_otel = ai_discovery.get("emit_otel", True)
@@ -1123,7 +1191,7 @@ def _resolve_effective_data_dir(document: Mapping[str, Any], effective_data_dir:
             "supply the absolute v7 effective data directory from the upgrader",
             source_name=ctx.source_name,
         )
-    return resolved
+    return os.path.abspath(resolved)
 
 
 def _resource_attributes(otel: Mapping[str, Any], ctx: _Context) -> dict[str, str]:
@@ -1188,10 +1256,7 @@ def _resource_attributes(otel: Mapping[str, Any], ctx: _Context) -> dict[str, st
         if name == "defenseclaw.preset_name":
             ctx.resource_migration("preset_display_name_removed")
             continue
-        if (
-            name in RESERVED_RESOURCE_ATTRIBUTE_KEYS
-            and name not in CONFIGURABLE_CORE_RESOURCE_ATTRIBUTE_KEYS
-        ):
+        if name in RESERVED_RESOURCE_ATTRIBUTE_KEYS and name not in CONFIGURABLE_CORE_RESOURCE_ATTRIBUTE_KEYS:
             raise _error(
                 ctx,
                 "unsupported_reserved_resource_attribute",
@@ -2036,12 +2101,24 @@ def _convert_sink(
             reference = _env_name(token_env, "$.audit_sinks[].splunk_hec.token_env", ctx)
             inline = block.get("token")
             if not ctx.environment.get(reference) and inline:
-                target["token_env"] = _protect_value(name, "token", _text(inline, "token", ctx), ctx)
+                target["token_env"] = _protect_value(
+                    name,
+                    "token",
+                    _text(inline, "token", ctx),
+                    ctx,
+                    reference_path=("token_env",),
+                )
                 ctx.warning("legacy_credential_environment_fallback_promoted")
             else:
                 target["token_env"] = reference
         elif token := block.get("token"):
-            target["token_env"] = _protect_value(name, "token", _text(token, "token", ctx), ctx)
+            target["token_env"] = _protect_value(
+                name,
+                "token",
+                _text(token, "token", ctx),
+                ctx,
+                reference_path=("token_env",),
+            )
         for key in ("index",):
             if value := block.get(key):
                 target[key] = _text(value, f"$.audit_sinks[].splunk_hec.{key}", ctx)
@@ -2185,7 +2262,13 @@ def _protect_bearer(destination: str, value: Any, ctx: _Context) -> str:
     text = _text(value, "$.audit_sinks[].http_jsonl.bearer_token", ctx)
     if not text.strip():
         raise _unrepresentable_bearer(ctx, "$.audit_sinks[].http_jsonl.bearer_token")
-    return _protect_value(destination, "bearer", text, ctx)
+    return _protect_value(
+        destination,
+        "bearer",
+        text,
+        ctx,
+        reference_path=("bearer_env",),
+    )
 
 
 def _unrepresentable_bearer(ctx: _Context, path: str) -> V8MigrationError:
@@ -2345,7 +2428,15 @@ def _convert_headers(value: Any, context: str, ctx: _Context) -> dict[str, Any]:
         else:
             expanded = _expand_environment(text, ctx) if "$" in text else text
             if expanded.strip():
-                result[name] = {"env": _protect_value(context, name, expanded, ctx)}
+                result[name] = {
+                    "env": _protect_value(
+                        context,
+                        name,
+                        expanded,
+                        ctx,
+                        reference_path=("headers", name, "env"),
+                    )
+                }
             else:
                 # V7's os.Expand turns missing references into an empty value.
                 # Empty/whitespace values cannot be v8 secret references, but
@@ -2356,24 +2447,48 @@ def _convert_headers(value: Any, context: str, ctx: _Context) -> dict[str, Any]:
     return result
 
 
-def _protect_value(context: str, field_name: str, value: str, ctx: _Context) -> str:
+def _protect_value(
+    context: str,
+    field_name: str,
+    value: str,
+    ctx: _Context,
+    *,
+    reference_path: tuple[str, ...],
+) -> str:
     base = "DEFENSECLAW_MIGRATED_" + re.sub(r"[^A-Za-z0-9]+", "_", f"{context}_{field_name}").upper().strip("_")
     base = base[:96]
     ctx.add_sensitive_value(value)
     digest = _sha256(value.encode("utf-8"))
+    reference = EnvironmentReference(destination=context, path=reference_path)
     name = base
     suffix = 1
     while True:
         environment_value = ctx.environment.get(name)
         pending = ctx.edits.get(name)
-        if environment_value == value or (pending is not None and pending.value_sha256 == digest):
+        if pending is not None and pending.value_sha256 == digest:
+            if reference not in pending.references:
+                ctx.edits[name] = replace(
+                    pending,
+                    references=tuple(
+                        sorted((*pending.references, reference), key=lambda item: (item.destination, item.path))
+                    ),
+                )
             return name
-        if environment_value is None and pending is None:
+        # An identical ambient value is not durable provenance: it may exist
+        # only in the invoking shell and disappear on restart.  Still emit a
+        # set-if-absent edit so activation proves or persists the value in the
+        # selected .env transaction.
+        if (environment_value is None or environment_value == value) and pending is None:
             break
         suffix += 1
         stable_suffix = f"_{digest[:8]}" if suffix == 2 else f"_{digest[:8]}_{suffix}"
         name = base[: 128 - len(stable_suffix)] + stable_suffix
-    ctx.edits[name] = EnvironmentEdit(name=name, value=value, value_sha256=digest)
+    ctx.edits[name] = EnvironmentEdit(
+        name=name,
+        value=value,
+        value_sha256=digest,
+        references=(reference,),
+    )
     ctx.warning("protected_environment_edit_required")
     return name
 
