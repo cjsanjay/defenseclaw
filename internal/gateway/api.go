@@ -49,6 +49,7 @@ import (
 	"github.com/defenseclaw/defenseclaw/internal/gatewaylog"
 	"github.com/defenseclaw/defenseclaw/internal/inventory"
 	"github.com/defenseclaw/defenseclaw/internal/managed"
+	"github.com/defenseclaw/defenseclaw/internal/observability/destinationtest"
 	"github.com/defenseclaw/defenseclaw/internal/policy"
 	"github.com/defenseclaw/defenseclaw/internal/redaction"
 	"github.com/defenseclaw/defenseclaw/internal/scanner"
@@ -78,6 +79,11 @@ type APIServer struct {
 	// runtime-graph generation through export acknowledgement. It is separate
 	// from log admission so partial test/runtime integrations stay explicit.
 	observabilityV8Canary sidecarRuntimeCanaryEmitter
+	// observabilityV8LocalOnly persists control-plane evidence through the
+	// canonical collection/redaction/SQLite graph without constructing any
+	// optional destination projection. It is deliberately distinct from the
+	// ordinary OTLP-ingest emitter while that producer cutover remains gated.
+	observabilityV8LocalOnly sidecarRuntimeLocalOnlyEmitter
 
 	// cfgMu protects mutable fields in scannerCfg.Guardrail (Mode,
 	// ScannerMode) which can be changed at runtime via the PATCH
@@ -804,6 +810,7 @@ func (a *APIServer) Run(ctx context.Context) error {
 	mux.HandleFunc("/api/v1/scan/code", a.handleCodeScan)
 	mux.HandleFunc("/api/v1/network-egress", a.handleNetworkEgress)
 	mux.HandleFunc("/api/v1/telemetry/canary", a.handleTelemetryCanary)
+	mux.HandleFunc(destinationtest.EndpointPath, a.handleObservabilityDestinationTestActivity)
 	a.registerConnectorHookRoutes(mux, hookLimiter)
 	// OTLP-HTTP receiver for the three signal types codex
 	// (via [otel.exporter.otlp-http]) and Claude Code (via

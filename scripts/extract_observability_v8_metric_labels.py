@@ -290,11 +290,7 @@ def latest_assignment(
     before_position: int,
     available: list[Assignment],
 ) -> Assignment | None:
-    candidates = [
-        item
-        for item in available
-        if item.variable == variable and item.position < before_position
-    ]
+    candidates = [item for item in available if item.variable == variable and item.position < before_position]
     return max(candidates, key=lambda item: item.position) if candidates else None
 
 
@@ -337,9 +333,7 @@ def validate_metric_options(
         identifier = expression.removesuffix("...").strip()
         if IDENTIFIER_RE.fullmatch(identifier):
             assignment = latest_assignment(identifier, before_position, available)
-            if assignment is None or not assignment.expression.lstrip().startswith(
-                "metric.WithAttributes"
-            ):
+            if assignment is None or not assignment.expression.lstrip().startswith("metric.WithAttributes"):
                 raise AnalysisError(f"unmodeled metric option source {identifier!r}")
             opening = assignment.expression.find("(")
             closing = matching_delimiter(assignment.expression, opening)
@@ -501,20 +495,10 @@ def registry_contract(root: Path) -> dict[str, set[str]]:
             continue
         labels = resolved(group["id"])
         projections = group["metric"].get("label_projections", [])
-        local = [
-            projection
-            for projection in projections
-            if projection["profile"] == "local-observability-v1"
-        ]
+        local = [projection for projection in projections if projection["profile"] == "local-observability-v1"]
         if len(local) > 1:
-            raise AnalysisError(
-                f"duplicate local-observability-v1 projection for {group['id']}"
-            )
-        mappings = (
-            {item["ref"]: item["label"] for item in local[0]["mappings"]}
-            if local
-            else {}
-        )
+            raise AnalysisError(f"duplicate local-observability-v1 projection for {group['id']}")
+        mappings = {item["ref"]: item["label"] for item in local[0]["mappings"]} if local else {}
         if not mappings.keys() <= labels:
             raise AnalysisError(f"projection references unknown labels for {group['id']}")
         projected = {mappings.get(label, label) for label in labels}
@@ -524,18 +508,35 @@ def registry_contract(root: Path) -> dict[str, set[str]]:
     return result
 
 
-def global_gate(root: Path) -> set[str]:
+def global_gate(root: Path, registry: dict[str, set[str]]) -> set[str]:
     source = (root / V8_GATE_SOURCE).read_text(encoding="utf-8")
     start = source.index("var v8MetricAllowedAttributeKeys")
     end = source.index("// V8MetricAllowedAttributeKeys returns", start)
-    return set(re.findall(r'"([^\"]+)"\s*:\s*\{\}', source[start:end]))
+    contract = source[start:end]
+    literal = set(re.findall(r'"([^\"]+)"\s*:\s*\{\}', contract))
+    if literal:
+        return literal
+    generated_markers = (
+        "v8MetricAllowedAttributeKeys = generatedV8MetricAttributeKeys()",
+        "V8MetricDescriptorCatalog()",
+        "descriptor.AllowedLabels",
+        "descriptor.LocalLabelMapping",
+        "mapping.Local",
+    )
+    if all(marker in contract for marker in generated_markers):
+        # The production gate now derives its vocabulary from the same generated
+        # local-observability descriptors compiled above. ``registry`` is the
+        # projected producer-label view of those descriptors, so its union is
+        # the exact subset relevant to this bootstrap producer analysis.
+        return {label for labels in registry.values() for label in labels}
+    raise AnalysisError("unrecognized v8 metric global-gate authority")
 
 
 def build_report(root: Path) -> dict[str, Any]:
     field_to_name = instrument_fields((root / PRODUCTION_SOURCES[0]).read_text(encoding="utf-8"))
     labels, callsites, _ = producer_contract(root, field_to_name)
     registry = registry_contract(root)
-    gate = global_gate(root)
+    gate = global_gate(root, registry)
     if set(labels) != set(registry):
         raise AnalysisError(
             "producer/registry metric inventory mismatch: "

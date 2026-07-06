@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 from threading import Event
@@ -282,21 +283,27 @@ def test_missing_credential_is_bounded_and_does_not_reach_transport() -> None:
 def test_unbound_compliance_seam_blocks_before_dns_or_network() -> None:
     transport = _Transport()
 
-    with pytest.raises(destination_test.DestinationTestError) as captured:
+    with (
+        patch.object(destination_test, "resolve_gateway_binary", return_value=None),
+        pytest.raises(destination_test.DestinationTestError) as captured,
+    ):
         destination_test.run_destination_test(
             _effective(_destination("soc")),
             name="soc",
             data_dir="/data",
             timeout=2.5,
             write_probe=False,
-            compliance=destination_test.canonical_local_compliance_recorder(),
+            compliance=destination_test.canonical_local_compliance_recorder(
+                config_path="/data/config.yaml",
+                data_dir="/data",
+            ),
             transport=transport,
             credential_resolver=lambda _reference, _data_dir: "",
             probe_id_factory=lambda: "audit-1",
         )
 
     assert captured.value.failure_class == "audit_unavailable"
-    assert "legacy /audit/event endpoint is not local-only" in captured.value.message
+    assert "ensure the v8 gateway is running" in captured.value.message
     assert not transport.handshakes
     assert not transport.writes
 
@@ -538,7 +545,11 @@ def test_top_level_command_registers_named_write_probe_without_legacy_config_loa
     with (
         patch.object(cmd_observability.config_module, "config_path", return_value=config_path),
         patch.object(cmd_observability, "inspect_v8_config", return_value=wire),
-        patch.object(cmd_observability, "canonical_local_compliance_recorder", return_value=_Compliance()),
+        patch.object(
+            cmd_observability,
+            "canonical_local_compliance_recorder",
+            return_value=_Compliance(),
+        ) as recorder,
         patch.object(cmd_observability, "run_destination_test", return_value=expected) as run,
         patch("defenseclaw.config.load", side_effect=AssertionError("legacy config loader must not run")),
     ):
@@ -553,6 +564,7 @@ def test_top_level_command_registers_named_write_probe_without_legacy_config_loa
     assert run.call_args.kwargs["name"] == "soc"
     assert run.call_args.kwargs["write_probe"] is True
     assert run.call_args.kwargs["timeout"] == 2.5
+    recorder.assert_called_once_with(config_path=str(config_path), data_dir=str(tmp_path))
 
 
 def test_top_level_command_fails_before_network_when_local_only_audit_seam_is_unbound(tmp_path: Path) -> None:
@@ -573,6 +585,7 @@ def test_top_level_command_fails_before_network_when_local_only_audit_seam_is_un
     with (
         patch.object(cmd_observability.config_module, "config_path", return_value=config_path),
         patch.object(cmd_observability, "inspect_v8_config", return_value=wire),
+        patch.object(destination_test, "resolve_gateway_binary", return_value=None),
         patch.object(
             destination_test,
             "SocketProbeTransport",
@@ -583,5 +596,74 @@ def test_top_level_command_fails_before_network_when_local_only_audit_seam_is_un
 
     assert result.exit_code != 0
     assert "audit_unavailable" in result.output
-    assert "legacy /audit/event endpoint is not local-only" in result.output
+    assert "ensure the v8 gateway is running" in result.output
     assert "collector.example.test" not in result.output
+
+
+def test_gateway_local_compliance_recorder_uses_stdin_and_accepts_exact_acknowledgement(tmp_path: Path) -> None:
+    activity = destination_test.ComplianceActivity(
+        phase="outcome",
+        destination="soc",
+        probe_id="probe-123",
+        mode="handshake",
+        result="failed",
+        failure_class="timeout",
+    )
+    completed = subprocess.CompletedProcess([], 0, stdout='{"recorded":true}\n', stderr="ignored-secret")
+    recorder = destination_test.GatewayLocalComplianceRecorder(
+        config_path=str(tmp_path / "config.yaml"),
+        data_dir=str(tmp_path),
+    )
+    with (
+        patch.object(destination_test, "resolve_gateway_binary", return_value="/opt/bin/defenseclaw-gateway"),
+        patch.object(destination_test.subprocess, "run", return_value=completed) as run,
+    ):
+        recorder.record(activity)
+
+    argv = run.call_args.args[0]
+    assert argv[:3] == [
+        "/opt/bin/defenseclaw-gateway",
+        "observability-v8",
+        "record-destination-test-activity",
+    ]
+    assert "probe-123" not in argv
+    assert "timeout" not in argv
+    assert destination_test.json.loads(run.call_args.kwargs["input"]) == {
+        "phase": "outcome",
+        "destination": "soc",
+        "probe_id": "probe-123",
+        "mode": "handshake",
+        "result": "failed",
+        "failure_class": "timeout",
+    }
+    assert "shell" not in run.call_args.kwargs
+
+
+@pytest.mark.parametrize(
+    ("completed", "side_effect"),
+    [
+        (subprocess.CompletedProcess([], 1, stdout="", stderr="remote-secret"), None),
+        (subprocess.CompletedProcess([], 0, stdout='{"recorded":false}', stderr=""), None),
+        (None, subprocess.TimeoutExpired(["gateway"], timeout=10)),
+    ],
+)
+def test_gateway_local_compliance_recorder_fails_closed_without_echoing_helper_output(
+    tmp_path: Path,
+    completed: subprocess.CompletedProcess[str] | None,
+    side_effect: BaseException | None,
+) -> None:
+    recorder = destination_test.GatewayLocalComplianceRecorder(
+        config_path=str(tmp_path / "config.yaml"),
+        data_dir=str(tmp_path),
+    )
+    kwargs = {"return_value": completed} if side_effect is None else {"side_effect": side_effect}
+    with (
+        patch.object(destination_test, "resolve_gateway_binary", return_value="gateway"),
+        patch.object(destination_test.subprocess, "run", **kwargs),
+        pytest.raises(destination_test.DestinationTestError) as caught,
+    ):
+        recorder.record(
+            destination_test.ComplianceActivity("attempt", "soc", "probe-1", "handshake", "attempted", None)
+        )
+    assert caught.value.failure_class == "audit_unavailable"
+    assert "remote-secret" not in str(caught.value)

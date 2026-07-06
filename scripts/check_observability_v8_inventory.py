@@ -32,9 +32,7 @@ ROOT = Path(__file__).resolve().parents[1]
 METRIC_LABEL_ANALYZER = Path(__file__).with_name(
     "extract_observability_v8_metric_labels.py",
 )
-DEFAULT_INVENTORY = (
-    ROOT / "docs" / "design" / "observability-v8" / "current-state-inventory.yaml"
-)
+DEFAULT_INVENTORY = ROOT / "docs" / "design" / "observability-v8" / "current-state-inventory.yaml"
 CORE_DATASOURCE_TYPES = {"prometheus", "loki", "tempo"}
 
 GO_ACTION_PATTERN = re.compile(
@@ -65,8 +63,10 @@ def load_inventory(path: Path) -> dict[str, Any]:
     if not isinstance(classes, dict):
         raise InventoryError("classes must be a mapping")
     categories = data.get("migration_disposition_categories")
-    if not isinstance(categories, list) or not categories or not all(
-        isinstance(value, str) and value for value in categories
+    if (
+        not isinstance(categories, list)
+        or not categories
+        or not all(isinstance(value, str) and value for value in categories)
     ):
         raise InventoryError("migration_disposition_categories must be a non-empty string list")
     if len(categories) != len(set(categories)):
@@ -80,6 +80,27 @@ def load_inventory(path: Path) -> dict[str, Any]:
             raise InventoryError(
                 f"classes.{name}.migration_disposition {disposition!r} is not declared",
             )
+        if name == "v7_exporter_selection":
+            # This class is a derivation contract consumed verbatim by the
+            # telemetry registry compiler, not an inventory of homogeneous
+            # source items. The compiler applies its closed-key/schema checks;
+            # the inventory checker must not impose the generic ``items``
+            # shape on it.
+            required = {
+                "source",
+                "schema_version",
+                "source_config_version",
+                "projection_profile",
+                "collection",
+                "exporters",
+                "features",
+                "span_filter_operations",
+                "local_observability",
+            }
+            missing = sorted(required - set(inventory_class))
+            if missing:
+                raise InventoryError(f"classes.{name} is missing required fields: {', '.join(missing)}")
+            continue
         if "items" not in inventory_class:
             raise InventoryError(f"classes.{name}.items is required")
         if disposition == "per_item":
@@ -92,8 +113,7 @@ def load_inventory(path: Path) -> dict[str, Any]:
                 item_disposition = item.get("migration_disposition")
                 if item_disposition not in allowed - {"per_item"}:
                     raise InventoryError(
-                        f"classes.{name}.items[{index}] has invalid migration_disposition "
-                        f"{item_disposition!r}",
+                        f"classes.{name}.items[{index}] has invalid migration_disposition {item_disposition!r}",
                     )
     return data
 
@@ -193,8 +213,7 @@ def discover_metrics(path: Path, root: Path) -> dict[str, dict[str, Any]]:
         dropped = evidence.get("dropped_by_current_global_v8_gate")
         empty_reason = evidence.get("label_free_reason")
         if not all(
-            isinstance(values, list)
-            and all(isinstance(value, str) and value for value in values)
+            isinstance(values, list) and all(isinstance(value, str) and value for value in values)
             for values in (labels, callsites, dropped)
         ):
             raise InventoryError(f"metric label analyzer returned malformed evidence for {name!r}")
@@ -225,9 +244,7 @@ def discover_schema_files(root: Path, inventory_class: dict[str, Any]) -> set[st
         raise InventoryError(f"schema source directory does not exist: {directory_value}")
 
     excluded_value = inventory_class.get("excluded_target_directories", [])
-    if not isinstance(excluded_value, list) or not all(
-        isinstance(item, str) and item for item in excluded_value
-    ):
+    if not isinstance(excluded_value, list) or not all(isinstance(item, str) and item for item in excluded_value):
         raise InventoryError(
             "classes.schema_files.excluded_target_directories must be a string list",
         )
@@ -293,8 +310,7 @@ def discover_core_datasources(path: Path) -> dict[str, str]:
         result[datasource_type] = uid
     if set(result) != CORE_DATASOURCE_TYPES:
         raise InventoryError(
-            f"{path}: core datasource types are {sorted(result)}, "
-            f"expected {sorted(CORE_DATASOURCE_TYPES)}",
+            f"{path}: core datasource types are {sorted(result)}, expected {sorted(CORE_DATASOURCE_TYPES)}",
         )
     return result
 
@@ -466,9 +482,7 @@ def run_checks(
     if not isinstance(schema_items, list) or not schema_items:
         raise InventoryError("classes.schema_files.items must be a non-empty list")
     expected_schemas = {
-        item.get("path")
-        for item in schema_items
-        if isinstance(item, dict) and isinstance(item.get("path"), str)
+        item.get("path") for item in schema_items if isinstance(item, dict) and isinstance(item.get("path"), str)
     }
     if len(expected_schemas) != len(schema_items):
         raise InventoryError("schema_files items require unique path strings")

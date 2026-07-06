@@ -99,7 +99,10 @@ def observability_destination_test(name: str, write_probe: bool, timeout: float)
             data_dir=inspected.data_dir,
             timeout=timeout,
             write_probe=write_probe,
-            compliance=canonical_local_compliance_recorder(),
+            compliance=canonical_local_compliance_recorder(
+                config_path=inspected.source,
+                data_dir=inspected.data_dir,
+            ),
         )
     except ConfigInspectError as exc:
         raise click.ClickException(str(exc)) from exc

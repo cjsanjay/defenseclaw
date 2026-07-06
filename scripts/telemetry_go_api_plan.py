@@ -598,7 +598,7 @@ class GoAPIPlanIR:
 
 _GO_API_PLAN_DIGEST_DOMAIN: Final = b"DefenseClaw GoAPIPlanIR v1\x00"
 _GO_SYMBOL_TABLE_DIGEST_DOMAIN: Final = b"DefenseClaw GoSymbolTableIR v1\x00"
-_CANONICAL_SYMBOL_TABLE_SHA256: Final = "7663bcaa86e8307990ba1d64cee1f783881b9a9ff7dd86ad01dab1db623a7c1f"
+_CANONICAL_SYMBOL_TABLE_SHA256: Final = "91c018dcfe27adbd97773029d86e3b1a652871311d68c79d36df7dcaf5091307"
 _SHA256: Final = re.compile(r"^[0-9a-f]{64}$")
 _GO_IDENTIFIER: Final = re.compile(r"^[A-Za-z][A-Za-z0-9]*$")
 
@@ -694,10 +694,10 @@ GO_OUTPUT_FILES: Final = (
     _FIXTURES_FILE,
 )
 _EXPECTED_REVIEWED_PARTITION: Final = {
-    _IDS_FILE: 1005,
+    _IDS_FILE: 1015,
     _DOMAIN_FILES["genai"]: 282,
     _DOMAIN_FILES["security"]: 212,
-    _DOMAIN_FILES["operations"]: 398,
+    _DOMAIN_FILES["operations"]: 402,
 }
 _EXPECTED_LEGACY_FIXTURE_PARTITION: Final = {
     _IDS_FILE: 901,
@@ -706,7 +706,7 @@ _EXPECTED_LEGACY_FIXTURE_PARTITION: Final = {
     _DOMAIN_FILES["operations"]: 386,
 }
 _EXPECTED_CANONICAL_PUBLIC_VALUES: Final = {
-    "log": 2128,
+    "log": 2164,
     "span": 886,
     "resource": 325,
     "metric": 346,
@@ -3226,7 +3226,7 @@ def _file_assignments(
         raise GoAPIPlanError("Go declaration file assignment is incomplete or duplicated")
     expected_partition = {
         1781: _EXPECTED_LEGACY_FIXTURE_PARTITION,
-        1897: _EXPECTED_REVIEWED_PARTITION,
+        1911: _EXPECTED_REVIEWED_PARTITION,
     }.get(len(rows))
     if expected_partition is not None:
         counts = {path: len(assigned[path]) for path in expected_partition}
@@ -3638,8 +3638,8 @@ def _validate_canonical_counts(
             "canonical public value occurrence counts disagree: "
             f"expected {_EXPECTED_CANONICAL_PUBLIC_VALUES}, got {observed}"
         )
-    if len(producer_ids) != 8075:
-        raise GoAPIPlanError("canonical expanded producer row count is not 8075")
+    if len(producer_ids) != 8077:
+        raise GoAPIPlanError("canonical expanded producer row count is not 8077")
 
 
 def _plain_json(value: Any, path: str) -> Any:

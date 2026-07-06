@@ -3,7 +3,7 @@
     "artifact": "compatibility/v7-exporter-selection.json",
     "authority": "candidate-not-public-authority",
     "generator": "defenseclaw-telemetry-candidate-renderer-v1",
-    "materialized_view_sha256": "9ab8029c2e07448a6605044b18d79b0550df35f66671f495c67d9820439dd57e",
+    "materialized_view_sha256": "0c48952e5e1d8fd6e7d04bfef5fec09556a1173d7abad10dc8b0a6d5f9637040",
     "registry_version": 1
   },
   "collection": {
@@ -345,6 +345,8 @@
             "destination.authorization.denied",
             "destination.export_failed",
             "destination.queue_full",
+            "destination.test.attempted",
+            "destination.test.completed",
             "destination.updated",
             "diagnostic.message",
             "egress.allowed",
@@ -525,6 +527,8 @@
             "destination.authorization.denied",
             "destination.export_failed",
             "destination.queue_full",
+            "destination.test.attempted",
+            "destination.test.completed",
             "destination.updated",
             "diagnostic.message",
             "egress.allowed",

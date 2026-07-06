@@ -29,6 +29,14 @@ type sidecarRuntimeEmitter interface {
 	) (pipeline.LocalLogOutcome, error)
 }
 
+type sidecarRuntimeLocalOnlyEmitter interface {
+	EmitLocalOnly(
+		context.Context,
+		router.Metadata,
+		observabilityruntime.EmitBuilder,
+	) (pipeline.LocalLogOutcome, error)
+}
+
 // sidecarRuntimeCanaryEmitter is intentionally separate from
 // sidecarRuntimeEmitter. Log-only test doubles and integrations do not need to
 // implement the trace diagnostic, while the real v8 Runtime exposes both on
@@ -138,11 +146,27 @@ func (s *Sidecar) observabilityV8CanaryEmitter() sidecarRuntimeCanaryEmitter {
 	return canary
 }
 
+func (s *Sidecar) observabilityV8LocalOnlyEmitter() sidecarRuntimeLocalOnlyEmitter {
+	emitter := s.observabilityV8Emitter()
+	if emitter == nil {
+		return nil
+	}
+	localOnly, _ := emitter.(sidecarRuntimeLocalOnlyEmitter)
+	return localOnly
+}
+
 func (a *APIServer) bindTelemetryCanaryRuntime(emitter sidecarRuntimeCanaryEmitter) {
 	if a == nil {
 		return
 	}
 	a.observabilityV8Canary = emitter
+}
+
+func (a *APIServer) bindLocalOnlyObservabilityRuntime(emitter sidecarRuntimeLocalOnlyEmitter) {
+	if a == nil {
+		return
+	}
+	a.observabilityV8LocalOnly = emitter
 }
 
 func (s *Sidecar) recordSidecarLifecycle(ctx context.Context, action audit.Action) error {
@@ -253,3 +277,4 @@ func (s *Sidecar) recordSidecarLifecycle(ctx context.Context, action audit.Actio
 
 var _ sidecarRuntimeEmitter = (*observabilityruntime.Runtime)(nil)
 var _ sidecarRuntimeCanaryEmitter = (*observabilityruntime.Runtime)(nil)
+var _ sidecarRuntimeLocalOnlyEmitter = (*observabilityruntime.Runtime)(nil)

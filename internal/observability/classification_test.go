@@ -28,8 +28,8 @@ import (
 func TestGatewayEventClassificationsMatchSourceConstants(t *testing.T) {
 	want := typedStringConstants(t, "internal/gatewaylog/events.go", "EventType")
 	got := producerKeysAsStrings(observability.ClassificationKeys(observability.ProducerGatewayEvent))
-	if len(want) != 14 {
-		t.Fatalf("gateway EventType source constants = %d, want 14", len(want))
+	if len(want) != 15 {
+		t.Fatalf("gateway EventType source constants = %d, want 15", len(want))
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("gateway classifications = %v, source constants = %v", got, want)

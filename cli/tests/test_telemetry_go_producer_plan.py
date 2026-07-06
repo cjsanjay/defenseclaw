@@ -76,16 +76,16 @@ def test_real_candidate_compiles_lossless_typed_producer_authority(
 
     assert compiled == repeated
     assert compiled.version == 1
-    assert compiled.producer_plan_sha256 == "78b1d64807ba7b4bb5610a9d1715221eaecd812490d7086a7776b731e4b5b16a"
+    assert compiled.producer_plan_sha256 == "4799dd0fe3998860225726c11705807b294b58f45b5bbcd874e931f91a9c1388"
     assert compiled.materialized_view_sha256 == candidate_index.materialized_view_sha256
     assert compiled.candidate_render_index_sha256 == candidate_index.candidate_render_index_sha256
-    assert len(compiled.rows) == len(candidate_index.expanded_producer_mappings) == 8075
-    assert len(compiled.groups) == 202
+    assert len(compiled.rows) == len(candidate_index.expanded_producer_mappings) == 8077
+    assert len(compiled.groups) == 203
     assert Counter(group.producer_kind.value for group in compiled.groups) == {
         "audit_action": 188,
-        "gateway_event": 14,
+        "gateway_event": 15,
     }
-    assert sum(row.family_refs.family_descriptor_id is not None for row in compiled.rows) == 1818
+    assert sum(row.family_refs.family_descriptor_id is not None for row in compiled.rows) == 1820
     assert sum(row.compatibility_only for row in compiled.rows) == 6257
     assert tuple(row.row_id for row in compiled.rows) == tuple(
         row.id for row in candidate_index.expanded_producer_mappings
@@ -136,7 +136,7 @@ def test_grouping_preserves_fixed_and_context_identity_precedence_without_wildca
     rows = {row.row_id: row for row in compiled.rows}
     assert Counter(group.event_name_policy.value for group in compiled.groups) == {
         "context_optional": 182,
-        "context_required": 14,
+        "context_required": 15,
         "fixed": 6,
     }
     for group in compiled.groups:
@@ -164,10 +164,10 @@ def test_grouping_preserves_fixed_and_context_identity_precedence_without_wildca
             assert group.selection_steps[1].row_ids == group.context_row_ids
 
     assert len(compiled.lookup_index.entries) == len(compiled.groups)
-    assert tuple(entry.group_index for entry in compiled.lookup_index.entries) == tuple(range(202))
-    assert sum(entry.row_count for entry in compiled.lookup_index.entries) == 8075
+    assert tuple(entry.group_index for entry in compiled.lookup_index.entries) == tuple(range(203))
+    assert sum(entry.row_count for entry in compiled.lookup_index.entries) == 8077
     assert tuple(entry.row_start for entry in compiled.lookup_index.entries) == tuple(
-        sum(len(group.ordered_row_ids) for group in compiled.groups[:position]) for position in range(202)
+        sum(len(group.ordered_row_ids) for group in compiled.groups[:position]) for position in range(203)
     )
 
 
@@ -211,10 +211,10 @@ def test_private_go_plan_is_syntax_complete_and_copy_safe(compiled: plan.GoProdu
         "generatedProducerGroupIndex",
     )
     assert file.variables[0].go_type == plan.GoTypeRefIR(
-        "array", element=plan.GoTypeRefIR("named", name="generatedProducerIdentity"), length=8075
+        "array", element=plan.GoTypeRefIR("named", name="generatedProducerIdentity"), length=8077
     )
     assert file.variables[1].go_type == plan.GoTypeRefIR(
-        "array", element=plan.GoTypeRefIR("named", name="generatedProducerGroup"), length=202
+        "array", element=plan.GoTypeRefIR("named", name="generatedProducerGroup"), length=203
     )
     assert tuple(item.symbol for item in file.functions) == (
         "lookupGeneratedProducerGroup",
@@ -259,7 +259,7 @@ def test_private_go_plan_is_syntax_complete_and_copy_safe(compiled: plan.GoProdu
 @pytest.mark.parametrize(
     ("mutation", "message"),
     (
-        ("missing row", "exact 8,075-row inventory"),
+        ("missing row", "exact 8,077-row inventory"),
         ("wrong selected floor", "selected-family floor reference"),
         ("policy drift", "unsupported policy"),
         ("source drift", "producer source disagrees"),
@@ -309,7 +309,7 @@ def test_adversarial_expanded_rows_fail_closed(candidate_index: Any, mutation: s
 
 class OversizedSequence(Sequence[object]):
     def __len__(self) -> int:
-        return 8076
+        return 8078
 
     def __getitem__(self, index: int) -> object:
         raise AssertionError("bounded preflight iterated an oversized producer sequence")

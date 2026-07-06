@@ -339,14 +339,14 @@ GO_SYMBOL_KIND_ORDER: Final = (
     "span_link_constructor",
 )
 EXPECTED_GO_SYMBOL_KIND_COUNTS: Final = {
-    "attribute": 427,
-    "family": 247,
-    "log_event": 91,
+    "attribute": 431,
+    "family": 249,
+    "log_event": 93,
     "span_event": 15,
     "link_relation": 4,
     "metric_instrument": 131,
-    "condition": 9,
-    "condition_fact": 7,
+    "condition": 10,
+    "condition_fact": 8,
     "phase": 12,
     "phase_code": 12,
     "semantic_profile": 1,
@@ -359,24 +359,24 @@ EXPECTED_GO_SYMBOL_KIND_COUNTS: Final = {
     "resource_attributes_constructor": 1,
     "resource_attributes_attach": 1,
     "resource_attributes_validator": 1,
-    "family_input": 247,
-    "family_builder": 247,
+    "family_input": 249,
+    "family_builder": 249,
     "span_event_input": 61,
     "span_event_constructor": 61,
     "span_link_input": 100,
     "span_link_constructor": 100,
 }
 EXPECTED_GO_SYMBOL_DECLARATION_COUNTS: Final = {
-    "exported_const": 1005,
-    "exported_type": 464,
+    "exported_const": 1015,
+    "exported_type": 466,
     "exported_function": 181,
-    "family_builder_method": 247,
+    "family_builder_method": 249,
 }
-EXPECTED_GO_SYMBOL_COUNT: Final = 1897
-EXPECTED_GO_SYMBOL_TABLE_SHA256: Final = "7663bcaa86e8307990ba1d64cee1f783881b9a9ff7dd86ad01dab1db623a7c1f"
+EXPECTED_GO_SYMBOL_COUNT: Final = 1911
+EXPECTED_GO_SYMBOL_TABLE_SHA256: Final = "91c018dcfe27adbd97773029d86e3b1a652871311d68c79d36df7dcaf5091307"
 GO_SYMBOL_TABLE_BASELINES: Final = Path("schemas/telemetry/v8/baselines/go-symbol-table")
 GO_SYMBOL_TABLE_BASELINE_FORMAT: Final = "defenseclaw-go-symbol-table-baseline-v1"
-EXPECTED_GO_SYMBOL_TABLE_BASELINE_SHA256: Final = "75ae4cf2b5440b3f423fc87dafde36b77be058e834093f2fbe485a2188562ee3"
+EXPECTED_GO_SYMBOL_TABLE_BASELINE_SHA256: Final = "d024811e979c0e823fc2556f83c4070d9a6968253cec876ddecade0080513d71"
 _GO_IDENTIFIER = re.compile(r"^[A-Za-z][A-Za-z0-9]*$")
 _GO_SOURCE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:/#-]{0,511}$")
 _GO_SOURCE_ID_PART = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,255}$")
@@ -674,7 +674,7 @@ EXPECTED_BUCKET_ORDER: Final = (
     "diagnostic",
 )
 EXPECTED_BUCKETS: Final = frozenset(EXPECTED_BUCKET_ORDER)
-EXPECTED_DOTTED_LOG_IDENTITIES: Final = 79
+EXPECTED_DOTTED_LOG_IDENTITIES: Final = 81
 EXPECTED_SPAN_FAMILIES: Final = 25
 EXPECTED_METRIC_FAMILIES: Final = 131
 EXPECTED_COMPATIBILITY_LOG_IDENTITIES: Final = frozenset(
@@ -693,7 +693,7 @@ EXPECTED_COMPATIBILITY_LOG_IDENTITIES: Final = frozenset(
         "turn_start",
     }
 )
-EXPECTED_PRODUCER_COUNTS: Final = {"gateway_event": 14, "audit_action": 188}
+EXPECTED_PRODUCER_COUNTS: Final = {"gateway_event": 15, "audit_action": 188}
 EXPECTED_LINK_RELATIONS: Final = frozenset({"caused_by", "correlates_with", "derived_from", "resumes"})
 EXPECTED_COMPATIBILITY_PROFILES: Final = frozenset({"galileo-rich-v2", "local-observability-v1", "openinference-v1"})
 EXPECTED_SPAN_KINDS: Final = frozenset({"CLIENT", "CONSUMER", "INTERNAL", "PRODUCER", "SERVER"})
@@ -1095,6 +1095,7 @@ _MANDATORY_RULE_CATALOG_V1: Final = (
     ("sqlite_failure", "builder_fact", "sqlite_failure"),
     ("exporter_initialization_failure", "builder_fact", "exporter_initialization_failure"),
     ("durable_health_transition", "builder_fact", "durable_health_transition"),
+    ("destination_test_activity", "builder_fact", "destination_test_activity"),
 )
 _COMPANION_RULES = frozenset(
     {

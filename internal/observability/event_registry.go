@@ -47,6 +47,8 @@ var documentedLogEventNames = [...]EventName{
 	"destination.authorization.denied",
 	"destination.export_failed",
 	"destination.queue_full",
+	"destination.test.attempted",
+	"destination.test.completed",
 	"destination.updated",
 	"diagnostic.message",
 	"diagnostic.snapshot",

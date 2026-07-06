@@ -53,7 +53,7 @@ def test_observability_v8_current_state_inventory_matches_sources() -> None:
     # These counts are intentional drift pins: adding or removing a covered source
     # surface must update the reviewed inventory and this baseline together.
     assert "legacy_config_anchors=37" in result.stdout
-    assert "gateway_event_types=14" in result.stdout
+    assert "gateway_event_types=15" in result.stdout
     assert "audit_actions=188" in result.stdout
     assert "emitted_metrics=131" in result.stdout
     assert "schema_files=23" in result.stdout
@@ -88,9 +88,7 @@ def test_observability_v8_inventory_detects_metric_evidence_drift(
     field: str,
 ) -> None:
     document = yaml.safe_load(INVENTORY.read_text(encoding="utf-8"))
-    contract = document["classes"]["emitted_metrics"]["items"][
-        "defenseclaw.activity.diff_entries"
-    ]
+    contract = document["classes"]["emitted_metrics"]["items"]["defenseclaw.activity.diff_entries"]
     contract[field] = ["tampered"]
     tampered = tmp_path / "current-state-inventory.yaml"
     tampered.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
@@ -149,6 +147,45 @@ func emit() {
 
     with pytest.raises(module.AnalysisError, match="unmodeled metric option source 'attrs'"):
         module.producer_contract(tmp_path, {"example": "defenseclaw.example"})
+
+
+def test_metric_label_analyzer_resolves_generated_global_gate_authority(tmp_path: Path) -> None:
+    gate = tmp_path / "internal/telemetry/metrics_v8.go"
+    gate.parent.mkdir(parents=True)
+    gate.write_text(
+        """
+var v8MetricAllowedAttributeKeys = generatedV8MetricAttributeKeys()
+func generatedV8MetricAttributeKeys() map[attribute.Key]struct{} {
+    descriptors, err := V8MetricDescriptorCatalog()
+    for _, descriptor := range descriptors {
+        for _, label := range descriptor.AllowedLabels {}
+        for _, mapping := range descriptor.LocalLabelMapping { _ = mapping.Local }
+    }
+}
+// V8MetricAllowedAttributeKeys returns the generated vocabulary.
+""",
+        encoding="utf-8",
+    )
+    module = _load_script_module("metric_label_analyzer_generated_gate_test", ANALYZER)
+
+    assert module.global_gate(tmp_path, {"metric.one": {"alpha"}, "metric.two": {"beta"}}) == {
+        "alpha",
+        "beta",
+    }
+
+
+def test_metric_label_analyzer_rejects_unknown_global_gate_authority(tmp_path: Path) -> None:
+    gate = tmp_path / "internal/telemetry/metrics_v8.go"
+    gate.parent.mkdir(parents=True)
+    gate.write_text(
+        "var v8MetricAllowedAttributeKeys = unknown()\n"
+        "// V8MetricAllowedAttributeKeys returns an unknown vocabulary.\n",
+        encoding="utf-8",
+    )
+    module = _load_script_module("metric_label_analyzer_unknown_gate_test", ANALYZER)
+
+    with pytest.raises(module.AnalysisError, match="unrecognized v8 metric global-gate authority"):
+        module.global_gate(tmp_path, {"metric.one": {"alpha"}})
 
 
 def test_metric_label_analyzer_rejects_duplicate_yaml_keys(tmp_path: Path) -> None:
@@ -223,6 +260,22 @@ def test_observability_v8_inventory_requires_disposition(tmp_path: Path) -> None
 
     assert result.returncode == 2
     assert "classes.gateway_event_types.migration_disposition" in result.stderr
+
+
+def test_observability_v8_inventory_validates_v7_selection_without_generic_items(
+    tmp_path: Path,
+) -> None:
+    document = yaml.safe_load(INVENTORY.read_text(encoding="utf-8"))
+    selection = document["classes"]["v7_exporter_selection"]
+    assert "items" not in selection
+    del selection["projection_profile"]
+    malformed = tmp_path / "current-state-inventory.yaml"
+    malformed.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+
+    result = _run(malformed)
+
+    assert result.returncode == 2
+    assert "classes.v7_exporter_selection is missing required fields: projection_profile" in result.stderr
 
 
 def test_observability_v8_inventory_rejects_non_mapping_root(tmp_path: Path) -> None:

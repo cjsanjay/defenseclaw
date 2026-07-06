@@ -191,17 +191,32 @@ func init() {
 }
 
 func compileConfigV8File(path, defaultDataDir string) (*config.ObservabilityV8CompiledConfig, string, int, error) {
+	loaded, err := loadConfigV8File(path, defaultDataDir)
+	if err != nil {
+		return nil, "", 0, err
+	}
+	return loaded.compiled, loaded.source, loaded.gatewayAPIPort, nil
+}
+
+type loadedConfigV8File struct {
+	compiled       *config.ObservabilityV8CompiledConfig
+	document       *config.V8YAMLDocument
+	source         string
+	gatewayAPIPort int
+}
+
+func loadConfigV8File(path, defaultDataDir string) (*loadedConfigV8File, error) {
 	path = strings.TrimSpace(path)
 	if path == "" {
 		path = config.ConfigPath()
 	}
 	absPath, err := filepath.Abs(path)
 	if err != nil {
-		return nil, "", 0, fmt.Errorf("resolve v8 config path: %w", err)
+		return nil, fmt.Errorf("resolve v8 config path: %w", err)
 	}
 	raw, err := readConfigV8Source(absPath)
 	if err != nil {
-		return nil, "", 0, err
+		return nil, err
 	}
 
 	// Resolve the data directory from the already strict YAML projection before
@@ -210,7 +225,7 @@ func compileConfigV8File(path, defaultDataDir string) (*config.ObservabilityV8Co
 	// performs the authoritative parse/schema/semantic pass below.
 	document, err := config.ParseV8YAML(absPath, raw)
 	if err != nil {
-		return nil, "", 0, err
+		return nil, err
 	}
 	resolvedDataDir := strings.TrimSpace(defaultDataDir)
 	if sourceDataDir, ok := document.Plain["data_dir"].(string); ok && strings.TrimSpace(sourceDataDir) != "" {
@@ -227,19 +242,24 @@ func compileConfigV8File(path, defaultDataDir string) (*config.ObservabilityV8Co
 		config.ObservabilityV8CompileOptions{DefaultDataDir: resolvedDataDir},
 	)
 	if err != nil {
-		return nil, "", 0, err
+		return nil, err
 	}
 	gatewayAPIPort := config.DefaultGatewayAPIPort
 	if gateway, ok := document.Plain["gateway"].(map[string]any); ok {
 		if rawPort, exists := gateway["api_port"]; exists {
 			configured, typed := rawPort.(int)
 			if !typed || configured < 1 || configured > 65535 {
-				return nil, "", 0, fmt.Errorf("compiled v8 gateway.api_port is invalid")
+				return nil, fmt.Errorf("compiled v8 gateway.api_port is invalid")
 			}
 			gatewayAPIPort = configured
 		}
 	}
-	return compiled, absPath, gatewayAPIPort, nil
+	return &loadedConfigV8File{
+		compiled:       compiled,
+		document:       document,
+		source:         absPath,
+		gatewayAPIPort: gatewayAPIPort,
+	}, nil
 }
 
 func readConfigV8Source(path string) ([]byte, error) {

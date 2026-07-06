@@ -2616,10 +2616,10 @@ def render_go_candidate(index: Any, plan: Any | None = None) -> GoRenderCandidat
     )
     files = _validate_file_plans(plan, declarations)
     _validate_private_declaration_coverage(plan, files)
-    if len(declarations) != 1897:
-        raise GoRenderError("GoAPIPlanIR.declarations: exact 1,897-declaration inventory is required")
-    if len(_sequence(_read(plan, "private_declarations", "GoAPIPlanIR"), "private declarations", maximum=4096)) != 749:
-        raise GoRenderError("GoAPIPlanIR.private_declarations: exact 749-declaration inventory is required")
+    if len(declarations) != 1911:
+        raise GoRenderError("GoAPIPlanIR.declarations: exact 1,911-declaration inventory is required")
+    if len(_sequence(_read(plan, "private_declarations", "GoAPIPlanIR"), "private declarations", maximum=4096)) != 753:
+        raise GoRenderError("GoAPIPlanIR.private_declarations: exact 753-declaration inventory is required")
     producer = compile_go_producer_plan(index)
     fixture = compile_go_fixture_plan(index)
     expected_projections = {

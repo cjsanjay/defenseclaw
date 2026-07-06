@@ -3,7 +3,7 @@
     "artifact": "compatibility/local-observability-v1.json",
     "authority": "candidate-not-public-authority",
     "generator": "defenseclaw-telemetry-candidate-renderer-v1",
-    "materialized_view_sha256": "9ab8029c2e07448a6605044b18d79b0550df35f66671f495c67d9820439dd57e",
+    "materialized_view_sha256": "0c48952e5e1d8fd6e7d04bfef5fec09556a1173d7abad10dc8b0a6d5f9637040",
     "registry_version": 1
   },
   "availability": "available",
@@ -414,6 +414,26 @@
       "eligibility": "eligible",
       "event_name": "destination.queue_full",
       "family_id": "log.destination.queue_full",
+      "projection": {
+        "mode": "canonical_otlp_log_v1"
+      },
+      "signal": "logs"
+    },
+    {
+      "bucket": "compliance.activity",
+      "eligibility": "eligible",
+      "event_name": "destination.test.attempted",
+      "family_id": "log.destination.test.attempted",
+      "projection": {
+        "mode": "canonical_otlp_log_v1"
+      },
+      "signal": "logs"
+    },
+    {
+      "bucket": "compliance.activity",
+      "eligibility": "eligible",
+      "event_name": "destination.test.completed",
+      "family_id": "log.destination.test.completed",
       "projection": {
         "mode": "canonical_otlp_log_v1"
       },
@@ -5138,7 +5158,7 @@
     }
   ],
   "format": "defenseclaw-compatibility-profile-v1",
-  "materialized_view_sha256": "9ab8029c2e07448a6605044b18d79b0550df35f66671f495c67d9820439dd57e",
+  "materialized_view_sha256": "0c48952e5e1d8fd6e7d04bfef5fec09556a1173d7abad10dc8b0a6d5f9637040",
   "profile_id": "local-observability-v1",
   "registry_version": 1,
   "runtime_projection": {

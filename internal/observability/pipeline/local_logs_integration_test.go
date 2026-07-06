@@ -325,6 +325,19 @@ func mandatoryFloorIntegrationCases() []mandatoryFloorIntegrationCase {
 			observability.BucketPlatformHealth, "gateway-ready", "subsystem.ready",
 			observability.MandatoryFacts{DurableHealthTransition: true},
 		),
+		{
+			name: "destination test activity", factField: "DestinationTestActivity",
+			log: classifiedLogCase{
+				bucket: observability.BucketComplianceActivity,
+				kind:   observability.ProducerGatewayEvent,
+				key:    "destination_test",
+				context: observability.ClassificationContext{
+					Bucket:    observability.BucketComplianceActivity,
+					EventName: "destination.test.attempted", RawSeverity: "INFO",
+					MandatoryFacts: observability.MandatoryFacts{DestinationTestActivity: true},
+				},
+			},
+		},
 	}
 }
 

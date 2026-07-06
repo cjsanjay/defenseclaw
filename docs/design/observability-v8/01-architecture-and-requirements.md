@@ -283,9 +283,13 @@ The mandatory floor includes only log records for:
    `compliance.activity`; inbound telemetry receiver failures are
    `telemetry.ingest`; outbound destination credential/authentication failures are
    `platform.health`.
-5. Canonical or projected schema validation failures.
-6. SQLite write, migration, corruption, and retention failures.
-7. Exporter or sink initialization failures and durable health-state transitions.
+5. Explicit operator destination-test attempts and terminal outcomes. The ordinary
+   `compliance.activity` record contains only destination name, probe ID, test mode,
+   bounded result, and bounded failure class; it never contains a credential,
+   endpoint, response body, or probe payload.
+6. Canonical or projected schema validation failures.
+7. SQLite write, migration, corruption, and retention failures.
+8. Exporter or sink initialization failures and durable health-state transitions.
 
 ### 6.2 Excluded events
 
@@ -306,6 +310,9 @@ The floor does not automatically include:
 - A floor-only record MUST be minimal and MUST NOT contain complete prompts,
   responses, tool arguments, tool results, evidence bodies, credentials, or judge
   bodies.
+- When disabled ordinary collection reduces a destination-test activity to its
+  floor-only form, destination/probe/result details are deliberately omitted; the
+  full content-free fields are present only on the single ordinary record.
 - Floor-only records MUST NOT be considered collected for remote routing, JSONL,
   console, trace, or metric purposes.
 - If ordinary collection is enabled, the ordinary canonical record is used; the

@@ -23,7 +23,7 @@ func TestGeneratedCompatibilityProfileAuthorityIsExactAndDetached(t *testing.T) 
 		unknownFamily observability.EventName
 	}{
 		{"galileo-rich-v2", "available", "available", 6, 6, "span.agent.invoke", "span.agent.transition"},
-		{"local-observability-v1", "available", "available", 247, 25, "span.diagnostic.canary", "span.unknown"},
+		{"local-observability-v1", "available", "available", 249, 25, "span.diagnostic.canary", "span.unknown"},
 		{"openinference-v1", "pending", "unsupported", 7, 7, "span.retrieval.search", "span.guardrail.apply"},
 	}
 	for _, test := range tests {

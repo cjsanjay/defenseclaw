@@ -288,10 +288,10 @@ def test_public_candidate_render_index_is_identity_bound_deterministic_and_recur
     assert first.schema_version == 1
     assert first.registry_version == 1
     assert first.bucket_catalog_version == 1
-    assert len(first.families) == 247
-    assert len(first.attributes) == 427
+    assert len(first.families) == 249
+    assert len(first.attributes) == 431
     assert len(first.domains) == 3
-    assert sum(len(domain.producer_mappings) for domain in first.domains) == 202
+    assert sum(len(domain.producer_mappings) for domain in first.domains) == 203
     assert first.family_domains["span.model.chat"] == "genai"
     assert first.family_domains["log.finding.observed"] == "security"
     assert first.family_domains["log.telemetry.batch.rejected"] == "operations"
@@ -378,9 +378,9 @@ def test_candidate_enrichment_is_complete_typed_and_recursively_immutable(
     assert index.materialized_view_sha256 == index.digest == view.typed_canonical_json_sha256
     assert index.candidate_render_index_sha256 != index.materialized_view_sha256
     assert len(index.candidate_render_index_sha256) == 64
-    assert len(index.enriched_fields) == 3643
+    assert len(index.enriched_fields) == 3679
     assert Counter(item.context for item in index.enriched_fields.values()) == {
-        "log": 2128,
+        "log": 2164,
         "span": 1036,
         "metric": 346,
         "resource": 14,
@@ -422,24 +422,24 @@ def test_candidate_enrichment_is_complete_typed_and_recursively_immutable(
         owner_orders.setdefault((item.context, item.owner_id), []).append(item.order)
     assert all(sorted(orders) == list(range(len(orders))) for orders in owner_orders.values())
 
-    assert len(index.enriched_families) == 247
+    assert len(index.enriched_families) == 249
     assert len(index.enriched_traces) == 25
     assert len(index.enriched_metrics) == 131
-    assert len(index.mandatory_programs) == 91
-    assert sum(bool(program.rule_ids) for program in index.mandatory_programs.values()) == 42
+    assert len(index.mandatory_programs) == 93
+    assert sum(bool(program.rule_ids) for program in index.mandatory_programs.values()) == 44
     assert sum(not program.rule_ids for program in index.mandatory_programs.values()) == 49
-    assert sum(len(program.rule_ids) for program in index.mandatory_programs.values()) == 43
+    assert sum(len(program.rule_ids) for program in index.mandatory_programs.values()) == 45
     assert all(
         (family.mandatory_program_id == family.id) == (family.signal == "logs")
         for family in index.enriched_families.values()
     )
 
-    assert len(index.expanded_producer_mappings) == 8075
+    assert len(index.expanded_producer_mappings) == 8077
     assert Counter(row.identity_origin for row in index.expanded_producer_mappings) == {
         "default": 188,
-        "allowed_context": 7887,
+        "allowed_context": 7889,
     }
-    assert sum(row.family_id is not None for row in index.expanded_producer_mappings) == 1818
+    assert sum(row.family_id is not None for row in index.expanded_producer_mappings) == 1820
     assert all(
         (row.selected_mandatory_program_id == row.family_id)
         if row.family_id is not None
@@ -448,13 +448,13 @@ def test_candidate_enrichment_is_complete_typed_and_recursively_immutable(
     )
     assert all(row.family_id is not None or row.compatibility_only for row in index.expanded_producer_mappings)
 
-    assert len(index.go_declaration_values) == 1005
+    assert len(index.go_declaration_values) == 1015
     const_rows = tuple(row for row in index.go_symbol_table.rows if row.declaration_form == "exported_const")
     assert tuple((item.kind, item.source_id, item.symbol) for item in index.go_declaration_values) == tuple(
         (row.kind, row.source_id, row.symbol) for row in const_rows
     )
-    assert Counter(item.literal_kind for item in index.go_declaration_values) == {"string": 993, "integer": 12}
-    assert Counter(item.go_type for item in index.go_declaration_values) == {"string": 993, "int": 12}
+    assert Counter(item.literal_kind for item in index.go_declaration_values) == {"string": 1003, "integer": 12}
+    assert Counter(item.go_type for item in index.go_declaration_values) == {"string": 1003, "int": 12}
     assert (
         next(
             item for item in index.go_declaration_values if item.kind == "phase_code" and item.source_id == "session"
@@ -786,7 +786,7 @@ def test_v7_exporter_selection_is_schema_valid_exact_and_non_wildcard(
     console_events = document["exporters"]["gateway_console"]["logs"][0]["event_names"]
     audit_actions = document["exporters"]["audit_sink"]["logs"][0]["actions"]
     assert gateway_events == console_events == sorted(gateway_events)
-    assert len(gateway_events) == 172
+    assert len(gateway_events) == 174
     assert len(audit_actions) == 188
     assert {
         "guardrail.evaluation.completed",
@@ -819,7 +819,7 @@ def test_v7_exporter_selection_is_schema_valid_exact_and_non_wildcard(
     log_families = [family for family in catalog["families"] if family["signal"] == "logs"]
     span_families = [family for family in catalog["families"] if family["signal"] == "traces"]
     metric_families = [family for family in catalog["families"] if family["signal"] == "metrics"]
-    assert len(log_families) == 91
+    assert len(log_families) == 93
     assert len(span_families) == 25
     assert len(metric_families) == 131
     assert {family["bucket"] for family in log_families} == set(metric_buckets)
@@ -859,14 +859,14 @@ def test_candidate_index_consumes_reviewed_go_symbol_contract_immutably_and_pres
         "otel": "OTel",
     }
     assert index.go_symbol_overrides == ()
-    assert len(table.rows) == 1897
-    assert table.table_sha256 == "7663bcaa86e8307990ba1d64cee1f783881b9a9ff7dd86ad01dab1db623a7c1f"
+    assert len(table.rows) == 1911
+    assert table.table_sha256 == "91c018dcfe27adbd97773029d86e3b1a652871311d68c79d36df7dcaf5091307"
     assert table.kind_counts == renderer._GO_SYMBOL_KIND_COUNTS
     assert table.declaration_form_counts == {
-        "exported_const": 1005,
-        "exported_type": 464,
+        "exported_const": 1015,
+        "exported_type": 466,
         "exported_function": 181,
-        "family_builder_method": 247,
+        "family_builder_method": 249,
     }
     assert rows[("family", "span.model.chat")].symbol == "TelemetryFamilyModelChat"
     assert rows[("span_event", "model.retry")].symbol == "TelemetrySpanEventModelRetry"
@@ -1505,11 +1505,11 @@ def test_bundle_is_complete_draft_2020_12_and_examples_have_exact_dispositions(
 
     assert schema["$schema"] == "https://json-schema.org/draft/2020-12/schema"
     assert schema["$id"] == "https://defenseclaw.dev/schemas/telemetry/v8/telemetry.schema.json"
-    assert len(schema["oneOf"]) == 247
-    assert len(schema["$defs"]) == 721
+    assert len(schema["oneOf"]) == 249
+    assert len(schema["$defs"]) == 727
     assert set(schema["x-defenseclaw-conditions"][0]) == {"description", "enforcement", "false_requirement", "id"}
     assert "$type" not in json.dumps(schema["x-defenseclaw-conditions"])
-    assert len(schema["x-defenseclaw-conditions"]) == 9
+    assert len(schema["x-defenseclaw-conditions"]) == 10
     mandatory_catalog = schema["x-defenseclaw-mandatory-rule-catalog"]
     assert mandatory_catalog["version"] == 1
     assert [rule["id"] for rule in mandatory_catalog["rules"]] == [
@@ -1524,6 +1524,7 @@ def test_bundle_is_complete_draft_2020_12_and_examples_have_exact_dispositions(
         "sqlite_failure",
         "exporter_initialization_failure",
         "durable_health_transition",
+        "destination_test_activity",
     ]
     assert mandatory_catalog["rules"][0]["enforcement"] == {
         "fact": None,
@@ -2609,8 +2610,8 @@ def test_catalog_contains_portable_family_privacy_condition_lifecycle_and_compat
 ) -> None:
     catalog = _json(artifacts, "catalog.json")
     assert catalog["format"] == "defenseclaw-telemetry-catalog-v1"
-    assert len(catalog["families"]) == 247
-    assert len(catalog["attributes"]) == 427
+    assert len(catalog["families"]) == 249
+    assert len(catalog["attributes"]) == 431
     assert {item["signal"] for item in catalog["families"]} == {"logs", "traces", "metrics"}
     assert {item["id"] for item in catalog["compatibility_manifests"]} == {
         "galileo-rich-v2",
@@ -2706,7 +2707,7 @@ def test_generated_compatibility_profiles_are_digest_bound_exact_and_explicit(
     local = documents["local-observability-v1"]
     assert local["runtime_projection"]["status"] == "available"
     assert local["runtime_projection"]["alias_conflict_behavior"] == "reject"
-    assert Counter(item["signal"] for item in local["families"]) == Counter({"logs": 91, "metrics": 131, "traces": 25})
+    assert Counter(item["signal"] for item in local["families"]) == Counter({"logs": 93, "metrics": 131, "traces": 25})
     assert all(
         item["projection"]["mode"]
         == {"logs": "canonical_otlp_log_v1", "metrics": "otel_sdk_metric_v1", "traces": "local_trace_aliases_v1"}[

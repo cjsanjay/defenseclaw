@@ -86,7 +86,7 @@ _CANONICAL_OUTCOME_ORDER = (
     "timed_out",
     "validated",
 )
-_REAL_FAMILY_OUTCOME_CONTRACT_DIGEST = "d75e3e7809e6e264a432ca5e45f84cd7e6d4e2864292d3c97cf8f16ee7608bd1"
+_REAL_FAMILY_OUTCOME_CONTRACT_DIGEST = "1551a227b577904053d07dc5696cb21a5d6b5702ec53d37ac3fe3aa42d89e6c8"
 _CANONICAL_AGENT_PHASES = (
     "session",
     "planning",
@@ -169,6 +169,7 @@ _MANDATORY_RULE_CATALOG_V1 = (
         "exporter_initialization_failure",
     ),
     ("durable_health_transition", "builder_fact", "durable_health_transition"),
+    ("destination_test_activity", "builder_fact", "destination_test_activity"),
 )
 
 
@@ -668,7 +669,7 @@ def _domain_sources() -> dict[str, dict[str, Any]]:
             next(item for item in canonical_operations["attribute_extensions"] if item["ref"] == "service.version")
         )
     )
-    for index in range(78):
+    for index in range(80):
         operations["groups"].append(
             {
                 "id": f"fixture.log.{index}",
@@ -3685,9 +3686,9 @@ def test_real_family_outcome_contract_matrix_is_exact() -> None:
     families = [group for domain in ir.domains for group in domain.groups if group.type in {"log", "span"}]
 
     assert outcome_order == _CANONICAL_OUTCOME_ORDER
-    assert sum(group.type == "log" for group in families) == 91
+    assert sum(group.type == "log" for group in families) == 93
     assert sum(group.type == "span" for group in families) == 25
-    assert len(families) == len({group.id for group in families}) == 116
+    assert len(families) == len({group.id for group in families}) == 118
     assert all(group.outcome_requirement is not None for group in families)
     assert all(group.allowed_outcomes is not None for group in families)
 
@@ -3700,8 +3701,8 @@ def test_real_family_outcome_contract_matrix_is_exact() -> None:
         for requirement in {item[0] for item in matrix}
     }
 
-    assert len(matrix) == 47
-    assert family_counts == {"forbidden": 11, "required": 105}
+    assert len(matrix) == 48
+    assert family_counts == {"forbidden": 11, "required": 107}
     assert _outcome_contract_digest(contracts) == _REAL_FAMILY_OUTCOME_CONTRACT_DIGEST
 
 
@@ -5471,8 +5472,9 @@ def test_structural_contract_ir_is_closed_lossless_and_runtime_bound(tmp_path: P
         "admin-principal-known-v1",
         "agent-reported-cost-available-v1",
         "telemetry-canary-enabled-v1",
+        "destination-test-failed-v1",
     )
-    assert sum(condition.enforcement.kind == "builder_fact" for condition in ir.conditions) == 7
+    assert sum(condition.enforcement.kind == "builder_fact" for condition in ir.conditions) == 8
     attribute_conditions = tuple(
         condition for condition in ir.conditions if condition.enforcement.kind == "boolean_attribute"
     )
@@ -8155,7 +8157,7 @@ def test_v7_exporter_selection_is_derived_from_exhaustive_producer_mappings() ->
     console_events = selection["exporters"]["gateway_console"]["logs"][0]["event_names"]
     audit_actions = selection["exporters"]["audit_sink"]["logs"][0]["actions"]
     assert gateway_events == console_events == tuple(sorted(gateway_events))
-    assert len(gateway_events) == 172
+    assert len(gateway_events) == 174
     assert len(audit_actions) == 188
     assert {
         "guardrail.evaluation.completed",
@@ -8180,7 +8182,7 @@ def test_v7_exporter_selection_is_derived_from_exhaustive_producer_mappings() ->
         bucket for bucket in module.EXPECTED_BUCKET_ORDER if any(group.bucket == bucket for group in metric_groups)
     )
     assert len(metric_groups) == 131
-    assert len(log_groups) == 91
+    assert len(log_groups) == 93
     assert len(span_groups) == 25
     assert len(metric_buckets) == 14
     assert selection["collection"]["always"]["logs"] == tuple(module.EXPECTED_BUCKET_ORDER)
@@ -9755,16 +9757,16 @@ def test_canonical_go_symbol_table_matches_digest_addressed_reviewed_baseline(
     table = ir.go_symbol_table
     baseline_digest = module._validate_reviewed_go_symbol_baseline(ROOT, table)
 
-    assert len(table.rows) == 1897
+    assert len(table.rows) == 1911
     assert dict(table.kind_counts) == module.EXPECTED_GO_SYMBOL_KIND_COUNTS
     assert dict(table.declaration_form_counts) == {
-        "exported_const": 1005,
-        "exported_type": 464,
+        "exported_const": 1015,
+        "exported_type": 466,
         "exported_function": 181,
-        "family_builder_method": 247,
+        "family_builder_method": 249,
     }
-    assert table.table_sha256 == "7663bcaa86e8307990ba1d64cee1f783881b9a9ff7dd86ad01dab1db623a7c1f"
-    assert baseline_digest.sha256 == "75ae4cf2b5440b3f423fc87dafde36b77be058e834093f2fbe485a2188562ee3"
+    assert table.table_sha256 == "91c018dcfe27adbd97773029d86e3b1a652871311d68c79d36df7dcaf5091307"
+    assert baseline_digest.sha256 == "d024811e979c0e823fc2556f83c4070d9a6968253cec876ddecade0080513d71"
     assert baseline_digest.path.endswith(f"/{baseline_digest.sha256}.json")
     rank = {kind: index for index, kind in enumerate(module.GO_SYMBOL_KIND_ORDER)}
     assert list(table.rows) == sorted(
@@ -9828,7 +9830,7 @@ def test_go_symbol_file_domain_ownership_counts_are_frozen(
         else:
             family_id = row.source_id.split("#", 1)[0]
             ownership[family_domains[family_id]] += 1
-    assert ownership == {"ids": 1005, "genai": 282, "security": 212, "operations": 398}
+    assert ownership == {"ids": 1015, "genai": 282, "security": 212, "operations": 402}
 
 
 def test_go_symbol_policy_and_table_are_materialized_and_row_order_is_digest_significant(

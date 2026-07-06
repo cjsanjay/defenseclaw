@@ -414,14 +414,14 @@ _GO_SYMBOL_KIND_ORDER: Final = (
     "span_link_constructor",
 )
 _GO_SYMBOL_KIND_COUNTS: Final = {
-    "attribute": 427,
-    "family": 247,
-    "log_event": 91,
+    "attribute": 431,
+    "family": 249,
+    "log_event": 93,
     "span_event": 15,
     "link_relation": 4,
     "metric_instrument": 131,
-    "condition": 9,
-    "condition_fact": 7,
+    "condition": 10,
+    "condition_fact": 8,
     "phase": 12,
     "phase_code": 12,
     "semantic_profile": 1,
@@ -434,20 +434,20 @@ _GO_SYMBOL_KIND_COUNTS: Final = {
     "resource_attributes_constructor": 1,
     "resource_attributes_attach": 1,
     "resource_attributes_validator": 1,
-    "family_input": 247,
-    "family_builder": 247,
+    "family_input": 249,
+    "family_builder": 249,
     "span_event_input": 61,
     "span_event_constructor": 61,
     "span_link_input": 100,
     "span_link_constructor": 100,
 }
 _GO_SYMBOL_DECLARATION_COUNTS: Final = {
-    "exported_const": 1005,
-    "exported_type": 464,
+    "exported_const": 1015,
+    "exported_type": 466,
     "exported_function": 181,
-    "family_builder_method": 247,
+    "family_builder_method": 249,
 }
-_GO_SYMBOL_DOMAIN_COUNTS: Final = {"ids": 1005, "genai": 282, "security": 212, "operations": 398}
+_GO_SYMBOL_DOMAIN_COUNTS: Final = {"ids": 1015, "genai": 282, "security": 212, "operations": 402}
 _GO_SYMBOL_DECLARATION_BY_KIND: Final = {
     "attribute": "exported_const",
     "family": "exported_const",
@@ -476,9 +476,9 @@ _GO_SYMBOL_DECLARATION_BY_KIND: Final = {
     "span_link_input": "exported_type",
     "span_link_constructor": "exported_function",
 }
-_GO_SYMBOL_ROW_COUNT: Final = 1897
+_GO_SYMBOL_ROW_COUNT: Final = 1911
 _GO_SYMBOL_TABLE_DIGEST_DOMAIN: Final = b"DefenseClaw GoSymbolTableIR v1\x00"
-_GO_SYMBOL_TABLE_SHA256: Final = "7663bcaa86e8307990ba1d64cee1f783881b9a9ff7dd86ad01dab1db623a7c1f"
+_GO_SYMBOL_TABLE_SHA256: Final = "91c018dcfe27adbd97773029d86e3b1a652871311d68c79d36df7dcaf5091307"
 
 
 def _normalized_candidate_path(raw: str) -> str:
@@ -3702,7 +3702,7 @@ def _go_declaration_values(
             continue
         value = row.source_id.split("#", 1)[1] if row.kind == "structured_member" else row.source_id
         declarations.append(GoDeclarationValue(row.kind, row.source_id, row.symbol, "string", "string", value))
-    if len(declarations) != 1005 or Counter(item.kind for item in declarations) != {
+    if len(declarations) != 1015 or Counter(item.kind for item in declarations) != {
         kind: count
         for kind, count in _GO_SYMBOL_KIND_COUNTS.items()
         if _GO_SYMBOL_DECLARATION_BY_KIND[kind] == "exported_const"
@@ -4272,9 +4272,9 @@ def _enriched_field_descriptors(
                     origin=f"structured_types.{type_id}.canonical_json.{arm_id}",
                 )
                 order += 1
-    if len(descriptors) != 3643:
+    if len(descriptors) != 3679:
         raise CandidateRenderError(
-            f"enriched field descriptor inventory is incomplete: expected 3643, got {len(descriptors)}"
+            f"enriched field descriptor inventory is incomplete: expected 3679, got {len(descriptors)}"
         )
     return MappingProxyType({key: descriptors[key] for key in sorted(descriptors)})
 
@@ -4741,7 +4741,7 @@ def _enriched_family_descriptors(
                 family_field_ids,
                 tuple(_freeze(_plain_ir(item)) for item in family["metric_projections"]),
             )
-    if len(enriched_families) != 247 or len(traces) != 25 or len(metrics) != 131:
+    if len(enriched_families) != 249 or len(traces) != 25 or len(metrics) != 131:
         raise CandidateRenderError("enriched family descriptor inventory is incomplete")
     return (
         MappingProxyType(enriched_families),
@@ -4824,7 +4824,7 @@ def _expanded_producer_mappings(
                     )
                 )
     canonical_rows = sum(row.family_id is not None for row in rows)
-    if len(rows) != 8075 or canonical_rows != 1818:
+    if len(rows) != 8077 or canonical_rows != 1820:
         raise CandidateRenderError(
             f"expanded producer identity row inventory is incomplete: rows={len(rows)} canonical={canonical_rows}"
         )

@@ -97,7 +97,7 @@ def test_observability_v8_generated_builder_source_contract_is_normative() -> No
     assert "| P-070 | Add one closed generated-builder source contract" in decisions
     assert "| P-070 | 12 §§5.2.3,6,12,17 |" in traceability
     assert "`mandatory_rule_catalog` is the closed object" in schemas
-    assert "eleven rules" in schemas
+    assert "twelve rules" in schemas
     for rule in (
         "always",
         "control_plane_mutation",
@@ -110,6 +110,7 @@ def test_observability_v8_generated_builder_source_contract_is_normative() -> No
         "sqlite_failure",
         "exporter_initialization_failure",
         "durable_health_transition",
+        "destination_test_activity",
     ):
         assert f"`{rule}`" in schemas
     assert "`structured_types`" in schemas

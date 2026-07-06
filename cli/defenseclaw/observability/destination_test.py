@@ -25,6 +25,7 @@ import queue
 import re
 import socket
 import ssl
+import subprocess
 import threading
 import uuid
 from collections.abc import Callable, Mapping, Sequence
@@ -33,6 +34,7 @@ from typing import Final, Protocol
 from urllib.parse import urlsplit
 
 from defenseclaw.credentials import resolve as resolve_credential
+from defenseclaw.gateway import resolve_gateway_binary
 
 _REMOTE_KINDS: Final = frozenset({"http_jsonl", "splunk_hec", "otlp"})
 _WRITE_KINDS: Final = frozenset({"http_jsonl", "splunk_hec"})
@@ -44,6 +46,7 @@ _HEADER_NAME = re.compile(r"^[!#$%&'*+.^_`|~0-9A-Za-z-]{1,256}$")
 _MAX_RESPONSE_BODY: Final = 4096
 _PROBE_MARKER_HEADER: Final = "X-DefenseClaw-Probe"
 _PROBE_ID_HEADER: Final = "X-DefenseClaw-Probe-ID"
+_LOCAL_COMPLIANCE_TIMEOUT_SECONDS: Final = 10
 _FORBIDDEN_HEADERS: Final = frozenset(
     {
         "host",
@@ -153,27 +156,73 @@ class LocalComplianceRecorder(Protocol):
         """Persist one attempt/outcome without ordinary routing or fan-out."""
 
 
-class _UnavailableComplianceRecorder:
-    def record(self, activity: ComplianceActivity) -> None:
-        del activity
-        raise DestinationTestError(
-            "audit_unavailable",
-            "the gateway local-only destination-test compliance recorder is unavailable; "
-            "bind LocalComplianceRecorder to a canonical gateway operation that bypasses "
-            "ordinary routing (the legacy /audit/event endpoint is not local-only)",
-        )
+class GatewayLocalComplianceRecorder:
+    """Persist content-free activity through the gateway-owned local-only path.
 
-
-def canonical_local_compliance_recorder() -> LocalComplianceRecorder:
-    """Return the canonical recorder, failing closed until its gateway seam exists.
-
-    The current gateway ``/audit/event`` endpoint invokes the legacy logger and
-    sink fan-out, so using it would violate the local-only contract.  Keeping
-    this named factory is the precise integration seam for the gateway-owned
-    operation; callers must not replace it with a direct SQLite write.
+    The installed Go helper resolves the gateway bearer without returning it to
+    Python, then calls the authenticated loopback endpoint. Activity JSON is
+    supplied on stdin so no probe metadata or credential enters process argv.
     """
 
-    return _UnavailableComplianceRecorder()
+    def __init__(self, *, config_path: str, data_dir: str) -> None:
+        self._config_path = config_path
+        self._data_dir = data_dir
+
+    def record(self, activity: ComplianceActivity) -> None:
+        binary = resolve_gateway_binary()
+        if not binary:
+            raise _audit_unavailable()
+        payload: dict[str, str] = {
+            "phase": activity.phase,
+            "destination": activity.destination,
+            "probe_id": activity.probe_id,
+            "mode": activity.mode,
+            "result": activity.result,
+        }
+        if activity.failure_class is not None:
+            payload["failure_class"] = activity.failure_class
+        argv = [
+            binary,
+            "observability-v8",
+            "record-destination-test-activity",
+            "--config",
+            self._config_path,
+            "--data-dir",
+            self._data_dir,
+        ]
+        try:
+            completed = subprocess.run(
+                argv,
+                input=json.dumps(payload, separators=(",", ":")),
+                capture_output=True,
+                text=True,
+                timeout=_LOCAL_COMPLIANCE_TIMEOUT_SECONDS,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise _audit_unavailable() from exc
+        if completed.returncode != 0:
+            raise _audit_unavailable()
+        try:
+            response = json.loads(completed.stdout)
+        except (TypeError, json.JSONDecodeError) as exc:
+            raise _audit_unavailable() from exc
+        if response != {"recorded": True}:
+            raise _audit_unavailable()
+
+
+def _audit_unavailable() -> DestinationTestError:
+    return DestinationTestError(
+        "audit_unavailable",
+        "the gateway local-only destination-test compliance recorder is unavailable; "
+        "ensure the v8 gateway is running and retry",
+    )
+
+
+def canonical_local_compliance_recorder(*, config_path: str, data_dir: str) -> LocalComplianceRecorder:
+    """Return the canonical helper-backed, local-only compliance recorder."""
+
+    return GatewayLocalComplianceRecorder(config_path=config_path, data_dir=data_dir)
 
 
 @dataclass(frozen=True)

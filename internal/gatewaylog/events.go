@@ -126,6 +126,11 @@ const (
 	// scraping CLI output.
 	EventActivity EventType = "activity"
 
+	// EventDestinationTest records only the content-free attempt and terminal
+	// outcome of an explicit operator connectivity test. It is a distinct
+	// producer so ordinary audit actions cannot claim the probe-only schema.
+	EventDestinationTest EventType = "destination_test"
+
 	// EventEgress [v7.1] records every outbound request observed
 	// by the guardrail proxy's passthrough path, classified by the
 	// Layer 1 shape detector. The three branches — known / shape /

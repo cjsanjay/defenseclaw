@@ -59,6 +59,7 @@ const (
 	MandatorySQLiteFailure                 MandatoryRule = "sqlite_failure"
 	MandatoryExporterInitializationFailure MandatoryRule = "exporter_initialization_failure"
 	MandatoryDurableHealthTransition       MandatoryRule = "durable_health_transition"
+	MandatoryDestinationTestActivity       MandatoryRule = "destination_test_activity"
 )
 
 type CompanionRule string
@@ -82,6 +83,7 @@ type MandatoryFacts struct {
 	SQLiteFailure                 bool
 	ExporterInitializationFailure bool
 	DurableHealthTransition       bool
+	DestinationTestActivity       bool
 }
 
 // Classification is immutable producer metadata. An empty Bucket means a typed
@@ -285,6 +287,10 @@ func (classification Classification) isMandatory(facts MandatoryFacts) bool {
 			if facts.DurableHealthTransition {
 				return true
 			}
+		case MandatoryDestinationTestActivity:
+			if facts.DestinationTestActivity {
+				return true
+			}
 		}
 	}
 	return false
@@ -371,6 +377,13 @@ func buildGatewayEventClassifications() map[ProducerKey]Classification {
 			MandatoryControlPlaneMutation, MandatoryApprovalResolution, MandatoryAlertMutation,
 		},
 	})
+	add(contextual(
+		"destination_test",
+		[]Bucket{BucketComplianceActivity},
+		SeverityCanonicalOrInfo,
+		[]MandatoryRule{MandatoryDestinationTestActivity},
+		nil,
+	))
 	add(Classification{
 		Key: "egress", Bucket: BucketNetworkEgress,
 		EventNamePolicy: EventNameContextRequired, SeverityPolicy: SeverityCanonicalOrInfo,

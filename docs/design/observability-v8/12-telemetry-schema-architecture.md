@@ -558,15 +558,16 @@ and golden migration rather than an adapter-local reinterpretation.
 ##### Stable conditions
 
 Conditional uses reference `conditional: <id>`; prose in a use is invalid. The root
-`conditions` catalog accepts exactly `enforcement.kind: json_schema` or
-`enforcement.kind: builder_fact`. A JSON-Schema condition supplies a closed typed
-predicate over independent record fields. A builder-fact condition supplies one
-closed fact token; generated builders evaluate it from typed producer state before
-record construction. Each row declares `false_requirement: optional|forbidden`;
-an adapter cannot treat omission and permission as the same fallback. The current
-seven conditions all require producer knowledge
-that has no independent serialized discriminator, so all seven are
-`builder_fact`:
+`conditions` catalog accepts exactly `enforcement.kind: json_schema`,
+`enforcement.kind: builder_fact`, or `enforcement.kind: boolean_attribute`. A
+JSON-Schema condition supplies a closed typed predicate over independent record
+fields. A builder-fact condition supplies one closed fact token; generated builders
+evaluate it from typed producer state before record construction. A
+boolean-attribute condition binds to one registered source Boolean without giving
+callers a second independent fact. Each row declares
+`false_requirement: optional|forbidden`; an adapter cannot treat omission and
+permission as the same fallback. The current ten conditions contain eight
+independent `builder_fact` values and two attribute-derived values:
 
 | ID | Typed truth condition | False behavior |
 |---|---|---|
@@ -577,6 +578,9 @@ that has no independent serialized discriminator, so all seven are
 | `security-severity-available-v1` | A recognized producer severity exists or was canonically normalized, including `NONE` to `INFO` | Conditioned severity forbidden |
 | `judge-output-parse-failed-v1` | Judge output parsing failed and a bounded centrally redacted parse-error value exists | Conditioned parse error forbidden |
 | `admin-principal-known-v1` | A positively authenticated/authorized administrative principal is known; submitted credentials and origin metadata cannot synthesize one | Conditioned principal forbidden |
+| `agent-reported-cost-available-v1` | The connector explicitly supplied the registered reported-cost presence Boolean | Conditioned reported cost forbidden |
+| `telemetry-canary-enabled-v1` | The producer explicitly supplied the registered canary marker Boolean | Canary-only fields forbidden |
+| `destination-test-failed-v1` | The explicit destination test reached the terminal `failed` result | Conditioned bounded failure class forbidden |
 
 Calling one of these `json_schema` merely because the conditioned field is present
 would be a tautology and is forbidden. Group resolution compares stable condition
@@ -679,7 +683,7 @@ attributes; they do not acquire local copies of these root catalogs.
 `version: 1`. Each rule is exactly `{id, enforcement}`. `enforcement` is one of
 `{kind: constant, value: true}` or `{kind: builder_fact, fact: <stable-token>}`.
 Rule IDs and builder-fact tokens are unique. Version 1 contains exactly the
-following eleven rules:
+following twelve rules:
 
 | Rule ID | Enforcement |
 |---|---|
@@ -694,6 +698,7 @@ following eleven rules:
 | `sqlite_failure` | builder fact `sqlite_failure` |
 | `exporter_initialization_failure` | builder fact `exporter_initialization_failure` |
 | `durable_health_transition` | builder fact `durable_health_transition` |
+| `destination_test_activity` | builder fact `destination_test_activity` |
 
 Only log families may declare `mandatory_floor`; every listed ID resolves through
 this catalog. A log occurrence is mandatory when at least one referenced rule is

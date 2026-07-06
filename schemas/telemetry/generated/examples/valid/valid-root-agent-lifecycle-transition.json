@@ -3,7 +3,7 @@
     "artifact": "examples/valid/valid-root-agent-lifecycle-transition.json",
     "authority": "candidate-not-public-authority",
     "generator": "defenseclaw-telemetry-candidate-renderer-v1",
-    "materialized_view_sha256": "9ab8029c2e07448a6605044b18d79b0550df35f66671f495c67d9820439dd57e",
+    "materialized_view_sha256": "0c48952e5e1d8fd6e7d04bfef5fec09556a1173d7abad10dc8b0a6d5f9637040",
     "registry_version": 1
   },
   "base_example": null,
@@ -101,7 +101,7 @@
     "/status/code": "metadata"
   },
   "id": "valid-root-agent-lifecycle-transition",
-  "materialized_view_sha256": "9ab8029c2e07448a6605044b18d79b0550df35f66671f495c67d9820439dd57e",
+  "materialized_view_sha256": "0c48952e5e1d8fd6e7d04bfef5fec09556a1173d7abad10dc8b0a6d5f9637040",
   "mutation": null,
   "record": {
     "body": {

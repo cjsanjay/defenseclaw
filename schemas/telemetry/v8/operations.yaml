@@ -1210,6 +1210,77 @@ attributes:
     id: identifier-v1
     notes: configured destination name
   introduced_in: telemetry-registry-v1
+- id: defenseclaw.destination.test.probe_id
+  type: string
+  brief: Unique identifier for one explicit destination connectivity test
+  examples: [probe-01234567]
+  stability: stable
+  owner: defenseclaw
+  field_class: identifier
+  sensitivity: internal
+  cardinality: high
+  normalization:
+    id: identifier-v1
+    overrides: {max_utf8_bytes: 128}
+    notes: Content-free probe correlation identifier; never a credential or payload identifier
+  introduced_in: telemetry-registry-v1
+- id: defenseclaw.destination.test.mode
+  type: string
+  brief: Whether the explicit destination test performed a handshake or synthetic write
+  examples: [handshake]
+  stability: stable
+  owner: defenseclaw
+  field_class: metadata
+  sensitivity: safe
+  cardinality: low
+  normalization:
+    id: enum-v1
+    overrides: {enum: [handshake, write_probe]}
+    notes: handshake|write_probe
+  introduced_in: telemetry-registry-v1
+- id: defenseclaw.destination.test.result
+  type: string
+  brief: Bounded state of the explicit destination connectivity test
+  examples: [succeeded]
+  stability: stable
+  owner: defenseclaw
+  field_class: metadata
+  sensitivity: safe
+  cardinality: low
+  normalization:
+    id: enum-v1
+    overrides: {enum: [attempted, succeeded, failed]}
+    notes: attempted|succeeded|failed
+  introduced_in: telemetry-registry-v1
+- id: defenseclaw.destination.test.failure_class
+  type: string
+  brief: Content-free terminal class for a failed destination connectivity test
+  examples: [timeout]
+  stability: stable
+  owner: defenseclaw
+  field_class: metadata
+  sensitivity: internal
+  cardinality: low
+  normalization:
+    id: enum-v1
+    overrides:
+      enum:
+      - audit_unavailable
+      - authentication_failed
+      - connection_failed
+      - credential_unavailable
+      - dns_failed
+      - internal_failure
+      - invalid_destination
+      - not_found
+      - protocol_failed
+      - remote_rejected
+      - timeout
+      - tls_failed
+      - unsafe_endpoint
+      - unsupported
+    notes: Registered class only; never an endpoint, response body, credential, or exception text
+  introduced_in: telemetry-registry-v1
 - id: defenseclaw.destination.signal
   type: string
   brief: Export signal
@@ -2992,6 +3063,26 @@ groups:
     requirement_level: recommended
   - ref: defenseclaw.admin.change_set_hash
     requirement_level: recommended
+- id: body.destination.test
+  type: body_group
+  brief: Content-free operator evidence for one explicit destination connectivity test transition.
+  stability: stable
+  introduced_in: telemetry-registry-v1
+  extends:
+  - body.compliance.activity
+  attributes: []
+  body_fields:
+  - ref: defenseclaw.destination.id
+    requirement_level: required
+  - ref: defenseclaw.destination.test.probe_id
+    requirement_level: required
+  - ref: defenseclaw.destination.test.mode
+    requirement_level: required
+  - ref: defenseclaw.destination.test.result
+    requirement_level: required
+  - ref: defenseclaw.destination.test.failure_class
+    requirement_level: conditional
+    conditional: destination-test-failed-v1
 - id: body.asset.lifecycle
   type: body_group
   brief: Actual asset lifecycle transition body.
@@ -4749,6 +4840,50 @@ groups:
     - local-observability-v1
     legacy_bindings:
     - source: internal/observability/event_registry.go
+      disposition: preserved
+- id: log.destination.test.attempted
+  type: log
+  brief: Content-free local compliance evidence that an operator requested one explicit destination test.
+  stability: stable
+  introduced_in: telemetry-registry-v1
+  extends:
+  - body.destination.test
+  attributes: []
+  body_fields: []
+  log:
+    event_name: destination.test.attempted
+  x-defenseclaw:
+    bucket: compliance.activity
+    family_schema_version: 1
+    outcome_requirement: required
+    allowed_outcomes: [attempted]
+    route_selector: true
+    mandatory_floor: [destination_test_activity]
+    compatibility_profiles: [local-observability-v1]
+    legacy_bindings:
+    - source: internal/gateway/observability_destination.go
+      disposition: preserved
+- id: log.destination.test.completed
+  type: log
+  brief: Content-free local compliance evidence for the terminal result of one explicit destination test.
+  stability: stable
+  introduced_in: telemetry-registry-v1
+  extends:
+  - body.destination.test
+  attributes: []
+  body_fields: []
+  log:
+    event_name: destination.test.completed
+  x-defenseclaw:
+    bucket: compliance.activity
+    family_schema_version: 1
+    outcome_requirement: required
+    allowed_outcomes: [completed, failed]
+    route_selector: true
+    mandatory_floor: [destination_test_activity]
+    compatibility_profiles: [local-observability-v1]
+    legacy_bindings:
+    - source: internal/gateway/observability_destination.go
       disposition: preserved
 - id: log.diagnostic.message
   type: log
@@ -7987,6 +8122,14 @@ producer_identity_sets:
   - event_name: redaction.profile.updated
     bucket: compliance.activity
     family: log.redaction.profile.updated
+- id: identity_set.destination_test
+  identities:
+  - event_name: destination.test.attempted
+    bucket: compliance.activity
+    family: log.destination.test.attempted
+  - event_name: destination.test.completed
+    bucket: compliance.activity
+    family: log.destination.test.completed
 - id: identity_set.enforcement_action
   identities:
   - event_name: enforcement.access.revoked
@@ -9615,6 +9758,17 @@ producer_mappings:
     introduced_in: telemetry-registry-v1
     disposition: translate_to_v8
   allowed_context_identity_set: identity_set.compliance_activity
+- producer: gateway_event
+  key: destination_test
+  source: internal/gatewaylog/events.go
+  event_name_policy: context_required
+  severity_policy: canonical_or_info
+  mandatory_rules: [destination_test_activity]
+  companion_rules: []
+  compatibility:
+    introduced_in: telemetry-registry-v1
+    disposition: translate_to_v8
+  allowed_context_identity_set: identity_set.destination_test
 - producer: gateway_event
   key: egress
   source: internal/gatewaylog/events.go

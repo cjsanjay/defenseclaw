@@ -245,11 +245,11 @@ _SHA256: Final = re.compile(r"^[0-9a-f]{64}$")
 _TOKEN: Final = re.compile(r"^[a-z][a-z0-9_.:/#-]{0,511}$")
 _EVENT_NAME: Final = re.compile(r"^[a-z][a-z0-9_.-]{0,255}$")
 _SOURCE: Final = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:/#-]{0,511}$")
-_MAX_ROWS: Final = 8075
-_EXPECTED_ROWS: Final = 8075
-_EXPECTED_FAMILY_ROWS: Final = 1818
-_EXPECTED_GROUPS: Final = 202
-_EXPECTED_GROUPS_BY_KIND: Final = {"gateway_event": 14, "audit_action": 188}
+_MAX_ROWS: Final = 8077
+_EXPECTED_ROWS: Final = 8077
+_EXPECTED_FAMILY_ROWS: Final = 1820
+_EXPECTED_GROUPS: Final = 203
+_EXPECTED_GROUPS_BY_KIND: Final = {"gateway_event": 15, "audit_action": 188}
 _PRODUCER_KINDS: Final = frozenset(_EXPECTED_GROUPS_BY_KIND)
 _PRODUCER_SOURCES: Final = {
     "gateway_event": "internal/gatewaylog/events.go",
@@ -278,6 +278,7 @@ _MANDATORY_RULES: Final = frozenset(
         "sqlite_failure",
         "exporter_initialization_failure",
         "durable_health_transition",
+        "destination_test_activity",
     }
 )
 _COMPANION_RULES: Final = frozenset(
@@ -881,7 +882,7 @@ def compile_go_producer_plan(index: object) -> GoProducerPlanIR:
         _MAX_ROWS,
     )
     if len(raw_rows) != _EXPECTED_ROWS:
-        raise GoProducerPlanError("expanded producer rows: exact 8,075-row inventory is required")
+        raise GoProducerPlanError("expanded producer rows: exact 8,077-row inventory is required")
     rows = tuple(_row(raw, position) for position, raw in enumerate(raw_rows))
     if len({row.row_id for row in rows}) != len(rows):
         raise GoProducerPlanError("expanded producer rows: duplicate row ID")
@@ -890,7 +891,7 @@ def compile_go_producer_plan(index: object) -> GoProducerPlanIR:
         raise GoProducerPlanError("expanded producer rows: exact 1,781 selected-family inventory is required")
     groups = _groups(rows)
     if len(groups) != _EXPECTED_GROUPS:
-        raise GoProducerPlanError("expanded producer rows: exact 202-mapping inventory is required")
+        raise GoProducerPlanError("expanded producer rows: exact 203-mapping inventory is required")
     observed_groups = {
         kind: sum(group.producer_kind.value == kind for group in groups) for kind in _EXPECTED_GROUPS_BY_KIND
     }

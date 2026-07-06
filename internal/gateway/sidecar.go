@@ -3722,6 +3722,7 @@ func (s *Sidecar) runAPI(ctx context.Context) error {
 	// legacy provider snapshot, so one graph lease covers construction, flush,
 	// acknowledgement, and reload-safe release.
 	api.bindTelemetryCanaryRuntime(s.observabilityV8CanaryEmitter())
+	api.bindLocalOnlyObservabilityRuntime(s.observabilityV8LocalOnlyEmitter())
 	if s.configMgr != nil {
 		api.SetConfigRuntime(s.configMgr.Reload, s.currentConfig)
 	}
