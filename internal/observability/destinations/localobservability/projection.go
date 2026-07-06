@@ -27,8 +27,8 @@ import (
 )
 
 const (
-	DestinationName = "local-observability"
-	ProfileID       = "local-observability-v1"
+	DestinationName = observability.RuntimeLocalObservabilityDestination
+	ProfileID       = observability.RuntimeLocalObservabilityProfile
 )
 
 type ProjectionReason string

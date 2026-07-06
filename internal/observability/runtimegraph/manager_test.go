@@ -459,6 +459,25 @@ func testConfig(t *testing.T, suffix string, retention int, retain bool) Config 
 	return ConfigFromPlan(plan, retain)
 }
 
+func prometheusTestConfig(t *testing.T, retention int, listen string) Config {
+	t.Helper()
+	value := retention
+	plan, err := config.CompileObservabilityV8(&config.ObservabilityV8Source{
+		Local: config.ObservabilityV8LocalSource{
+			Path: "/var/lib/defenseclaw/audit-prometheus.db", JudgeBodiesPath: "/var/lib/defenseclaw/judge-prometheus.db",
+			RetentionDays: &value,
+		},
+		Destinations: []config.ObservabilityV8DestinationSource{{
+			Name: "metrics", Kind: config.ObservabilityV8DestinationPrometheus,
+			Listen: listen, Path: "/metrics",
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ConfigFromPlan(plan, true)
+}
+
 func successfulFactory(name string, log *lifecycleLog) *fakeFactory {
 	factory := &fakeFactory{name: name, log: log}
 	factory.make = func(input BuildInput) (*fakeComponent, error) {
@@ -573,6 +592,38 @@ func TestReloadRejectsInvalidAndRestartRequiredFieldsWithoutInitialization(t *te
 	for _, report := range reporter.snapshot()[1:] {
 		if report.graph != old || report.value.Outcome != "rejected" {
 			t.Fatalf("rejection report escaped old graph: %#v", report)
+		}
+	}
+}
+
+func TestReloadRejectsSamePrometheusBindingBeforeCandidateInitialization(t *testing.T) {
+	log := &lifecycleLog{}
+	factory := successfulFactory("prometheus", log)
+	initial := prometheusTestConfig(t, 90, "127.0.0.1:9464")
+	manager, reporter, _ := newTestManager(t, initial, []ComponentFactory{factory})
+	old := manager.Active()
+	initialBuildEvents := len(log.snapshot())
+
+	result, reloadErr := manager.Reload(
+		t.Context(), prometheusTestConfig(t, 30, "127.0.0.1:9464"),
+	)
+	if reloadErr == nil || reloadErr.Code() != ErrorRestartRequired ||
+		reloadErr.FieldPath() != "observability.destinations.metrics.listen" ||
+		result.ActiveGraph() != old || result.Status() != ReloadRejected || manager.Active() != old {
+		t.Fatalf("same-binding reload active=%p old=%p err=%v", result.ActiveGraph(), old, reloadErr)
+	}
+	if events := log.snapshot(); len(events) != initialBuildEvents {
+		t.Fatalf("same-binding reload initialized candidate resources: %#v", events)
+	}
+	flushReports(t, manager)
+	reports := reporter.snapshot()
+	if len(reports) < 3 {
+		t.Fatalf("same-binding rejection reports = %#v", reports)
+	}
+	for _, report := range reports[len(reports)-2:] {
+		if report.graph != old || report.value.Code != ReportRestartRequired ||
+			report.value.FieldPath != "observability.destinations.metrics.listen" {
+			t.Fatalf("same-binding rejection report = %#v", report)
 		}
 	}
 }

@@ -154,7 +154,16 @@ def _plan_rows(
                 continue
             collected = bool(collect.get(signal, False))
             for destination in destinations:
-                rows.append(_destination_row(bucket, signal, collected, destination, filters))
+                rows.append(
+                    _destination_row(
+                        bucket,
+                        signal,
+                        collected,
+                        str(bucket_policy.get("reload_applicability") or ""),
+                        destination,
+                        filters,
+                    )
+                )
     return rows
 
 
@@ -162,6 +171,7 @@ def _destination_row(
     bucket: str,
     signal: str,
     collected: bool,
+    collection_reload: str,
     destination: dict[str, Any],
     filters: _PlanFilters,
 ) -> dict[str, Any]:
@@ -175,12 +185,20 @@ def _destination_row(
         "route": None,
         "redaction_profile": None,
     }
+    reload_applicability = destination.get("reload_applicability")
+    if collection_reload or isinstance(reload_applicability, dict):
+        reload_policy = reload_applicability if isinstance(reload_applicability, dict) else {}
+        result["reload_applicability"] = {
+            "collection": collection_reload or None,
+            "routing": reload_policy.get("policy"),
+            "transport": reload_policy.get("transport"),
+        }
     if not destination.get("enabled", False):
         result["decision"] = "destination_disabled"
-        return result
+        return _annotate_compatibility(result, signal, destination, filters)
     if signal not in (destination.get("selected_signals") or []):
         result["decision"] = "signal_not_selected"
-        return result
+        return _annotate_compatibility(result, signal, destination, filters)
     if not collected:
         floor_route = _destination_floor_route(destination) if name == "local-sqlite" else None
         if signal == "logs" and floor_route is not None:
@@ -193,7 +211,7 @@ def _destination_row(
             result["route"] = floor_route
         else:
             result["decision"] = "not_collected"
-        return result
+        return _annotate_compatibility(result, signal, destination, filters)
 
     for route in destination.get("routes") or []:
         if not isinstance(route, dict):
@@ -205,14 +223,83 @@ def _destination_row(
         if match == "conditional":
             result["decision"] = "conditional"
             result["potential_action"] = route.get("action") or "send"
-            return result
+            return _annotate_compatibility(result, signal, destination, filters)
         action = str(route.get("action") or "send")
         result["decision"] = action
         if action == "send" and signal in {"logs", "traces"}:
             profiles = route.get("redaction_profile_by_bucket")
             if isinstance(profiles, dict):
                 result["redaction_profile"] = profiles.get(bucket)
+        return _annotate_compatibility(result, signal, destination, filters)
+    return _annotate_compatibility(result, signal, destination, filters)
+
+
+def _annotate_compatibility(
+    result: dict[str, Any],
+    signal: str,
+    destination: dict[str, Any],
+    filters: _PlanFilters,
+) -> dict[str, Any]:
+    """Render only Go-published family/profile facts for an exact span filter."""
+
+    if signal != "traces" or not filters.event_name:
         return result
+    profiles = destination.get("compatibility_profiles")
+    if not isinstance(profiles, list):
+        return result
+    annotations: list[dict[str, Any]] = []
+    for profile in profiles:
+        if not isinstance(profile, dict) or not isinstance(profile.get("id"), str):
+            continue
+        eligible_families = profile.get("eligible_span_families")
+        if not isinstance(eligible_families, list):
+            continue
+        matched_family = next(
+            (
+                family
+                for family in eligible_families
+                if isinstance(family, dict)
+                and family.get("event_name") == filters.event_name
+                and family.get("bucket") == result.get("bucket")
+            ),
+            None,
+        )
+        family_member = matched_family is not None
+        profile_availability = str(profile.get("availability") or "unknown")
+        binding_availability = (
+            str(matched_family.get("availability") or "unknown") if isinstance(matched_family, dict) else None
+        )
+        decision = str(result.get("decision") or "unmatched")
+        family_shape_available = (
+            family_member and profile_availability == "available" and binding_availability == "available"
+        )
+        family_eligible = family_shape_available and decision == "send"
+        if not family_member:
+            eligibility = "family_not_in_profile"
+        elif profile_availability != "available":
+            eligibility = f"profile_{profile_availability}"
+        elif binding_availability != "available":
+            eligibility = f"family_binding_{binding_availability}"
+        elif decision == "send":
+            eligibility = "eligible"
+        elif decision == "conditional":
+            eligibility = "conditional_route"
+        else:
+            eligibility = "not_routed"
+        annotations.append(
+            {
+                "profile": profile["id"],
+                "profile_availability": profile_availability,
+                "event_name": filters.event_name,
+                "family_member": family_member,
+                "family_binding_availability": binding_availability,
+                "family_shape_available": family_shape_available,
+                "family_eligible": family_eligible,
+                "eligibility": eligibility,
+            }
+        )
+    if annotations:
+        result["compatibility"] = annotations
     return result
 
 
@@ -285,7 +372,17 @@ def _delivery_settings(effective: dict[str, Any]) -> list[dict[str, Any]]:
 
 def _render_plan_table(rows: list[dict[str, Any]], digest: str, delivery: list[dict[str, Any]]) -> None:
     click.echo(f"Compiled Go plan digest: {digest}")
-    headings = ("BUCKET", "SIGNAL", "COLLECT", "DESTINATION", "DECISION", "ROUTE", "REDACTION")
+    headings = (
+        "BUCKET",
+        "SIGNAL",
+        "COLLECT",
+        "DESTINATION",
+        "DECISION",
+        "ROUTE",
+        "REDACTION",
+        "COMPATIBILITY",
+        "RELOAD",
+    )
     values = [
         (
             row["bucket"],
@@ -299,6 +396,8 @@ def _render_plan_table(rows: list[dict[str, Any]], digest: str, delivery: list[d
             row["decision"],
             row["route"] or "-",
             row["redaction_profile"] or "-",
+            _table_compatibility(row),
+            _table_reload(row),
         )
         for row in rows
     ]
@@ -342,3 +441,25 @@ def _render_plan_table(rows: list[dict[str, Any]], digest: str, delivery: list[d
         for row in delivery_values:
             click.echo("  ".join(str(value).ljust(delivery_widths[index]) for index, value in enumerate(row)))
     click.echo("Rows render canonical Go-compiled routes; Python does not compile routing policy.")
+
+
+def _table_compatibility(row: dict[str, Any]) -> str:
+    annotations = row.get("compatibility")
+    if not isinstance(annotations, list):
+        return "-"
+    values = [
+        f"{item.get('profile')}:{item.get('eligibility')}"
+        for item in annotations
+        if isinstance(item, dict) and item.get("profile") and item.get("eligibility")
+    ]
+    return ",".join(values) or "-"
+
+
+def _table_reload(row: dict[str, Any]) -> str:
+    applicability = row.get("reload_applicability")
+    if not isinstance(applicability, dict):
+        return "-"
+    values = [str(applicability.get(field) or "unknown") for field in ("collection", "routing", "transport")]
+    if values[0] == values[1] == values[2]:
+        return values[0]
+    return f"collect={values[0]},route={values[1]},transport={values[2]}"

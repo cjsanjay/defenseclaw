@@ -158,7 +158,7 @@ func CompileObservabilityV8(source *ObservabilityV8Source) (*ObservabilityV8Plan
 		Profiles:                 profiles,
 		Destinations:             destinations,
 		Warnings:                 compileObservabilityV8Warnings(local, destinations),
-		Provenance:               compileObservabilityV8Provenance(source, buckets, destinations),
+		Provenance:               compileObservabilityV8Provenance(source, buckets, profiles, destinations),
 	})
 }
 
@@ -206,7 +206,12 @@ func compileObservabilityV8Buckets(defaults ObservabilityV8BucketPolicySource, o
 				profile = override.RedactionProfile
 			}
 		}
-		result = append(result, ObservabilityV8EffectiveBucket{Bucket: bucket, Collect: collect, RedactionProfile: profile})
+		result = append(result, ObservabilityV8EffectiveBucket{
+			Bucket:              bucket,
+			Collect:             collect,
+			RedactionProfile:    profile,
+			ReloadApplicability: ObservabilityV8LiveReloadable,
+		})
 	}
 	return result, nil
 }
@@ -374,6 +379,9 @@ func compileObservabilityV8LocalDestination(buckets []ObservabilityV8EffectiveBu
 		Name: ObservabilityV8LocalDestinationName, Kind: ObservabilityV8DestinationLocalSQLite, Enabled: true, Generated: true,
 		Capabilities:    ObservabilityV8DestinationCapabilities{Signals: []observability.Signal{observability.SignalLogs}},
 		SelectedSignals: []observability.Signal{observability.SignalLogs}, PolicyForm: ObservabilityV8PolicyImplicitLocal, FirstMatchPerSignal: true,
+		ReloadApplicability: ObservabilityV8EffectiveDestinationReload{
+			Policy: ObservabilityV8LiveReloadable, Transport: ObservabilityV8RestartRequired,
+		},
 		Routes:    []ObservabilityV8EffectiveRoute{{Index: 0, Name: "all-collected-logs-and-mandatory-floor", Generated: true, Signals: []observability.Signal{observability.SignalLogs}, Selector: ObservabilityV8EffectiveSelector{Buckets: allBuckets, BucketWildcard: true}, Action: ObservabilityV8RouteSend, RedactionProfileByBucket: profiles, IncludesMandatoryFloor: true}},
 		Transport: ObservabilityV8TransportPlan{Path: local.Path},
 	}
@@ -415,6 +423,17 @@ func compileObservabilityV8Destination(
 	result := ObservabilityV8EffectiveDestination{
 		Name: source.Name, Kind: source.Kind, Enabled: enabled, Preset: source.Preset,
 		Capabilities: capabilities, FirstMatchPerSignal: true,
+		ReloadApplicability: ObservabilityV8EffectiveDestinationReload{
+			Policy: ObservabilityV8LiveReloadable, Transport: ObservabilityV8LiveReloadable,
+		},
+	}
+	// A Prometheus destination owns an in-process listener. The current runtime
+	// cannot prepare a replacement generation on the same binding while the
+	// active generation is still serving, so neither its listener policy nor
+	// transport may be represented as generally live-reloadable.
+	if source.Kind == ObservabilityV8DestinationPrometheus {
+		result.ReloadApplicability.Policy = ObservabilityV8RestartRequired
+		result.ReloadApplicability.Transport = ObservabilityV8RestartRequired
 	}
 	if source.Preset == "galileo" {
 		result.PresetProfile = galileoCompatibilityProfile
@@ -453,6 +472,10 @@ func compileObservabilityV8Destination(
 	result.Transport = transport
 	if err := validateObservabilityV8SignalOverrides(result.Transport.SignalOverrides, result.SelectedSignals, path+".signal_overrides"); err != nil {
 		return ObservabilityV8EffectiveDestination{}, 0, err
+	}
+	result.CompatibilityProfiles, err = compileObservabilityV8DestinationCompatibility(result)
+	if err != nil {
+		return ObservabilityV8EffectiveDestination{}, 0, fmt.Errorf("%s: %w", path, err)
 	}
 	return result, explicitRoutes, nil
 }
@@ -1528,11 +1551,20 @@ func compileObservabilityV8Warnings(
 func compileObservabilityV8Provenance(
 	source *ObservabilityV8Source,
 	buckets []ObservabilityV8EffectiveBucket,
+	profiles []ObservabilityV8EffectiveProfile,
 	destinations []ObservabilityV8EffectiveDestination,
 ) []ObservabilityV8Provenance {
-	result := make([]ObservabilityV8Provenance, 0, len(buckets)*2+len(destinations)*2+14+len(source.Resource.Attributes))
+	result := make([]ObservabilityV8Provenance, 0, len(buckets)*3+len(profiles)+len(destinations)*5+14+len(source.Resource.Attributes))
+	resourceOrigin := "compiled-default"
+	resourceDetail := "no resource attributes configured"
+	if len(source.Resource.Attributes) > 0 {
+		resourceOrigin = "source"
+		resourceDetail = "normalized configured resource attributes"
+	}
 	result = append(result,
 		ObservabilityV8Provenance{Path: "observability.bucket_catalog_version", Origin: originObservabilityV8Pointer(source.BucketCatalogVersion), Detail: "catalog-v1"},
+		ObservabilityV8Provenance{Path: "observability.resource_attributes", Origin: resourceOrigin, Detail: resourceDetail},
+		ObservabilityV8Provenance{Path: "observability.warnings", Origin: "compiler-derived", Detail: "validation and risk warnings"},
 		ObservabilityV8Provenance{Path: "observability.trace_policy.sampler", Origin: originObservabilityV8String(source.TracePolicy.Sampler)},
 		ObservabilityV8Provenance{Path: "observability.trace_policy.semantic_profile", Origin: originObservabilityV8String(source.TracePolicy.SemanticProfile)},
 		ObservabilityV8Provenance{Path: "observability.trace_policy.semantic_profile_lock", Origin: "registry-lock", Source: "schemas/telemetry/v8/registry.yaml", Line: 3, Column: 5},
@@ -1570,28 +1602,68 @@ func compileObservabilityV8Provenance(
 		}
 		base := "observability.buckets." + string(bucket.Bucket)
 		result = append(result,
+			ObservabilityV8Provenance{Path: base + ".bucket", Origin: "catalog-default", Detail: "catalog-v1", Source: "schemas/telemetry/generated/catalog.json"},
 			ObservabilityV8Provenance{Path: base + ".collect", Origin: collectOrigin},
+			ObservabilityV8Provenance{Path: base + ".collect.logs", Origin: observabilityV8BucketSignalOrigin(source.Defaults.Collect.Logs, policy.Collect.Logs, overridden)},
+			ObservabilityV8Provenance{Path: base + ".collect.traces", Origin: observabilityV8BucketSignalOrigin(source.Defaults.Collect.Traces, policy.Collect.Traces, overridden)},
+			ObservabilityV8Provenance{Path: base + ".collect.metrics", Origin: observabilityV8BucketSignalOrigin(source.Defaults.Collect.Metrics, policy.Collect.Metrics, overridden)},
 			ObservabilityV8Provenance{Path: base + ".redaction_profile", Origin: profileOrigin},
+			ObservabilityV8Provenance{Path: base + ".reload_applicability", Origin: "reload-contract", Detail: string(bucket.ReloadApplicability)},
 		)
+	}
+	for _, profile := range profiles {
+		origin := "built-in-profile"
+		if !profile.BuiltIn {
+			origin = "source"
+		}
+		result = append(result, ObservabilityV8Provenance{
+			Path:   v8YAMLChildPath("observability.redaction_profiles", profile.Name),
+			Origin: origin,
+		})
 	}
 	for _, destination := range destinations {
 		origin := "source"
+		identityOrigin := "source"
 		if destination.Generated {
 			origin = "generated"
+			identityOrigin = "generated"
 		} else if destination.PolicyForm == ObservabilityV8PolicyCapabilityDefault {
 			origin = "capability-default"
 		}
 		base := "observability.destinations." + destination.Name
 		result = append(result,
+			ObservabilityV8Provenance{Path: base + ".name", Origin: identityOrigin, Detail: "compiled destination identity"},
+			ObservabilityV8Provenance{Path: base + ".kind", Origin: identityOrigin, Detail: "compiled destination identity"},
+			ObservabilityV8Provenance{Path: base + ".generated", Origin: identityOrigin, Detail: "compiled destination identity"},
 			ObservabilityV8Provenance{Path: base + ".enabled", Origin: observabilityV8DestinationEnabledOrigin(source, destination)},
 			ObservabilityV8Provenance{Path: base + ".policy", Origin: origin},
 			ObservabilityV8Provenance{Path: base + ".transport", Origin: observabilityV8TransportOrigin(destination)},
+			ObservabilityV8Provenance{
+				Path: base + ".reload_applicability", Origin: "reload-contract",
+				Detail: "policy=" + string(destination.ReloadApplicability.Policy) + ",transport=" + string(destination.ReloadApplicability.Transport),
+			},
 		)
 		if destination.PresetProfile != "" {
 			result = append(result, ObservabilityV8Provenance{Path: base + ".preset_profile", Origin: "preset", Detail: destination.PresetProfile})
 		}
+		for _, profile := range destination.CompatibilityProfiles {
+			result = append(result, ObservabilityV8Provenance{
+				Path: base + ".compatibility_profiles." + profile.ID, Origin: "registry-profile",
+				Detail: profile.ID, Source: "schemas/telemetry/generated/catalog.json",
+			})
+		}
 	}
 	return result
+}
+
+func observabilityV8BucketSignalOrigin(global, override *bool, bucketOverridden bool) string {
+	if bucketOverridden && override != nil {
+		return "bucket-override"
+	}
+	if global != nil {
+		return "global-default"
+	}
+	return "catalog-default"
 }
 
 func observabilityV8DestinationEnabledOrigin(source *ObservabilityV8Source, destination ObservabilityV8EffectiveDestination) string {

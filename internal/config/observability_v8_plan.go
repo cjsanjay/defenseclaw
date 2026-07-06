@@ -41,10 +41,18 @@ func (collect ObservabilityV8EffectiveCollect) Enabled(signal observability.Sign
 }
 
 type ObservabilityV8EffectiveBucket struct {
-	Bucket           observability.Bucket            `json:"bucket"`
-	Collect          ObservabilityV8EffectiveCollect `json:"collect"`
-	RedactionProfile string                          `json:"redaction_profile"`
+	Bucket              observability.Bucket               `json:"bucket"`
+	Collect             ObservabilityV8EffectiveCollect    `json:"collect"`
+	RedactionProfile    string                             `json:"redaction_profile"`
+	ReloadApplicability ObservabilityV8ReloadApplicability `json:"reload_applicability"`
 }
+
+type ObservabilityV8ReloadApplicability string
+
+const (
+	ObservabilityV8LiveReloadable  ObservabilityV8ReloadApplicability = "live_reloadable"
+	ObservabilityV8RestartRequired ObservabilityV8ReloadApplicability = "restart_required"
+)
 
 type ObservabilityV8EffectiveProfile struct {
 	Name         string                                                 `json:"name"`
@@ -111,6 +119,23 @@ type ObservabilityV8EffectiveRotation struct {
 	Compress   bool `json:"compress"`
 }
 
+type ObservabilityV8EffectiveSpanFamily struct {
+	EventName    observability.EventName `json:"event_name"`
+	Bucket       observability.Bucket    `json:"bucket"`
+	Availability string                  `json:"availability"`
+}
+
+type ObservabilityV8EffectiveCompatibilityProfile struct {
+	ID                   string                               `json:"id"`
+	Availability         string                               `json:"availability"`
+	EligibleSpanFamilies []ObservabilityV8EffectiveSpanFamily `json:"eligible_span_families"`
+}
+
+type ObservabilityV8EffectiveDestinationReload struct {
+	Policy    ObservabilityV8ReloadApplicability `json:"policy"`
+	Transport ObservabilityV8ReloadApplicability `json:"transport"`
+}
+
 type ObservabilityV8EffectiveSelector struct {
 	Buckets        []observability.Bucket      `json:"buckets,omitempty"`
 	BucketWildcard bool                        `json:"bucket_wildcard,omitempty"`
@@ -155,18 +180,20 @@ type ObservabilityV8TransportPlan struct {
 }
 
 type ObservabilityV8EffectiveDestination struct {
-	Name                string                                 `json:"name"`
-	Kind                ObservabilityV8DestinationKind         `json:"kind"`
-	Enabled             bool                                   `json:"enabled"`
-	Generated           bool                                   `json:"generated"`
-	Preset              string                                 `json:"preset,omitempty"`
-	PresetProfile       string                                 `json:"preset_profile,omitempty"`
-	Capabilities        ObservabilityV8DestinationCapabilities `json:"capabilities"`
-	SelectedSignals     []observability.Signal                 `json:"selected_signals"`
-	PolicyForm          ObservabilityV8PolicyForm              `json:"policy_form"`
-	FirstMatchPerSignal bool                                   `json:"first_match_per_signal"`
-	Routes              []ObservabilityV8EffectiveRoute        `json:"routes"`
-	Transport           ObservabilityV8TransportPlan           `json:"transport,omitempty"`
+	Name                  string                                         `json:"name"`
+	Kind                  ObservabilityV8DestinationKind                 `json:"kind"`
+	Enabled               bool                                           `json:"enabled"`
+	Generated             bool                                           `json:"generated"`
+	Preset                string                                         `json:"preset,omitempty"`
+	PresetProfile         string                                         `json:"preset_profile,omitempty"`
+	CompatibilityProfiles []ObservabilityV8EffectiveCompatibilityProfile `json:"compatibility_profiles,omitempty"`
+	Capabilities          ObservabilityV8DestinationCapabilities         `json:"capabilities"`
+	SelectedSignals       []observability.Signal                         `json:"selected_signals"`
+	PolicyForm            ObservabilityV8PolicyForm                      `json:"policy_form"`
+	FirstMatchPerSignal   bool                                           `json:"first_match_per_signal"`
+	ReloadApplicability   ObservabilityV8EffectiveDestinationReload      `json:"reload_applicability"`
+	Routes                []ObservabilityV8EffectiveRoute                `json:"routes"`
+	Transport             ObservabilityV8TransportPlan                   `json:"transport,omitempty"`
 }
 
 type ObservabilityV8Warning struct {
@@ -176,12 +203,13 @@ type ObservabilityV8Warning struct {
 }
 
 type ObservabilityV8Provenance struct {
-	Path   string `json:"path"`
-	Origin string `json:"origin"`
-	Detail string `json:"detail,omitempty"`
-	Source string `json:"source,omitempty"`
-	Line   int    `json:"line,omitempty"`
-	Column int    `json:"column,omitempty"`
+	Path      string `json:"path"`
+	ValuePath string `json:"value_path,omitempty"`
+	Origin    string `json:"origin"`
+	Detail    string `json:"detail,omitempty"`
+	Source    string `json:"source,omitempty"`
+	Line      int    `json:"line,omitempty"`
+	Column    int    `json:"column,omitempty"`
 }
 
 // ObservabilityV8EffectivePlan is a detached snapshot. Mutating it cannot alter
@@ -215,6 +243,11 @@ type ObservabilityV8Plan struct {
 }
 
 func newObservabilityV8Plan(effective ObservabilityV8EffectivePlan) (*ObservabilityV8Plan, error) {
+	provenance, err := completeObservabilityV8EffectiveProvenance(effective)
+	if err != nil {
+		return nil, err
+	}
+	effective.Provenance = provenance
 	display := maskObservabilityV8EffectivePlan(effective)
 	canonical, err := json.Marshal(display)
 	if err != nil {
@@ -366,6 +399,16 @@ func cloneObservabilityV8Destinations(source []ObservabilityV8EffectiveDestinati
 
 func cloneObservabilityV8Destination(source ObservabilityV8EffectiveDestination) ObservabilityV8EffectiveDestination {
 	result := source
+	if source.CompatibilityProfiles != nil {
+		result.CompatibilityProfiles = make([]ObservabilityV8EffectiveCompatibilityProfile, len(source.CompatibilityProfiles))
+		for index, profile := range source.CompatibilityProfiles {
+			result.CompatibilityProfiles[index] = profile
+			result.CompatibilityProfiles[index].EligibleSpanFamilies = append(
+				[]ObservabilityV8EffectiveSpanFamily(nil),
+				profile.EligibleSpanFamilies...,
+			)
+		}
+	}
 	result.Capabilities.Signals = append([]observability.Signal(nil), source.Capabilities.Signals...)
 	result.SelectedSignals = append([]observability.Signal(nil), source.SelectedSignals...)
 	result.Routes = make([]ObservabilityV8EffectiveRoute, len(source.Routes))

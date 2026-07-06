@@ -25,6 +25,13 @@ import (
 
 const localRawPII = "agent-owner@example.test"
 
+func TestRuntimeIdentityUsesSharedNoCycleAuthority(t *testing.T) {
+	if DestinationName != observability.RuntimeLocalObservabilityDestination ||
+		ProfileID != observability.RuntimeLocalObservabilityProfile {
+		t.Fatalf("local observability identity drifted: destination=%q profile=%q", DestinationName, ProfileID)
+	}
+}
+
 func TestProjectionPreservesRootAgentAndModelDashboardShapeWithoutFabrication(t *testing.T) {
 	t.Parallel()
 	fixture := newLocalFixture(t, "none", 8)

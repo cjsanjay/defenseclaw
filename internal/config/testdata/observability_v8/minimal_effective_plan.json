@@ -39,7 +39,8 @@
         "traces": true,
         "metrics": true
       },
-      "redaction_profile": "none"
+      "redaction_profile": "none",
+      "reload_applicability": "live_reloadable"
     },
     {
       "bucket": "security.finding",
@@ -48,7 +49,8 @@
         "traces": true,
         "metrics": true
       },
-      "redaction_profile": "none"
+      "redaction_profile": "none",
+      "reload_applicability": "live_reloadable"
     },
     {
       "bucket": "guardrail.evaluation",
@@ -57,7 +59,8 @@
         "traces": true,
         "metrics": true
       },
-      "redaction_profile": "none"
+      "redaction_profile": "none",
+      "reload_applicability": "live_reloadable"
     },
     {
       "bucket": "enforcement.action",
@@ -66,7 +69,8 @@
         "traces": true,
         "metrics": true
       },
-      "redaction_profile": "none"
+      "redaction_profile": "none",
+      "reload_applicability": "live_reloadable"
     },
     {
       "bucket": "model.io",
@@ -75,7 +79,8 @@
         "traces": true,
         "metrics": true
       },
-      "redaction_profile": "none"
+      "redaction_profile": "none",
+      "reload_applicability": "live_reloadable"
     },
     {
       "bucket": "tool.activity",
@@ -84,7 +89,8 @@
         "traces": true,
         "metrics": true
       },
-      "redaction_profile": "none"
+      "redaction_profile": "none",
+      "reload_applicability": "live_reloadable"
     },
     {
       "bucket": "asset.scan",
@@ -93,7 +99,8 @@
         "traces": true,
         "metrics": true
       },
-      "redaction_profile": "none"
+      "redaction_profile": "none",
+      "reload_applicability": "live_reloadable"
     },
     {
       "bucket": "asset.lifecycle",
@@ -102,7 +109,8 @@
         "traces": true,
         "metrics": true
       },
-      "redaction_profile": "none"
+      "redaction_profile": "none",
+      "reload_applicability": "live_reloadable"
     },
     {
       "bucket": "network.egress",
@@ -111,7 +119,8 @@
         "traces": true,
         "metrics": true
       },
-      "redaction_profile": "none"
+      "redaction_profile": "none",
+      "reload_applicability": "live_reloadable"
     },
     {
       "bucket": "agent.lifecycle",
@@ -120,7 +129,8 @@
         "traces": true,
         "metrics": true
       },
-      "redaction_profile": "none"
+      "redaction_profile": "none",
+      "reload_applicability": "live_reloadable"
     },
     {
       "bucket": "ai.discovery",
@@ -129,7 +139,8 @@
         "traces": true,
         "metrics": true
       },
-      "redaction_profile": "none"
+      "redaction_profile": "none",
+      "reload_applicability": "live_reloadable"
     },
     {
       "bucket": "telemetry.ingest",
@@ -138,7 +149,8 @@
         "traces": true,
         "metrics": true
       },
-      "redaction_profile": "none"
+      "redaction_profile": "none",
+      "reload_applicability": "live_reloadable"
     },
     {
       "bucket": "platform.health",
@@ -147,7 +159,8 @@
         "traces": true,
         "metrics": true
       },
-      "redaction_profile": "none"
+      "redaction_profile": "none",
+      "reload_applicability": "live_reloadable"
     },
     {
       "bucket": "diagnostic",
@@ -156,7 +169,8 @@
         "traces": true,
         "metrics": true
       },
-      "redaction_profile": "none"
+      "redaction_profile": "none",
+      "reload_applicability": "live_reloadable"
     }
   ],
   "redaction_profiles": [
@@ -264,6 +278,10 @@
       ],
       "policy_form": "implicit_local",
       "first_match_per_signal": true,
+      "reload_applicability": {
+        "policy": "live_reloadable",
+        "transport": "restart_required"
+      },
       "routes": [
         {
           "index": 0,
@@ -324,7 +342,25 @@
       "detail": "catalog-v1"
     },
     {
+      "path": "observability.buckets.agent.lifecycle.bucket",
+      "origin": "catalog-default",
+      "detail": "catalog-v1",
+      "source": "schemas/telemetry/generated/catalog.json"
+    },
+    {
       "path": "observability.buckets.agent.lifecycle.collect",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.agent.lifecycle.collect.logs",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.agent.lifecycle.collect.metrics",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.agent.lifecycle.collect.traces",
       "origin": "catalog-default"
     },
     {
@@ -332,7 +368,30 @@
       "origin": "catalog-default"
     },
     {
+      "path": "observability.buckets.agent.lifecycle.reload_applicability",
+      "origin": "reload-contract",
+      "detail": "live_reloadable"
+    },
+    {
+      "path": "observability.buckets.ai.discovery.bucket",
+      "origin": "catalog-default",
+      "detail": "catalog-v1",
+      "source": "schemas/telemetry/generated/catalog.json"
+    },
+    {
       "path": "observability.buckets.ai.discovery.collect",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.ai.discovery.collect.logs",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.ai.discovery.collect.metrics",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.ai.discovery.collect.traces",
       "origin": "catalog-default"
     },
     {
@@ -340,7 +399,30 @@
       "origin": "catalog-default"
     },
     {
+      "path": "observability.buckets.ai.discovery.reload_applicability",
+      "origin": "reload-contract",
+      "detail": "live_reloadable"
+    },
+    {
+      "path": "observability.buckets.asset.lifecycle.bucket",
+      "origin": "catalog-default",
+      "detail": "catalog-v1",
+      "source": "schemas/telemetry/generated/catalog.json"
+    },
+    {
       "path": "observability.buckets.asset.lifecycle.collect",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.asset.lifecycle.collect.logs",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.asset.lifecycle.collect.metrics",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.asset.lifecycle.collect.traces",
       "origin": "catalog-default"
     },
     {
@@ -348,7 +430,30 @@
       "origin": "catalog-default"
     },
     {
+      "path": "observability.buckets.asset.lifecycle.reload_applicability",
+      "origin": "reload-contract",
+      "detail": "live_reloadable"
+    },
+    {
+      "path": "observability.buckets.asset.scan.bucket",
+      "origin": "catalog-default",
+      "detail": "catalog-v1",
+      "source": "schemas/telemetry/generated/catalog.json"
+    },
+    {
       "path": "observability.buckets.asset.scan.collect",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.asset.scan.collect.logs",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.asset.scan.collect.metrics",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.asset.scan.collect.traces",
       "origin": "catalog-default"
     },
     {
@@ -356,7 +461,30 @@
       "origin": "catalog-default"
     },
     {
+      "path": "observability.buckets.asset.scan.reload_applicability",
+      "origin": "reload-contract",
+      "detail": "live_reloadable"
+    },
+    {
+      "path": "observability.buckets.compliance.activity.bucket",
+      "origin": "catalog-default",
+      "detail": "catalog-v1",
+      "source": "schemas/telemetry/generated/catalog.json"
+    },
+    {
       "path": "observability.buckets.compliance.activity.collect",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.compliance.activity.collect.logs",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.compliance.activity.collect.metrics",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.compliance.activity.collect.traces",
       "origin": "catalog-default"
     },
     {
@@ -364,7 +492,30 @@
       "origin": "catalog-default"
     },
     {
+      "path": "observability.buckets.compliance.activity.reload_applicability",
+      "origin": "reload-contract",
+      "detail": "live_reloadable"
+    },
+    {
+      "path": "observability.buckets.diagnostic.bucket",
+      "origin": "catalog-default",
+      "detail": "catalog-v1",
+      "source": "schemas/telemetry/generated/catalog.json"
+    },
+    {
       "path": "observability.buckets.diagnostic.collect",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.diagnostic.collect.logs",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.diagnostic.collect.metrics",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.diagnostic.collect.traces",
       "origin": "catalog-default"
     },
     {
@@ -372,7 +523,30 @@
       "origin": "catalog-default"
     },
     {
+      "path": "observability.buckets.diagnostic.reload_applicability",
+      "origin": "reload-contract",
+      "detail": "live_reloadable"
+    },
+    {
+      "path": "observability.buckets.enforcement.action.bucket",
+      "origin": "catalog-default",
+      "detail": "catalog-v1",
+      "source": "schemas/telemetry/generated/catalog.json"
+    },
+    {
       "path": "observability.buckets.enforcement.action.collect",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.enforcement.action.collect.logs",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.enforcement.action.collect.metrics",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.enforcement.action.collect.traces",
       "origin": "catalog-default"
     },
     {
@@ -380,7 +554,30 @@
       "origin": "catalog-default"
     },
     {
+      "path": "observability.buckets.enforcement.action.reload_applicability",
+      "origin": "reload-contract",
+      "detail": "live_reloadable"
+    },
+    {
+      "path": "observability.buckets.guardrail.evaluation.bucket",
+      "origin": "catalog-default",
+      "detail": "catalog-v1",
+      "source": "schemas/telemetry/generated/catalog.json"
+    },
+    {
       "path": "observability.buckets.guardrail.evaluation.collect",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.guardrail.evaluation.collect.logs",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.guardrail.evaluation.collect.metrics",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.guardrail.evaluation.collect.traces",
       "origin": "catalog-default"
     },
     {
@@ -388,7 +585,30 @@
       "origin": "catalog-default"
     },
     {
+      "path": "observability.buckets.guardrail.evaluation.reload_applicability",
+      "origin": "reload-contract",
+      "detail": "live_reloadable"
+    },
+    {
+      "path": "observability.buckets.model.io.bucket",
+      "origin": "catalog-default",
+      "detail": "catalog-v1",
+      "source": "schemas/telemetry/generated/catalog.json"
+    },
+    {
       "path": "observability.buckets.model.io.collect",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.model.io.collect.logs",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.model.io.collect.metrics",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.model.io.collect.traces",
       "origin": "catalog-default"
     },
     {
@@ -396,7 +616,30 @@
       "origin": "catalog-default"
     },
     {
+      "path": "observability.buckets.model.io.reload_applicability",
+      "origin": "reload-contract",
+      "detail": "live_reloadable"
+    },
+    {
+      "path": "observability.buckets.network.egress.bucket",
+      "origin": "catalog-default",
+      "detail": "catalog-v1",
+      "source": "schemas/telemetry/generated/catalog.json"
+    },
+    {
       "path": "observability.buckets.network.egress.collect",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.network.egress.collect.logs",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.network.egress.collect.metrics",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.network.egress.collect.traces",
       "origin": "catalog-default"
     },
     {
@@ -404,7 +647,30 @@
       "origin": "catalog-default"
     },
     {
+      "path": "observability.buckets.network.egress.reload_applicability",
+      "origin": "reload-contract",
+      "detail": "live_reloadable"
+    },
+    {
+      "path": "observability.buckets.platform.health.bucket",
+      "origin": "catalog-default",
+      "detail": "catalog-v1",
+      "source": "schemas/telemetry/generated/catalog.json"
+    },
+    {
       "path": "observability.buckets.platform.health.collect",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.platform.health.collect.logs",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.platform.health.collect.metrics",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.platform.health.collect.traces",
       "origin": "catalog-default"
     },
     {
@@ -412,7 +678,30 @@
       "origin": "catalog-default"
     },
     {
+      "path": "observability.buckets.platform.health.reload_applicability",
+      "origin": "reload-contract",
+      "detail": "live_reloadable"
+    },
+    {
+      "path": "observability.buckets.security.finding.bucket",
+      "origin": "catalog-default",
+      "detail": "catalog-v1",
+      "source": "schemas/telemetry/generated/catalog.json"
+    },
+    {
       "path": "observability.buckets.security.finding.collect",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.security.finding.collect.logs",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.security.finding.collect.metrics",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.security.finding.collect.traces",
       "origin": "catalog-default"
     },
     {
@@ -420,7 +709,30 @@
       "origin": "catalog-default"
     },
     {
+      "path": "observability.buckets.security.finding.reload_applicability",
+      "origin": "reload-contract",
+      "detail": "live_reloadable"
+    },
+    {
+      "path": "observability.buckets.telemetry.ingest.bucket",
+      "origin": "catalog-default",
+      "detail": "catalog-v1",
+      "source": "schemas/telemetry/generated/catalog.json"
+    },
+    {
       "path": "observability.buckets.telemetry.ingest.collect",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.telemetry.ingest.collect.logs",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.telemetry.ingest.collect.metrics",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.telemetry.ingest.collect.traces",
       "origin": "catalog-default"
     },
     {
@@ -428,7 +740,30 @@
       "origin": "catalog-default"
     },
     {
+      "path": "observability.buckets.telemetry.ingest.reload_applicability",
+      "origin": "reload-contract",
+      "detail": "live_reloadable"
+    },
+    {
+      "path": "observability.buckets.tool.activity.bucket",
+      "origin": "catalog-default",
+      "detail": "catalog-v1",
+      "source": "schemas/telemetry/generated/catalog.json"
+    },
+    {
       "path": "observability.buckets.tool.activity.collect",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.tool.activity.collect.logs",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.tool.activity.collect.metrics",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.tool.activity.collect.traces",
       "origin": "catalog-default"
     },
     {
@@ -436,12 +771,37 @@
       "origin": "catalog-default"
     },
     {
+      "path": "observability.buckets.tool.activity.reload_applicability",
+      "origin": "reload-contract",
+      "detail": "live_reloadable"
+    },
+    {
       "path": "observability.destinations.local-sqlite.enabled",
       "origin": "generated"
     },
     {
+      "path": "observability.destinations.local-sqlite.generated",
+      "origin": "generated",
+      "detail": "compiled destination identity"
+    },
+    {
+      "path": "observability.destinations.local-sqlite.kind",
+      "origin": "generated",
+      "detail": "compiled destination identity"
+    },
+    {
+      "path": "observability.destinations.local-sqlite.name",
+      "origin": "generated",
+      "detail": "compiled destination identity"
+    },
+    {
       "path": "observability.destinations.local-sqlite.policy",
       "origin": "generated"
+    },
+    {
+      "path": "observability.destinations.local-sqlite.reload_applicability",
+      "origin": "reload-contract",
+      "detail": "policy=live_reloadable,transport=restart_required"
     },
     {
       "path": "observability.destinations.local-sqlite.transport",
@@ -468,6 +828,31 @@
       "origin": "compiled-default"
     },
     {
+      "path": "observability.redaction_profiles.content",
+      "origin": "built-in-profile"
+    },
+    {
+      "path": "observability.redaction_profiles.legacy-v7",
+      "origin": "built-in-profile"
+    },
+    {
+      "path": "observability.redaction_profiles.none",
+      "origin": "built-in-profile"
+    },
+    {
+      "path": "observability.redaction_profiles.sensitive",
+      "origin": "built-in-profile"
+    },
+    {
+      "path": "observability.redaction_profiles.strict",
+      "origin": "built-in-profile"
+    },
+    {
+      "path": "observability.resource_attributes",
+      "origin": "compiled-default",
+      "detail": "no resource attributes configured"
+    },
+    {
       "path": "observability.trace_policy.compatibility_aliases",
       "origin": "compiled-default"
     },
@@ -489,6 +874,1143 @@
       "source": "schemas/telemetry/v8/registry.yaml",
       "line": 3,
       "column": 5
+    },
+    {
+      "path": "observability.warnings",
+      "origin": "compiler-derived",
+      "detail": "validation and risk warnings"
+    },
+    {
+      "path": "observability.bucket_catalog_version",
+      "value_path": "observability.bucket_catalog_version",
+      "origin": "compiled-default",
+      "detail": "catalog-v1"
+    },
+    {
+      "path": "observability.buckets.compliance.activity.bucket",
+      "value_path": "observability.buckets[0].bucket",
+      "origin": "catalog-default",
+      "detail": "catalog-v1",
+      "source": "schemas/telemetry/generated/catalog.json"
+    },
+    {
+      "path": "observability.buckets.compliance.activity.collect.logs",
+      "value_path": "observability.buckets[0].collect.logs",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.compliance.activity.collect.metrics",
+      "value_path": "observability.buckets[0].collect.metrics",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.compliance.activity.collect.traces",
+      "value_path": "observability.buckets[0].collect.traces",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.compliance.activity.redaction_profile",
+      "value_path": "observability.buckets[0].redaction_profile",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.compliance.activity.reload_applicability",
+      "value_path": "observability.buckets[0].reload_applicability",
+      "origin": "reload-contract",
+      "detail": "live_reloadable"
+    },
+    {
+      "path": "observability.buckets.ai.discovery.bucket",
+      "value_path": "observability.buckets[10].bucket",
+      "origin": "catalog-default",
+      "detail": "catalog-v1",
+      "source": "schemas/telemetry/generated/catalog.json"
+    },
+    {
+      "path": "observability.buckets.ai.discovery.collect.logs",
+      "value_path": "observability.buckets[10].collect.logs",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.ai.discovery.collect.metrics",
+      "value_path": "observability.buckets[10].collect.metrics",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.ai.discovery.collect.traces",
+      "value_path": "observability.buckets[10].collect.traces",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.ai.discovery.redaction_profile",
+      "value_path": "observability.buckets[10].redaction_profile",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.ai.discovery.reload_applicability",
+      "value_path": "observability.buckets[10].reload_applicability",
+      "origin": "reload-contract",
+      "detail": "live_reloadable"
+    },
+    {
+      "path": "observability.buckets.telemetry.ingest.bucket",
+      "value_path": "observability.buckets[11].bucket",
+      "origin": "catalog-default",
+      "detail": "catalog-v1",
+      "source": "schemas/telemetry/generated/catalog.json"
+    },
+    {
+      "path": "observability.buckets.telemetry.ingest.collect.logs",
+      "value_path": "observability.buckets[11].collect.logs",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.telemetry.ingest.collect.metrics",
+      "value_path": "observability.buckets[11].collect.metrics",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.telemetry.ingest.collect.traces",
+      "value_path": "observability.buckets[11].collect.traces",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.telemetry.ingest.redaction_profile",
+      "value_path": "observability.buckets[11].redaction_profile",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.telemetry.ingest.reload_applicability",
+      "value_path": "observability.buckets[11].reload_applicability",
+      "origin": "reload-contract",
+      "detail": "live_reloadable"
+    },
+    {
+      "path": "observability.buckets.platform.health.bucket",
+      "value_path": "observability.buckets[12].bucket",
+      "origin": "catalog-default",
+      "detail": "catalog-v1",
+      "source": "schemas/telemetry/generated/catalog.json"
+    },
+    {
+      "path": "observability.buckets.platform.health.collect.logs",
+      "value_path": "observability.buckets[12].collect.logs",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.platform.health.collect.metrics",
+      "value_path": "observability.buckets[12].collect.metrics",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.platform.health.collect.traces",
+      "value_path": "observability.buckets[12].collect.traces",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.platform.health.redaction_profile",
+      "value_path": "observability.buckets[12].redaction_profile",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.platform.health.reload_applicability",
+      "value_path": "observability.buckets[12].reload_applicability",
+      "origin": "reload-contract",
+      "detail": "live_reloadable"
+    },
+    {
+      "path": "observability.buckets.diagnostic.bucket",
+      "value_path": "observability.buckets[13].bucket",
+      "origin": "catalog-default",
+      "detail": "catalog-v1",
+      "source": "schemas/telemetry/generated/catalog.json"
+    },
+    {
+      "path": "observability.buckets.diagnostic.collect.logs",
+      "value_path": "observability.buckets[13].collect.logs",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.diagnostic.collect.metrics",
+      "value_path": "observability.buckets[13].collect.metrics",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.diagnostic.collect.traces",
+      "value_path": "observability.buckets[13].collect.traces",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.diagnostic.redaction_profile",
+      "value_path": "observability.buckets[13].redaction_profile",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.diagnostic.reload_applicability",
+      "value_path": "observability.buckets[13].reload_applicability",
+      "origin": "reload-contract",
+      "detail": "live_reloadable"
+    },
+    {
+      "path": "observability.buckets.security.finding.bucket",
+      "value_path": "observability.buckets[1].bucket",
+      "origin": "catalog-default",
+      "detail": "catalog-v1",
+      "source": "schemas/telemetry/generated/catalog.json"
+    },
+    {
+      "path": "observability.buckets.security.finding.collect.logs",
+      "value_path": "observability.buckets[1].collect.logs",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.security.finding.collect.metrics",
+      "value_path": "observability.buckets[1].collect.metrics",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.security.finding.collect.traces",
+      "value_path": "observability.buckets[1].collect.traces",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.security.finding.redaction_profile",
+      "value_path": "observability.buckets[1].redaction_profile",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.security.finding.reload_applicability",
+      "value_path": "observability.buckets[1].reload_applicability",
+      "origin": "reload-contract",
+      "detail": "live_reloadable"
+    },
+    {
+      "path": "observability.buckets.guardrail.evaluation.bucket",
+      "value_path": "observability.buckets[2].bucket",
+      "origin": "catalog-default",
+      "detail": "catalog-v1",
+      "source": "schemas/telemetry/generated/catalog.json"
+    },
+    {
+      "path": "observability.buckets.guardrail.evaluation.collect.logs",
+      "value_path": "observability.buckets[2].collect.logs",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.guardrail.evaluation.collect.metrics",
+      "value_path": "observability.buckets[2].collect.metrics",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.guardrail.evaluation.collect.traces",
+      "value_path": "observability.buckets[2].collect.traces",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.guardrail.evaluation.redaction_profile",
+      "value_path": "observability.buckets[2].redaction_profile",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.guardrail.evaluation.reload_applicability",
+      "value_path": "observability.buckets[2].reload_applicability",
+      "origin": "reload-contract",
+      "detail": "live_reloadable"
+    },
+    {
+      "path": "observability.buckets.enforcement.action.bucket",
+      "value_path": "observability.buckets[3].bucket",
+      "origin": "catalog-default",
+      "detail": "catalog-v1",
+      "source": "schemas/telemetry/generated/catalog.json"
+    },
+    {
+      "path": "observability.buckets.enforcement.action.collect.logs",
+      "value_path": "observability.buckets[3].collect.logs",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.enforcement.action.collect.metrics",
+      "value_path": "observability.buckets[3].collect.metrics",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.enforcement.action.collect.traces",
+      "value_path": "observability.buckets[3].collect.traces",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.enforcement.action.redaction_profile",
+      "value_path": "observability.buckets[3].redaction_profile",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.enforcement.action.reload_applicability",
+      "value_path": "observability.buckets[3].reload_applicability",
+      "origin": "reload-contract",
+      "detail": "live_reloadable"
+    },
+    {
+      "path": "observability.buckets.model.io.bucket",
+      "value_path": "observability.buckets[4].bucket",
+      "origin": "catalog-default",
+      "detail": "catalog-v1",
+      "source": "schemas/telemetry/generated/catalog.json"
+    },
+    {
+      "path": "observability.buckets.model.io.collect.logs",
+      "value_path": "observability.buckets[4].collect.logs",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.model.io.collect.metrics",
+      "value_path": "observability.buckets[4].collect.metrics",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.model.io.collect.traces",
+      "value_path": "observability.buckets[4].collect.traces",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.model.io.redaction_profile",
+      "value_path": "observability.buckets[4].redaction_profile",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.model.io.reload_applicability",
+      "value_path": "observability.buckets[4].reload_applicability",
+      "origin": "reload-contract",
+      "detail": "live_reloadable"
+    },
+    {
+      "path": "observability.buckets.tool.activity.bucket",
+      "value_path": "observability.buckets[5].bucket",
+      "origin": "catalog-default",
+      "detail": "catalog-v1",
+      "source": "schemas/telemetry/generated/catalog.json"
+    },
+    {
+      "path": "observability.buckets.tool.activity.collect.logs",
+      "value_path": "observability.buckets[5].collect.logs",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.tool.activity.collect.metrics",
+      "value_path": "observability.buckets[5].collect.metrics",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.tool.activity.collect.traces",
+      "value_path": "observability.buckets[5].collect.traces",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.tool.activity.redaction_profile",
+      "value_path": "observability.buckets[5].redaction_profile",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.tool.activity.reload_applicability",
+      "value_path": "observability.buckets[5].reload_applicability",
+      "origin": "reload-contract",
+      "detail": "live_reloadable"
+    },
+    {
+      "path": "observability.buckets.asset.scan.bucket",
+      "value_path": "observability.buckets[6].bucket",
+      "origin": "catalog-default",
+      "detail": "catalog-v1",
+      "source": "schemas/telemetry/generated/catalog.json"
+    },
+    {
+      "path": "observability.buckets.asset.scan.collect.logs",
+      "value_path": "observability.buckets[6].collect.logs",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.asset.scan.collect.metrics",
+      "value_path": "observability.buckets[6].collect.metrics",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.asset.scan.collect.traces",
+      "value_path": "observability.buckets[6].collect.traces",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.asset.scan.redaction_profile",
+      "value_path": "observability.buckets[6].redaction_profile",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.asset.scan.reload_applicability",
+      "value_path": "observability.buckets[6].reload_applicability",
+      "origin": "reload-contract",
+      "detail": "live_reloadable"
+    },
+    {
+      "path": "observability.buckets.asset.lifecycle.bucket",
+      "value_path": "observability.buckets[7].bucket",
+      "origin": "catalog-default",
+      "detail": "catalog-v1",
+      "source": "schemas/telemetry/generated/catalog.json"
+    },
+    {
+      "path": "observability.buckets.asset.lifecycle.collect.logs",
+      "value_path": "observability.buckets[7].collect.logs",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.asset.lifecycle.collect.metrics",
+      "value_path": "observability.buckets[7].collect.metrics",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.asset.lifecycle.collect.traces",
+      "value_path": "observability.buckets[7].collect.traces",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.asset.lifecycle.redaction_profile",
+      "value_path": "observability.buckets[7].redaction_profile",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.asset.lifecycle.reload_applicability",
+      "value_path": "observability.buckets[7].reload_applicability",
+      "origin": "reload-contract",
+      "detail": "live_reloadable"
+    },
+    {
+      "path": "observability.buckets.network.egress.bucket",
+      "value_path": "observability.buckets[8].bucket",
+      "origin": "catalog-default",
+      "detail": "catalog-v1",
+      "source": "schemas/telemetry/generated/catalog.json"
+    },
+    {
+      "path": "observability.buckets.network.egress.collect.logs",
+      "value_path": "observability.buckets[8].collect.logs",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.network.egress.collect.metrics",
+      "value_path": "observability.buckets[8].collect.metrics",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.network.egress.collect.traces",
+      "value_path": "observability.buckets[8].collect.traces",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.network.egress.redaction_profile",
+      "value_path": "observability.buckets[8].redaction_profile",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.network.egress.reload_applicability",
+      "value_path": "observability.buckets[8].reload_applicability",
+      "origin": "reload-contract",
+      "detail": "live_reloadable"
+    },
+    {
+      "path": "observability.buckets.agent.lifecycle.bucket",
+      "value_path": "observability.buckets[9].bucket",
+      "origin": "catalog-default",
+      "detail": "catalog-v1",
+      "source": "schemas/telemetry/generated/catalog.json"
+    },
+    {
+      "path": "observability.buckets.agent.lifecycle.collect.logs",
+      "value_path": "observability.buckets[9].collect.logs",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.agent.lifecycle.collect.metrics",
+      "value_path": "observability.buckets[9].collect.metrics",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.agent.lifecycle.collect.traces",
+      "value_path": "observability.buckets[9].collect.traces",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.agent.lifecycle.redaction_profile",
+      "value_path": "observability.buckets[9].redaction_profile",
+      "origin": "catalog-default"
+    },
+    {
+      "path": "observability.buckets.agent.lifecycle.reload_applicability",
+      "value_path": "observability.buckets[9].reload_applicability",
+      "origin": "reload-contract",
+      "detail": "live_reloadable"
+    },
+    {
+      "path": "observability.destinations.local-sqlite.policy",
+      "value_path": "observability.destinations[0].capabilities.signals[0]",
+      "origin": "generated"
+    },
+    {
+      "path": "observability.destinations.local-sqlite.enabled",
+      "value_path": "observability.destinations[0].enabled",
+      "origin": "generated"
+    },
+    {
+      "path": "observability.destinations.local-sqlite.policy",
+      "value_path": "observability.destinations[0].first_match_per_signal",
+      "origin": "generated"
+    },
+    {
+      "path": "observability.destinations.local-sqlite.generated",
+      "value_path": "observability.destinations[0].generated",
+      "origin": "generated",
+      "detail": "compiled destination identity"
+    },
+    {
+      "path": "observability.destinations.local-sqlite.kind",
+      "value_path": "observability.destinations[0].kind",
+      "origin": "generated",
+      "detail": "compiled destination identity"
+    },
+    {
+      "path": "observability.destinations.local-sqlite.name",
+      "value_path": "observability.destinations[0].name",
+      "origin": "generated",
+      "detail": "compiled destination identity"
+    },
+    {
+      "path": "observability.destinations.local-sqlite.policy",
+      "value_path": "observability.destinations[0].policy_form",
+      "origin": "generated"
+    },
+    {
+      "path": "observability.destinations.local-sqlite.reload_applicability",
+      "value_path": "observability.destinations[0].reload_applicability.policy",
+      "origin": "reload-contract",
+      "detail": "policy=live_reloadable,transport=restart_required"
+    },
+    {
+      "path": "observability.destinations.local-sqlite.reload_applicability",
+      "value_path": "observability.destinations[0].reload_applicability.transport",
+      "origin": "reload-contract",
+      "detail": "policy=live_reloadable,transport=restart_required"
+    },
+    {
+      "path": "observability.destinations.local-sqlite.policy",
+      "value_path": "observability.destinations[0].routes[0].action",
+      "origin": "generated"
+    },
+    {
+      "path": "observability.destinations.local-sqlite.policy",
+      "value_path": "observability.destinations[0].routes[0].generated",
+      "origin": "generated"
+    },
+    {
+      "path": "observability.destinations.local-sqlite.policy",
+      "value_path": "observability.destinations[0].routes[0].includes_mandatory_floor",
+      "origin": "generated"
+    },
+    {
+      "path": "observability.destinations.local-sqlite.policy",
+      "value_path": "observability.destinations[0].routes[0].index",
+      "origin": "generated"
+    },
+    {
+      "path": "observability.destinations.local-sqlite.policy",
+      "value_path": "observability.destinations[0].routes[0].name",
+      "origin": "generated"
+    },
+    {
+      "path": "observability.destinations.local-sqlite.policy",
+      "value_path": "observability.destinations[0].routes[0].redaction_profile_by_bucket.diagnostic",
+      "origin": "generated"
+    },
+    {
+      "path": "observability.destinations.local-sqlite.policy",
+      "value_path": "observability.destinations[0].routes[0].redaction_profile_by_bucket[\"agent.lifecycle\"]",
+      "origin": "generated"
+    },
+    {
+      "path": "observability.destinations.local-sqlite.policy",
+      "value_path": "observability.destinations[0].routes[0].redaction_profile_by_bucket[\"ai.discovery\"]",
+      "origin": "generated"
+    },
+    {
+      "path": "observability.destinations.local-sqlite.policy",
+      "value_path": "observability.destinations[0].routes[0].redaction_profile_by_bucket[\"asset.lifecycle\"]",
+      "origin": "generated"
+    },
+    {
+      "path": "observability.destinations.local-sqlite.policy",
+      "value_path": "observability.destinations[0].routes[0].redaction_profile_by_bucket[\"asset.scan\"]",
+      "origin": "generated"
+    },
+    {
+      "path": "observability.destinations.local-sqlite.policy",
+      "value_path": "observability.destinations[0].routes[0].redaction_profile_by_bucket[\"compliance.activity\"]",
+      "origin": "generated"
+    },
+    {
+      "path": "observability.destinations.local-sqlite.policy",
+      "value_path": "observability.destinations[0].routes[0].redaction_profile_by_bucket[\"enforcement.action\"]",
+      "origin": "generated"
+    },
+    {
+      "path": "observability.destinations.local-sqlite.policy",
+      "value_path": "observability.destinations[0].routes[0].redaction_profile_by_bucket[\"guardrail.evaluation\"]",
+      "origin": "generated"
+    },
+    {
+      "path": "observability.destinations.local-sqlite.policy",
+      "value_path": "observability.destinations[0].routes[0].redaction_profile_by_bucket[\"model.io\"]",
+      "origin": "generated"
+    },
+    {
+      "path": "observability.destinations.local-sqlite.policy",
+      "value_path": "observability.destinations[0].routes[0].redaction_profile_by_bucket[\"network.egress\"]",
+      "origin": "generated"
+    },
+    {
+      "path": "observability.destinations.local-sqlite.policy",
+      "value_path": "observability.destinations[0].routes[0].redaction_profile_by_bucket[\"platform.health\"]",
+      "origin": "generated"
+    },
+    {
+      "path": "observability.destinations.local-sqlite.policy",
+      "value_path": "observability.destinations[0].routes[0].redaction_profile_by_bucket[\"security.finding\"]",
+      "origin": "generated"
+    },
+    {
+      "path": "observability.destinations.local-sqlite.policy",
+      "value_path": "observability.destinations[0].routes[0].redaction_profile_by_bucket[\"telemetry.ingest\"]",
+      "origin": "generated"
+    },
+    {
+      "path": "observability.destinations.local-sqlite.policy",
+      "value_path": "observability.destinations[0].routes[0].redaction_profile_by_bucket[\"tool.activity\"]",
+      "origin": "generated"
+    },
+    {
+      "path": "observability.destinations.local-sqlite.policy",
+      "value_path": "observability.destinations[0].routes[0].selector.bucket_wildcard",
+      "origin": "generated"
+    },
+    {
+      "path": "observability.destinations.local-sqlite.policy",
+      "value_path": "observability.destinations[0].routes[0].selector.buckets[0]",
+      "origin": "generated"
+    },
+    {
+      "path": "observability.destinations.local-sqlite.policy",
+      "value_path": "observability.destinations[0].routes[0].selector.buckets[10]",
+      "origin": "generated"
+    },
+    {
+      "path": "observability.destinations.local-sqlite.policy",
+      "value_path": "observability.destinations[0].routes[0].selector.buckets[11]",
+      "origin": "generated"
+    },
+    {
+      "path": "observability.destinations.local-sqlite.policy",
+      "value_path": "observability.destinations[0].routes[0].selector.buckets[12]",
+      "origin": "generated"
+    },
+    {
+      "path": "observability.destinations.local-sqlite.policy",
+      "value_path": "observability.destinations[0].routes[0].selector.buckets[13]",
+      "origin": "generated"
+    },
+    {
+      "path": "observability.destinations.local-sqlite.policy",
+      "value_path": "observability.destinations[0].routes[0].selector.buckets[1]",
+      "origin": "generated"
+    },
+    {
+      "path": "observability.destinations.local-sqlite.policy",
+      "value_path": "observability.destinations[0].routes[0].selector.buckets[2]",
+      "origin": "generated"
+    },
+    {
+      "path": "observability.destinations.local-sqlite.policy",
+      "value_path": "observability.destinations[0].routes[0].selector.buckets[3]",
+      "origin": "generated"
+    },
+    {
+      "path": "observability.destinations.local-sqlite.policy",
+      "value_path": "observability.destinations[0].routes[0].selector.buckets[4]",
+      "origin": "generated"
+    },
+    {
+      "path": "observability.destinations.local-sqlite.policy",
+      "value_path": "observability.destinations[0].routes[0].selector.buckets[5]",
+      "origin": "generated"
+    },
+    {
+      "path": "observability.destinations.local-sqlite.policy",
+      "value_path": "observability.destinations[0].routes[0].selector.buckets[6]",
+      "origin": "generated"
+    },
+    {
+      "path": "observability.destinations.local-sqlite.policy",
+      "value_path": "observability.destinations[0].routes[0].selector.buckets[7]",
+      "origin": "generated"
+    },
+    {
+      "path": "observability.destinations.local-sqlite.policy",
+      "value_path": "observability.destinations[0].routes[0].selector.buckets[8]",
+      "origin": "generated"
+    },
+    {
+      "path": "observability.destinations.local-sqlite.policy",
+      "value_path": "observability.destinations[0].routes[0].selector.buckets[9]",
+      "origin": "generated"
+    },
+    {
+      "path": "observability.destinations.local-sqlite.policy",
+      "value_path": "observability.destinations[0].routes[0].signals[0]",
+      "origin": "generated"
+    },
+    {
+      "path": "observability.destinations.local-sqlite.policy",
+      "value_path": "observability.destinations[0].selected_signals[0]",
+      "origin": "generated"
+    },
+    {
+      "path": "observability.destinations.local-sqlite.transport",
+      "value_path": "observability.destinations[0].transport.path",
+      "origin": "generated"
+    },
+    {
+      "path": "observability.local.judge_bodies_path",
+      "value_path": "observability.local.judge_bodies_path",
+      "origin": "compiled-default"
+    },
+    {
+      "path": "observability.local.path",
+      "value_path": "observability.local.path",
+      "origin": "compiled-default"
+    },
+    {
+      "path": "observability.local.retention_days",
+      "value_path": "observability.local.retention_days",
+      "origin": "compiled-default"
+    },
+    {
+      "path": "observability.metric_policy.export_interval_seconds",
+      "value_path": "observability.metric_policy.export_interval_seconds",
+      "origin": "compiled-default"
+    },
+    {
+      "path": "observability.metric_policy.temporality",
+      "value_path": "observability.metric_policy.temporality",
+      "origin": "compiled-default"
+    },
+    {
+      "path": "observability.redaction_profiles.none",
+      "value_path": "observability.redaction_profiles[0].built_in",
+      "origin": "built-in-profile"
+    },
+    {
+      "path": "observability.redaction_profiles.none",
+      "value_path": "observability.redaction_profiles[0].detectors",
+      "origin": "built-in-profile"
+    },
+    {
+      "path": "observability.redaction_profiles.none",
+      "value_path": "observability.redaction_profiles[0].field_classes.content",
+      "origin": "built-in-profile"
+    },
+    {
+      "path": "observability.redaction_profiles.none",
+      "value_path": "observability.redaction_profiles[0].field_classes.credential",
+      "origin": "built-in-profile"
+    },
+    {
+      "path": "observability.redaction_profiles.none",
+      "value_path": "observability.redaction_profiles[0].field_classes.error",
+      "origin": "built-in-profile"
+    },
+    {
+      "path": "observability.redaction_profiles.none",
+      "value_path": "observability.redaction_profiles[0].field_classes.evidence",
+      "origin": "built-in-profile"
+    },
+    {
+      "path": "observability.redaction_profiles.none",
+      "value_path": "observability.redaction_profiles[0].field_classes.identifier",
+      "origin": "built-in-profile"
+    },
+    {
+      "path": "observability.redaction_profiles.none",
+      "value_path": "observability.redaction_profiles[0].field_classes.metadata",
+      "origin": "built-in-profile"
+    },
+    {
+      "path": "observability.redaction_profiles.none",
+      "value_path": "observability.redaction_profiles[0].field_classes.path",
+      "origin": "built-in-profile"
+    },
+    {
+      "path": "observability.redaction_profiles.none",
+      "value_path": "observability.redaction_profiles[0].field_classes.reason",
+      "origin": "built-in-profile"
+    },
+    {
+      "path": "observability.redaction_profiles.none",
+      "value_path": "observability.redaction_profiles[0].name",
+      "origin": "built-in-profile"
+    },
+    {
+      "path": "observability.redaction_profiles.sensitive",
+      "value_path": "observability.redaction_profiles[1].built_in",
+      "origin": "built-in-profile"
+    },
+    {
+      "path": "observability.redaction_profiles.sensitive",
+      "value_path": "observability.redaction_profiles[1].detectors[0]",
+      "origin": "built-in-profile"
+    },
+    {
+      "path": "observability.redaction_profiles.sensitive",
+      "value_path": "observability.redaction_profiles[1].detectors[1]",
+      "origin": "built-in-profile"
+    },
+    {
+      "path": "observability.redaction_profiles.sensitive",
+      "value_path": "observability.redaction_profiles[1].detectors[2]",
+      "origin": "built-in-profile"
+    },
+    {
+      "path": "observability.redaction_profiles.sensitive",
+      "value_path": "observability.redaction_profiles[1].field_classes.content",
+      "origin": "built-in-profile"
+    },
+    {
+      "path": "observability.redaction_profiles.sensitive",
+      "value_path": "observability.redaction_profiles[1].field_classes.credential",
+      "origin": "built-in-profile"
+    },
+    {
+      "path": "observability.redaction_profiles.sensitive",
+      "value_path": "observability.redaction_profiles[1].field_classes.error",
+      "origin": "built-in-profile"
+    },
+    {
+      "path": "observability.redaction_profiles.sensitive",
+      "value_path": "observability.redaction_profiles[1].field_classes.evidence",
+      "origin": "built-in-profile"
+    },
+    {
+      "path": "observability.redaction_profiles.sensitive",
+      "value_path": "observability.redaction_profiles[1].field_classes.identifier",
+      "origin": "built-in-profile"
+    },
+    {
+      "path": "observability.redaction_profiles.sensitive",
+      "value_path": "observability.redaction_profiles[1].field_classes.metadata",
+      "origin": "built-in-profile"
+    },
+    {
+      "path": "observability.redaction_profiles.sensitive",
+      "value_path": "observability.redaction_profiles[1].field_classes.path",
+      "origin": "built-in-profile"
+    },
+    {
+      "path": "observability.redaction_profiles.sensitive",
+      "value_path": "observability.redaction_profiles[1].field_classes.reason",
+      "origin": "built-in-profile"
+    },
+    {
+      "path": "observability.redaction_profiles.sensitive",
+      "value_path": "observability.redaction_profiles[1].name",
+      "origin": "built-in-profile"
+    },
+    {
+      "path": "observability.redaction_profiles.content",
+      "value_path": "observability.redaction_profiles[2].built_in",
+      "origin": "built-in-profile"
+    },
+    {
+      "path": "observability.redaction_profiles.content",
+      "value_path": "observability.redaction_profiles[2].detectors[0]",
+      "origin": "built-in-profile"
+    },
+    {
+      "path": "observability.redaction_profiles.content",
+      "value_path": "observability.redaction_profiles[2].detectors[1]",
+      "origin": "built-in-profile"
+    },
+    {
+      "path": "observability.redaction_profiles.content",
+      "value_path": "observability.redaction_profiles[2].detectors[2]",
+      "origin": "built-in-profile"
+    },
+    {
+      "path": "observability.redaction_profiles.content",
+      "value_path": "observability.redaction_profiles[2].field_classes.content",
+      "origin": "built-in-profile"
+    },
+    {
+      "path": "observability.redaction_profiles.content",
+      "value_path": "observability.redaction_profiles[2].field_classes.credential",
+      "origin": "built-in-profile"
+    },
+    {
+      "path": "observability.redaction_profiles.content",
+      "value_path": "observability.redaction_profiles[2].field_classes.error",
+      "origin": "built-in-profile"
+    },
+    {
+      "path": "observability.redaction_profiles.content",
+      "value_path": "observability.redaction_profiles[2].field_classes.evidence",
+      "origin": "built-in-profile"
+    },
+    {
+      "path": "observability.redaction_profiles.content",
+      "value_path": "observability.redaction_profiles[2].field_classes.identifier",
+      "origin": "built-in-profile"
+    },
+    {
+      "path": "observability.redaction_profiles.content",
+      "value_path": "observability.redaction_profiles[2].field_classes.metadata",
+      "origin": "built-in-profile"
+    },
+    {
+      "path": "observability.redaction_profiles.content",
+      "value_path": "observability.redaction_profiles[2].field_classes.path",
+      "origin": "built-in-profile"
+    },
+    {
+      "path": "observability.redaction_profiles.content",
+      "value_path": "observability.redaction_profiles[2].field_classes.reason",
+      "origin": "built-in-profile"
+    },
+    {
+      "path": "observability.redaction_profiles.content",
+      "value_path": "observability.redaction_profiles[2].name",
+      "origin": "built-in-profile"
+    },
+    {
+      "path": "observability.redaction_profiles.strict",
+      "value_path": "observability.redaction_profiles[3].built_in",
+      "origin": "built-in-profile"
+    },
+    {
+      "path": "observability.redaction_profiles.strict",
+      "value_path": "observability.redaction_profiles[3].detectors[0]",
+      "origin": "built-in-profile"
+    },
+    {
+      "path": "observability.redaction_profiles.strict",
+      "value_path": "observability.redaction_profiles[3].detectors[1]",
+      "origin": "built-in-profile"
+    },
+    {
+      "path": "observability.redaction_profiles.strict",
+      "value_path": "observability.redaction_profiles[3].detectors[2]",
+      "origin": "built-in-profile"
+    },
+    {
+      "path": "observability.redaction_profiles.strict",
+      "value_path": "observability.redaction_profiles[3].field_classes.content",
+      "origin": "built-in-profile"
+    },
+    {
+      "path": "observability.redaction_profiles.strict",
+      "value_path": "observability.redaction_profiles[3].field_classes.credential",
+      "origin": "built-in-profile"
+    },
+    {
+      "path": "observability.redaction_profiles.strict",
+      "value_path": "observability.redaction_profiles[3].field_classes.error",
+      "origin": "built-in-profile"
+    },
+    {
+      "path": "observability.redaction_profiles.strict",
+      "value_path": "observability.redaction_profiles[3].field_classes.evidence",
+      "origin": "built-in-profile"
+    },
+    {
+      "path": "observability.redaction_profiles.strict",
+      "value_path": "observability.redaction_profiles[3].field_classes.identifier",
+      "origin": "built-in-profile"
+    },
+    {
+      "path": "observability.redaction_profiles.strict",
+      "value_path": "observability.redaction_profiles[3].field_classes.metadata",
+      "origin": "built-in-profile"
+    },
+    {
+      "path": "observability.redaction_profiles.strict",
+      "value_path": "observability.redaction_profiles[3].field_classes.path",
+      "origin": "built-in-profile"
+    },
+    {
+      "path": "observability.redaction_profiles.strict",
+      "value_path": "observability.redaction_profiles[3].field_classes.reason",
+      "origin": "built-in-profile"
+    },
+    {
+      "path": "observability.redaction_profiles.strict",
+      "value_path": "observability.redaction_profiles[3].name",
+      "origin": "built-in-profile"
+    },
+    {
+      "path": "observability.redaction_profiles.legacy-v7",
+      "value_path": "observability.redaction_profiles[4].built_in",
+      "origin": "built-in-profile"
+    },
+    {
+      "path": "observability.redaction_profiles.legacy-v7",
+      "value_path": "observability.redaction_profiles[4].detectors",
+      "origin": "built-in-profile"
+    },
+    {
+      "path": "observability.redaction_profiles.legacy-v7",
+      "value_path": "observability.redaction_profiles[4].field_classes.content",
+      "origin": "built-in-profile"
+    },
+    {
+      "path": "observability.redaction_profiles.legacy-v7",
+      "value_path": "observability.redaction_profiles[4].field_classes.credential",
+      "origin": "built-in-profile"
+    },
+    {
+      "path": "observability.redaction_profiles.legacy-v7",
+      "value_path": "observability.redaction_profiles[4].field_classes.error",
+      "origin": "built-in-profile"
+    },
+    {
+      "path": "observability.redaction_profiles.legacy-v7",
+      "value_path": "observability.redaction_profiles[4].field_classes.evidence",
+      "origin": "built-in-profile"
+    },
+    {
+      "path": "observability.redaction_profiles.legacy-v7",
+      "value_path": "observability.redaction_profiles[4].field_classes.identifier",
+      "origin": "built-in-profile"
+    },
+    {
+      "path": "observability.redaction_profiles.legacy-v7",
+      "value_path": "observability.redaction_profiles[4].field_classes.metadata",
+      "origin": "built-in-profile"
+    },
+    {
+      "path": "observability.redaction_profiles.legacy-v7",
+      "value_path": "observability.redaction_profiles[4].field_classes.path",
+      "origin": "built-in-profile"
+    },
+    {
+      "path": "observability.redaction_profiles.legacy-v7",
+      "value_path": "observability.redaction_profiles[4].field_classes.reason",
+      "origin": "built-in-profile"
+    },
+    {
+      "path": "observability.redaction_profiles.legacy-v7",
+      "value_path": "observability.redaction_profiles[4].name",
+      "origin": "built-in-profile"
+    },
+    {
+      "path": "observability.resource_attributes",
+      "value_path": "observability.resource_attributes",
+      "origin": "compiled-default",
+      "detail": "no resource attributes configured"
+    },
+    {
+      "path": "observability.trace_policy.compatibility_aliases",
+      "value_path": "observability.trace_policy.compatibility_aliases",
+      "origin": "compiled-default"
+    },
+    {
+      "path": "observability.trace_policy.limits",
+      "value_path": "observability.trace_policy.limits.max_attribute_value_bytes",
+      "origin": "compiled-default"
+    },
+    {
+      "path": "observability.trace_policy.limits",
+      "value_path": "observability.trace_policy.limits.max_attributes_per_event",
+      "origin": "compiled-default"
+    },
+    {
+      "path": "observability.trace_policy.limits",
+      "value_path": "observability.trace_policy.limits.max_attributes_per_span",
+      "origin": "compiled-default"
+    },
+    {
+      "path": "observability.trace_policy.limits",
+      "value_path": "observability.trace_policy.limits.max_events_per_span",
+      "origin": "compiled-default"
+    },
+    {
+      "path": "observability.trace_policy.limits",
+      "value_path": "observability.trace_policy.limits.max_links_per_span",
+      "origin": "compiled-default"
+    },
+    {
+      "path": "observability.trace_policy.limits",
+      "value_path": "observability.trace_policy.limits.max_message_items",
+      "origin": "compiled-default"
+    },
+    {
+      "path": "observability.trace_policy.limits",
+      "value_path": "observability.trace_policy.limits.max_projected_span_bytes",
+      "origin": "compiled-default"
+    },
+    {
+      "path": "observability.trace_policy.limits",
+      "value_path": "observability.trace_policy.limits.max_stacktrace_bytes",
+      "origin": "compiled-default"
+    },
+    {
+      "path": "observability.trace_policy.sampler",
+      "value_path": "observability.trace_policy.sampler",
+      "origin": "compiled-default"
+    },
+    {
+      "path": "observability.trace_policy.semantic_profile",
+      "value_path": "observability.trace_policy.semantic_profile",
+      "origin": "compiled-default"
+    },
+    {
+      "path": "observability.trace_policy.semantic_profile_lock",
+      "value_path": "observability.trace_policy.semantic_profile_lock.galileo_compatibility_profile",
+      "origin": "registry-lock",
+      "source": "schemas/telemetry/v8/registry.yaml",
+      "line": 3,
+      "column": 5
+    },
+    {
+      "path": "observability.trace_policy.semantic_profile_lock",
+      "value_path": "observability.trace_policy.semantic_profile_lock.gen_ai_semconv_profile",
+      "origin": "registry-lock",
+      "source": "schemas/telemetry/v8/registry.yaml",
+      "line": 3,
+      "column": 5
+    },
+    {
+      "path": "observability.trace_policy.semantic_profile_lock",
+      "value_path": "observability.trace_policy.semantic_profile_lock.openinference_profile",
+      "origin": "registry-lock",
+      "source": "schemas/telemetry/v8/registry.yaml",
+      "line": 3,
+      "column": 5
+    },
+    {
+      "path": "observability.trace_policy.semantic_profile_lock",
+      "value_path": "observability.trace_policy.semantic_profile_lock.trace_schema_version",
+      "origin": "registry-lock",
+      "source": "schemas/telemetry/v8/registry.yaml",
+      "line": 3,
+      "column": 5
+    },
+    {
+      "path": "observability.warnings",
+      "value_path": "observability.warnings",
+      "origin": "compiler-derived",
+      "detail": "validation and risk warnings"
     }
   ]
 }

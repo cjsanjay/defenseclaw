@@ -123,6 +123,66 @@ def test_v8_effective_view_is_go_owned_and_reveal_is_rejected(tmp_path: Path) ->
     assert "--reveal is not supported" in reveal.output
 
 
+def test_v8_provenance_view_exposes_only_canonical_go_annotations(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("config_version: 8\nobservability: {}\n", encoding="utf-8")
+    annotations = [
+        {
+            "path": "observability.buckets.model.io.collect",
+            "value_path": "observability.buckets[4].collect.logs",
+            "origin": "catalog-default",
+        },
+        {
+            "path": "observability.local.retention_days",
+            "origin": "source",
+            "source": str(config_path),
+            "line": 2,
+            "column": 16,
+        },
+    ]
+    effective = {
+        "buckets": [
+            {
+                "bucket": "model.io",
+                "collect": {"logs": True, "traces": True, "metrics": True},
+            }
+        ],
+        "destinations": [],
+        "provenance": annotations,
+    }
+    with (
+        patch.object(cmd_config.config_module, "config_path", return_value=config_path),
+        patch.object(cmd_config, "inspect_v8_config", return_value=_wire("effective", effective=effective)) as inspect,
+    ):
+        result = CliRunner().invoke(
+            cmd_config.config_cmd,
+            ["show", "--provenance", "--section", "observability", "--format", "json"],
+        )
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output) == {
+        "observability": {
+            "buckets": effective["buckets"],
+            "destinations": [],
+        },
+        "_provenance": {
+            "basis": "canonical_go_effective_plan",
+            "annotations": annotations,
+        },
+    }
+    inspect.assert_called_once_with("effective", config_path=str(config_path))
+
+
+def test_v8_provenance_rejects_source_view(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("config_version: 8\nobservability: {}\n", encoding="utf-8")
+    with patch.object(cmd_config.config_module, "config_path", return_value=config_path):
+        result = CliRunner().invoke(cmd_config.config_cmd, ["show", "--source", "--provenance"])
+
+    assert result.exit_code == 2
+    assert "cannot be combined with --source" in result.output
+
+
 def test_reference_uses_go_artifact_and_writes_atomically(tmp_path: Path) -> None:
     output = tmp_path / "reference.yaml"
     with patch.object(cmd_config, "config_v8_reference", return_value="# generated\nobservability: {}\n") as reference:

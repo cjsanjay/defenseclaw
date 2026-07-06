@@ -519,6 +519,80 @@ func TestSidecarConfigManagerV8RuntimeFailureRollsBackGraphAndConfig(t *testing.
 	}
 }
 
+func TestSidecarConfigManagerV8SamePrometheusBindingRequiresRestartBeforeReplacement(t *testing.T) {
+	fixture := newSidecarV8BootstrapFixture(t, 8, "")
+	probe, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	listen := probe.Addr().String()
+	if err := probe.Close(); err != nil {
+		t.Fatal(err)
+	}
+	initialRaw := []byte(fmt.Sprintf(
+		"config_version: 8\ndata_dir: %q\nenvironment: original\nobservability:\n  local:\n    retention_days: 90\n  destinations:\n    - name: metrics\n      kind: prometheus\n      listen: %q\n      path: /metrics\n",
+		fixture.dataDir, listen,
+	))
+	if err := os.WriteFile(fixture.configPath, initialRaw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	initial, err := config.LoadFromFile(fixture.configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture.sidecar.publishConfig(initial)
+	bound, err := fixture.sidecar.BootstrapObservabilityRuntime(
+		t.Context(), fixture.configPath, initialRaw,
+	)
+	if err != nil || !bound {
+		t.Fatalf("bootstrap bound=%t error=%v", bound, err)
+	}
+	assertMetricsListenerBound := func() {
+		t.Helper()
+		connection, dialErr := net.DialTimeout("tcp", listen, 2*time.Second)
+		if dialErr != nil {
+			t.Fatalf("dial active Prometheus listener: %v", dialErr)
+		}
+		if closeErr := connection.Close(); closeErr != nil {
+			t.Fatalf("close Prometheus listener probe: %v", closeErr)
+		}
+	}
+	assertMetricsListenerBound()
+
+	mgr := newConfigManagerWithSnapshot(
+		fixture.configPath,
+		initial,
+		nil,
+		nil,
+		fixture.sidecar.observabilityV8ActivePlanDigest(),
+		fixture.sidecar.applyConfigReloadSnapshot,
+	)
+	initialDigest := mgr.v8PlanDigest
+	fixture.sidecar.observabilityV8Mu.Lock()
+	owner := fixture.sidecar.observabilityV8.(*sidecarOwnedObservabilityV8Runtime)
+	fixture.sidecar.observabilityV8Mu.Unlock()
+	oldGraph := owner.runtime.Active()
+	candidateRaw := []byte(fmt.Sprintf(
+		"config_version: 8\ndata_dir: %q\nenvironment: original\nobservability:\n  local:\n    retention_days: 30\n  destinations:\n    - name: metrics\n      kind: prometheus\n      listen: %q\n      path: /metrics\n",
+		fixture.dataDir, listen,
+	))
+	if err := os.WriteFile(fixture.configPath, candidateRaw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	reloadErr := mgr.Reload(t.Context(), "test")
+	if sidecarV8BootstrapCode(reloadErr) != sidecarObservabilityV8BootstrapReload {
+		t.Fatalf("same Prometheus binding reload error = %v", reloadErr)
+	}
+	if owner.runtime.Active() != oldGraph || oldGraph.Generation() != 1 ||
+		mgr.v8PlanDigest != initialDigest || mgr.gen.Load() != 0 {
+		t.Fatalf(
+			"same-binding reload mutated graph/digest/gen = %p/%p %q/%q/%d",
+			owner.runtime.Active(), oldGraph, mgr.v8PlanDigest, initialDigest, mgr.gen.Load(),
+		)
+	}
+	assertMetricsListenerBound()
+}
+
 func TestSidecarConfigManagerV8RestartModeDoesNotHotApplyPlan(t *testing.T) {
 	fixture := newSidecarV8BootstrapFixture(t, 8, "")
 	initialRaw := []byte(fmt.Sprintf(

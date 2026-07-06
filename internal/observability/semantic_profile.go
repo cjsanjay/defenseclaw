@@ -16,9 +16,11 @@ package observability
 // these capabilities. A different tuple therefore requires a new profile ID and
 // runtime support rather than silently changing an existing profile's meaning.
 const (
-	RuntimeSemanticProfileID           = "defenseclaw-genai-rich-v1"
-	RuntimeTraceSchemaVersion          = "defenseclaw-trace-v1"
-	RuntimeGenAISemconvProfile         = "otel-genai-b028dceecdad117461a785c3af35315e7184e813"
-	RuntimeOpenInferenceProfile        = "openinference-semantic-conventions-v0.1.30"
-	RuntimeGalileoCompatibilityProfile = "galileo-rich-v2"
+	RuntimeSemanticProfileID             = "defenseclaw-genai-rich-v1"
+	RuntimeTraceSchemaVersion            = "defenseclaw-trace-v1"
+	RuntimeGenAISemconvProfile           = "otel-genai-b028dceecdad117461a785c3af35315e7184e813"
+	RuntimeOpenInferenceProfile          = "openinference-semantic-conventions-v0.1.30"
+	RuntimeGalileoCompatibilityProfile   = "galileo-rich-v2"
+	RuntimeLocalObservabilityDestination = "local-observability"
+	RuntimeLocalObservabilityProfile     = "local-observability-v1"
 )

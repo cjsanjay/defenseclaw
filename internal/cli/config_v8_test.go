@@ -139,6 +139,40 @@ func TestConfigV8EffectiveWireEnvelopeIsVersioned(t *testing.T) {
 	}
 }
 
+func TestConfigV8EffectiveWireProvenanceIsLeafCompleteAndSecretSafe(t *testing.T) {
+	directory := t.TempDir()
+	path := filepath.Join(directory, "config.yaml")
+	const secret = "provenance-bridge-secret"
+	raw := "config_version: 8\ndata_dir: " + directory + `
+observability:
+  destinations:
+    - name: collector
+      kind: otlp
+      endpoint: https://collector.example.test/v1/traces?token=` + secret + `
+      headers:
+        authorization: ` + secret + `
+`
+	if err := os.WriteFile(path, []byte(raw), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	previousPath, previousDataDir := configV8ConfigPath, configV8DataDir
+	configV8ConfigPath, configV8DataDir = path, ""
+	t.Cleanup(func() { configV8ConfigPath, configV8DataDir = previousPath, previousDataDir })
+	output := &strings.Builder{}
+	configV8EffectiveCmd.SetOut(output)
+	if err := configV8EffectiveCmd.RunE(configV8EffectiveCmd, nil); err != nil {
+		t.Fatal(err)
+	}
+	encoded := output.String()
+	if strings.Contains(encoded, secret) {
+		t.Fatal("effective provenance wire leaked source secret")
+	}
+	if !strings.Contains(encoded, `"value_path":"observability.destinations[1].transport.endpoint"`) ||
+		!strings.Contains(encoded, "[REDACTED]") {
+		t.Fatalf("effective provenance wire omitted leaf coverage or masking: %s", encoded)
+	}
+}
+
 func TestReadConfigV8SourceRejectsOversizedInputWithCanonicalCode(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
 	tooLarge := strings.Repeat("x", config.ObservabilityV8MaxSourceBytes+1)

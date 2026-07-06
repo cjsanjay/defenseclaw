@@ -130,6 +130,11 @@ def config_validate(quiet: bool) -> None:
 @click.option("--source", is_flag=True, help="Display the masked source configuration.")
 @click.option("--effective", is_flag=True, help="Display canonical resolved defaults and expansions.")
 @click.option(
+    "--provenance",
+    is_flag=True,
+    help="Include canonical Go provenance annotations for the effective configuration.",
+)
+@click.option(
     "--section",
     type=click.Choice(["observability"], case_sensitive=False),
     default=None,
@@ -146,12 +151,15 @@ def config_show(
     fmt: str,
     source: bool,
     effective: bool,
+    provenance: bool,
     section: str | None,
     reveal: bool,
 ) -> None:
     """Render the resolved configuration (secrets masked)."""
     if source and effective:
         raise click.UsageError("--source and --effective are mutually exclusive")
+    if source and provenance:
+        raise click.UsageError("--provenance annotates the effective view and cannot be combined with --source")
 
     cfg_path = str(config_module.config_path())
     v8 = _looks_like_v8_config(cfg_path)
@@ -173,6 +181,8 @@ def config_show(
                 raise click.ClickException(str(exc)) from exc
             data = {"observability": result.effective or {}}
     else:
+        if provenance:
+            raise click.UsageError("--provenance requires a configuration v8 effective plan")
         # Preserve the pre-v8 view for installations that have not upgraded.
         cfg = app.cfg if app.cfg is not None else config_module.load()
         data = _config_to_masked_dict(cfg, reveal=reveal)
@@ -180,6 +190,18 @@ def config_show(
     if section:
         section_name = section.lower()
         data = {section_name: data.get(section_name, {})}
+    if provenance:
+        effective_observability = data.get("observability")
+        if isinstance(effective_observability, dict):
+            effective_observability = dict(effective_observability)
+            annotations = effective_observability.pop("provenance", [])
+            data["observability"] = effective_observability
+        else:
+            annotations = []
+        data["_provenance"] = {
+            "basis": "canonical_go_effective_plan",
+            "annotations": annotations,
+        }
     if fmt.lower() == "json":
         click.echo(json.dumps(data, indent=2, sort_keys=True))
     else:

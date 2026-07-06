@@ -112,6 +112,13 @@ func addObservabilityV8SourceProvenance(
 		return plan, nil
 	}
 	effective := cloneObservabilityV8EffectivePlan(plan.effective)
+	baseProvenance := make([]ObservabilityV8Provenance, 0, len(effective.Provenance))
+	for _, provenance := range effective.Provenance {
+		if provenance.ValuePath == "" {
+			baseProvenance = append(baseProvenance, provenance)
+		}
+	}
+	effective.Provenance = baseProvenance
 	existing := make(map[string]int, len(effective.Provenance))
 	for index := range effective.Provenance {
 		existing[effective.Provenance[index].Path] = index
