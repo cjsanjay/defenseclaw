@@ -42,6 +42,10 @@ type V8CanonicalMetricSink interface {
 	Shutdown(context.Context) error
 }
 
+// V8CanonicalMetricSinkFactory materializes a destination-private sink only
+// after the provider has built the exact immutable generation resource.
+type V8CanonicalMetricSinkFactory func(context.Context, V8ResourceContext) (V8CanonicalMetricSink, error)
+
 // V8GenerationMetricPipeline binds one unique destination to one projection
 // and an exact generated-family selection. SelectedFamilies is copied during
 // provider construction and duplicate entries fail the candidate generation.
@@ -50,6 +54,7 @@ type V8GenerationMetricPipeline struct {
 	Projection       V8MetricProjection
 	SelectedFamilies []observability.EventName
 	Sink             V8CanonicalMetricSink
+	SinkFactory      V8CanonicalMetricSinkFactory
 }
 
 // V8MetricNumber is the closed int64/double metric value union.
@@ -126,6 +131,71 @@ type v8MetricRecorder struct {
 	shutdown   atomic.Bool
 }
 
+func validateV8MetricPipelineDeclarations(pipelines []V8GenerationMetricPipeline) error {
+	destinations := make(map[string]struct{}, len(pipelines))
+	for _, pipeline := range pipelines {
+		hasSink := !nilV8MetricSink(pipeline.Sink)
+		hasFactory := pipeline.SinkFactory != nil
+		if !observability.IsStableToken(pipeline.Destination) || hasSink == hasFactory ||
+			(pipeline.Projection != V8MetricProjectionCanonical && pipeline.Projection != V8MetricProjectionLocal) ||
+			len(pipeline.SelectedFamilies) == 0 {
+			return errors.New("telemetry: invalid generated metric pipeline declaration")
+		}
+		if _, duplicate := destinations[pipeline.Destination]; duplicate {
+			return errors.New("telemetry: duplicate generated metric destination")
+		}
+		destinations[pipeline.Destination] = struct{}{}
+		families := make(map[observability.EventName]struct{}, len(pipeline.SelectedFamilies))
+		for _, family := range pipeline.SelectedFamilies {
+			if _, known := v8MetricDescriptorByName(string(family)); !known {
+				return errors.New("telemetry: generated metric pipeline selects an unknown family")
+			}
+			if _, duplicate := families[family]; duplicate {
+				return errors.New("telemetry: generated metric pipeline repeats a family")
+			}
+			families[family] = struct{}{}
+		}
+	}
+	return nil
+}
+
+func materializeV8MetricPipelines(
+	ctx context.Context,
+	resource V8ResourceContext,
+	pipelines []V8GenerationMetricPipeline,
+) ([]V8GenerationMetricPipeline, error) {
+	result := make([]V8GenerationMetricPipeline, len(pipelines))
+	for index, source := range pipelines {
+		result[index] = source
+		result[index].SelectedFamilies = append([]observability.EventName(nil), source.SelectedFamilies...)
+		if !nilV8MetricSink(source.Sink) {
+			result[index].SinkFactory = nil
+			continue
+		}
+		sink, err := callV8MetricSinkFactory(ctx, source.SinkFactory, resource.clone())
+		if err != nil || nilV8MetricSink(sink) {
+			return result, errors.New("telemetry: generated metric sink initialization failed")
+		}
+		result[index].Sink = sink
+		result[index].SinkFactory = nil
+	}
+	return result, nil
+}
+
+func callV8MetricSinkFactory(
+	ctx context.Context,
+	factory V8CanonicalMetricSinkFactory,
+	resource V8ResourceContext,
+) (sink V8CanonicalMetricSink, err error) {
+	defer func() {
+		if recover() != nil {
+			sink = nil
+			err = errors.New("telemetry: generated metric sink factory panicked")
+		}
+	}()
+	return factory(ctx, resource)
+}
+
 func newV8MetricRecorder(
 	generation uint64,
 	digest string,
@@ -136,6 +206,9 @@ func newV8MetricRecorder(
 		return nil, errors.New("telemetry: invalid generated metric recorder binding")
 	}
 	if _, err := V8MetricDescriptorCatalog(); err != nil {
+		return nil, err
+	}
+	if err := validateV8MetricPipelineDeclarations(pipelines); err != nil {
 		return nil, err
 	}
 	recorder := &v8MetricRecorder{
@@ -151,7 +224,7 @@ func newV8MetricRecorder(
 	destinations := make(map[string]struct{}, len(pipelines))
 	sinks := make(map[uintptr]struct{}, len(pipelines))
 	for _, source := range pipelines {
-		if !observability.IsStableToken(source.Destination) || nilV8MetricSink(source.Sink) ||
+		if !observability.IsStableToken(source.Destination) || nilV8MetricSink(source.Sink) || source.SinkFactory != nil ||
 			(source.Projection != V8MetricProjectionCanonical && source.Projection != V8MetricProjectionLocal) ||
 			len(source.SelectedFamilies) == 0 {
 			return nil, errors.New("telemetry: invalid generated metric pipeline")

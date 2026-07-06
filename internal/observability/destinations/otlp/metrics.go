@@ -24,6 +24,35 @@ import (
 	"google.golang.org/grpc"
 )
 
+// ForkMetricFactory creates a claim-independent metric transport factory from
+// the already resolved immutable configuration. The fork owns a fresh dial
+// tracker and exporter/reader lifecycle, while TLS, headers, endpoint policy,
+// temporality, and batch settings remain exact clones of the parent.
+func (factory *Factory) ForkMetricFactory() (*Factory, error) {
+	if factory == nil {
+		return nil, newError(ErrorInvalidConfig, nil)
+	}
+	factory.mu.Lock()
+	defer factory.mu.Unlock()
+	config, ok := factory.signals[observability.SignalMetrics]
+	if !ok || factory.created[observability.SignalMetrics] {
+		return nil, newError(ErrorInvalidConfig, nil)
+	}
+	clone := config
+	clone.url = cloneURL(config.url)
+	clone.tls = cloneTLS(config.tls)
+	clone.headers = cloneHeaders(config.headers)
+	clone.tracker = &dialOutcomeTracker{}
+	outer := factory.config
+	outer.Selected = []observability.Signal{observability.SignalMetrics}
+	outer.Headers = cloneHeaders(factory.config.Headers)
+	return &Factory{
+		config:  outer,
+		signals: map[observability.Signal]signalConfig{observability.SignalMetrics: clone},
+		created: make(map[observability.Signal]bool, 1),
+	}, nil
+}
+
 func (factory *Factory) NewMetricExporter(ctx context.Context) (*MetricExporter, error) {
 	if ctx == nil {
 		return nil, newError(ErrorInvalidConfig, nil)

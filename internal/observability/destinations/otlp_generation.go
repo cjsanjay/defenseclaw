@@ -13,6 +13,7 @@ package destinations
 import (
 	"context"
 	"reflect"
+	"sort"
 	"sync"
 	"time"
 
@@ -301,6 +302,10 @@ func (factory *Factory) PrepareOTLPGenerationPipelines(
 			generalCanonicalConsumers = append(generalCanonicalConsumers, consumer)
 		}
 		if candidate.metrics != nil {
+			generatedFactory, forkErr := prepared.ForkMetricFactory()
+			if forkErr != nil {
+				return fail(newError(ErrorAdapterPrepare))
+			}
 			reader, err := prepared.NewFilteredPeriodicMetricReader(ctx, candidate.metrics)
 			if err != nil {
 				return fail(newError(ErrorAdapterPrepare))
@@ -313,6 +318,31 @@ func (factory *Factory) PrepareOTLPGenerationPipelines(
 				return fail(newError(ErrorAdapterPrepare))
 			}
 			pipelines.MetricReaders = append(pipelines.MetricReaders, sdkReader)
+			families := selectedMetricFamilies(candidate.metrics)
+			projection := telemetry.V8MetricProjectionCanonical
+			if candidate.local {
+				projection = telemetry.V8MetricProjectionLocal
+			}
+			destinationName := candidate.destination.Name
+			pipelines.MetricPipelines = append(pipelines.MetricPipelines, telemetry.V8GenerationMetricPipeline{
+				Destination: destinationName, Projection: projection,
+				SelectedFamilies: append([]observability.EventName(nil), families...),
+				SinkFactory: func(
+					factory *otlp.Factory,
+					selected []observability.EventName,
+				) telemetry.V8CanonicalMetricSinkFactory {
+					return func(
+						factoryContext context.Context,
+						resource telemetry.V8ResourceContext,
+					) (telemetry.V8CanonicalMetricSink, error) {
+						return factory.NewCanonicalMetricSink(factoryContext, otlp.CanonicalMetricSinkOptions{
+							Destination: destinationName, Generation: generation,
+							Resource: resource.SDKResource(), SelectedFamilies: selected,
+							CardinalityLimit: metricSpec.CardinalityLimit,
+						})
+					}
+				}(generatedFactory, append([]observability.EventName(nil), families...)),
+			})
 		}
 		preparedWarnings = append(preparedWarnings, candidate.destination)
 	}
@@ -340,6 +370,15 @@ func (factory *Factory) PrepareOTLPGenerationPipelines(
 		consumer.Activate()
 	}
 	return pipelines, nil
+}
+
+func selectedMetricFamilies(selected map[string]struct{}) []observability.EventName {
+	result := make([]observability.EventName, 0, len(selected))
+	for name := range selected {
+		result = append(result, observability.EventName(name))
+	}
+	sort.Slice(result, func(left, right int) bool { return result[left] < result[right] })
+	return result
 }
 
 func isLocalObservabilityOTLP(destination config.ObservabilityV8EffectiveDestination) bool {
@@ -639,12 +678,18 @@ func (consumer *canaryRegisteredCanonicalConsumer) Shutdown(ctx context.Context)
 func cleanupOTLPGenerationPipelines(pipelines telemetry.V8GenerationPipelines) {
 	ctx, cancel := context.WithTimeout(context.Background(), generationPipelineCleanupTimeout)
 	defer cancel()
+	seen := make(map[otlpCleanupIdentity]struct{}, len(pipelines.MetricPipelines)+len(pipelines.SpanPipelines)*2)
+	for index := len(pipelines.MetricPipelines) - 1; index >= 0; index-- {
+		sink := pipelines.MetricPipelines[index].Sink
+		if otlpCleanupChild(sink, seen) {
+			otlpCleanupShutdown(func() error { return sink.Shutdown(ctx) })
+		}
+	}
 	for index := len(pipelines.MetricReaders) - 1; index >= 0; index-- {
 		if pipelines.MetricReaders[index] != nil {
 			_ = pipelines.MetricReaders[index].Shutdown(ctx)
 		}
 	}
-	seen := make(map[otlpCleanupIdentity]struct{}, len(pipelines.SpanPipelines)*2)
 	for index := len(pipelines.SpanPipelines) - 1; index >= 0; index-- {
 		pipeline := pipelines.SpanPipelines[index]
 		if otlpCleanupChild(pipeline.Legacy, seen) {

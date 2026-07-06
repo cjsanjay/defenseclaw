@@ -231,3 +231,47 @@ func TestGeneratedMetricRecorderRequiresStableSinkIdentityAndIsolatesLifecycle(t
 		t.Fatalf("rollback shutdown count=%d, want 1", duplicate.shutdown)
 	}
 }
+
+func TestGeneratedMetricSinkFactoriesBindResourceAndRollbackMaterializedChildrenOnce(t *testing.T) {
+	family := observability.EventName("defenseclaw.connector.hook.latency")
+	resource := V8ResourceContext{
+		schemaURL: "https://opentelemetry.io/schemas/1.42.0",
+		values: map[string]string{
+			"service.name": "defenseclaw", "service.instance.id": "instance-one",
+		},
+	}
+	first := &v8MetricCaptureSink{}
+	var firstResource, secondResource map[string]string
+	pipelines := []V8GenerationMetricPipeline{
+		{
+			Destination: "first", Projection: V8MetricProjectionCanonical,
+			SelectedFamilies: []observability.EventName{family},
+			SinkFactory: func(_ context.Context, captured V8ResourceContext) (V8CanonicalMetricSink, error) {
+				firstResource = captured.Values()
+				firstResource["service.name"] = "caller-mutation"
+				return first, nil
+			},
+		},
+		{
+			Destination: "second", Projection: V8MetricProjectionLocal,
+			SelectedFamilies: []observability.EventName{family},
+			SinkFactory: func(_ context.Context, captured V8ResourceContext) (V8CanonicalMetricSink, error) {
+				secondResource = captured.Values()
+				return nil, errors.New("private initialization detail")
+			},
+		},
+	}
+	if err := validateV8MetricPipelineDeclarations(pipelines); err != nil {
+		t.Fatal(err)
+	}
+	materialized, err := materializeV8MetricPipelines(context.Background(), resource, pipelines)
+	if err == nil || len(materialized) != 2 || materialized[0].Sink != first || materialized[0].SinkFactory != nil ||
+		materialized[1].Sink != nil || secondResource["service.name"] != "defenseclaw" ||
+		resource.Values()["service.name"] != "defenseclaw" {
+		t.Fatalf("materialization result=%+v first=%v second=%v err=%v", materialized, firstResource, secondResource, err)
+	}
+	cleanupV8MetricPipelines(materialized, time.Second)
+	if first.shutdown != 1 {
+		t.Fatalf("materialized sink cleanup calls=%d", first.shutdown)
+	}
+}

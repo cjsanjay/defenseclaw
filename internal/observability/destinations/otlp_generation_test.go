@@ -13,11 +13,14 @@ package destinations
 import (
 	"context"
 	"encoding/pem"
+	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"reflect"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -28,6 +31,7 @@ import (
 	"github.com/defenseclaw/defenseclaw/internal/observability/delivery"
 	"github.com/defenseclaw/defenseclaw/internal/observability/destinations/galileo"
 	"github.com/defenseclaw/defenseclaw/internal/observability/destinations/localobservability"
+	otlpdestination "github.com/defenseclaw/defenseclaw/internal/observability/destinations/otlp"
 	"github.com/defenseclaw/defenseclaw/internal/observability/redaction"
 	"github.com/defenseclaw/defenseclaw/internal/observability/runtimegraph"
 	"github.com/defenseclaw/defenseclaw/internal/telemetry"
@@ -36,7 +40,10 @@ import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	collectormetricpb "go.opentelemetry.io/proto/otlp/collector/metrics/v1"
 	collectortracepb "go.opentelemetry.io/proto/otlp/collector/trace/v1"
+	commonpb "go.opentelemetry.io/proto/otlp/common/v1"
+	metricpb "go.opentelemetry.io/proto/otlp/metrics/v1"
 	tracepb "go.opentelemetry.io/proto/otlp/trace/v1"
+	"google.golang.org/grpc"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -94,7 +101,7 @@ func (capture *otlpGenerationCapture) snapshot() ([]*collectortracepb.ExportTrac
 func generationMetricSpec() telemetry.V8MetricReaderSpec {
 	return telemetry.V8MetricReaderSpec{
 		ExportInterval: time.Hour, ExportTimeout: time.Second,
-		Temporality: metricdata.DeltaTemporality, CardinalityLimit: 2_000,
+		Temporality: metricdata.DeltaTemporality, CardinalityLimit: 2_048,
 	}
 }
 
@@ -155,6 +162,59 @@ func metricSend(name, endpoint string, buckets []observability.Bucket) config.Ob
 	}
 }
 
+func generatedHookLatencyRecord(
+	t *testing.T,
+	provider *telemetry.Provider,
+	id string,
+	value float64,
+) observability.Record {
+	t.Helper()
+	digest, generation, ok := provider.V8PlanBinding()
+	if !ok || digest == "" || generation == 0 {
+		t.Fatalf("provider binding digest=%q generation=%d ok=%v", digest, generation, ok)
+	}
+	builder, err := observability.NewFamilyBuilder(
+		observability.ClockFunc(func() time.Time { return time.Unix(500, 0).UTC() }),
+		observability.OccurrenceIDGeneratorFunc(func() (string, error) { return id, nil }),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err := builder.BuildMetricDefenseClawConnectorHookLatency(
+		observability.MetricDefenseClawConnectorHookLatencyInput{
+			Envelope: observability.FamilyEnvelopeInput{
+				Source: observability.SourceGateway,
+				Provenance: observability.FamilyProvenanceInput{
+					Producer: "defenseclaw", BinaryVersion: "generation-test",
+					ConfigGeneration: int64(generation), ConfigDigest: digest,
+				},
+			},
+			Value: value, DefenseClawConnectorSource: observability.Present("codex"),
+			DefenseClawMetricEventType: observability.Present("prompt"),
+			DefenseClawMetricReason:    observability.Present("allow"),
+			DefenseClawMetricResult:    observability.Present("ok"),
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return record
+}
+
+func drainGeneratedProvider(t *testing.T, lease *runtimegraph.Lease) {
+	t.Helper()
+	componentValue, componentOK := lease.Component(telemetry.V8ProviderComponentName)
+	component, typed := componentValue.(*telemetry.V8ProviderComponent)
+	if !componentOK || !typed {
+		t.Fatal("generation provider component missing")
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	if err := component.Drain(ctx); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestMetricsOnlyLocalOTLPDestinationRetainsLocalIdentity(t *testing.T) {
 	destination := metricSend(
 		localobservability.DestinationName, "https://local-collector.example.test",
@@ -193,7 +253,7 @@ func TestOTLPGenerationAssemblerUsesUnmaskedRuntimeTransportAndDefaultAllSignals
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(pipelines.SpanPipelines) != 1 || len(pipelines.MetricReaders) != 1 ||
+	if len(pipelines.SpanPipelines) != 1 || len(pipelines.MetricReaders) != 1 || len(pipelines.MetricPipelines) != 1 ||
 		pipelines.CanaryAcknowledged == nil || secrets.callCount("OTLP_AUTH") != 1 || loader.callCount(caPath) != 1 {
 		t.Fatalf("pipelines=%d/%d secret=%d CA=%d", len(pipelines.SpanPipelines), len(pipelines.MetricReaders), secrets.callCount("OTLP_AUTH"), loader.callCount(caPath))
 	}
@@ -248,7 +308,7 @@ func TestOTLPGenerationAssemblerAppliesBucketRoutesAcrossMultipleDestinations(t 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(pipelines.SpanPipelines) != 2 || len(pipelines.MetricReaders) != 1 {
+	if len(pipelines.SpanPipelines) != 2 || len(pipelines.MetricReaders) != 1 || len(pipelines.MetricPipelines) != 1 {
 		t.Fatalf("pipelines = %d/%d", len(pipelines.SpanPipelines), len(pipelines.MetricReaders))
 	}
 	if pipelines.SpanPipelines[0].Destination != "agent-traces" ||
@@ -324,11 +384,14 @@ func TestOTLPGenerationAssemblerAppliesMetricEventNameFirstMatchRoutes(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(pipelines.SpanPipelines) != 0 || len(pipelines.MetricReaders) != 1 {
+	if len(pipelines.SpanPipelines) != 0 || len(pipelines.MetricReaders) != 1 || len(pipelines.MetricPipelines) != 1 {
 		t.Fatalf("pipelines=%d/%d", len(pipelines.SpanPipelines), len(pipelines.MetricReaders))
 	}
 	if pipelines.CanaryAcknowledged != nil {
 		t.Fatal("metric-only pipeline exposed a trace acknowledgement callback")
+	}
+	if got := pipelines.MetricPipelines[0].SelectedFamilies; !reflect.DeepEqual(got, []observability.EventName{"defenseclaw.scan.count"}) {
+		t.Fatalf("generated metric route selection=%v", got)
 	}
 	meterProvider := sdkmetric.NewMeterProvider(sdkmetric.WithReader(pipelines.MetricReaders[0]))
 	meter := meterProvider.Meter("test")
@@ -348,6 +411,384 @@ func TestOTLPGenerationAssemblerAppliesMetricEventNameFirstMatchRoutes(t *testin
 	}
 	if err := meterProvider.Shutdown(context.Background()); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestGeneratedMetricOTLPSinksProjectGenericAndLocalLabelsWithExactResource(t *testing.T) {
+	genericCapture, localCapture := &otlpGenerationCapture{}, &otlpGenerationCapture{}
+	genericServer := httptest.NewServer(http.HandlerFunc(genericCapture.handler))
+	localServer := httptest.NewServer(http.HandlerFunc(localCapture.handler))
+	defer genericServer.Close()
+	defer localServer.Close()
+	plan := compileGenerationRuntimePlan(t, t.TempDir(),
+		metricSend("generic-metrics", genericServer.URL, []observability.Bucket{observability.BucketAgentLifecycle}),
+		metricSend(localobservability.DestinationName, localServer.URL, []observability.Bucket{observability.BucketAgentLifecycle}),
+	)
+	factory := newTestFactory(t, io.Discard, nil, nil, net.Dialer{}, nil)
+	manager := generationOTLPManager(t, factory, plan)
+	provider, lease := compositeProviderFromManager(t, manager)
+	digest, generation, ok := provider.V8PlanBinding()
+	if !ok || digest == "" || generation != 1 {
+		lease.Release()
+		t.Fatalf("provider binding digest=%q generation=%d ok=%v", digest, generation, ok)
+	}
+	builder, err := observability.NewFamilyBuilder(
+		observability.ClockFunc(func() time.Time { return time.Unix(500, 0).UTC() }),
+		observability.OccurrenceIDGeneratorFunc(func() (string, error) { return "generated-metric-e2e", nil }),
+	)
+	if err != nil {
+		lease.Release()
+		t.Fatal(err)
+	}
+	record, err := builder.BuildMetricDefenseClawConnectorHookLatency(
+		observability.MetricDefenseClawConnectorHookLatencyInput{
+			Envelope: observability.FamilyEnvelopeInput{
+				Source: observability.SourceGateway,
+				Provenance: observability.FamilyProvenanceInput{
+					Producer: "defenseclaw", BinaryVersion: "generation-test",
+					ConfigGeneration: int64(generation), ConfigDigest: digest,
+				},
+			},
+			Value: 17.5, DefenseClawConnectorSource: observability.Present("codex"),
+			DefenseClawMetricEventType: observability.Present("prompt"),
+			DefenseClawMetricReason:    observability.Present("allow"),
+			DefenseClawMetricResult:    observability.Present("ok"),
+		},
+	)
+	if err != nil {
+		lease.Release()
+		t.Fatal(err)
+	}
+	result, err := provider.RecordGeneratedMetric(t.Context(), record)
+	if err != nil || result != (telemetry.V8MetricRecordResult{Matched: 2, Delivered: 2}) {
+		lease.Release()
+		t.Fatalf("record result=%+v err=%v", result, err)
+	}
+	componentValue, componentOK := lease.Component(telemetry.V8ProviderComponentName)
+	component, typed := componentValue.(*telemetry.V8ProviderComponent)
+	if !componentOK || !typed {
+		lease.Release()
+		t.Fatal("generation provider component missing")
+	}
+	flushContext, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	if err := component.Drain(flushContext); err != nil {
+		lease.Release()
+		t.Fatal(err)
+	}
+	lease.Release()
+
+	_, genericRequests, _ := genericCapture.snapshot()
+	_, localRequests, _ := localCapture.snapshot()
+	generic := capturedHistogramMetric(t, genericRequests, "defenseclaw.connector.hook.latency")
+	local := capturedHistogramMetric(t, localRequests, "defenseclaw.connector.hook.latency")
+	wantBounds := []float64{1, 2, 5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000}
+	for name, metric := range map[string]capturedHistogram{"generic": generic, "local": local} {
+		if metric.unit != "ms" || metric.temporality != metricpb.AggregationTemporality_AGGREGATION_TEMPORALITY_DELTA ||
+			!reflect.DeepEqual(metric.bounds, wantBounds) || metric.resource["service.name"] != "defenseclaw" ||
+			metric.resource["service.instance.id"] != "generation-test-instance" ||
+			metric.resource["service.version"] != "generation-test" {
+			t.Fatalf("%s metric contract=%+v", name, metric)
+		}
+	}
+	wantGeneric := map[string]any{
+		"defenseclaw.connector.source": "codex", "defenseclaw.metric.event_type": "prompt",
+		"defenseclaw.metric.reason": "allow", "defenseclaw.metric.result": "ok",
+	}
+	wantLocal := map[string]any{
+		"connector": "codex", "event_type": "prompt", "reason": "allow", "result": "ok",
+	}
+	if !reflect.DeepEqual(generic.attributes, wantGeneric) || !reflect.DeepEqual(local.attributes, wantLocal) {
+		t.Fatalf("generic/local labels=%v/%v", generic.attributes, local.attributes)
+	}
+}
+
+func TestGeneratedMetricOTLPSinkFailureDoesNotSuppressSiblingDestination(t *testing.T) {
+	var failedCalls atomic.Int64
+	failedServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		failedCalls.Add(1)
+		writer.WriteHeader(http.StatusInternalServerError)
+	}))
+	goodCapture := &otlpGenerationCapture{}
+	goodServer := httptest.NewServer(http.HandlerFunc(goodCapture.handler))
+	defer failedServer.Close()
+	defer goodServer.Close()
+	failed := metricSend("failed-metrics", failedServer.URL, []observability.Bucket{observability.BucketAgentLifecycle})
+	failed.TimeoutMS = 100
+	good := metricSend("good-metrics", goodServer.URL, []observability.Bucket{observability.BucketAgentLifecycle})
+	plan := compileGenerationRuntimePlan(t, t.TempDir(), failed, good)
+	factory := newTestFactory(t, io.Discard, nil, nil, net.Dialer{}, nil)
+	manager := generationOTLPManager(t, factory, plan)
+	provider, lease := compositeProviderFromManager(t, manager)
+	digest, generation, ok := provider.V8PlanBinding()
+	if !ok {
+		lease.Release()
+		t.Fatal("provider binding missing")
+	}
+	builder, err := observability.NewFamilyBuilder(
+		observability.ClockFunc(func() time.Time { return time.Unix(501, 0).UTC() }),
+		observability.OccurrenceIDGeneratorFunc(func() (string, error) { return "generated-metric-failure", nil }),
+	)
+	if err != nil {
+		lease.Release()
+		t.Fatal(err)
+	}
+	record, err := builder.BuildMetricDefenseClawConnectorHookLatency(
+		observability.MetricDefenseClawConnectorHookLatencyInput{
+			Envelope: observability.FamilyEnvelopeInput{
+				Source: observability.SourceGateway,
+				Provenance: observability.FamilyProvenanceInput{
+					Producer: "defenseclaw", BinaryVersion: "generation-test",
+					ConfigGeneration: int64(generation), ConfigDigest: digest,
+				},
+			},
+			Value: 5, DefenseClawConnectorSource: observability.Present("codex"),
+			DefenseClawMetricEventType: observability.Present("prompt"),
+			DefenseClawMetricReason:    observability.Present("allow"),
+			DefenseClawMetricResult:    observability.Present("ok"),
+		},
+	)
+	if err != nil {
+		lease.Release()
+		t.Fatal(err)
+	}
+	if result, recordErr := provider.RecordGeneratedMetric(t.Context(), record); recordErr != nil ||
+		result != (telemetry.V8MetricRecordResult{Matched: 2, Delivered: 2}) {
+		lease.Release()
+		t.Fatalf("record result=%+v err=%v", result, recordErr)
+	}
+	componentValue, _ := lease.Component(telemetry.V8ProviderComponentName)
+	component := componentValue.(*telemetry.V8ProviderComponent)
+	flushContext, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+	defer cancel()
+	if err := component.Drain(flushContext); err == nil {
+		lease.Release()
+		t.Fatal("failed destination flush unexpectedly succeeded")
+	}
+	lease.Release()
+	_, requests, _ := goodCapture.snapshot()
+	if failedCalls.Load() == 0 || len(requests) != 1 ||
+		!reflect.DeepEqual(metricNames(requests), []string{"defenseclaw.connector.hook.latency"}) {
+		t.Fatalf("failed calls=%d good metrics=%v", failedCalls.Load(), metricNames(requests))
+	}
+}
+
+func TestGeneratedMetricOTLPSinkExportsEveryCatalogInstrumentShapeOverGRPC(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	capture := &generationGRPCMetricCapture{}
+	server := grpc.NewServer()
+	collectormetricpb.RegisterMetricsServiceServer(server, capture)
+	go func() { _ = server.Serve(listener) }()
+	t.Cleanup(func() {
+		server.Stop()
+		_ = listener.Close()
+	})
+
+	destination := metricSend(
+		"grpc-generated", listener.Addr().String(),
+		[]observability.Bucket{
+			observability.BucketComplianceActivity,
+			observability.BucketAgentLifecycle,
+			observability.BucketPlatformHealth,
+		},
+	)
+	destination.Protocol = "grpc"
+	plan := compileGenerationRuntimePlan(t, t.TempDir(), destination)
+	families := []observability.EventName{
+		"defenseclaw.activity.total",
+		"defenseclaw.audit.sink.circuit.state",
+		"defenseclaw.agent.discovery.installed",
+		"defenseclaw.agent.last_seen",
+		"defenseclaw.activity.diff_entries",
+		"defenseclaw.agent.discovery.duration",
+	}
+	resource, projected := captureGeneratedMetricProjections(
+		t, plan, destination.Name, families,
+		func(builder *observability.FamilyBuilder, envelope observability.FamilyEnvelopeInput) []observability.Record {
+			records := make([]observability.Record, 0, len(families))
+			appendRecord := func(record observability.Record, buildErr error) {
+				if buildErr != nil {
+					t.Fatal(buildErr)
+				}
+				records = append(records, record)
+			}
+			appendRecord(builder.BuildMetricDefenseClawActivityTotal(
+				observability.MetricDefenseClawActivityTotalInput{Envelope: envelope, Value: 7},
+			))
+			appendRecord(builder.BuildMetricDefenseClawAuditSinkCircuitState(
+				observability.MetricDefenseClawAuditSinkCircuitStateInput{Envelope: envelope, Value: -3},
+			))
+			appendRecord(builder.BuildMetricDefenseClawAgentDiscoveryInstalled(
+				observability.MetricDefenseClawAgentDiscoveryInstalledInput{Envelope: envelope, Value: 11},
+			))
+			appendRecord(builder.BuildMetricDefenseClawAgentLastSeen(
+				observability.MetricDefenseClawAgentLastSeenInput{Envelope: envelope, Value: 12.5},
+			))
+			appendRecord(builder.BuildMetricDefenseClawActivityDiffEntries(
+				observability.MetricDefenseClawActivityDiffEntriesInput{Envelope: envelope, Value: 13},
+			))
+			appendRecord(builder.BuildMetricDefenseClawAgentDiscoveryDuration(
+				observability.MetricDefenseClawAgentDiscoveryDurationInput{Envelope: envelope, Value: 14.5},
+			))
+			return records
+		},
+	)
+	factory := newTestFactory(t, io.Discard, nil, nil, net.Dialer{}, nil)
+	sink := materializeGeneratedMetricSink(t, factory, plan, 1, resource)
+	for _, metric := range projected {
+		if err := sink.RecordMetric(t.Context(), metric); err != nil {
+			t.Fatal(err)
+		}
+	}
+	flushContext, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	if err := sink.ForceFlush(flushContext); err != nil {
+		cancel()
+		t.Fatal(err)
+	}
+	cancel()
+	if err := sink.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	descriptors, err := telemetry.V8MetricDescriptorCatalog()
+	if err != nil {
+		t.Fatal(err)
+	}
+	descriptorByName := make(map[string]telemetry.V8MetricDescriptor, len(descriptors))
+	catalogShapes := make(map[string]struct{})
+	for _, descriptor := range descriptors {
+		descriptorByName[descriptor.Name] = descriptor
+		catalogShapes[descriptor.InstrumentType+"/"+descriptor.ValueType] = struct{}{}
+	}
+	wantCatalogShapes := map[string]struct{}{
+		"counter/int64": {}, "updowncounter/int64": {},
+		"gauge/int64": {}, "gauge/double": {},
+		"histogram/int64": {}, "histogram/double": {},
+	}
+	if !reflect.DeepEqual(catalogShapes, wantCatalogShapes) {
+		t.Fatalf("generated metric catalog shapes=%v want=%v", catalogShapes, wantCatalogShapes)
+	}
+	wire := capturedMetricsByName(capture.snapshot())
+	for _, test := range []struct {
+		name           string
+		instrumentType string
+		valueType      string
+		value          float64
+	}{
+		{name: "defenseclaw.activity.total", instrumentType: "counter", valueType: "int64", value: 7},
+		{name: "defenseclaw.audit.sink.circuit.state", instrumentType: "updowncounter", valueType: "int64", value: -3},
+		{name: "defenseclaw.agent.discovery.installed", instrumentType: "gauge", valueType: "int64", value: 11},
+		{name: "defenseclaw.agent.last_seen", instrumentType: "gauge", valueType: "double", value: 12.5},
+		{name: "defenseclaw.activity.diff_entries", instrumentType: "histogram", valueType: "int64", value: 13},
+		{name: "defenseclaw.agent.discovery.duration", instrumentType: "histogram", valueType: "double", value: 14.5},
+	} {
+		t.Run(test.instrumentType+"_"+test.valueType, func(t *testing.T) {
+			descriptor, ok := descriptorByName[test.name]
+			if !ok || descriptor.InstrumentType != test.instrumentType || descriptor.ValueType != test.valueType {
+				t.Fatalf("descriptor=%+v present=%v", descriptor, ok)
+			}
+			metric := wire[test.name]
+			if metric == nil || metric.Unit != descriptor.Unit {
+				t.Fatalf("wire metric=%+v unit=%q", metric, descriptor.Unit)
+			}
+			kind, value, delta, ok := capturedMetricShape(metric)
+			if !ok || kind != test.instrumentType || value != test.value ||
+				(test.instrumentType != "gauge" && !delta) {
+				t.Fatalf("wire kind=%q value=%v delta=%v ok=%v", kind, value, delta, ok)
+			}
+		})
+	}
+}
+
+func TestGeneratedMetricOTLPSinkShutdownTimeoutRetryAndIdempotence(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	var startedOnce, releaseOnce sync.Once
+	var calls atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		_, _ = io.Copy(io.Discard, request.Body)
+		calls.Add(1)
+		startedOnce.Do(func() { close(started) })
+		<-release
+		writer.Header().Set("Content-Type", "application/x-protobuf")
+		writer.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(func() {
+		releaseOnce.Do(func() { close(release) })
+		server.Close()
+	})
+	destination := metricSend(
+		"shutdown-metrics", server.URL,
+		[]observability.Bucket{observability.BucketAgentLifecycle},
+	)
+	plan := compileGenerationRuntimePlan(t, t.TempDir(), destination)
+	resource, projected := captureGeneratedMetricProjections(
+		t, plan, destination.Name,
+		[]observability.EventName{"defenseclaw.connector.hook.latency"},
+		func(builder *observability.FamilyBuilder, envelope observability.FamilyEnvelopeInput) []observability.Record {
+			record, buildErr := builder.BuildMetricDefenseClawConnectorHookLatency(
+				observability.MetricDefenseClawConnectorHookLatencyInput{Envelope: envelope, Value: 9.5},
+			)
+			if buildErr != nil {
+				t.Fatal(buildErr)
+			}
+			return []observability.Record{record}
+		},
+	)
+	factory := newTestFactory(t, io.Discard, nil, nil, net.Dialer{}, nil)
+	sink := materializeGeneratedMetricSink(t, factory, plan, 1, resource)
+	if len(projected) != 1 {
+		t.Fatalf("projected metrics=%d", len(projected))
+	}
+	if err := sink.RecordMetric(t.Context(), projected[0]); err != nil {
+		t.Fatal(err)
+	}
+
+	firstContext, firstCancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
+	defer firstCancel()
+	firstDone := make(chan error, 1)
+	go func() { firstDone <- sink.Shutdown(firstContext) }()
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("shutdown did not begin its final export")
+	}
+	select {
+	case firstErr := <-firstDone:
+		if !otlpdestination.IsError(firstErr, otlpdestination.ErrorShutdown) ||
+			!errors.Is(firstErr, context.DeadlineExceeded) {
+			t.Fatalf("first shutdown error=%v", firstErr)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("caller timeout did not bound shutdown wait")
+	}
+
+	retryContext, retryCancel := context.WithTimeout(t.Context(), 2*time.Second)
+	defer retryCancel()
+	retryDone := make(chan error, 1)
+	go func() { retryDone <- sink.Shutdown(retryContext) }()
+	select {
+	case retryErr := <-retryDone:
+		t.Fatalf("retry returned before terminal exporter state: %v", retryErr)
+	case <-time.After(25 * time.Millisecond):
+	}
+	releaseOnce.Do(func() { close(release) })
+	select {
+	case retryErr := <-retryDone:
+		if retryErr != nil {
+			t.Fatal(retryErr)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("retry did not observe terminal shutdown")
+	}
+	if err := sink.Shutdown(context.Background()); err != nil {
+		t.Fatalf("idempotent shutdown error=%v", err)
+	}
+	if calls.Load() != 1 {
+		t.Fatalf("shutdown export calls=%d want=1", calls.Load())
 	}
 }
 
@@ -657,6 +1098,76 @@ func TestOTLPGenerationAssemblerKeepsReloadGenerationsIsolated(t *testing.T) {
 	}
 }
 
+func TestGeneratedMetricOTLPSinksKeepReloadGenerationsAndEndpointsIsolated(t *testing.T) {
+	firstCapture, secondCapture := &otlpGenerationCapture{}, &otlpGenerationCapture{}
+	firstServer := httptest.NewServer(http.HandlerFunc(firstCapture.handler))
+	secondServer := httptest.NewServer(http.HandlerFunc(secondCapture.handler))
+	defer firstServer.Close()
+	defer secondServer.Close()
+
+	directory := t.TempDir()
+	firstDestination := metricSend(
+		"reload-metrics", firstServer.URL,
+		[]observability.Bucket{observability.BucketAgentLifecycle},
+	)
+	firstPlan := compileGenerationRuntimePlan(t, directory, firstDestination)
+	factory := newTestFactory(t, io.Discard, nil, nil, net.Dialer{}, nil)
+	manager := generationOTLPManager(t, factory, firstPlan)
+	firstProvider, firstLease := compositeProviderFromManager(t, manager)
+	firstRecord := generatedHookLatencyRecord(t, firstProvider, "reload-metric-one", 11.5)
+	if result, err := firstProvider.RecordGeneratedMetric(t.Context(), firstRecord); err != nil ||
+		result != (telemetry.V8MetricRecordResult{Matched: 1, Delivered: 1}) {
+		firstLease.Release()
+		t.Fatalf("first record result=%+v error=%v", result, err)
+	}
+	drainGeneratedProvider(t, firstLease)
+	firstLease.Release()
+
+	secondDestination := metricSend(
+		"reload-metrics", secondServer.URL,
+		[]observability.Bucket{observability.BucketAgentLifecycle},
+	)
+	secondPlan := compileGenerationRuntimePlan(t, directory, secondDestination)
+	reload, err := manager.Reload(t.Context(), runtimegraph.ConfigFromPlan(secondPlan, false))
+	if err != nil || reload.Status() != runtimegraph.ReloadApplied {
+		t.Fatalf("reload=%s error=%v", reload.Status(), err)
+	}
+	if result, recordErr := firstProvider.RecordGeneratedMetric(t.Context(), firstRecord); recordErr == nil ||
+		result != (telemetry.V8MetricRecordResult{}) {
+		t.Fatalf("retired generation accepted record: result=%+v error=%v", result, recordErr)
+	}
+
+	secondProvider, secondLease := compositeProviderFromManager(t, manager)
+	if _, generation, ok := secondProvider.V8PlanBinding(); !ok || generation != 2 {
+		secondLease.Release()
+		t.Fatalf("second provider generation=%d ok=%v", generation, ok)
+	}
+	if result, recordErr := secondProvider.RecordGeneratedMetric(t.Context(), firstRecord); recordErr == nil ||
+		result != (telemetry.V8MetricRecordResult{}) {
+		secondLease.Release()
+		t.Fatalf("new generation accepted old record: result=%+v error=%v", result, recordErr)
+	}
+	secondRecord := generatedHookLatencyRecord(t, secondProvider, "reload-metric-two", 22.5)
+	if result, recordErr := secondProvider.RecordGeneratedMetric(t.Context(), secondRecord); recordErr != nil ||
+		result != (telemetry.V8MetricRecordResult{Matched: 1, Delivered: 1}) {
+		secondLease.Release()
+		t.Fatalf("second record result=%+v error=%v", result, recordErr)
+	}
+	drainGeneratedProvider(t, secondLease)
+	secondLease.Release()
+	if err := manager.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	_, firstRequests, _ := firstCapture.snapshot()
+	_, secondRequests, _ := secondCapture.snapshot()
+	firstValues := capturedHistogramValues(firstRequests, "defenseclaw.connector.hook.latency")
+	secondValues := capturedHistogramValues(secondRequests, "defenseclaw.connector.hook.latency")
+	if !reflect.DeepEqual(firstValues, []float64{11.5}) || !reflect.DeepEqual(secondValues, []float64{22.5}) {
+		t.Fatalf("cross-generation delivery first=%v second=%v", firstValues, secondValues)
+	}
+}
+
 func TestOTLPGenerationAssemblerCleansPartialFailureWithoutAffectingActiveGeneration(t *testing.T) {
 	capture := &otlpGenerationCapture{}
 	server := httptest.NewTLSServer(http.HandlerFunc(capture.handler))
@@ -867,4 +1378,299 @@ func metricNames(requests []*collectormetricpb.ExportMetricsServiceRequest) []st
 		}
 	}
 	return result
+}
+
+type capturedHistogram struct {
+	unit        string
+	temporality metricpb.AggregationTemporality
+	bounds      []float64
+	attributes  map[string]any
+	resource    map[string]any
+}
+
+func capturedHistogramMetric(
+	t *testing.T,
+	requests []*collectormetricpb.ExportMetricsServiceRequest,
+	name string,
+) capturedHistogram {
+	t.Helper()
+	for _, request := range requests {
+		for _, resourceMetrics := range request.ResourceMetrics {
+			resourceAttributes := capturedKeyValues(resourceMetrics.Resource.Attributes)
+			for _, scope := range resourceMetrics.ScopeMetrics {
+				for _, metric := range scope.Metrics {
+					if metric.Name != name {
+						continue
+					}
+					histogram := metric.GetHistogram()
+					if histogram == nil || len(histogram.DataPoints) != 1 {
+						t.Fatalf("metric %s data=%T points=%d", name, metric.Data, len(histogram.GetDataPoints()))
+					}
+					point := histogram.DataPoints[0]
+					return capturedHistogram{
+						unit: metric.Unit, temporality: histogram.AggregationTemporality,
+						bounds:     append([]float64(nil), point.ExplicitBounds...),
+						attributes: capturedKeyValues(point.Attributes), resource: resourceAttributes,
+					}
+				}
+			}
+		}
+	}
+	t.Fatalf("metric %q not captured", name)
+	return capturedHistogram{}
+}
+
+func capturedKeyValues(values []*commonpb.KeyValue) map[string]any {
+	result := make(map[string]any, len(values))
+	for _, item := range values {
+		if item == nil || item.Value == nil {
+			continue
+		}
+		switch value := item.Value.Value.(type) {
+		case *commonpb.AnyValue_StringValue:
+			result[item.Key] = value.StringValue
+		case *commonpb.AnyValue_IntValue:
+			result[item.Key] = value.IntValue
+		case *commonpb.AnyValue_BoolValue:
+			result[item.Key] = value.BoolValue
+		case *commonpb.AnyValue_DoubleValue:
+			result[item.Key] = value.DoubleValue
+		}
+	}
+	return result
+}
+
+func capturedHistogramValues(
+	requests []*collectormetricpb.ExportMetricsServiceRequest,
+	name string,
+) []float64 {
+	result := make([]float64, 0)
+	for _, request := range requests {
+		for _, resourceMetrics := range request.ResourceMetrics {
+			for _, scope := range resourceMetrics.ScopeMetrics {
+				for _, metric := range scope.Metrics {
+					if metric.Name != name || metric.GetHistogram() == nil {
+						continue
+					}
+					for _, point := range metric.GetHistogram().DataPoints {
+						result = append(result, point.GetSum())
+					}
+				}
+			}
+		}
+	}
+	return result
+}
+
+type projectedMetricCaptureSink struct {
+	mu      sync.Mutex
+	metrics []telemetry.V8ProjectedMetric
+}
+
+func (sink *projectedMetricCaptureSink) RecordMetric(
+	_ context.Context,
+	metric telemetry.V8ProjectedMetric,
+) error {
+	sink.mu.Lock()
+	sink.metrics = append(sink.metrics, metric)
+	sink.mu.Unlock()
+	return nil
+}
+
+func (*projectedMetricCaptureSink) ForceFlush(context.Context) error { return nil }
+func (*projectedMetricCaptureSink) Shutdown(context.Context) error   { return nil }
+
+func (sink *projectedMetricCaptureSink) snapshot() []telemetry.V8ProjectedMetric {
+	sink.mu.Lock()
+	defer sink.mu.Unlock()
+	return append([]telemetry.V8ProjectedMetric(nil), sink.metrics...)
+}
+
+func captureGeneratedMetricProjections(
+	t *testing.T,
+	plan *config.ObservabilityV8Plan,
+	destination string,
+	families []observability.EventName,
+	build func(*observability.FamilyBuilder, observability.FamilyEnvelopeInput) []observability.Record,
+) (telemetry.V8ResourceContext, []telemetry.V8ProjectedMetric) {
+	t.Helper()
+	capture := &projectedMetricCaptureSink{}
+	providerFactory := telemetry.NewV8ProviderFactory(telemetry.V8ProviderOptions{
+		Version: "generation-test", Environment: "test", ServiceInstanceID: "generation-test-instance",
+		GenerationPipelines: func(
+			context.Context,
+			*config.ObservabilityV8Plan,
+			uint64,
+			telemetry.V8MetricReaderSpec,
+		) (telemetry.V8GenerationPipelines, error) {
+			return telemetry.V8GenerationPipelines{MetricPipelines: []telemetry.V8GenerationMetricPipeline{{
+				Destination: destination, Projection: telemetry.V8MetricProjectionCanonical,
+				SelectedFamilies: append([]observability.EventName(nil), families...), Sink: capture,
+			}}}, nil
+		},
+	})
+	manager, err := runtimegraph.New(
+		t.Context(), runtimegraph.ConfigFromPlan(plan, false),
+		[]runtimegraph.ComponentFactory{providerFactory},
+		runtimegraph.DefaultOptions(compositePipelineReporter{}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	closed := false
+	t.Cleanup(func() {
+		if !closed {
+			_ = manager.Close(context.Background())
+		}
+	})
+	provider, lease := compositeProviderFromManager(t, manager)
+	digest, generation, ok := provider.V8PlanBinding()
+	if !ok {
+		lease.Release()
+		t.Fatal("projection provider binding missing")
+	}
+	resource, ok := provider.V8ResourceContext()
+	if !ok {
+		lease.Release()
+		t.Fatal("projection provider resource missing")
+	}
+	var occurrence atomic.Int64
+	builder, err := observability.NewFamilyBuilder(
+		observability.ClockFunc(func() time.Time { return time.Unix(600, 0).UTC() }),
+		observability.OccurrenceIDGeneratorFunc(func() (string, error) {
+			return fmt.Sprintf("projected-metric-%d", occurrence.Add(1)), nil
+		}),
+	)
+	if err != nil {
+		lease.Release()
+		t.Fatal(err)
+	}
+	envelope := observability.FamilyEnvelopeInput{
+		Source: observability.SourceGateway,
+		Provenance: observability.FamilyProvenanceInput{
+			Producer: "defenseclaw", BinaryVersion: "generation-test",
+			ConfigGeneration: int64(generation), ConfigDigest: digest,
+		},
+	}
+	for _, record := range build(builder, envelope) {
+		result, recordErr := provider.RecordGeneratedMetric(t.Context(), record)
+		if recordErr != nil || result != (telemetry.V8MetricRecordResult{Matched: 1, Delivered: 1}) {
+			lease.Release()
+			t.Fatalf("project metric %q result=%+v error=%v", record.EventName(), result, recordErr)
+		}
+	}
+	lease.Release()
+	if err := manager.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	closed = true
+	return resource, capture.snapshot()
+}
+
+func materializeGeneratedMetricSink(
+	t *testing.T,
+	factory *Factory,
+	plan *config.ObservabilityV8Plan,
+	generation uint64,
+	resource telemetry.V8ResourceContext,
+) telemetry.V8CanonicalMetricSink {
+	t.Helper()
+	pipelines, err := factory.PrepareOTLPGenerationPipelines(
+		t.Context(), plan, generation, generationMetricSpec(),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		for index := len(pipelines.MetricReaders) - 1; index >= 0; index-- {
+			_ = pipelines.MetricReaders[index].Shutdown(context.Background())
+		}
+	})
+	if len(pipelines.MetricPipelines) != 1 || pipelines.MetricPipelines[0].SinkFactory == nil {
+		t.Fatalf("generated metric pipelines=%d", len(pipelines.MetricPipelines))
+	}
+	sink, err := pipelines.MetricPipelines[0].SinkFactory(t.Context(), resource)
+	if err != nil || sink == nil {
+		t.Fatalf("materialize generated metric sink=%T error=%v", sink, err)
+	}
+	return sink
+}
+
+type generationGRPCMetricCapture struct {
+	collectormetricpb.UnimplementedMetricsServiceServer
+	mu       sync.Mutex
+	requests []*collectormetricpb.ExportMetricsServiceRequest
+}
+
+func (capture *generationGRPCMetricCapture) Export(
+	_ context.Context,
+	request *collectormetricpb.ExportMetricsServiceRequest,
+) (*collectormetricpb.ExportMetricsServiceResponse, error) {
+	capture.mu.Lock()
+	capture.requests = append(
+		capture.requests,
+		proto.Clone(request).(*collectormetricpb.ExportMetricsServiceRequest),
+	)
+	capture.mu.Unlock()
+	return &collectormetricpb.ExportMetricsServiceResponse{}, nil
+}
+
+func (capture *generationGRPCMetricCapture) snapshot() []*collectormetricpb.ExportMetricsServiceRequest {
+	capture.mu.Lock()
+	defer capture.mu.Unlock()
+	return append([]*collectormetricpb.ExportMetricsServiceRequest(nil), capture.requests...)
+}
+
+func capturedMetricsByName(
+	requests []*collectormetricpb.ExportMetricsServiceRequest,
+) map[string]*metricpb.Metric {
+	result := make(map[string]*metricpb.Metric)
+	for _, request := range requests {
+		for _, resourceMetrics := range request.ResourceMetrics {
+			for _, scope := range resourceMetrics.ScopeMetrics {
+				for _, metric := range scope.Metrics {
+					result[metric.Name] = metric
+				}
+			}
+		}
+	}
+	return result
+}
+
+func capturedMetricShape(metric *metricpb.Metric) (string, float64, bool, bool) {
+	if metric == nil {
+		return "", 0, false, false
+	}
+	if sum := metric.GetSum(); sum != nil && len(sum.DataPoints) == 1 {
+		value, ok := capturedNumberDataPoint(sum.DataPoints[0])
+		kind := "updowncounter"
+		if sum.IsMonotonic {
+			kind = "counter"
+		}
+		return kind, value,
+			sum.AggregationTemporality == metricpb.AggregationTemporality_AGGREGATION_TEMPORALITY_DELTA, ok
+	}
+	if gauge := metric.GetGauge(); gauge != nil && len(gauge.DataPoints) == 1 {
+		value, ok := capturedNumberDataPoint(gauge.DataPoints[0])
+		return "gauge", value, false, ok
+	}
+	if histogram := metric.GetHistogram(); histogram != nil && len(histogram.DataPoints) == 1 {
+		return "histogram", histogram.DataPoints[0].GetSum(),
+			histogram.AggregationTemporality == metricpb.AggregationTemporality_AGGREGATION_TEMPORALITY_DELTA, true
+	}
+	return "", 0, false, false
+}
+
+func capturedNumberDataPoint(point *metricpb.NumberDataPoint) (float64, bool) {
+	if point == nil {
+		return 0, false
+	}
+	switch value := point.Value.(type) {
+	case *metricpb.NumberDataPoint_AsInt:
+		return float64(value.AsInt), true
+	case *metricpb.NumberDataPoint_AsDouble:
+		return value.AsDouble, true
+	default:
+		return 0, false
+	}
 }

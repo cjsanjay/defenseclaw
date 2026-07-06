@@ -171,6 +171,12 @@ type V8TraceResourceFields struct {
 
 func (context V8ResourceContext) SchemaURL() string { return context.schemaURL }
 
+// SDKResource returns a detached SDK resource for a destination-private
+// provider. Resource itself is immutable after construction.
+func (context V8ResourceContext) SDKResource() *resource.Resource {
+	return context.clone().sdkResource()
+}
+
 // ResourceDroppedAttributesCount is always zero for a locally constructed
 // resource. The OTel SDK resource model cannot represent a nonzero count.
 func (context V8ResourceContext) ResourceDroppedAttributesCount() uint32 {
@@ -550,6 +556,14 @@ func newProviderV8Inactive(
 		pipelines, pipelineErr = callV8GenerationPipelineFactory(
 			options.GenerationPipelines, ctx, plan, generation, metricSpec,
 		)
+		if pipelineErr == nil {
+			pipelineErr = validateV8MetricPipelineDeclarations(pipelines.MetricPipelines)
+		}
+		if pipelineErr == nil {
+			pipelines.MetricPipelines, pipelineErr = materializeV8MetricPipelines(
+				ctx, resourceContext, pipelines.MetricPipelines,
+			)
+		}
 		preparedReaders = append(preparedReaders, pipelines.MetricReaders...)
 		if pipelineErr != nil || !validV8GenerationPipelines(pipelines, len(traceCollect) > 0, len(metricCollect) > 0) {
 			cleanupV8SpanPipelines(pipelines.SpanPipelines, options.PrepareCleanupTimeout)
