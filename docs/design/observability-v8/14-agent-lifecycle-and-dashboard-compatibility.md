@@ -220,6 +220,112 @@ Duplicate terminal hooks do not create duplicate completed spans or lifecycle
 counts. Deduplication MUST NOT merge two distinct executions merely because they
 share an upstream conversation, agent name, tool name, timestamp, or payload hash.
 
+### 4.4 OpenClaw EventRouter run-observation boundary
+
+The EventRouter `agent` stream is an OpenClaw Gateway WebSocket surface, not a
+Bifrost agent-lifecycle protocol. DefenseClaw uses Bifrost Core `v1.5.21` only for
+LLM-provider request/response translation in `internal/gateway/provider.go`; the
+`[bifrost]` read-loop prefix is historical and does not make Bifrost authoritative
+for these frames. The source audit for this boundary is pinned to:
+
+- DefenseClaw `internal/gateway/client.go` at `79af8ecd33d443143aba43ce042d8b30d61f01b7`,
+  `internal/gateway/frames.go` at `b867158d327b824e68c8db7b7dcd05de927cf9ac`,
+  `internal/gateway/router.go` at `b4c6207ce2661748c50c9933d8724a55afd1f169`,
+  and the Bifrost provider/module pins at
+  `61985c251c3771177da3ecd710b8f1449cc96f9f` /
+  `b6c4ea3122e50ee40bfa9b77f2637cee4c5790d5`.
+- OpenClaw commit
+  [`ba9700d59a1398f4ac68fc23786cce4a6789ba42`](https://github.com/openclaw/openclaw/commit/ba9700d59a1398f4ac68fc23786cce4a6789ba42),
+  specifically `docs/concepts/agent-loop.md`, `src/infra/agent-events.ts`,
+  `src/gateway/server-chat.ts`, `src/gateway/server-broadcast.ts`, and
+  `src/sessions/session-key-utils.ts`.
+- Bifrost Core tag `core/v1.5.21`, commit
+  [`6773fe25780ad70b0e9c235589941712b32380da`](https://github.com/maximhq/bifrost/commit/6773fe25780ad70b0e9c235589941712b32380da),
+  specifically `core/bifrost.go` and `core/schemas/`.
+
+OpenClaw defines an agent run as one serialized run in a session. Its internal
+payload counter and its outer WebSocket counter are different contracts:
+
+| Wire fact | Source-backed meaning | V8 disposition |
+|---|---|---|
+| payload `runId` | The OpenClaw accepted-run/idempotency key for one agent-loop invocation. It is not `defenseclaw.run.id`, which remains the DefenseClaw gateway/sidecar process run. | Preserve as a distinct connector-scoped agent-run ID. |
+| payload `seq` | Positive counter assigned by OpenClaw immediately before notifying listeners; monotonic only within the active `runId` context and cleared with that context. | Preserve as upstream run order. It is not the PR #403 per-execution sequence until the execution mapping is validated. |
+| payload `ts` | `Date.now()` at event emission, in Unix milliseconds. | Convert to Unix nanoseconds with checked multiplication by `1_000_000`; never interpret it as seconds or nanoseconds. |
+| `data.startedAt` / `data.endedAt` | Producer wall-clock values written with `Date.now()`, in Unix milliseconds, when the emitting path supplies them. | Preserve only when positive and ordered. Missing values do not create synthetic time or duration. |
+| payload `sessionKey` | OpenClaw routing/session correlation for the run. It can resolve a session, but OpenClaw separately stamps `sessionId` so a pre-reset terminal event cannot mutate the new session incarnation behind the same key. | Preserve as `correlation.session_id` on the narrow observation. It alone is insufficient to mint a PR #403 conversation/lifecycle identity across reset. |
+| lifecycle `start` / `end` / `error` | Observations about an agent-loop run/turn. They are not session-create/session-destroy or subagent-create/subagent-destroy events. Current OpenClaw can defer error finalization during retry grace and clear it when later lifecycle evidence arrives. | Preserve the literal observation. Do not rename it `session_start`, `session_end`, `subagent_start`, or `subagent_stop`, and do not default an unknown/error observation to a terminal `failed` outcome. |
+| outer frame `seq` | Per-WebSocket-client delivery counter. Targeted frames omit it; slow-client drops advance it; a new connection receives a new counter starting at one. | Use only for connection-local gap diagnostics. It is neither an event ID nor a replay cursor. |
+
+OpenClaw's current payload and session surfaces can also supply `sessionId`,
+`agentId`, `spawnedBy`, `parentSessionKey`, `spawnDepth`, and session kind. The
+current DefenseClaw EventRouter payload struct discards those facts. Parsing a
+configured default agent name or the string `openclaw` does not recover them:
+`openclaw` is connector provenance, not agent type, and a configured agent ID is
+not proof that the operation is root. Session-key grammar can positively identify
+some subagent/ACP keys, but it does not by itself provide a validated root and
+parent chain for every supported OpenClaw session kind and version.
+
+Therefore the three current callbacks cannot enter `body.agent.lifecycle`,
+`log.compat.{session,subagent}_*`, `span.agent.transition`, or
+`span.agent.invoke`. In particular, an `AgentTrace` or graph-generation lease MUST
+NOT be kept in `EventRouter.activeAgentSpans` or another cache between start and
+terminal deliveries. A terminal delivery may construct one completed span
+entirely within that delivery only after it contains validated start/end time and
+all required identity/topology facts; otherwise it remains a log occurrence.
+
+The smallest truthful generated successor is one proposed log family,
+`log.agent.run.observed`, with event name `agent.run.observed` in the
+`agent.lifecycle` bucket. It does not extend `lifecycle.agent`, has forbidden
+canonical outcome, does not update PR #403 lifecycle/phase metrics, and is not a
+`local-observability-v1` Agent360 lifecycle input. Its initial contract is:
+
+| Field | Requirement |
+|---|---|
+| `defenseclaw.agent.run.id` | Required identifier, 1..256 UTF-8 bytes, from nonempty payload `runId`; it is distinct from and must not populate `defenseclaw.run.id`. |
+| `defenseclaw.agent.run.event` | Required metadata enum `start`, `end`, or `error`, copied from `data.phase`. |
+| `defenseclaw.agent.run.sequence` | Required `uint64` in `1..2^63-1` from payload `seq`; zero, negative, fractional, or overflow values reject the occurrence. |
+| record timestamp | Required, from valid payload `ts` milliseconds; local receipt time remains `observed_at`. |
+| session correlation | Optional `correlation.session_id` from nonempty `sessionKey`; no lifecycle/root claim follows. |
+| process correlation | Optional `correlation.run_id` from `gatewaylog.ProcessRunID()`, kept distinct from the upstream run ID. |
+| `defenseclaw.agent.run.started_at_unix_nano` / `defenseclaw.agent.run.ended_at_unix_nano` | Optional `uint64` values produced by checked positive millisecond-to-nanosecond conversion from the same frame; when both exist, start MUST be no later than end. |
+| `defenseclaw.agent.run.error_message` | Optional content/sensitive string on an `error` observation only, at most 4,096 UTF-8 bytes before central redaction. It is forbidden on start/end; raw prompt/model state is never copied. |
+
+The family is an occurrence log, not a promise that all three observations were
+received. It emits no synthetic start for a terminal-only delivery, no synthetic
+terminal on disconnect/timeout, and no duration from local receipt time. The exact
+duplicate key is `(connector, sessionKey?, runId, payload-seq, payload-ts,
+stream, phase)`: a byte-equivalent repeat inside the bounded dedupe window is one
+occurrence, while a changed sequence or producer timestamp remains a distinct
+observation. Outer frame sequence is deliberately absent from that key. Reconnect
+does not replay missed OpenClaw agent frames, so a gap produces a diagnostic and
+never a reconstructed lifecycle record.
+
+The dedupe cache is process-local and router-owned, contains at most 4,096 keys,
+and retains each insertion for ten minutes of monotonic local time. It stores only
+the bounded key plus insertion time, evicts expired keys before lookup, and evicts
+the oldest insertion at capacity. A repeat after expiry, eviction, or restart is a
+new at-least-once occurrence. Cache pressure never drops a previously unseen
+observation, and neither the error value nor any content enters the key.
+
+Full PR #403 normalization requires an adapter, not a looser builder. The adapter
+must version-gate and retain `sessionId`, current `agentId`, explicit session kind,
+parent/root session chain, root/current/parent agent identity, and depth; validate
+one-run/one-turn semantics; and classify abort/timeout/retry terminal evidence.
+Only then may it derive the existing compatibility hashes with the existing
+`stableLLMEventID` algorithm (trim nonempty parts, NUL-join, SHA-256, first eight
+bytes as lowercase hex):
+
+```text
+lifecycle = stableLLMEventID("lifecycle", "openclaw", sessionId, validatedCurrentAgentId)
+execution = stableLLMEventID("execution", "openclaw", sessionId, validatedCurrentAgentId, runId, startedAtMs)
+```
+
+`startedAtMs` is part of the execution seed because OpenClaw `runId` is a
+caller-supplied idempotency key and must not be assumed globally unique forever.
+Both hashes are omitted unless every seed is present and the same execution seed
+is available on its related observations. The adapter may use a bounded expiring
+fact cache, but it may not retain a runtime trace handle or generation lease.
+
 ## 5. Model, Tool, Turn, and Approval Continuity
 
 The v8 registry and builders MUST preserve the current runtime agent, model, tool,
@@ -638,7 +744,37 @@ Every scenario asserts exact record/span/metric counts, stable correlation, phas
 codes and sequence, parent/link shape, reported-state behavior, and no duplicate
 old/new pipeline output.
 
-### 11.2 Static and packaged dashboard checks
+### 11.2 EventRouter run-observation acceptance matrix
+
+The following matrix is executable as table-driven gateway tests. Until the
+proposed family and adapter parser exist, `legacy only` is the required current
+result and C-0029 remains active. After registry materialization, the exact suite
+name is `TestEventRouterAgentRunObservationContract` and the focused command is:
+
+```bash
+go test ./internal/gateway -run '^TestEventRouterAgentRunObservationContract$' -count=1
+```
+
+| Case | Ordered input | Required assertion |
+|---|---|---|
+| `ER-RUN-01` | lifecycle `start`, nonempty `runId`/`sessionKey`, payload `seq=1`, valid `ts`/`startedAt` | Current tree: one legacy owner only. Successor: one `agent.run.observed` occurrence with event `start`, exact upstream run ID and sequence, checked source time, no PR #403 lifecycle/root/depth/type fields, span, or lifecycle metric. |
+| `ER-RUN-02` | lifecycle `end`, `seq=2`, valid `startedAt <= endedAt` | One `end` occurrence; source interval may be preserved, but no `session_end`, fabricated outcome, or cross-delivery handle. |
+| `ER-RUN-03` | lifecycle `error` followed by `end` for the same run with increasing payload sequence | Preserve both literal observations. The error is centrally redacted and is not coerced to final `failed`; the later end is not dropped merely because error arrived first. |
+| `ER-RUN-04` | exact repeat of the same `(sessionKey, runId, seq, ts, stream, phase)` | One successor occurrence inside the bounded dedupe window; still exactly one legacy owner before cutover. |
+| `ER-RUN-05` | same run/phase with changed payload `seq` or `ts` | Two observations; do not merge plausible distinct upstream occurrences by name, phase, or payload hash. |
+| `ER-RUN-06` | terminal frame without an observed start | Emit the terminal occurrence only; no synthetic start, duration, invoke span, or lifecycle count. |
+| `ER-RUN-07` | outer frame sequence gap or regression with valid increasing payload sequence | At most a connection diagnostic; normal run observation uses payload sequence and is not dropped or renumbered. |
+| `ER-RUN-08` | disconnect after start, reconnect, then terminal or no further frame | Outer sequence restarts for the new connection. No replay is assumed, no timeout terminal is invented, and no runtime lease survives the delivery. A later terminal is a terminal-only occurrence unless its own facts are sufficient. |
+| `ER-RUN-09` | missing/zero `runId`, payload sequence, or producer timestamp; overflow during millisecond-to-nanosecond conversion | No successor family record; emit bounded schema/diagnostic accounting. Do not substitute outer sequence, local UUID, or local time for the invalid source fact. |
+| `ER-RUN-10` | valid start/end plus only configured connector/default-agent values | Agent type, root/current relationship, parent/root session, and depth remain absent; the literal `openclaw` is provenance only. |
+| `ER-RUN-11` | adapter fixture includes `sessionId`, `agentId`, explicit kind, complete parent/root chain/depth, `runId`, and identical `startedAt` | The lifecycle/execution hashes match the formulas in section 4.4 across related observations; restart preserves lifecycle, a new attempt/start time changes execution, and reset/new `sessionId` changes lifecycle. |
+| `ER-RUN-12` | reload while a start has no terminal | Reload completes without waiting for an EventRouter run, old graph generations drain, and neither generated `AgentTrace` nor another generation lease is retained. |
+
+The implementation test must capture generated records, legacy audit rows,
+metrics, and active graph generations in the same fixture so `legacy only`, exact
+dedupe counts, and lease freedom are assertions rather than log inspection.
+
+### 11.3 Static and packaged dashboard checks
 
 The release runs:
 
@@ -652,7 +788,7 @@ Prometheus cadence, PromQL/LogQL/TraceQL shape, registered metrics and labels,
 histogram buckets, legends, percentile grouping, dashboard links, variable
 datasources, and the generated compatibility inventory.
 
-### 11.3 Live bundle checks
+### 11.4 Live bundle checks
 
 A release candidate starts the bundled stack, emits the golden root/subagent
 scenario through real producers, and validates:
