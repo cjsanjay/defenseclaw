@@ -315,6 +315,10 @@ func (s *Sidecar) bindObservabilityV8ConsumersLocked() {
 	}
 	canary, _ := emitter.(sidecarRuntimeCanaryEmitter)
 	localOnly, _ := emitter.(sidecarRuntimeLocalOnlyEmitter)
+	judgeRuntime, _ := emitter.(judgeTraceV8Runtime)
+	if judge := s.sharedJudge(); judge != nil {
+		judge.bindJudgeTraceV8(judgeRuntime)
+	}
 
 	s.apiMu.RLock()
 	if api := s.apiServer; api != nil {
@@ -326,7 +330,7 @@ func (s *Sidecar) bindObservabilityV8ConsumersLocked() {
 	}
 	s.proxyMu.RLock()
 	if proxy := s.guardrailProxy; proxy != nil {
-		proxy.bindObservabilityV8Trace(lifecycle)
+		proxy.bindObservabilityV8TraceMode(lifecycle, true)
 	}
 	s.proxyMu.RUnlock()
 }

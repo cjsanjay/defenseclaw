@@ -207,6 +207,9 @@ func configureGuardrailInspectorTelemetry(inspector *GuardrailInspector, tel *te
 	if inspector == nil {
 		return
 	}
+	if inspector.judge != nil {
+		inspector.judge.SetTelemetryProvider(tel)
+	}
 	if tel == nil {
 		inspector.SetPanicRecorderFunc(nil)
 		inspector.SetTracerFunc(nil)

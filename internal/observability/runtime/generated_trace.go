@@ -75,6 +75,14 @@ type ModelTrace struct {
 	node    *generatedTraceNode
 }
 
+// JudgeTrace is one generated span.guardrail.judge for an actual local LLM
+// judge provider call. The handle is request bounded and keeps the exact
+// runtime generation alive until End or Abort.
+type JudgeTrace struct {
+	session *generatedTraceSession
+	node    *generatedTraceNode
+}
+
 // ToolTrace is one generated span.tool.execute nested under an AgentTrace or
 // ModelTrace.
 type ToolTrace struct {
@@ -193,6 +201,27 @@ func (runtime *Runtime) StartModelTrace(
 		return startedContext, nil, err
 	}
 	return startedContext, &ModelTrace{session: session, node: node}, nil
+}
+
+// StartJudgeTrace starts a request-bounded span.guardrail.judge for a real
+// local judge model call. A nil handle with a nil error means collection or
+// sampling declined the span; callers must not fall back to a legacy span in
+// that case because the active v8 runtime remains authoritative.
+func (runtime *Runtime) StartJudgeTrace(
+	ctx context.Context,
+	input observability.SpanGuardrailJudgeInput,
+) (context.Context, *JudgeTrace, error) {
+	if input.GenAIRequestModel == "" || input.DefenseClawJudgeKind == "" {
+		return ctx, nil, generatedTraceError(GeneratedTraceInvalidInput)
+	}
+	startedContext, session, node, err := runtime.startGeneratedTrace(
+		ctx, observability.BucketGuardrailEvaluation, observability.TelemetryFamilyGuardrailJudge,
+		input.Kind, input.GenAIRequestModel, input.StartTimeUnixNano,
+	)
+	if err != nil || node == nil {
+		return startedContext, nil, err
+	}
+	return startedContext, &JudgeTrace{session: session, node: node}, nil
 }
 
 // StartToolTrace starts a request-bounded root span.tool.execute when a real
@@ -486,6 +515,9 @@ func (span *AgentTrace) Context() context.Context {
 func (span *ModelTrace) Context() context.Context {
 	return generatedNodeContext(span.session, span.node)
 }
+func (span *JudgeTrace) Context() context.Context {
+	return generatedNodeContext(span.session, span.node)
+}
 func (span *ToolTrace) Context() context.Context {
 	return generatedNodeContext(span.session, span.node)
 }
@@ -504,6 +536,7 @@ func (span *TelemetryNormalizeTrace) Context() context.Context {
 
 func (span *AgentTrace) Generation() uint64 { return generatedNodeGeneration(span.session, span.node) }
 func (span *ModelTrace) Generation() uint64 { return generatedNodeGeneration(span.session, span.node) }
+func (span *JudgeTrace) Generation() uint64 { return generatedNodeGeneration(span.session, span.node) }
 func (span *ToolTrace) Generation() uint64  { return generatedNodeGeneration(span.session, span.node) }
 func (span *AgentTransitionTrace) Generation() uint64 {
 	return generatedNodeGeneration(span.session, span.node)
@@ -520,6 +553,7 @@ func (span *TelemetryNormalizeTrace) Generation() uint64 {
 
 func (span *AgentTrace) TraceID() string { return generatedNodeTraceID(span.session, span.node) }
 func (span *ModelTrace) TraceID() string { return generatedNodeTraceID(span.session, span.node) }
+func (span *JudgeTrace) TraceID() string { return generatedNodeTraceID(span.session, span.node) }
 func (span *ToolTrace) TraceID() string  { return generatedNodeTraceID(span.session, span.node) }
 func (span *AgentTransitionTrace) TraceID() string {
 	return generatedNodeTraceID(span.session, span.node)
@@ -534,6 +568,7 @@ func (span *TelemetryNormalizeTrace) TraceID() string {
 
 func (span *AgentTrace) SpanID() string { return generatedNodeSpanID(span.session, span.node) }
 func (span *ModelTrace) SpanID() string { return generatedNodeSpanID(span.session, span.node) }
+func (span *JudgeTrace) SpanID() string { return generatedNodeSpanID(span.session, span.node) }
 func (span *ToolTrace) SpanID() string  { return generatedNodeSpanID(span.session, span.node) }
 func (span *AgentTransitionTrace) SpanID() string {
 	return generatedNodeSpanID(span.session, span.node)
@@ -561,6 +596,13 @@ func (span *ModelTrace) End(input observability.SpanModelChatInput) error {
 		return generatedTraceError(GeneratedTraceInvalidInput)
 	}
 	return span.session.endModel(span.node, input)
+}
+
+func (span *JudgeTrace) End(input observability.SpanGuardrailJudgeInput) error {
+	if span == nil || span.session == nil || span.node == nil {
+		return generatedTraceError(GeneratedTraceInvalidInput)
+	}
+	return span.session.endJudge(span.node, input)
 }
 
 func (span *ToolTrace) End(input observability.SpanToolExecuteInput) error {
@@ -608,6 +650,12 @@ func (span *AgentTrace) Abort() {
 }
 
 func (span *ModelTrace) Abort() {
+	if span != nil && span.session != nil {
+		span.session.abort()
+	}
+}
+
+func (span *JudgeTrace) Abort() {
 	if span != nil && span.session != nil {
 		span.session.abort()
 	}
@@ -745,6 +793,30 @@ func (session *generatedTraceSession) endModel(
 	}
 	input = session.sealModelInput(input, node, end)
 	record, buildErr := session.builder.BuildSpanModelChat(input)
+	if buildErr != nil {
+		session.abortLocked()
+		return generatedTraceError(GeneratedTraceBuildRejected)
+	}
+	return session.registerEndLocked(node, input.Status, record)
+}
+
+func (session *generatedTraceSession) endJudge(
+	node *generatedTraceNode,
+	input observability.SpanGuardrailJudgeInput,
+) (err error) {
+	defer session.abortOnPanic()
+	session.mu.Lock()
+	defer session.mu.Unlock()
+	if err := session.preflightEndLocked(node); err != nil {
+		return err
+	}
+	end, ok := generatedTraceEndTime(input.EndTimeUnixNano, node.start)
+	if !ok {
+		session.abortLocked()
+		return generatedTraceError(GeneratedTraceInvalidInput)
+	}
+	input = session.sealJudgeInput(input, node, end)
+	record, buildErr := session.builder.BuildSpanGuardrailJudge(input)
 	if buildErr != nil {
 		session.abortLocked()
 		return generatedTraceError(GeneratedTraceBuildRejected)
@@ -946,6 +1018,29 @@ func (session *generatedTraceSession) sealModelInput(
 	node *generatedTraceNode,
 	end time.Time,
 ) observability.SpanModelChatInput {
+	input.Envelope = session.sealEnvelope(input.Envelope, node)
+	input.Kind, input.StartTimeUnixNano, input.EndTimeUnixNano = node.kind, uint64(node.start.UnixNano()), uint64(end.UnixNano())
+	input.ParentSpanID, input.TraceState, input.Flags = generatedTraceParent(node), generatedTraceState(node.spanContext), generatedTraceFlags(node)
+	input.Resource, input.Scope = session.resource.Resource, observability.TraceScopeInput{}
+	input.ResourceServiceName = session.resource.ServiceName
+	input.ResourceServiceNamespace = session.resource.ServiceNamespace
+	input.ResourceServiceInstanceID = session.resource.ServiceInstanceID
+	input.ResourceDeploymentEnvironmentName = session.resource.DeploymentEnvironmentName
+	input.ResourceHostName, input.ResourceHostArch, input.ResourceOsType = session.resource.HostName, session.resource.HostArch, session.resource.OSType
+	input.ResourceTenantID, input.ResourceWorkspaceID = session.resource.TenantID, session.resource.WorkspaceID
+	input.ResourceDefenseClawDeploymentMode = session.resource.DefenseClawDeploymentMode
+	input.ResourceDefenseClawClawMode = session.resource.DefenseClawClawMode
+	input.ResourceDefenseClawInstanceID = session.resource.DefenseClawInstanceID
+	input.ResourceDefenseClawDevicePublicKeyFingerprint = session.resource.DefenseClawDevicePublicKeyFingerprint
+	input.GenAIRequestModel = node.nameKey
+	return input
+}
+
+func (session *generatedTraceSession) sealJudgeInput(
+	input observability.SpanGuardrailJudgeInput,
+	node *generatedTraceNode,
+	end time.Time,
+) observability.SpanGuardrailJudgeInput {
 	input.Envelope = session.sealEnvelope(input.Envelope, node)
 	input.Kind, input.StartTimeUnixNano, input.EndTimeUnixNano = node.kind, uint64(node.start.UnixNano()), uint64(end.UnixNano())
 	input.ParentSpanID, input.TraceState, input.Flags = generatedTraceParent(node), generatedTraceState(node.spanContext), generatedTraceFlags(node)
@@ -1188,6 +1283,8 @@ func generatedTraceFamilyKind(family, kind string) bool {
 		return kind == "INTERNAL" || kind == "CLIENT"
 	case observability.TelemetryFamilyModelChat:
 		return kind == "CLIENT"
+	case observability.TelemetryFamilyGuardrailJudge:
+		return kind == "CLIENT"
 	case observability.TelemetryFamilyAgentTransition, observability.TelemetryFamilyApprovalResolve:
 		return kind == "INTERNAL"
 	case observability.TelemetryFamilyTelemetryReceive:
@@ -1207,6 +1304,8 @@ func generatedTraceName(family, key string) string {
 	case observability.TelemetryFamilyAgentInvoke:
 		return "invoke_agent " + key
 	case observability.TelemetryFamilyModelChat:
+		return "chat " + key
+	case observability.TelemetryFamilyGuardrailJudge:
 		return "chat " + key
 	case observability.TelemetryFamilyToolExecute:
 		return "execute_tool " + key

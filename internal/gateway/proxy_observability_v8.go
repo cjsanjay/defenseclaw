@@ -64,12 +64,23 @@ func proxyV8DefaultResult(streaming bool) proxyV8TraceResult {
 }
 
 func (p *GuardrailProxy) bindObservabilityV8Trace(runtime lifecycleV8Runtime) {
+	p.bindObservabilityV8TraceMode(runtime, runtime != nil)
+}
+
+func (p *GuardrailProxy) bindObservabilityV8TraceMode(runtime lifecycleV8Runtime, v8Authoritative bool) {
 	if p == nil {
 		return
 	}
 	p.observabilityV8Mu.Lock()
 	p.observabilityV8Trace = runtime
 	p.observabilityV8Mu.Unlock()
+	judgeRuntime, _ := runtime.(judgeTraceV8Runtime)
+	if inspector, ok := p.inspector.(*GuardrailInspector); ok && inspector.judge != nil {
+		_, _, alreadyAuthoritative := inspector.judge.judgeTelemetrySnapshot()
+		if v8Authoritative || alreadyAuthoritative {
+			inspector.judge.bindJudgeTraceV8(judgeRuntime)
+		}
+	}
 }
 
 func (p *GuardrailProxy) observabilityV8TraceRuntime() lifecycleV8Runtime {

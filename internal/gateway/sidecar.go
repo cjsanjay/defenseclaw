@@ -114,7 +114,8 @@ type Sidecar struct {
 	// (EventRouter.SetJudge) and the hook lane (APIServer.SetHookJudge
 	// in runAPI) so both lanes use one Bifrost client cache and one
 	// verdict cache. nil when guardrail.judge.enabled is false.
-	judge *LLMJudge
+	judgeMu sync.RWMutex
+	judge   *LLMJudge
 
 	// judgeStore is the async judge completion queue. It remains active when
 	// guardrail.retain_judge_bodies is off so canonical allow/block/error logs
@@ -266,6 +267,7 @@ func NewSidecar(cfg *config.Config, store *audit.Store, logger *audit.Logger, sh
 	// tool_injection is on.
 	hookJudge := buildSharedJudge(cfg, rp)
 	if hookJudge != nil {
+		hookJudge.SetTelemetryProvider(otel)
 		router.SetJudge(hookJudge)
 	}
 
@@ -514,6 +516,24 @@ func (s *Sidecar) currentConfig() *config.Config {
 		return cfg
 	}
 	return s.cfg
+}
+
+func (s *Sidecar) sharedJudge() *LLMJudge {
+	if s == nil {
+		return nil
+	}
+	s.judgeMu.RLock()
+	defer s.judgeMu.RUnlock()
+	return s.judge
+}
+
+func (s *Sidecar) setSharedJudge(judge *LLMJudge) {
+	if s == nil {
+		return
+	}
+	s.judgeMu.Lock()
+	s.judge = judge
+	s.judgeMu.Unlock()
 }
 
 func (s *Sidecar) publishConfig(cfg *config.Config) *config.Config {
@@ -1334,7 +1354,23 @@ func (s *Sidecar) applyConfigReloadSnapshot(
 	}
 
 	if judgeReload {
-		s.judge = nextJudge
+		if nextJudge != nil {
+			tel := s.otelSnapshot()
+			if otelReload {
+				tel = nextOTel
+			}
+			nextJudge.SetTelemetryProvider(tel)
+			if appliedCfg.ConfigVersion == 8 {
+				s.observabilityV8Mu.Lock()
+				judgeRuntime, _ := s.observabilityV8.(judgeTraceV8Runtime)
+				if s.observabilityV8ConsumersDetached {
+					judgeRuntime = nil
+				}
+				nextJudge.bindJudgeTraceV8(judgeRuntime)
+				s.observabilityV8Mu.Unlock()
+			}
+		}
+		s.setSharedJudge(nextJudge)
 		if s.router != nil {
 			s.router.SetJudge(nextJudge)
 		}
@@ -1435,6 +1471,9 @@ func (s *Sidecar) applyOTelProvider(p *telemetry.Provider) {
 	}
 	if s.hilt != nil {
 		s.hilt.SetOTelProvider(p)
+	}
+	if judge := s.sharedJudge(); judge != nil {
+		judge.SetTelemetryProvider(p)
 	}
 	if webhooks := s.webhooksSnapshot(); webhooks != nil {
 		webhooks.BindObservability(p)
@@ -1592,15 +1631,17 @@ func (s *Sidecar) setGuardrailProxy(proxy *GuardrailProxy) {
 	s.observabilityV8Mu.Lock()
 	s.proxyMu.Lock()
 	previous := s.guardrailProxy
+	current := s.currentConfig()
+	v8Authoritative := current != nil && current.ConfigVersion == 8
 	if previous != nil && previous != proxy {
-		previous.bindObservabilityV8Trace(nil)
+		previous.bindObservabilityV8TraceMode(nil, v8Authoritative)
 	}
 	if proxy != nil {
 		lifecycle := s.observabilityV8Lifecycle
 		if s.observabilityV8ConsumersDetached {
 			lifecycle = nil
 		}
-		proxy.bindObservabilityV8Trace(lifecycle)
+		proxy.bindObservabilityV8TraceMode(lifecycle, v8Authoritative)
 	}
 	s.guardrailProxy = proxy
 	s.proxyMu.Unlock()
@@ -3794,8 +3835,8 @@ func (s *Sidecar) runAPI(ctx context.Context) error {
 	// proxy lane's router judge — one Bifrost client cache, one verdict
 	// cache. nil when guardrail.judge.enabled is false; the hook lane
 	// then skips the judge exactly as before.
-	if s.judge != nil {
-		api.SetHookJudge(s.judge)
+	if judge := s.sharedJudge(); judge != nil {
+		api.SetHookJudge(judge)
 	}
 	api.SetAIDiscoveryService(s.aiDiscoverySnapshot())
 	api.SetNotifier(s.osNotifier)

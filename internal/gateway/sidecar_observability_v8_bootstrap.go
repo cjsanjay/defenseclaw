@@ -442,6 +442,21 @@ func (owner *sidecarOwnedObservabilityV8Runtime) StartModelTrace(
 	return owner.runtime.StartModelTrace(ctx, input)
 }
 
+func (owner *sidecarOwnedObservabilityV8Runtime) StartJudgeTrace(
+	ctx context.Context,
+	input observability.SpanGuardrailJudgeInput,
+) (context.Context, *observabilityruntime.JudgeTrace, error) {
+	if owner == nil || owner.runtime == nil {
+		return ctx, nil, newSidecarObservabilityV8BootstrapError(sidecarObservabilityV8BootstrapClose, nil)
+	}
+	owner.lifecycleMu.RLock()
+	defer owner.lifecycleMu.RUnlock()
+	if owner.closed {
+		return ctx, nil, newSidecarObservabilityV8BootstrapError(sidecarObservabilityV8BootstrapClose, nil)
+	}
+	return owner.runtime.StartJudgeTrace(ctx, input)
+}
+
 func (owner *sidecarOwnedObservabilityV8Runtime) StartToolTrace(
 	ctx context.Context,
 	input observability.SpanToolExecuteInput,

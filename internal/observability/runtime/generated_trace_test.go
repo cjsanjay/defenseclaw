@@ -216,6 +216,43 @@ func generatedModelInput(model string, start, end time.Time) observability.SpanM
 	}
 }
 
+func generatedJudgeInput(model string, start, end time.Time) observability.SpanGuardrailJudgeInput {
+	envelope := generatedTraceEnvelope()
+	envelope.Action = "judge"
+	envelope.Phase = "judge"
+	return observability.SpanGuardrailJudgeInput{
+		Envelope: envelope, Outcome: observability.OutcomeAllowed, Kind: "CLIENT",
+		StartTimeUnixNano: generatedTimeNanos(start), EndTimeUnixNano: generatedTimeNanos(end),
+		Status:                              observability.NewTraceStatusOK(),
+		DefenseClawJudgeKind:                "injection",
+		DefenseClawGuardrailPhase:           observability.Present("judge"),
+		DefenseClawGuardrailDirection:       observability.Present("input"),
+		DefenseClawGuardrailCacheHit:        observability.Present(false),
+		DefenseClawGuardrailAttempt:         observability.Present[int64](1),
+		DefenseClawGuardrailLatencyMs:       observability.Present(12.5),
+		DefenseClawGuardrailRawAction:       observability.Present("allow"),
+		DefenseClawGuardrailEffectiveAction: observability.Present("allow"),
+		GenAIOperationName:                  observability.Present("chat"),
+		GenAIProviderName:                   observability.Present("openai"),
+		GenAIRequestModel:                   model,
+		GenAIResponseModel:                  observability.Present(model),
+		GenAIRequestMaxTokens:               observability.Present[int64](1024),
+		GenAIUsageInputTokens:               observability.Present[int64](10),
+		GenAIUsageOutputTokens:              observability.Present[int64](5),
+		DefenseClawModelAttempt:             observability.Present[int64](1),
+		DefenseClawModelRetryCount:          observability.Present[int64](0),
+		DefenseClawModelUpstreamMs:          observability.Present(12.5),
+		DefenseClawModelStreaming:           observability.Present(false),
+		DefenseClawGuardrailFindingCount:    observability.Present[int64](0),
+		DefenseClawTelemetryTokensReported:  observability.Present(true),
+		DefenseClawTelemetryInputReported:   false,
+		DefenseClawContentInputState:        "not_reported",
+		DefenseClawTelemetryOutputReported:  false,
+		DefenseClawContentOutputState:       "not_reported",
+		ConditionOperationTerminal:          true,
+	}
+}
+
 func generatedToolInput(tool string, start, end time.Time) observability.SpanToolExecuteInput {
 	envelope := generatedTraceEnvelope()
 	envelope.Phase = "tool"
@@ -430,6 +467,103 @@ func TestGeneratedTraceSessionPreservesRichHierarchyAndMissingData(t *testing.T)
 	}
 	if links, ok := modelBody["links"].([]any); !ok || len(links) != 1 {
 		t.Fatalf("model links=%v", modelBody["links"])
+	}
+}
+
+func TestGeneratedJudgeTraceBuildsCanonicalFamily(t *testing.T) {
+	dependencies := newRuntimeTestDependencies(t)
+	pipelines := &generatedTracePipelines{consumers: make(map[uint64]*generatedTraceConsumer)}
+	plan := generatedTracePlan(t, dependencies, 90, "always_on", []observability.Bucket{"*"})
+	runtime := newGeneratedTraceRuntime(t, dependencies, pipelines, plan)
+
+	base := time.Now().UTC().Add(-time.Second)
+	input := generatedJudgeInput("openai/gpt-5.5", base, base.Add(25*time.Millisecond))
+	missingKind := input
+	missingKind.DefenseClawJudgeKind = ""
+	if _, invalid, invalidErr := runtime.StartJudgeTrace(t.Context(), missingKind); invalid != nil ||
+		generatedTraceErrorCode(invalidErr) != GeneratedTraceInvalidInput {
+		t.Fatalf("missing judge kind handle=%v error=%v", invalid, invalidErr)
+	}
+	ctx, judge, err := runtime.StartJudgeTrace(t.Context(), input)
+	if err != nil || judge == nil || ctx == nil || judge.Generation() != 1 {
+		t.Fatalf("start judge=%v context=%v error=%v", judge, ctx, err)
+	}
+	if err := judge.End(input); err != nil {
+		t.Fatal(err)
+	}
+
+	spans := pipelines.consumer(t, 1).snapshot()
+	if len(spans) != 1 {
+		t.Fatalf("canonical judge spans=%d, want 1", len(spans))
+	}
+	ended := spans[0]
+	if ended.Record().EventName() != observability.EventName(observability.TelemetryFamilyGuardrailJudge) ||
+		ended.Name() != "chat openai/gpt-5.5" || ended.Record().Provenance().ConfigGeneration != 1 {
+		t.Fatalf("judge identity name=%q record=%s provenance=%+v", ended.Name(), ended.Record().EventName(), ended.Record().Provenance())
+	}
+	attributes := generatedTraceRecordAttributes(t, ended.Record())
+	if attributes["gen_ai.provider.name"] != "openai" ||
+		attributes["gen_ai.request.model"] != "openai/gpt-5.5" ||
+		attributes["defenseclaw.judge.kind"] != "injection" ||
+		attributes["defenseclaw.guardrail.cache_hit"] != false ||
+		attributes["defenseclaw.guardrail.attempt"] != float64(1) ||
+		attributes["defenseclaw.guardrail.latency_ms"] != 12.5 ||
+		attributes["defenseclaw.model.attempt"] != float64(1) ||
+		attributes["gen_ai.usage.input_tokens"] != float64(10) ||
+		attributes["gen_ai.usage.output_tokens"] != float64(5) {
+		t.Fatalf("judge attributes=%v", attributes)
+	}
+}
+
+func TestGeneratedJudgeTracePinsGenerationAcrossReload(t *testing.T) {
+	dependencies := newRuntimeTestDependencies(t)
+	pipelines := &generatedTracePipelines{consumers: make(map[uint64]*generatedTraceConsumer)}
+	initial := generatedTracePlan(t, dependencies, 90, "always_on", []observability.Bucket{"*"})
+	runtime := newGeneratedTraceRuntime(t, dependencies, pipelines, initial)
+	base := time.Now().UTC().Add(-time.Second)
+	input := generatedJudgeInput("openai/gpt-5.5", base, base.Add(25*time.Millisecond))
+	_, judge, err := runtime.StartJudgeTrace(t.Context(), input)
+	if err != nil || judge == nil || judge.Generation() != 1 {
+		t.Fatalf("start judge=%v error=%v", judge, err)
+	}
+
+	reloadDone := make(chan struct {
+		result runtimegraph.ReloadResult
+		err    *runtimegraph.Error
+	}, 1)
+	candidate := generatedTracePlan(t, dependencies, 30, "always_on", []observability.Bucket{"*"})
+	go func() {
+		result, reloadErr := runtime.Reload(t.Context(), runtimegraph.ConfigFromPlan(candidate, false))
+		reloadDone <- struct {
+			result runtimegraph.ReloadResult
+			err    *runtimegraph.Error
+		}{result: result, err: reloadErr}
+	}()
+	deadline := time.Now().Add(5 * time.Second)
+	for runtime.Active() == nil || runtime.Active().Generation() != 2 {
+		if time.Now().After(deadline) {
+			t.Fatal("judge reload did not publish generation two")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	select {
+	case <-reloadDone:
+		t.Fatal("judge reload returned before the active handle released generation one")
+	default:
+	}
+	if judge.Generation() != 1 {
+		t.Fatalf("live judge generation=%d, want 1", judge.Generation())
+	}
+	if err := judge.End(input); err != nil {
+		t.Fatal(err)
+	}
+	reload := <-reloadDone
+	if reload.err != nil || reload.result.Status() != runtimegraph.ReloadApplied {
+		t.Fatalf("judge reload=%s error=%v", reload.result.Status(), reload.err)
+	}
+	spans := pipelines.consumer(t, 1).snapshot()
+	if len(spans) != 1 || spans[0].Record().Provenance().ConfigGeneration != 1 {
+		t.Fatalf("generation-one judge spans=%v", spans)
 	}
 }
 
@@ -941,6 +1075,11 @@ func TestGeneratedTraceSessionReleasesLeaseAfterBuildFailureAndSamplingDrop(t *t
 	}
 	if got := len(pipelines.consumer(t, 2).snapshot()); got != 0 {
 		t.Fatalf("sampling drop resurrected %d canonical spans", got)
+	}
+	judgeInput := generatedJudgeInput("openai/gpt-5.5", base, base.Add(time.Millisecond))
+	_, droppedJudge, judgeDropErr := runtime.StartJudgeTrace(t.Context(), judgeInput)
+	if judgeDropErr != nil || droppedJudge != nil {
+		t.Fatalf("always-off judge sampling returned handle=%v error=%v", droppedJudge, judgeDropErr)
 	}
 	third := runtimeTestPlan(t, dependencies.storePath, dependencies.judgePath, 15,
 		func(source *config.ObservabilityV8Source) {
