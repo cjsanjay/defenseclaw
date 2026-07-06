@@ -102,6 +102,28 @@ func TestFamilyProjectionIsDetached(t *testing.T) {
 	}
 }
 
+func TestFamilyTraceContractIsGeneratedAndDetached(t *testing.T) {
+	t.Parallel()
+	first, ok := FamilyTraceContract(
+		"galileo-rich-v2", observability.SignalTraces, "span.agent.invoke",
+	)
+	if !ok || len(first.AttributeKeys) == 0 || len(first.EventNames) == 0 ||
+		len(first.LinkRelations) == 0 || first.StatusRule == "" {
+		t.Fatalf("generated trace contract unavailable: %+v", first)
+	}
+	first.AttributeKeys[0] = "mutated"
+	first.EventNames[0] = "mutated"
+	first.LinkRelations[0] = "mutated"
+	fresh, ok := FamilyTraceContract(
+		"galileo-rich-v2", observability.SignalTraces, "span.agent.invoke",
+	)
+	if !ok || fresh.AttributeKeys[0] == "mutated" || fresh.EventNames[0] == "mutated" ||
+		fresh.LinkRelations[0] == "mutated" || !sort.StringsAreSorted(fresh.AttributeKeys) ||
+		!sort.StringsAreSorted(fresh.EventNames) || !sort.StringsAreSorted(fresh.LinkRelations) {
+		t.Fatalf("caller mutated cached trace contract: %+v", fresh)
+	}
+}
+
 func TestMetricProjectionPreservesBoundaryNullAndCanonicalFieldsAreDetached(t *testing.T) {
 	counter, ok := FamilyProjection(
 		"local-observability-v1", observability.SignalMetrics, "defenseclaw.activity.total",

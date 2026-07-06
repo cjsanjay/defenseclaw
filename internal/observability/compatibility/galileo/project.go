@@ -70,7 +70,9 @@ func Project(input redaction.Projection, configured Limits) Result {
 		return rejected(reason, missing...)
 	}
 
-	projectedAttributes := projectAttributes(attributes, limits.MaxAttributeValueBytes)
+	projectedAttributes := projectAttributes(
+		attributes, contract.allowedAttributes, limits.MaxAttributeValueBytes,
+	)
 	missing = prepareRequiredProjection(contract, envelope, projectedAttributes, limits)
 	if len(missing) > 0 {
 		return rejected(ReasonSchemaMissingRequired, missing...)
@@ -78,7 +80,7 @@ func Project(input redaction.Projection, configured Limits) Result {
 	projectedAttributes = trimAttributes(
 		projectedAttributes, requiredAttributeKeys(contract), limits.MaxAttributesPerSpan,
 	)
-	body, ok := projectBody(envelope.Body, projectedAttributes, limits)
+	body, ok := projectBody(envelope.Body, projectedAttributes, contract, limits)
 	if !ok {
 		return rejected(ReasonInvalidProjection)
 	}
@@ -165,9 +167,33 @@ func selectContract(envelope projectedEnvelope, attributes map[string]any) (shap
 	if projection.OpenInferenceSpanKind == "" || len(allowedKinds) == 0 {
 		return shapeContract{}, ReasonUnsupportedShape, nil
 	}
+	traceContract, ok := profilemanifest.FamilyTraceContract(
+		ProfileID, observability.SignalTraces, observability.EventName(family),
+	)
+	if !ok || len(traceContract.AttributeKeys) == 0 {
+		return shapeContract{}, ReasonUnsupportedShape, nil
+	}
+	registered, ok := observability.RegisteredTraceProjectionContract(observability.EventIdentity{
+		Bucket: observability.Bucket(envelope.Bucket), Signal: observability.SignalTraces,
+		Name: observability.EventName(family),
+	})
+	if !ok || !sameStrings(traceContract.AttributeKeys, registered.AttributeKeys) ||
+		!sameStrings(traceContract.EventNames, sortedMapKeys(registered.EventAttributeKeys)) ||
+		!sameStrings(traceContract.LinkRelations, registered.LinkRelations) {
+		return shapeContract{}, ReasonUnsupportedShape, nil
+	}
+	// The generated compatibility manifest and catalog share one verified
+	// materialized-view digest; the comparisons above bind every vocabulary
+	// fact represented in both artifacts. Event-field, link-field, and scope-
+	// field keys are intentionally not duplicated into the profile manifest:
+	// they come directly from the compile-linked generated builder descriptor
+	// that constructed and schema-derived the canonical record. Using that one
+	// descriptor avoids a third destination-authored authority while still
+	// failing closed when profile membership, attributes, events, or relations
+	// drift from the digest-bound catalog.
 	return contract(
 		shape, family, operation, projection.OpenInferenceSpanKind,
-		allowedKinds, projection.RequiredAttributes,
+		allowedKinds, traceContract, registered, projection.RequiredAttributes,
 	), ReasonEligible, nil
 }
 
@@ -203,12 +229,54 @@ func contract(
 	shape Shape,
 	family, operation, oiKind string,
 	kinds map[string]struct{},
+	traceContract profilemanifest.TraceContract,
+	registered observability.TraceProjectionContract,
 	requiredAttributes []string,
 ) shapeContract {
+	eventFields := make(map[string]map[string]struct{}, len(registered.EventAttributeKeys))
+	for name, keys := range registered.EventAttributeKeys {
+		eventFields[name] = stringSet(keys)
+	}
 	return shapeContract{
 		shape: shape, family: family, operation: operation, oiKind: oiKind,
-		allowedKinds: kinds, requiredAttributes: append([]string(nil), requiredAttributes...),
+		allowedKinds:       kinds,
+		allowedAttributes:  stringSet(traceContract.AttributeKeys),
+		allowedEvents:      stringSet(traceContract.EventNames),
+		allowedEventFields: eventFields,
+		allowedLinks:       stringSet(traceContract.LinkRelations),
+		allowedLinkFields:  stringSet(registered.LinkAttributeKeys),
+		allowedScopeFields: stringSet(registered.ScopeAttributeKeys),
+		requiredAttributes: append([]string(nil), requiredAttributes...),
 	}
+}
+
+func sameStrings(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if left[index] != right[index] {
+			return false
+		}
+	}
+	return true
+}
+
+func sortedMapKeys(values map[string][]string) []string {
+	result := make([]string, 0, len(values))
+	for key := range values {
+		result = append(result, key)
+	}
+	sort.Strings(result)
+	return result
+}
+
+func stringSet(values []string) map[string]struct{} {
+	result := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		result[value] = struct{}{}
+	}
+	return result
 }
 
 func prepareRequiredProjection(
@@ -247,8 +315,12 @@ func prepareRequiredProjection(
 		ensureMessages(attributes, "input", "user", contentFallback(attributes, "input", limits), limits)
 		ensureMessages(attributes, "output", "assistant", contentFallback(attributes, "output", limits), limits)
 	case ShapeTool:
-		arguments, argumentsOK := boundedString(attributes["gen_ai.tool.call.arguments"], limits.MaxAttributeValueBytes)
-		result, resultOK := boundedString(attributes["gen_ai.tool.call.result"], limits.MaxAttributeValueBytes)
+		arguments, argumentsOK := boundedCanonicalString(
+			attributes["gen_ai.tool.call.arguments"], limits.MaxAttributeValueBytes,
+		)
+		result, resultOK := boundedCanonicalString(
+			attributes["gen_ai.tool.call.result"], limits.MaxAttributeValueBytes,
+		)
 		delete(attributes, "gen_ai.tool.call.arguments")
 		delete(attributes, "gen_ai.tool.call.result")
 		if !argumentsOK {
@@ -344,7 +416,11 @@ func normalizedSpanKind(value any) (string, bool) {
 	}
 }
 
-func projectBody(input, attributes map[string]any, limits Limits) (map[string]any, bool) {
+func projectBody(
+	input, attributes map[string]any,
+	contract shapeContract,
+	limits Limits,
+) (map[string]any, bool) {
 	output := make(map[string]any)
 	for _, key := range []string{
 		"kind", "parent_span_id", "start_time_unix_nano", "end_time_unix_nano", "duration_nano",
@@ -378,10 +454,22 @@ func projectBody(input, attributes map[string]any, limits Limits) (map[string]an
 		output["trace_state"] = strings.Clone(traceState)
 	}
 	output["attributes"] = cloneObject(attributes)
-	if events := projectEvents(input["events"], limits); len(events) > 0 {
+	events, eventsOK := projectEvents(
+		input["events"], contract.allowedEvents, contract.allowedEventFields, limits,
+	)
+	if !eventsOK {
+		return nil, false
+	}
+	if len(events) > 0 {
 		output["events"] = events
 	}
-	if links := projectLinks(input["links"], limits); len(links) > 0 {
+	links, linksOK := projectLinks(
+		input["links"], contract.allowedLinks, contract.allowedLinkFields, limits,
+	)
+	if !linksOK {
+		return nil, false
+	}
+	if len(links) > 0 {
 		output["links"] = links
 	}
 	if status := projectStatus(input["status"], limits.MaxAttributeValueBytes); len(status) > 0 {
@@ -394,7 +482,13 @@ func projectBody(input, attributes map[string]any, limits Limits) (map[string]an
 		}
 		output["resource"] = resource
 	}
-	if scope := projectScope(input["scope"], limits.MaxAttributeValueBytes); len(scope) > 0 {
+	scope, scopeOK := projectScope(
+		input["scope"], contract.allowedScopeFields, limits.MaxAttributeValueBytes,
+	)
+	if !scopeOK {
+		return nil, false
+	}
+	if len(scope) > 0 {
 		output["scope"] = scope
 	}
 	return output, true
@@ -456,10 +550,13 @@ func validUnsignedJSONNumber(value json.Number, bits int) bool {
 	return ok && rational.IsInt() && rational.Sign() >= 0 && rational.Num().BitLen() <= bits
 }
 
-func projectScope(value any, maximum int) map[string]any {
+func projectScope(value any, allowed map[string]struct{}, maximum int) (map[string]any, bool) {
+	if value == nil {
+		return nil, true
+	}
 	scope, ok := object(value)
 	if !ok {
-		return nil
+		return nil, false
 	}
 	output := make(map[string]any, 4)
 	for _, key := range []string{"name", "version", "schema_url"} {
@@ -469,10 +566,11 @@ func projectScope(value any, maximum int) map[string]any {
 	}
 	if attributes, ok := object(scope["attributes"]); ok {
 		projected := make(map[string]any)
-		for _, key := range []string{
-			"defenseclaw.trace.schema_version", "defenseclaw.semantic_profile",
-			"defenseclaw.galileo.compatibility_profile",
-		} {
+		for _, key := range sortedKeys(attributes) {
+			if _, registered := allowed[key]; !registered &&
+				key != "defenseclaw.galileo.compatibility_profile" {
+				continue
+			}
 			if value, exists := attributes[key]; exists && valueWithinLimit(value, maximum) {
 				projected[key] = cloneJSON(value)
 			}
@@ -481,14 +579,25 @@ func projectScope(value any, maximum int) map[string]any {
 			output["attributes"] = projected
 		}
 	}
-	return output
+	if droppedValue, present := scope["dropped_attributes_count"]; present {
+		dropped, valid := droppedValue.(json.Number)
+		if !valid || !validUnsignedJSONNumber(dropped, 32) {
+			return nil, false
+		}
+		output["dropped_attributes_count"] = json.Number(strings.Clone(dropped.String()))
+	}
+	return output, len(output) > 0
 }
 
-func projectAttributes(input map[string]any, maxValueBytes int) map[string]any {
+func projectAttributes(
+	input map[string]any,
+	allowed map[string]struct{},
+	maxValueBytes int,
+) map[string]any {
 	keys := sortedKeys(input)
 	output := make(map[string]any, len(keys))
 	for _, key := range keys {
-		if !allowedAttribute(key) {
+		if _, registered := allowed[key]; !registered && !compatibilityInputAttribute(key) {
 			continue
 		}
 		if !isContentAttribute(key) && !valueWithinLimit(input[key], maxValueBytes) {
@@ -514,47 +623,14 @@ func valueWithinLimit(value any, maximum int) bool {
 	return err == nil && len(encoded) <= maximum
 }
 
-func allowedAttribute(key string) bool {
-	if strings.HasPrefix(key, "gen_ai.") || strings.HasPrefix(key, "openinference.") ||
-		strings.HasPrefix(key, "db.") || strings.HasPrefix(key, "input.") || strings.HasPrefix(key, "output.") {
-		return true
-	}
+func compatibilityInputAttribute(key string) bool {
 	switch key {
-	case "connector", "user.id", "tenant.id", "workspace.id", "error.type",
-		"defenseclaw.bucket", "defenseclaw.span.family", "defenseclaw.span.family_schema_version",
-		"defenseclaw.source", "defenseclaw.config.generation", "defenseclaw.outcome",
-		"defenseclaw.run.id", "defenseclaw.operation.id", "defenseclaw.request.id",
-		"defenseclaw.turn.id", "defenseclaw.turn_id", "defenseclaw.agent.instance_id",
-		"defenseclaw.agent.root.id", "defenseclaw.agent.parent.id",
-		"defenseclaw.agent.lifecycle.id", "defenseclaw.agent.execution.id",
-		"defenseclaw.agent.lifecycle.event", "defenseclaw.agent.lifecycle.state",
-		"defenseclaw.agent.phase", "defenseclaw.agent.phase.previous",
-		"defenseclaw.agent.phase.code", "defenseclaw.agent.sequence",
-		"defenseclaw.agent.depth", "defenseclaw.agent.stream.mode",
-		"defenseclaw.workflow.name",
-		"defenseclaw.agent.lifecycle.transition", "defenseclaw.agent.reported_cost.present",
-		"defenseclaw.agent.reported_cost.usd", "defenseclaw.session.root.id",
-		"defenseclaw.session.parent.id", "defenseclaw.session.source",
-		"defenseclaw.session.resumed", "defenseclaw.user.name",
-		"defenseclaw.connector.source", "defenseclaw.destination.app",
-		"defenseclaw.policy.id", "defenseclaw.policy.version",
-		"defenseclaw.evaluation.id", "defenseclaw.finding.occurrence_id",
-		"defenseclaw.enforcement.action.id", "defenseclaw.approval.id",
-		"defenseclaw.guardrail.judge", "defenseclaw.guardrail.decision",
-		"defenseclaw.guardrail.raw_action", "defenseclaw.guardrail.effective_action",
-		"defenseclaw.guardrail.mode", "defenseclaw.guardrail.would_block",
-		"defenseclaw.guardrail.enforced", "defenseclaw.guardrail.severity",
-		"defenseclaw.guardrail.evaluation.id", "defenseclaw.guardrail.finding.count",
-		"defenseclaw.llm.tool_calls", "defenseclaw.llm.guardrail", "defenseclaw.llm.guardrail.result",
-		"defenseclaw.tool.status", "defenseclaw.tool.dangerous", "defenseclaw.tool.provider",
-		"defenseclaw.tool.exit_code", "defenseclaw.tool.output_length",
-		canaryMarkerKey, canaryOperationKey, canaryDestinationKey:
+	case "openinference.span.kind", "input.value", "input.mime_type",
+		"output.value", "output.mime_type":
 		return true
+	default:
+		return false
 	}
-	return strings.HasPrefix(key, "defenseclaw.telemetry.input.") ||
-		strings.HasPrefix(key, "defenseclaw.telemetry.output.") ||
-		strings.HasPrefix(key, "defenseclaw.telemetry.arguments.") ||
-		strings.HasPrefix(key, "defenseclaw.telemetry.result.")
 }
 
 func requiredAttributeKeys(contract shapeContract) []string {
@@ -697,6 +773,22 @@ func contentScalar(attributes map[string]any, direction string, maximum int) (st
 	return content, true
 }
 
+func boundedCanonicalString(value any, maximum int) (string, bool) {
+	if text, ok := boundedString(value, maximum); ok {
+		return text, true
+	}
+	switch value.(type) {
+	case map[string]any, []any:
+		encoded, err := json.Marshal(value)
+		if err != nil || len(encoded) > maximum {
+			return "", false
+		}
+		return string(encoded), true
+	default:
+		return "", false
+	}
+}
+
 func contentFallback(attributes map[string]any, direction string, limits Limits) any {
 	value, ok := boundedString(attributes[direction+".value"], limits.MaxAttributeValueBytes)
 	if !ok {
@@ -726,10 +818,18 @@ func valueWhen(ok bool, value string) any {
 	return value
 }
 
-func projectEvents(value any, limits Limits) []any {
+func projectEvents(
+	value any,
+	allowed map[string]struct{},
+	allowedFields map[string]map[string]struct{},
+	limits Limits,
+) ([]any, bool) {
+	if value == nil {
+		return nil, true
+	}
 	events, ok := value.([]any)
 	if !ok {
-		return nil
+		return nil, false
 	}
 	output := make([]any, 0, min(len(events), limits.MaxEventsPerSpan))
 	for _, candidate := range events {
@@ -738,47 +838,50 @@ func projectEvents(value any, limits Limits) []any {
 		}
 		event, ok := object(candidate)
 		if !ok {
-			continue
+			return nil, false
 		}
 		name, ok := event["name"].(string)
-		if !ok || !allowedEvent(name) {
+		if !ok {
+			return nil, false
+		}
+		if _, registered := allowed[name]; !registered {
 			continue
 		}
 		projected := map[string]any{"name": name}
-		if timestamp, ok := event["timestamp"]; ok {
-			projected["timestamp"] = cloneJSON(timestamp)
-		}
 		if timestamp, ok := event["time_unix_nano"]; ok {
 			projected["time_unix_nano"] = cloneJSON(timestamp)
 		}
 		if attributes, ok := object(event["attributes"]); ok {
-			projected["attributes"] = projectEventAttributes(attributes, limits.MaxAttributesPerEvent)
+			projected["attributes"] = projectEventAttributes(
+				attributes, allowedFields[name], limits.MaxAttributesPerEvent,
+				limits.MaxAttributeValueBytes,
+			)
+		}
+		if dropped, present := event["dropped_attributes_count"]; present {
+			number, valid := dropped.(json.Number)
+			if !valid || !validUnsignedJSONNumber(number, 32) {
+				return nil, false
+			}
+			projected["dropped_attributes_count"] = json.Number(strings.Clone(number.String()))
 		}
 		output = append(output, projected)
 	}
-	return output
+	return output, true
 }
 
-func allowedEvent(name string) bool {
-	switch name {
-	case "guardrail.decision", "hook.decision", "security.finding.observed",
-		"approval.requested", "approval.resolved", "enforcement.requested",
-		"enforcement.applied", "enforcement.failed", "tool.flagged",
-		"content.redacted", "content.truncated", "model.retry", "model.stream.first_token":
-		return true
-	default:
-		return false
-	}
-}
-
-func projectEventAttributes(input map[string]any, maximum int) map[string]any {
+func projectEventAttributes(
+	input map[string]any,
+	allowed map[string]struct{},
+	maximum, maxValueBytes int,
+) map[string]any {
 	keys := sortedKeys(input)
 	output := make(map[string]any, min(len(keys), maximum))
 	for _, key := range keys {
 		if len(output) >= maximum {
 			break
 		}
-		if !safeEventAttribute(key) {
+		if _, registered := allowed[key]; !registered || key == "" ||
+			!utf8.ValidString(key) || !valueWithinLimit(input[key], maxValueBytes) {
 			continue
 		}
 		output[key] = cloneJSON(input[key])
@@ -786,27 +889,18 @@ func projectEventAttributes(input map[string]any, maximum int) map[string]any {
 	return output
 }
 
-func safeEventAttribute(key string) bool {
-	for _, forbidden := range []string{"content", "reason", "evidence", "pattern", "message", "stack", "body", "argument", "result"} {
-		if strings.Contains(strings.ToLower(key), forbidden) {
-			return false
-		}
+func projectLinks(
+	value any,
+	allowedRelations map[string]struct{},
+	allowedFields map[string]struct{},
+	limits Limits,
+) ([]any, bool) {
+	if value == nil {
+		return nil, true
 	}
-	return strings.HasSuffix(key, ".id") || strings.HasSuffix(key, "_id") ||
-		strings.HasSuffix(key, ".count") || strings.HasSuffix(key, "_count") ||
-		strings.HasSuffix(key, ".bytes") || strings.HasSuffix(key, "_bytes") ||
-		strings.HasSuffix(key, ".ms") || strings.HasSuffix(key, "_ms") ||
-		strings.Contains(key, "decision") || strings.Contains(key, "action") ||
-		strings.Contains(key, "severity") || strings.Contains(key, "category") ||
-		strings.Contains(key, "outcome") || strings.Contains(key, "enforced") ||
-		strings.Contains(key, "would_block") || strings.Contains(key, "field_class") ||
-		strings.Contains(key, "profile") || strings.Contains(key, "attempt") || key == "error.type"
-}
-
-func projectLinks(value any, limits Limits) []any {
 	links, ok := value.([]any)
 	if !ok {
-		return nil
+		return nil, false
 	}
 	output := make([]any, 0, min(len(links), limits.MaxLinksPerSpan))
 	for _, candidate := range links {
@@ -815,7 +909,18 @@ func projectLinks(value any, limits Limits) []any {
 		}
 		link, ok := object(candidate)
 		if !ok {
-			continue
+			return nil, false
+		}
+		attributes, attributesOK := object(link["attributes"])
+		if !attributesOK {
+			return nil, false
+		}
+		relation, relationOK := attributes["defenseclaw.link.relation"].(string)
+		if !relationOK {
+			return nil, false
+		}
+		if _, registered := allowedRelations[relation]; !registered {
+			return nil, false
 		}
 		projected := make(map[string]any)
 		for _, key := range []string{"trace_id", "span_id", "trace_state"} {
@@ -823,26 +928,40 @@ func projectLinks(value any, limits Limits) []any {
 				projected[key] = cloneJSON(value)
 			}
 		}
-		if attributes, ok := object(link["attributes"]); ok {
-			projected["attributes"] = projectLinkAttributes(attributes, limits.MaxAttributesPerEvent)
+		projected["attributes"] = projectLinkAttributes(
+			attributes, allowedFields, limits.MaxAttributesPerEvent,
+			limits.MaxAttributeValueBytes,
+		)
+		if dropped, present := link["dropped_attributes_count"]; present {
+			number, valid := dropped.(json.Number)
+			if !valid || !validUnsignedJSONNumber(number, 32) {
+				return nil, false
+			}
+			projected["dropped_attributes_count"] = json.Number(strings.Clone(number.String()))
 		}
 		if len(projected) > 0 {
 			output = append(output, projected)
 		}
 	}
-	return output
+	return output, true
 }
 
-func projectLinkAttributes(input map[string]any, maximum int) map[string]any {
+func projectLinkAttributes(
+	input map[string]any,
+	allowed map[string]struct{},
+	maximum, maxValueBytes int,
+) map[string]any {
 	keys := sortedKeys(input)
 	output := make(map[string]any, min(len(keys), maximum))
 	for _, key := range keys {
 		if len(output) >= maximum {
 			break
 		}
-		if key == "defenseclaw.link.relation" || allowedAttribute(key) || safeEventAttribute(key) {
-			output[key] = cloneJSON(input[key])
+		if _, registered := allowed[key]; !registered || key == "" ||
+			!utf8.ValidString(key) || !valueWithinLimit(input[key], maxValueBytes) {
+			continue
 		}
+		output[key] = cloneJSON(input[key])
 	}
 	return output
 }

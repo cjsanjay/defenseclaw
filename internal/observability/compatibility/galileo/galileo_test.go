@@ -59,6 +59,106 @@ func TestGeneratedProfileExactlyCoversImplementedShapes(t *testing.T) {
 	}
 }
 
+func TestGeneratedFamilyStructuralDispositionsAreCompleteAndDetached(t *testing.T) {
+	t.Parallel()
+	manifest, err := profilemanifest.Get(ProfileID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, family := range manifest.Families {
+		family := family
+		t.Run(family.FamilyID, func(t *testing.T) {
+			t.Parallel()
+			profileContract, ok := profilemanifest.FamilyTraceContract(
+				ProfileID, family.Signal, family.EventName,
+			)
+			if !ok {
+				t.Fatal("generated profile trace contract missing")
+			}
+			registered, ok := observability.RegisteredTraceProjectionContract(
+				observability.EventIdentity{
+					Bucket: family.Bucket, Signal: family.Signal, Name: family.EventName,
+				},
+			)
+			if !ok || !reflect.DeepEqual(profileContract.AttributeKeys, registered.AttributeKeys) ||
+				!reflect.DeepEqual(profileContract.EventNames, sortedMapKeys(registered.EventAttributeKeys)) ||
+				!reflect.DeepEqual(profileContract.LinkRelations, registered.LinkRelations) {
+				t.Fatalf("generated contract disagreement profile=%+v registered=%+v", profileContract, registered)
+			}
+
+			attributes := make(map[string]any, len(registered.AttributeKeys)+1)
+			for _, key := range registered.AttributeKeys {
+				attributes[key] = "registered-value"
+			}
+			attributes["operator.unregistered"] = "must-not-project"
+			projected := projectAttributes(
+				attributes, stringSet(registered.AttributeKeys), defaultAttributeValueBytes,
+			)
+			if len(projected) != len(registered.AttributeKeys) {
+				t.Fatalf("attribute dispositions = %d, want %d", len(projected), len(registered.AttributeKeys))
+			}
+			if _, exists := projected["operator.unregistered"]; exists {
+				t.Fatal("unregistered family attribute projected")
+			}
+
+			for eventName, keys := range registered.EventAttributeKeys {
+				input := make(map[string]any, len(keys)+1)
+				for _, key := range keys {
+					input[key] = "registered-value"
+				}
+				input["operator.unregistered"] = "must-not-project"
+				got := projectEventAttributes(
+					input, stringSet(keys), defaultAttributesPerEvent, defaultAttributeValueBytes,
+				)
+				if len(got) != len(keys) {
+					t.Fatalf("event %q dispositions = %d, want %d", eventName, len(got), len(keys))
+				}
+				if _, exists := got["operator.unregistered"]; exists {
+					t.Fatalf("event %q projected unregistered field", eventName)
+				}
+			}
+
+			linkInput := make(map[string]any, len(registered.LinkAttributeKeys)+1)
+			for _, key := range registered.LinkAttributeKeys {
+				linkInput[key] = "registered-value"
+			}
+			linkInput["operator.unregistered"] = "must-not-project"
+			linkOutput := projectLinkAttributes(
+				linkInput, stringSet(registered.LinkAttributeKeys),
+				defaultAttributesPerEvent, defaultAttributeValueBytes,
+			)
+			if len(linkOutput) != len(registered.LinkAttributeKeys) {
+				t.Fatalf("link dispositions = %d, want %d", len(linkOutput), len(registered.LinkAttributeKeys))
+			}
+		})
+	}
+}
+
+func TestCompatibilityOnlyInputsAreExplicitAndClosed(t *testing.T) {
+	t.Parallel()
+	allowed := map[string]struct{}{"gen_ai.provider.name": {}}
+	input := map[string]any{
+		"gen_ai.provider.name": "openai", "openinference.span.kind": "LLM",
+		"input.value": "prompt", "input.mime_type": "text/plain",
+		"output.value": "answer", "output.mime_type": "text/plain",
+		"openinference.secret": "must-not-project", "operator.unregistered": "must-not-project",
+	}
+	projected := projectAttributes(input, allowed, defaultAttributeValueBytes)
+	for _, key := range []string{
+		"gen_ai.provider.name", "openinference.span.kind", "input.value", "input.mime_type",
+		"output.value", "output.mime_type",
+	} {
+		if _, present := projected[key]; !present {
+			t.Errorf("explicit compatibility input %q missing", key)
+		}
+	}
+	for _, key := range []string{"openinference.secret", "operator.unregistered"} {
+		if _, present := projected[key]; present {
+			t.Errorf("unregistered compatibility input %q projected", key)
+		}
+	}
+}
+
 func TestProjectAcceptsExactRichV2Shapes(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -103,8 +203,8 @@ func TestProjectAcceptsExactRichV2Shapes(t *testing.T) {
 			spanName: "execute_tool search", kind: "CLIENT", wantShape: ShapeTool, wantOIKind: "TOOL",
 			attributes: map[string]any{
 				"gen_ai.operation.name": "execute_tool", "gen_ai.tool.name": "search",
-				"gen_ai.tool.call.id": "call-9", "gen_ai.tool.call.arguments": `{"q":"otel"}`,
-				"gen_ai.tool.call.result": `{"hits":2}`,
+				"gen_ai.tool.call.id": "call-9", "gen_ai.tool.call.arguments": map[string]any{"q": "otel"},
+				"gen_ai.tool.call.result": map[string]any{"hits": 2},
 			},
 		},
 		{
@@ -371,16 +471,18 @@ func TestProjectPreservesLifecycleCorrelationAndSafeSecurityEvents(t *testing.T)
 		},
 		"events": []any{
 			map[string]any{"name": "guardrail.decision", "attributes": map[string]any{
-				"evaluation_id": "eval", "decision": "block", "severity": "HIGH", "reason": "unsafe detail",
+				"defenseclaw.evaluation.id": "eval", "defenseclaw.guardrail.decision": "block",
+				"defenseclaw.security.severity": "HIGH", "reason": "unsafe detail",
 			}},
 			map[string]any{"name": "security.finding.observed", "attributes": map[string]any{
-				"finding_id": "finding", "rule_id": "rule", "category": "injection", "evidence": "unsafe evidence",
+				"defenseclaw.finding.id": "finding", "defenseclaw.finding.rule_id": "rule",
+				"defenseclaw.finding.category": "injection", "evidence": "unsafe evidence",
 			}},
 			map[string]any{"name": "custom.raw", "attributes": map[string]any{"content": "raw"}},
 		},
 		"links": []any{
 			map[string]any{"trace_id": strings.Repeat("1", 32), "span_id": strings.Repeat("2", 16), "attributes": map[string]any{
-				"defenseclaw.link.relation": "delegates_to", "defenseclaw.agent.root.id": "root", "reason": "drop",
+				"defenseclaw.link.relation": "correlates_with", "defenseclaw.agent.root.id": "root", "reason": "drop",
 			}},
 		},
 	}
@@ -418,7 +520,7 @@ func TestProjectPreservesLifecycleCorrelationAndSafeSecurityEvents(t *testing.T)
 	}
 	resultBody := wire["body"].(map[string]any)
 	events := resultBody["events"].([]any)
-	if len(events) != 2 {
+	if len(events) != 1 {
 		t.Fatalf("events = %d", len(events))
 	}
 	for _, eventValue := range events {
@@ -433,11 +535,13 @@ func TestProjectPreservesLifecycleCorrelationAndSafeSecurityEvents(t *testing.T)
 	}
 	links := resultBody["links"].([]any)
 	linkAttributes := links[0].(map[string]any)["attributes"].(map[string]any)
-	if linkAttributes["defenseclaw.link.relation"] != "delegates_to" || linkAttributes["defenseclaw.agent.root.id"] != "root" {
+	if linkAttributes["defenseclaw.link.relation"] != "correlates_with" {
 		t.Fatalf("safe delegation link = %#v", linkAttributes)
 	}
-	if _, exists := linkAttributes["reason"]; exists {
-		t.Fatal("unsafe link reason retained")
+	for _, absent := range []string{"defenseclaw.agent.root.id", "reason"} {
+		if _, exists := linkAttributes[absent]; exists {
+			t.Fatalf("unregistered link attribute %q retained", absent)
+		}
 	}
 }
 
@@ -652,6 +756,31 @@ func TestProjectRejectsNonCanonicalResourceShapes(t *testing.T) {
 	}
 }
 
+func TestProjectRejectsInvalidScopeDroppedCountAtCompatibilityBoundary(t *testing.T) {
+	t.Parallel()
+	projection := projectRecord(t, observability.BucketModelIO, "span.model.chat", "chat fixture", map[string]any{
+		"kind": "CLIENT",
+		"attributes": map[string]any{
+			"gen_ai.operation.name": "chat", "gen_ai.provider.name": "openai",
+			"gen_ai.input.messages":  messages("user", "safe"),
+			"gen_ai.output.messages": messages("assistant", "safe"),
+		},
+		"scope": map[string]any{
+			"name": "defenseclaw.telemetry", "version": "v8-test",
+			"schema_url": "https://defenseclaw.io/schemas/telemetry/v8",
+			"attributes": map[string]any{
+				"defenseclaw.trace.schema_version": "defenseclaw-trace-v1",
+				"defenseclaw.semantic_profile":     "defenseclaw-genai-rich-v1",
+			},
+			"dropped_attributes_count": -1,
+		},
+	}, redaction.ProfileNone)
+	result := Project(projection, Limits{})
+	if result.Eligible() || result.Reason() != ReasonInvalidProjection {
+		t.Fatalf("invalid scope dropped count = eligible:%v reason:%q", result.Eligible(), result.Reason())
+	}
+}
+
 func TestProjectCanarySurfaceIsExact(t *testing.T) {
 	t.Parallel()
 	base := func() map[string]any {
@@ -749,17 +878,44 @@ func TestProjectBoundsAreDeterministicAndFailClosed(t *testing.T) {
 		"gen_ai.operation.name": "chat", "gen_ai.provider.name": "openai",
 		"gen_ai.input.messages": messagesMany(3), "gen_ai.output.messages": strings.Repeat("x", 400),
 	}
-	for index := 0; index < 40; index++ {
-		attributes[fmt.Sprintf("gen_ai.request.compatibility_extra_%02d", index)] = strings.Repeat(string(rune('a'+index%26)), 180)
+	for index, key := range []string{
+		"defenseclaw.agent.execution.id", "defenseclaw.agent.instance_id",
+		"defenseclaw.agent.lifecycle.id", "defenseclaw.agent.parent.id",
+		"defenseclaw.agent.root.id", "defenseclaw.connector.source",
+		"defenseclaw.destination.app", "defenseclaw.model.request.id",
+		"defenseclaw.model.response.id", "defenseclaw.operation.id",
+		"defenseclaw.policy.id", "defenseclaw.policy.version",
+		"defenseclaw.request.id", "defenseclaw.run.id",
+		"defenseclaw.session.parent.id", "defenseclaw.session.root.id",
+		"defenseclaw.turn.id", "defenseclaw.user.name", "gen_ai.agent.id",
+		"gen_ai.agent.name", "gen_ai.conversation.id", "gen_ai.request.model",
+		"gen_ai.response.id", "gen_ai.response.model", "user.id",
+	} {
+		attributes[key] = fmt.Sprintf("id-%02d-%s", index, strings.Repeat("x", 170))
+	}
+	for index := 0; index < 8; index++ {
+		attributes[fmt.Sprintf("gen_ai.request.compatibility_extra_%02d", index)] = "must-be-dropped"
 	}
 	body := map[string]any{
 		"kind": "CLIENT", "attributes": attributes,
 		"events": []any{
-			map[string]any{"name": "model.retry", "attributes": map[string]any{"attempt": 1, "backoff_ms": 2, "error.type": "timeout", "evaluation_id": "e", "finding_id": "f"}},
-			map[string]any{"name": "guardrail.decision", "attributes": map[string]any{"decision": "allow"}},
+			map[string]any{"name": "model.retry", "attributes": map[string]any{
+				"defenseclaw.model.attempt": 1, "defenseclaw.model.retry_count": 2,
+				"error.type": "timeout", "defenseclaw.evaluation.id": "e",
+			}},
+			map[string]any{"name": "guardrail.decision", "attributes": map[string]any{
+				"defenseclaw.guardrail.decision": "allow",
+			}},
 		},
 		"links": []any{
-			map[string]any{"trace_id": strings.Repeat("1", 32)}, map[string]any{"trace_id": strings.Repeat("2", 32)},
+			map[string]any{
+				"trace_id": strings.Repeat("1", 32), "span_id": strings.Repeat("3", 16),
+				"attributes": map[string]any{"defenseclaw.link.relation": "correlates_with"},
+			},
+			map[string]any{
+				"trace_id": strings.Repeat("2", 32), "span_id": strings.Repeat("4", 16),
+				"attributes": map[string]any{"defenseclaw.link.relation": "derived_from"},
+			},
 		},
 	}
 	projection := projectRecord(t, observability.BucketModelIO, "span.model.chat", "chat model", body, redaction.ProfileNone)

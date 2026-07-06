@@ -125,6 +125,13 @@ type catalogFamily struct {
 	Bucket                observability.Bucket    `json:"bucket"`
 	CompatibilityProfiles []catalogFamilyProfile  `json:"compatibility_profiles"`
 	Fields                []catalogFamilyField    `json:"fields"`
+	AllowedEvents         []string                `json:"allowed_events"`
+	AllowedLinkRelations  []string                `json:"allowed_link_relations"`
+	Span                  catalogSpanContract     `json:"span"`
+}
+
+type catalogSpanContract struct {
+	StatusRule string `json:"status_rule"`
 }
 
 type catalogFamilyField struct {
@@ -151,6 +158,18 @@ type loadedProfile struct {
 	manifest Manifest
 	eligible map[string]struct{}
 	fields   map[string][]string
+	traces   map[string]TraceContract
+}
+
+// TraceContract is the generated canonical vocabulary that a compatibility
+// projection may consume for one eligible span family. It deliberately
+// contains no destination-authored field allowlist: route redaction has
+// already produced the only values a destination is allowed to inspect.
+type TraceContract struct {
+	AttributeKeys []string
+	EventNames    []string
+	LinkRelations []string
+	StatusRule    string
 }
 
 var cache struct {
@@ -260,6 +279,34 @@ func FamilyAttributeKeys(
 	return append([]string(nil), fields...), ok
 }
 
+// FamilyTraceContract returns a detached generated trace contract for one
+// runtime-eligible compatibility family. The event and link vocabularies are
+// family-specific, preventing a destination from silently broadening one
+// family with another family's registered structures.
+func FamilyTraceContract(
+	profileID string,
+	signal observability.Signal,
+	eventName observability.EventName,
+) (TraceContract, bool) {
+	profiles, err := load()
+	if err != nil {
+		return TraceContract{}, false
+	}
+	profile, ok := profiles[profileID]
+	if !ok || profile.manifest.Availability != "available" ||
+		profile.manifest.RuntimeProjection.Status != "available" {
+		return TraceContract{}, false
+	}
+	contract, ok := profile.traces[eligibilityKey(signal, eventName)]
+	if !ok {
+		return TraceContract{}, false
+	}
+	contract.AttributeKeys = append([]string(nil), contract.AttributeKeys...)
+	contract.EventNames = append([]string(nil), contract.EventNames...)
+	contract.LinkRelations = append([]string(nil), contract.LinkRelations...)
+	return contract, true
+}
+
 // cloneFloat64s deliberately preserves nil versus an authored empty array.
 // Metric histogram boundaries use that distinction: null means no authored
 // boundary policy, while [] is an explicitly authored empty policy.
@@ -291,6 +338,7 @@ func loadProfiles() (map[string]loadedProfile, error) {
 	}
 	expectedMembership := make(map[string]map[string]catalogMembership)
 	expectedFields := make(map[string]map[string][]string)
+	expectedTraceContracts := make(map[string]map[string]TraceContract)
 	for _, family := range catalog.Families {
 		for _, profile := range family.CompatibilityProfiles {
 			if expectedMembership[profile.ID] == nil {
@@ -314,6 +362,20 @@ func loadProfiles() (map[string]loadedProfile, error) {
 			}
 			sort.Strings(fields)
 			expectedFields[profile.ID][key] = fields
+			if family.Signal == observability.SignalTraces {
+				if expectedTraceContracts[profile.ID] == nil {
+					expectedTraceContracts[profile.ID] = make(map[string]TraceContract)
+				}
+				events := append([]string(nil), family.AllowedEvents...)
+				links := append([]string(nil), family.AllowedLinkRelations...)
+				sort.Strings(events)
+				sort.Strings(links)
+				expectedTraceContracts[profile.ID][key] = TraceContract{
+					AttributeKeys: append([]string(nil), fields...),
+					EventNames:    events, LinkRelations: links,
+					StatusRule: family.Span.StatusRule,
+				}
+			}
 		}
 	}
 	profiles := make(map[string]loadedProfile, 3)
@@ -344,7 +406,7 @@ func loadProfiles() (map[string]loadedProfile, error) {
 		}
 		profiles[expected.ID] = loadedProfile{
 			raw: append([]byte(nil), raw...), manifest: manifest, eligible: eligible,
-			fields: expectedFields[expected.ID],
+			fields: expectedFields[expected.ID], traces: expectedTraceContracts[expected.ID],
 		}
 	}
 	return profiles, nil

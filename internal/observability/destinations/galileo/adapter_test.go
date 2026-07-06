@@ -126,6 +126,13 @@ func TestAdapterExportsRichRedactedCanaryAndAcknowledgesExactTrace(t *testing.T)
 	if len(spans) != 2 {
 		t.Fatalf("spans = %d, want 2", len(spans))
 	}
+	for _, resourceSpans := range request.ResourceSpans {
+		for _, scopeSpans := range resourceSpans.ScopeSpans {
+			if scopeSpans.Scope == nil || scopeSpans.Scope.DroppedAttributesCount != 4 {
+				t.Fatalf("scope dropped count = %+v", scopeSpans.Scope)
+			}
+		}
+	}
 	operations := make(map[string]bool)
 	var agentSpan, modelSpan *tracepb.Span
 	for _, span := range spans {
@@ -146,7 +153,7 @@ func TestAdapterExportsRichRedactedCanaryAndAcknowledgesExactTrace(t *testing.T)
 		for _, key := range []string{
 			"defenseclaw.agent.root.id", "defenseclaw.agent.parent.id",
 			"defenseclaw.agent.lifecycle.id", "defenseclaw.agent.execution.id",
-			"defenseclaw.turn.id", "defenseclaw.tool.status",
+			"defenseclaw.turn.id",
 		} {
 			if attrs[key].GetStringValue() == "" {
 				t.Errorf("rich lifecycle attribute %q missing", key)
@@ -154,6 +161,9 @@ func TestAdapterExportsRichRedactedCanaryAndAcknowledgesExactTrace(t *testing.T)
 		}
 		if len(span.Events) != 1 || len(span.Links) != 1 || span.Status == nil || span.Status.Code != tracepb.Status_STATUS_CODE_OK {
 			t.Errorf("rich span shape lost events/links/status: %+v", span)
+		}
+		if span.Events[0].DroppedAttributesCount != 2 || span.Links[0].DroppedAttributesCount != 3 {
+			t.Errorf("event/link dropped counts = %d/%d", span.Events[0].DroppedAttributesCount, span.Links[0].DroppedAttributesCount)
 		}
 	}
 	if !operations["invoke_agent"] || !operations["chat"] {
@@ -825,7 +835,7 @@ func makeResult(
 		"gen_ai.output.messages":    message("assistant", "done"),
 		"defenseclaw.agent.root.id": "root-agent", "defenseclaw.agent.parent.id": "parent-agent",
 		"defenseclaw.agent.lifecycle.id": "lifecycle", "defenseclaw.agent.execution.id": "execution",
-		"defenseclaw.turn.id": "turn", "defenseclaw.tool.status": "completed",
+		"defenseclaw.turn.id": "turn",
 	}
 	if operation == "invoke_agent" {
 		kind, bucket, family, name = "INTERNAL", observability.BucketAgentLifecycle, "span.agent.invoke", "invoke_agent reviewer"
@@ -852,11 +862,17 @@ func makeResult(
 		"attributes": attributes,
 		"events": []any{map[string]any{
 			"name": "guardrail.decision", "time_unix_nano": uint64(1_000_000_005),
-			"attributes": map[string]any{"evaluation_id": "evaluation", "decision": "allow", "severity": "LOW"},
+			"dropped_attributes_count": uint32(2),
+			"attributes": map[string]any{
+				"defenseclaw.evaluation.id":      "evaluation",
+				"defenseclaw.guardrail.decision": "allow",
+				"defenseclaw.security.severity":  "LOW",
+			},
 		}},
 		"links": []any{map[string]any{
 			"trace_id": "11111111111111111111111111111111", "span_id": "2222222222222222",
-			"attributes": map[string]any{"defenseclaw.link.relation": "delegates_to"},
+			"dropped_attributes_count": uint32(3),
+			"attributes":               map[string]any{"defenseclaw.link.relation": "correlates_with"},
 		}},
 		"status": map[string]any{"code": 1},
 	}
@@ -886,7 +902,8 @@ func makeResult(
 			}}
 		body["scope"] = map[string]any{
 			"name": "defenseclaw.telemetry", "version": "v8-test",
-			"schema_url": "https://defenseclaw.example/schemas/trace/v1",
+			"schema_url":               "https://defenseclaw.example/schemas/trace/v1",
+			"dropped_attributes_count": uint32(4),
 			"attributes": map[string]any{
 				"defenseclaw.trace.schema_version":          "defenseclaw-trace-v1",
 				"defenseclaw.semantic_profile":              "defenseclaw-genai-rich-v1",

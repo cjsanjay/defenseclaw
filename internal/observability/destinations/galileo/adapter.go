@@ -319,23 +319,26 @@ type projectedResource struct {
 }
 
 type projectedScope struct {
-	Name       string         `json:"name"`
-	Version    string         `json:"version"`
-	SchemaURL  string         `json:"schema_url"`
-	Attributes map[string]any `json:"attributes,omitempty"`
+	Name                   string         `json:"name"`
+	Version                string         `json:"version"`
+	SchemaURL              string         `json:"schema_url"`
+	Attributes             map[string]any `json:"attributes,omitempty"`
+	DroppedAttributesCount json.Number    `json:"dropped_attributes_count,omitempty"`
 }
 
 type projectedEvent struct {
-	Name         string         `json:"name"`
-	TimeUnixNano json.Number    `json:"time_unix_nano"`
-	Attributes   map[string]any `json:"attributes,omitempty"`
+	Name                   string         `json:"name"`
+	TimeUnixNano           json.Number    `json:"time_unix_nano"`
+	Attributes             map[string]any `json:"attributes,omitempty"`
+	DroppedAttributesCount json.Number    `json:"dropped_attributes_count,omitempty"`
 }
 
 type projectedLink struct {
-	TraceID    string         `json:"trace_id"`
-	SpanID     string         `json:"span_id"`
-	TraceState string         `json:"trace_state,omitempty"`
-	Attributes map[string]any `json:"attributes,omitempty"`
+	TraceID                string         `json:"trace_id"`
+	SpanID                 string         `json:"span_id"`
+	TraceState             string         `json:"trace_state,omitempty"`
+	Attributes             map[string]any `json:"attributes,omitempty"`
+	DroppedAttributesCount json.Number    `json:"dropped_attributes_count,omitempty"`
 }
 
 type projectedStatus struct {
@@ -548,7 +551,14 @@ func requiredScope(input projectedScope) (*commonpb.InstrumentationScope, bool) 
 	if !ok {
 		return nil, false
 	}
-	return &commonpb.InstrumentationScope{Name: input.Name, Version: input.Version, Attributes: attributes}, true
+	dropped, ok := unsigned(input.DroppedAttributesCount, 32)
+	if !ok {
+		return nil, false
+	}
+	return &commonpb.InstrumentationScope{
+		Name: input.Name, Version: input.Version, Attributes: attributes,
+		DroppedAttributesCount: uint32(dropped),
+	}, true
 }
 
 func canonicalEndedIdentity(wire projectedWire) bool {
@@ -667,8 +677,13 @@ func events(input []projectedEvent) ([]*tracepb.Span_Event, bool) {
 		if !ok {
 			return nil, false
 		}
+		dropped, ok := unsigned(event.DroppedAttributesCount, 32)
+		if !ok {
+			return nil, false
+		}
 		output = append(output, &tracepb.Span_Event{
 			TimeUnixNano: timestamp, Name: event.Name, Attributes: attributes,
+			DroppedAttributesCount: uint32(dropped),
 		})
 	}
 	return output, true
@@ -689,8 +704,13 @@ func links(input []projectedLink) ([]*tracepb.Span_Link, bool) {
 		if !ok {
 			return nil, false
 		}
+		dropped, ok := unsigned(link.DroppedAttributesCount, 32)
+		if !ok {
+			return nil, false
+		}
 		output = append(output, &tracepb.Span_Link{
 			TraceId: traceID, SpanId: spanID, TraceState: link.TraceState, Attributes: attributes,
+			DroppedAttributesCount: uint32(dropped),
 		})
 	}
 	return output, true

@@ -230,6 +230,12 @@ type shapeContract struct {
 	operation          string
 	oiKind             string
 	allowedKinds       map[string]struct{}
+	allowedAttributes  map[string]struct{}
+	allowedEvents      map[string]struct{}
+	allowedEventFields map[string]map[string]struct{}
+	allowedLinks       map[string]struct{}
+	allowedLinkFields  map[string]struct{}
+	allowedScopeFields map[string]struct{}
 	requiredAttributes []string
 }
 

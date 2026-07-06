@@ -22,6 +22,7 @@ import (
 	"github.com/defenseclaw/defenseclaw/internal/observability"
 	compatibility "github.com/defenseclaw/defenseclaw/internal/observability/compatibility/galileo"
 	"github.com/defenseclaw/defenseclaw/internal/observability/delivery"
+	"github.com/defenseclaw/defenseclaw/internal/observability/destinations/otlp"
 	"github.com/defenseclaw/defenseclaw/internal/observability/pipeline"
 	"github.com/defenseclaw/defenseclaw/internal/observability/redaction"
 	"github.com/defenseclaw/defenseclaw/internal/telemetry"
@@ -71,6 +72,7 @@ const (
 	CanonicalFailureGenerationMismatch CanonicalFailureCode = "generation_mismatch"
 	CanonicalFailurePipeline           CanonicalFailureCode = "pipeline_failed"
 	CanonicalFailureProjection         CanonicalFailureCode = "projection_failed"
+	CanonicalFailureSchemaIneligible   CanonicalFailureCode = "schema_ineligible"
 	CanonicalFailureRouteIdentity      CanonicalFailureCode = "route_identity_mismatch"
 	CanonicalFailureUnsupportedShape   CanonicalFailureCode = "unsupported_shape"
 	CanonicalFailurePayload            CanonicalFailureCode = "payload_failed"
@@ -148,11 +150,18 @@ type CanonicalTraceConsumer struct {
 	adapterDone  bool
 	dispatchDone bool
 
-	accepted     atomic.Uint64
-	routeDropped atomic.Uint64
-	queueDropped atomic.Uint64
-	failed       atomic.Uint64
-	closed       atomic.Uint64
+	accepted                atomic.Uint64
+	observed                atomic.Uint64
+	routeDropped            atomic.Uint64
+	routeUnmatched          atomic.Uint64
+	projectionFailedClosed  atomic.Uint64
+	schemaIneligible        atomic.Uint64
+	routeTargetMismatch     atomic.Uint64
+	queueDropped            atomic.Uint64
+	failed                  atomic.Uint64
+	closed                  atomic.Uint64
+	closedBeforeObservation atomic.Uint64
+	closedObserved          atomic.Uint64
 }
 
 var _ telemetry.V8CanonicalSpanConsumer = (*CanonicalTraceConsumer)(nil)
@@ -169,7 +178,9 @@ func NewCanonicalTraceConsumer(options CanonicalTraceConsumerOptions) (*Canonica
 	if !validGalileoCanonicalDestination(destination) {
 		return nil, &CanonicalConsumerError{code: CanonicalConsumerErrorInvalidDestination}
 	}
-	if options.Dispatcher.Destination != destination.Name || !options.Dispatcher.Enabled {
+	if options.Dispatcher.Destination != destination.Name || !options.Dispatcher.Enabled ||
+		options.Dispatcher.Generation != options.Generation ||
+		options.Dispatcher.Signal != string(observability.SignalTraces) {
 		return nil, &CanonicalConsumerError{code: CanonicalConsumerErrorInvalidDispatcher}
 	}
 	dispatcher, err := delivery.NewDispatcher(options.Dispatcher, options.Adapter)
@@ -238,6 +249,7 @@ func (consumer *CanonicalTraceConsumer) TryEnqueue(
 	if consumer == nil || canonicalConsumerState(consumer.state.Load()) != canonicalConsumerActive {
 		if consumer != nil {
 			consumer.closed.Add(1)
+			consumer.closedBeforeObservation.Add(1)
 		}
 		return telemetry.V8CanonicalSpanEnqueueClosed
 	}
@@ -257,8 +269,10 @@ func (consumer *CanonicalTraceConsumer) tryEnqueueRecord(
 	}()
 	if canonicalConsumerState(consumer.state.Load()) != canonicalConsumerActive {
 		consumer.closed.Add(1)
+		consumer.closedBeforeObservation.Add(1)
 		return telemetry.V8CanonicalSpanEnqueueClosed
 	}
+	consumer.observed.Add(1)
 	provenance := record.Provenance()
 	if provenance.ConfigGeneration < 0 || uint64(provenance.ConfigGeneration) != consumer.generation {
 		consumer.failed.Add(1)
@@ -272,6 +286,7 @@ func (consumer *CanonicalTraceConsumer) tryEnqueueRecord(
 			return telemetry.V8CanonicalSpanEnqueueFailed
 		}
 		if target != consumer.destination {
+			consumer.routeTargetMismatch.Add(1)
 			consumer.routeDropped.Add(1)
 			return telemetry.V8CanonicalSpanEnqueueDropped
 		}
@@ -284,6 +299,7 @@ func (consumer *CanonicalTraceConsumer) tryEnqueueRecord(
 	}
 	for _, failure := range outcome.OptionalFailures() {
 		if failure.DestinationName() == consumer.destination {
+			consumer.projectionFailedClosed.Add(1)
 			consumer.failed.Add(1)
 			consumer.observe(CanonicalFailureProjection)
 			return telemetry.V8CanonicalSpanEnqueueFailed
@@ -304,13 +320,19 @@ func (consumer *CanonicalTraceConsumer) tryEnqueueRecord(
 		selected = &copy
 	}
 	if selected == nil {
+		consumer.routeUnmatched.Add(1)
 		consumer.routeDropped.Add(1)
 		return telemetry.V8CanonicalSpanEnqueueDropped
 	}
 	projected := consumer.project(selected.Projection(), consumer.limits)
 	if !projected.Eligible() {
+		consumer.schemaIneligible.Add(1)
 		consumer.routeDropped.Add(1)
-		consumer.observe(CanonicalFailureUnsupportedShape)
+		code := CanonicalFailureSchemaIneligible
+		if projected.Reason() == compatibility.ReasonUnsupportedShape {
+			code = CanonicalFailureUnsupportedShape
+		}
+		consumer.observe(code)
 		return telemetry.V8CanonicalSpanEnqueueDropped
 	}
 	payload, err := consumer.payload(projected, selected.Identity().OriginDestination())
@@ -331,6 +353,7 @@ func (consumer *CanonicalTraceConsumer) tryEnqueueRecord(
 	case delivery.EnqueueRejected:
 		if enqueued.Reason == delivery.ReasonInactive || enqueued.Reason == delivery.ReasonIntakeStopped {
 			consumer.closed.Add(1)
+			consumer.closedObserved.Add(1)
 			return telemetry.V8CanonicalSpanEnqueueClosed
 		}
 		consumer.failed.Add(1)
@@ -410,11 +433,18 @@ func (consumer *CanonicalTraceConsumer) Shutdown(ctx context.Context) error {
 // CanonicalTraceConsumerCounters is a content-free monotonic snapshot. Remote
 // delivery/retry counters remain available from the adapter and dispatcher.
 type CanonicalTraceConsumerCounters struct {
-	Accepted     uint64
-	RouteDropped uint64
-	QueueDropped uint64
-	Failed       uint64
-	Closed       uint64
+	Observed                uint64
+	Accepted                uint64
+	RouteDropped            uint64
+	RouteUnmatched          uint64
+	ProjectionFailedClosed  uint64
+	SchemaIneligible        uint64
+	RouteTargetMismatch     uint64
+	QueueDropped            uint64
+	Failed                  uint64
+	Closed                  uint64
+	ClosedBeforeObservation uint64
+	ClosedObserved          uint64
 }
 
 func (consumer *CanonicalTraceConsumer) Counters() CanonicalTraceConsumerCounters {
@@ -422,10 +452,62 @@ func (consumer *CanonicalTraceConsumer) Counters() CanonicalTraceConsumerCounter
 		return CanonicalTraceConsumerCounters{}
 	}
 	return CanonicalTraceConsumerCounters{
-		Accepted: consumer.accepted.Load(), RouteDropped: consumer.routeDropped.Load(),
-		QueueDropped: consumer.queueDropped.Load(), Failed: consumer.failed.Load(),
-		Closed: consumer.closed.Load(),
+		Observed: consumer.observed.Load(), Accepted: consumer.accepted.Load(),
+		RouteDropped: consumer.routeDropped.Load(), RouteUnmatched: consumer.routeUnmatched.Load(),
+		ProjectionFailedClosed: consumer.projectionFailedClosed.Load(),
+		SchemaIneligible:       consumer.schemaIneligible.Load(),
+		RouteTargetMismatch:    consumer.routeTargetMismatch.Load(),
+		QueueDropped:           consumer.queueDropped.Load(), Failed: consumer.failed.Load(),
+		Closed: consumer.closed.Load(), ClosedBeforeObservation: consumer.closedBeforeObservation.Load(),
+		ClosedObserved: consumer.closedObserved.Load(),
 	}
+}
+
+// Reconciled proves that every active observed handoff has exactly one primary
+// local disposition. Calls rejected before active observation are tracked
+// separately and therefore cannot make the observed funnel appear lossy.
+func (counters CanonicalTraceConsumerCounters) Reconciled() bool {
+	return counters.Observed == counters.Accepted+counters.RouteDropped+
+		counters.QueueDropped+counters.Failed+counters.ClosedObserved &&
+		counters.Closed == counters.ClosedBeforeObservation+counters.ClosedObserved &&
+		counters.SchemaIneligible+counters.RouteUnmatched+counters.RouteTargetMismatch ==
+			counters.RouteDropped &&
+		counters.ProjectionFailedClosed <= counters.Failed
+}
+
+// CanonicalDeliveryEvidence is one detached, content-free view of the complete
+// Galileo funnel. Projection dispositions, the common bounded queue, remote
+// partial success, retry, and terminal transport outcomes remain attributable
+// to the same destination and configuration generation.
+type CanonicalDeliveryEvidence struct {
+	Destination string
+	Generation  uint64
+	Profile     string
+	Funnel      CanonicalTraceConsumerCounters
+	Delivery    delivery.HealthSnapshot
+	Transport   otlp.ExportCounters
+}
+
+type transportCounterSource interface {
+	Counters() otlp.ExportCounters
+}
+
+// DeliveryEvidenceSnapshot never exposes record/trace/span IDs, route names,
+// endpoints, headers, response bodies, or projected values.
+func (consumer *CanonicalTraceConsumer) DeliveryEvidenceSnapshot() CanonicalDeliveryEvidence {
+	if consumer == nil {
+		return CanonicalDeliveryEvidence{Profile: compatibility.ProfileID,
+			Delivery: delivery.HealthSnapshot{State: delivery.HealthStopped}}
+	}
+	evidence := CanonicalDeliveryEvidence{
+		Destination: consumer.destination, Generation: consumer.generation,
+		Profile: compatibility.ProfileID, Funnel: consumer.Counters(),
+		Delivery: consumer.DeliveryHealthSnapshot(),
+	}
+	if source, ok := consumer.adapter.(transportCounterSource); ok && source != nil {
+		evidence.Transport = source.Counters()
+	}
+	return evidence
 }
 
 // DeliveryHealthSnapshot is a detached queue/counter view with no Galileo

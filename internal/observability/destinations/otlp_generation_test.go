@@ -28,6 +28,7 @@ import (
 
 	"github.com/defenseclaw/defenseclaw/internal/config"
 	"github.com/defenseclaw/defenseclaw/internal/observability"
+	compatibility "github.com/defenseclaw/defenseclaw/internal/observability/compatibility/galileo"
 	"github.com/defenseclaw/defenseclaw/internal/observability/delivery"
 	"github.com/defenseclaw/defenseclaw/internal/observability/destinations/galileo"
 	"github.com/defenseclaw/defenseclaw/internal/observability/destinations/localobservability"
@@ -195,6 +196,53 @@ func generatedHookLatencyRecord(
 			DefenseClawMetricResult:    observability.Present("ok"),
 		},
 	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return record
+}
+
+func generatedModelChatRecord(t *testing.T, provider *telemetry.Provider) observability.Record {
+	t.Helper()
+	digest, generation, ok := provider.V8PlanBinding()
+	if !ok || digest == "" || generation == 0 {
+		t.Fatalf("provider binding digest=%q generation=%d ok=%v", digest, generation, ok)
+	}
+	builder, err := observability.NewFamilyBuilder(
+		observability.ClockFunc(func() time.Time { return time.Unix(600, 0).UTC() }),
+		observability.OccurrenceIDGeneratorFunc(func() (string, error) { return "generic-galileo-xor", nil }),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err := builder.BuildSpanModelChat(observability.SpanModelChatInput{
+		Envelope: observability.FamilyEnvelopeInput{
+			Source: observability.SourceGateway,
+			Correlation: observability.Correlation{
+				RunID: "run-xor", TurnID: "turn-xor",
+				TraceID: "1234567890abcdef1234567890abcdef", SpanID: "1234567890abcdef",
+			},
+			Provenance: observability.FamilyProvenanceInput{
+				Producer: "defenseclaw", BinaryVersion: "generation-test",
+				ConfigGeneration: int64(generation), ConfigDigest: digest,
+			},
+		},
+		Outcome: observability.OutcomeCompleted, Kind: "CLIENT",
+		StartTimeUnixNano: 1_783_278_200_000_000_000,
+		EndTimeUnixNano:   1_783_278_200_100_000_000,
+		TraceState:        observability.Present("dc=xor"), Flags: 0x101,
+		Status:              observability.NewTraceStatusOK(),
+		Resource:            observability.TraceResourceInput{SchemaURL: "https://opentelemetry.io/schemas/1.42.0"},
+		ResourceServiceName: "defenseclaw", ResourceServiceNamespace: "cisco.ai-defense",
+		ResourceServiceInstanceID: "instance-xor", ResourceDeploymentEnvironmentName: "test",
+		ResourceDefenseClawInstanceID:       "instance-xor",
+		DefenseClawAgentReportedCostPresent: false,
+		DefenseClawContentInputState:        "not_reported", DefenseClawTelemetryInputReported: false,
+		DefenseClawContentOutputState: "not_reported", DefenseClawTelemetryOutputReported: false,
+		GenAIOperationName: observability.Present("chat"), GenAIProviderName: observability.Present("openai"),
+		GenAIRequestModel: "gpt-xor", DefenseClawTelemetryTokensReported: observability.Present(false),
+		ConditionOperationTerminal: true,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -868,6 +916,85 @@ func TestOTLPGenerationAssemblerPreparesCanonicalGalileoAndNeverRawLegacy(t *tes
 	}
 	if factory.OTLPGenerationAcknowledgedCanaryTrace(21, "galileo", "0102030405060708090a0b0c0d0e0f10") {
 		t.Fatal("Galileo canary registry outlived canonical consumer")
+	}
+}
+
+func TestOTLPGenerationAssemblerGenericGalileoCanonicalXORAndSiblingFanout(t *testing.T) {
+	genericCapture, galileoCapture := &otlpGenerationCapture{}, &otlpGenerationCapture{}
+	genericServer := httptest.NewServer(http.HandlerFunc(genericCapture.handler))
+	galileoServer := httptest.NewServer(http.HandlerFunc(galileoCapture.handler))
+	defer genericServer.Close()
+	defer galileoServer.Close()
+	genericDestination := traceSend("generic", genericServer.URL, []observability.Bucket{observability.BucketModelIO})
+	galileoDestination := traceSend("galileo", galileoServer.URL, []observability.Bucket{observability.BucketModelIO})
+	galileoDestination.Preset = "galileo"
+	plan := compileGenerationRuntimePlan(t, t.TempDir(), genericDestination, galileoDestination)
+	factory := newTestFactory(t, io.Discard, nil, nil, net.Dialer{}, nil)
+
+	prepared, err := factory.PrepareOTLPGenerationPipelines(
+		context.Background(), plan, 1, generationMetricSpec(),
+	)
+	if err != nil || len(prepared.SpanPipelines) != 2 || len(prepared.HealthSources) != 2 {
+		t.Fatalf("prepared pipelines=%+v error=%v", prepared, err)
+	}
+	for _, pipeline := range prepared.SpanPipelines {
+		wrapper, ok := pipeline.Canonical.(*canaryRegisteredCanonicalConsumer)
+		if !ok || wrapper == nil || wrapper.V8CanonicalSpanConsumer == nil || pipeline.Legacy != nil {
+			t.Fatalf("destination %q is not one canonical XOR arm: %+v", pipeline.Destination, pipeline)
+		}
+		switch pipeline.Destination {
+		case "generic":
+			if _, ok := wrapper.V8CanonicalSpanConsumer.(*otlpdestination.CanonicalTraceConsumer); !ok {
+				t.Fatalf("generic destination consumer = %T", wrapper.V8CanonicalSpanConsumer)
+			}
+		case "galileo":
+			if _, ok := wrapper.V8CanonicalSpanConsumer.(*galileo.CanonicalTraceConsumer); !ok {
+				t.Fatalf("Galileo destination consumer = %T", wrapper.V8CanonicalSpanConsumer)
+			}
+		default:
+			t.Fatalf("unexpected destination %q", pipeline.Destination)
+		}
+	}
+	cleanupOTLPGenerationPipelines(prepared)
+
+	manager := generationOTLPManager(t, factory, plan)
+	provider, lease := compositeProviderFromManager(t, manager)
+	result, err := provider.ImportV8CanonicalSpan(generatedModelChatRecord(t, provider))
+	if err != nil || result.Matched != 2 || result.Delivered != 2 || result.Dropped != 0 ||
+		result.Failed != 0 || result.Suppressed != 0 {
+		t.Fatalf("canonical sibling fanout=%+v error=%v", result, err)
+	}
+	drainGeneratedProvider(t, lease)
+	lease.Release()
+
+	genericRequests, _, _ := genericCapture.snapshot()
+	galileoRequests, _, _ := galileoCapture.snapshot()
+	if len(genericRequests) != 1 || len(galileoRequests) != 1 ||
+		len(traceRequestSpans(genericRequests[0])) != 1 || len(traceRequestSpans(galileoRequests[0])) != 1 {
+		t.Fatalf("generic/Galileo request counts=%d/%d", len(genericRequests), len(galileoRequests))
+	}
+	genericSpan := traceRequestSpans(genericRequests[0])[0]
+	galileoSpan := traceRequestSpans(galileoRequests[0])[0]
+	for _, span := range []*tracepb.Span{genericSpan, galileoSpan} {
+		if span.Name != "chat gpt-xor" ||
+			protoAttribute(span.Attributes, "defenseclaw.span.family") != observability.TelemetryFamilyModelChat ||
+			protoAttribute(span.Attributes, "defenseclaw.bucket") != string(observability.BucketModelIO) {
+			t.Fatalf("canonical identity changed: %+v", span)
+		}
+	}
+	if genericSpan.TraceState != galileoSpan.TraceState || genericSpan.Flags != galileoSpan.Flags ||
+		!reflect.DeepEqual(genericSpan.TraceId, galileoSpan.TraceId) ||
+		!reflect.DeepEqual(genericSpan.SpanId, galileoSpan.SpanId) {
+		t.Fatalf("generic/Galileo canonical topology diverged generic=%+v Galileo=%+v", genericSpan, galileoSpan)
+	}
+	genericScope := genericRequests[0].ResourceSpans[0].ScopeSpans[0].Scope
+	galileoScope := galileoRequests[0].ResourceSpans[0].ScopeSpans[0].Scope
+	if protoAttribute(genericScope.Attributes, "defenseclaw.galileo.compatibility_profile") != "" ||
+		protoAttribute(galileoScope.Attributes, "defenseclaw.galileo.compatibility_profile") != compatibility.ProfileID {
+		t.Fatalf("destination-private profile generic=%+v Galileo=%+v", genericScope, galileoScope)
+	}
+	if err := manager.Close(context.Background()); err != nil {
+		t.Fatal(err)
 	}
 }
 

@@ -15,6 +15,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"reflect"
 	"sync"
 	"sync/atomic"
@@ -25,10 +27,13 @@ import (
 	"github.com/defenseclaw/defenseclaw/internal/observability"
 	compatibility "github.com/defenseclaw/defenseclaw/internal/observability/compatibility/galileo"
 	"github.com/defenseclaw/defenseclaw/internal/observability/delivery"
+	"github.com/defenseclaw/defenseclaw/internal/observability/destinations/otlp"
 	"github.com/defenseclaw/defenseclaw/internal/observability/pipeline"
 	"github.com/defenseclaw/defenseclaw/internal/observability/redaction"
 	"github.com/defenseclaw/defenseclaw/internal/observability/router"
 	"github.com/defenseclaw/defenseclaw/internal/telemetry"
+	collectortracepb "go.opentelemetry.io/proto/otlp/collector/trace/v1"
+	tracepb "go.opentelemetry.io/proto/otlp/trace/v1"
 )
 
 const canonicalRawPII = "canonical-consumer@example.test"
@@ -40,8 +45,16 @@ type canonicalCaptureAdapter struct {
 	closeGate  chan struct{}
 	closeErr   error
 	closeCalls atomic.Uint64
+	transport  otlp.ExportCounters
 	mu         sync.Mutex
 	closed     bool
+}
+
+func (adapter *canonicalCaptureAdapter) Counters() otlp.ExportCounters {
+	if adapter == nil {
+		return otlp.ExportCounters{}
+	}
+	return adapter.transport
 }
 
 func (adapter *canonicalCaptureAdapter) EncodedSize(sizes []int) (int, bool) {
@@ -139,6 +152,11 @@ func TestCanonicalConsumerRequiresExplicitActivationAndPerformsNoPreparedIO(t *t
 		t.Fatalf("active enqueue = %s failures=%+v", result, fixture.failures.snapshot())
 	}
 	flushCanonical(t, fixture.consumer)
+	if counters := fixture.consumer.Counters(); !counters.Reconciled() || counters.Observed != 1 ||
+		counters.Accepted != 1 || counters.Closed != 1 || counters.ClosedBeforeObservation != 1 ||
+		counters.ClosedObserved != 0 {
+		t.Fatalf("prepared/active reconciliation = %+v", counters)
+	}
 	shutdownCanonical(t, fixture.consumer)
 }
 
@@ -147,7 +165,7 @@ func TestCanonicalConsumerPreparationRejectsCrossKindAndUnboundedDependencies(t 
 	fixture := newCanonicalFixture(t, "galileo-validation", observability.BucketModelIO, "none", 1)
 	base := CanonicalTraceConsumerOptions{
 		Destination: fixture.destination, Generation: 1, Pipeline: fixture.pipeline,
-		Adapter: fixture.adapter, Dispatcher: canonicalDispatcherConfig(fixture.destination.Name, 1),
+		Adapter: fixture.adapter, Dispatcher: canonicalDispatcherConfig(fixture.destination.Name, 1, 1),
 		Limits: compatibility.DefaultLimits(), Observer: fixture.failures,
 	}
 	tests := []struct {
@@ -165,6 +183,10 @@ func TestCanonicalConsumerPreparationRejectsCrossKindAndUnboundedDependencies(t 
 			value.Destination.SelectedSignals = []observability.Signal{observability.SignalLogs}
 		}},
 		{name: "dispatcher identity", code: CanonicalConsumerErrorInvalidDispatcher, edit: func(value *CanonicalTraceConsumerOptions) { value.Dispatcher.Destination = "other" }},
+		{name: "dispatcher generation", code: CanonicalConsumerErrorInvalidDispatcher, edit: func(value *CanonicalTraceConsumerOptions) { value.Dispatcher.Generation = 2 }},
+		{name: "dispatcher signal", code: CanonicalConsumerErrorInvalidDispatcher, edit: func(value *CanonicalTraceConsumerOptions) {
+			value.Dispatcher.Signal = string(observability.SignalLogs)
+		}},
 	}
 	for _, test := range tests {
 		test := test
@@ -229,6 +251,10 @@ func TestCanonicalConsumerConfiguredRouteDropAndWrongDestinationDoNotLeakToAdapt
 	if result := routeDrop.consumer.tryEnqueueRecord(routeDrop.modelRecord(t, "safe")); result != telemetry.V8CanonicalSpanEnqueueDropped {
 		t.Fatalf("unmatched route = %s", result)
 	}
+	if counters := routeDrop.consumer.Counters(); !counters.Reconciled() ||
+		counters.RouteDropped != 1 || counters.RouteUnmatched != 1 {
+		t.Fatalf("unmatched route accounting = %+v", counters)
+	}
 	assertNoCanonicalDelivery(t, routeDrop.adapter.deliveries)
 	shutdownCanonical(t, routeDrop.consumer)
 
@@ -238,7 +264,7 @@ func TestCanonicalConsumerConfiguredRouteDropAndWrongDestinationDoNotLeakToAdapt
 	wrongFailures := &canonicalFailureCapture{}
 	wrong, err := NewCanonicalTraceConsumer(CanonicalTraceConsumerOptions{
 		Destination: other.destination, Generation: 4, Pipeline: source.pipeline,
-		Adapter: wrongAdapter, Dispatcher: canonicalDispatcherConfig(other.destination.Name, 4),
+		Adapter: wrongAdapter, Dispatcher: canonicalDispatcherConfig(other.destination.Name, 4, 4),
 		Limits: compatibility.DefaultLimits(), Observer: wrongFailures,
 	})
 	if err != nil {
@@ -252,6 +278,19 @@ func TestCanonicalConsumerConfiguredRouteDropAndWrongDestinationDoNotLeakToAdapt
 	shutdownCanonical(t, wrong)
 	shutdownCanonical(t, source.consumer)
 	shutdownCanonical(t, other.consumer)
+
+	target := newCanonicalFixture(t, "galileo-target", observability.BucketModelIO, "none", 4)
+	target.consumer.Activate()
+	if result := target.consumer.tryEnqueueRecord(
+		target.modelRecordWithCanary(t, "safe", "different-destination"),
+	); result != telemetry.V8CanonicalSpanEnqueueDropped {
+		t.Fatalf("canary target mismatch = %s", result)
+	}
+	if counters := target.consumer.Counters(); !counters.Reconciled() ||
+		counters.RouteDropped != 1 || counters.RouteTargetMismatch != 1 {
+		t.Fatalf("target mismatch accounting = %+v", counters)
+	}
+	shutdownCanonical(t, target.consumer)
 }
 
 func TestCanonicalConsumerRejectsUnsupportedGalileoShapeAndGenerationMismatch(t *testing.T) {
@@ -272,6 +311,10 @@ func TestCanonicalConsumerRejectsUnsupportedGalileoShapeAndGenerationMismatch(t 
 	if got := fixture.failures.snapshot(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("failures = %+v, want %+v", got, want)
 	}
+	if counters := fixture.consumer.Counters(); !counters.Reconciled() ||
+		counters.SchemaIneligible != 1 || counters.RouteDropped != 1 || counters.Failed != 1 {
+		t.Fatalf("schema/failure accounting = %+v", counters)
+	}
 	shutdownCanonical(t, fixture.consumer)
 }
 
@@ -285,7 +328,7 @@ func TestCanonicalConsumerQueueFullIsBoundedAndFlushLeavesIntakeLive(t *testing.
 	}
 	cancel()
 	replacement, err := delivery.NewDispatcher(
-		canonicalDispatcherConfigWithDelay(fixture.destination.Name, 1, time.Hour), fixture.adapter,
+		canonicalDispatcherConfigWithDelay(fixture.destination.Name, 1, 3, time.Hour), fixture.adapter,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -315,6 +358,153 @@ func TestCanonicalConsumerQueueFullIsBoundedAndFlushLeavesIntakeLive(t *testing.
 		t.Fatalf("flush stopped intake: %+v", got)
 	}
 	shutdownCanonical(t, live.consumer)
+}
+
+func TestCanonicalConsumerUnifiesFunnelQueueAndPartialTransportEvidence(t *testing.T) {
+	t.Parallel()
+	fixture := newCanonicalFixture(t, "galileo-evidence", observability.BucketModelIO, "none", 11)
+	fixture.adapter.deliver = delivery.DeliveryResult{
+		Outcome: delivery.OutcomePartial, DeliveredItems: 1, RejectedItems: 1,
+	}
+	fixture.adapter.transport = otlp.ExportCounters{
+		Accepted: 2, Exported: 1, RejectedPartial: 1,
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	if err := fixture.consumer.dispatcher.Close(ctx); err != nil {
+		cancel()
+		t.Fatal(err)
+	}
+	cancel()
+	replacement, err := delivery.NewDispatcher(
+		canonicalDispatcherConfigWithDelay(fixture.destination.Name, 4, 11, time.Hour),
+		fixture.adapter,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture.consumer.dispatcher = replacement
+	fixture.consumer.Activate()
+	for _, content := range []string{"one", "two"} {
+		if result := fixture.consumer.tryEnqueueRecord(
+			fixture.modelRecord(t, content),
+		); result != telemetry.V8CanonicalSpanEnqueueAccepted {
+			t.Fatalf("enqueue %q = %s", content, result)
+		}
+	}
+	shutdownCanonical(t, fixture.consumer)
+	evidence := fixture.consumer.DeliveryEvidenceSnapshot()
+	if evidence.Destination != fixture.destination.Name || evidence.Generation != 11 ||
+		evidence.Profile != compatibility.ProfileID || evidence.Funnel.Observed != 2 ||
+		!evidence.Funnel.Reconciled() ||
+		evidence.Funnel.Accepted != 2 || evidence.Funnel.RouteDropped != 0 ||
+		evidence.Funnel.SchemaIneligible != 0 || evidence.Delivery.Counters.Accepted != 2 ||
+		evidence.Delivery.Counters.Delivered != 1 || evidence.Delivery.Counters.Rejected != 1 ||
+		evidence.Delivery.Counters.Retried != 0 || evidence.Transport.Accepted != 2 ||
+		evidence.Transport.Exported != 1 || evidence.Transport.RejectedPartial != 1 {
+		t.Fatalf("unified evidence = %+v", evidence)
+	}
+	if evidence.Delivery.LastSuccess.IsZero() || evidence.Delivery.LastFailure.IsZero() ||
+		bytes.Contains([]byte(fmt.Sprintf("%+v", evidence)), []byte(canonicalRawPII)) {
+		t.Fatalf("partial/content-free evidence = %+v", evidence)
+	}
+}
+
+func TestCanonicalConsumerExportsAllSixGeneratedFamiliesWithPR403Graph(t *testing.T) {
+	t.Parallel()
+	capture := &traceCapture{requests: make(chan *collectortracepb.ExportTraceServiceRequest, 2)}
+	server := httptest.NewServer(http.HandlerFunc(capture.handler))
+	defer server.Close()
+	adapter := newTestAdapter(t, server.URL+"/otel/traces", &canaryObserver{})
+	fixture := newCanonicalFixtureBuckets(t, "galileo", []observability.Bucket{
+		observability.BucketAgentLifecycle, observability.BucketModelIO,
+		observability.BucketToolActivity, observability.BucketGuardrailEvaluation,
+	}, "none", 12)
+	consumer, err := NewCanonicalTraceConsumer(CanonicalTraceConsumerOptions{
+		Destination: fixture.destination, Generation: 12, Pipeline: fixture.pipeline,
+		Adapter: adapter, Dispatcher: canonicalDispatcherConfigWithDelay("galileo", 8, 12, 100*time.Millisecond),
+		Limits: compatibility.DefaultLimits(), Observer: fixture.failures,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	consumer.Activate()
+	records := fixture.richGalileoGraph(t)
+	for _, record := range records {
+		if result := consumer.tryEnqueueRecord(record); result != telemetry.V8CanonicalSpanEnqueueAccepted {
+			t.Fatalf("enqueue %s = %s failures=%+v", record.EventName(), result, fixture.failures.snapshot())
+		}
+	}
+	request := waitRequest(t, capture.requests)
+	flushCanonical(t, consumer)
+	spans := requestSpans(request)
+	if len(spans) != 7 {
+		t.Fatalf("exported spans = %d, want 7", len(spans))
+	}
+	families := make(map[string]int)
+	byID := make(map[string]*tracepb.Span)
+	for _, span := range spans {
+		attributes := protoAttributes(span.Attributes)
+		family := attributes["defenseclaw.span.family"].GetStringValue()
+		bucket := attributes["defenseclaw.bucket"].GetStringValue()
+		if family == "" || bucket == "" || span.Status == nil ||
+			span.Status.Code != tracepb.Status_STATUS_CODE_OK || span.Flags != 0x101 ||
+			span.TraceState != "dc=rich" {
+			t.Fatalf("canonical identity/status lost family=%q bucket=%q span=%+v", family, bucket, span)
+		}
+		families[family]++
+		byID[fmt.Sprintf("%x", span.SpanId)] = span
+	}
+	wantFamilies := map[string]int{
+		observability.TelemetryFamilyAgentInvoke:     2,
+		observability.TelemetryFamilyModelChat:       1,
+		observability.TelemetryFamilyToolExecute:     1,
+		observability.TelemetryFamilyRetrievalSearch: 1,
+		observability.TelemetryFamilyWorkflowRun:     1,
+		observability.TelemetryFamilyGuardrailJudge:  1,
+	}
+	if !reflect.DeepEqual(families, wantFamilies) {
+		t.Fatalf("Galileo family inventory = %v, want %v", families, wantFamilies)
+	}
+	parents := map[string]string{
+		"0000000000000001": "", "0000000000000002": "0000000000000001",
+		"0000000000000003": "0000000000000002", "0000000000000004": "0000000000000003",
+		"0000000000000005": "0000000000000003", "0000000000000006": "0000000000000005",
+		"0000000000000007": "0000000000000004",
+	}
+	for spanID, parentID := range parents {
+		span := byID[spanID]
+		if span == nil || fmt.Sprintf("%x", span.ParentSpanId) != parentID {
+			t.Errorf("topology span=%s parent=%x want=%s", spanID, span.GetParentSpanId(), parentID)
+		}
+	}
+	rootAttributes := protoAttributes(byID["0000000000000001"].Attributes)
+	childAttributes := protoAttributes(byID["0000000000000002"].Attributes)
+	if rootAttributes["defenseclaw.agent.root.id"].GetStringValue() != "agent-root" ||
+		childAttributes["defenseclaw.agent.parent.id"].GetStringValue() != "agent-root" ||
+		childAttributes["defenseclaw.agent.lineage.provenance"].GetStringValue() != "reported" ||
+		childAttributes["defenseclaw.agent.lifecycle.id"].GetStringValue() != "lifecycle-child" ||
+		childAttributes["defenseclaw.agent.execution.id"].GetStringValue() != "execution-child" ||
+		childAttributes["defenseclaw.agent.depth"].GetIntValue() != 1 {
+		t.Fatalf("PR403 root/subagent richness lost root=%v child=%v", rootAttributes, childAttributes)
+	}
+	toolAttributes := protoAttributes(byID["0000000000000005"].Attributes)
+	judgeAttributes := protoAttributes(byID["0000000000000007"].Attributes)
+	if toolAttributes["gen_ai.tool.name"].GetStringValue() != "search" ||
+		toolAttributes["defenseclaw.tool.status"].GetStringValue() != "completed" ||
+		judgeAttributes["defenseclaw.guardrail.judge"].GetBoolValue() != true ||
+		judgeAttributes["defenseclaw.evaluation.id"].GetStringValue() != "evaluation-rich" ||
+		judgeAttributes["defenseclaw.finding.id"].GetStringValue() != "finding-rich" {
+		t.Fatalf("tool/judge richness lost tool=%v judge=%v", toolAttributes, judgeAttributes)
+	}
+	evidence := consumer.DeliveryEvidenceSnapshot()
+	if evidence.Funnel.Observed != 7 || evidence.Funnel.Accepted != 7 ||
+		!evidence.Funnel.Reconciled() ||
+		evidence.Delivery.Counters.Delivered != 7 || evidence.Transport.Exported != 7 ||
+		evidence.Funnel.RouteDropped != 0 || evidence.Funnel.Failed != 0 {
+		t.Fatalf("six-family delivery evidence = %+v", evidence)
+	}
+	shutdownCanonical(t, consumer)
+	shutdownCanonical(t, fixture.consumer)
 }
 
 func TestCanonicalConsumerShutdownIsRetryableIdempotentAndCannotReactivate(t *testing.T) {
@@ -388,9 +578,18 @@ func newCanonicalFixture(
 	profile string,
 	generation uint64,
 ) *canonicalFixture {
+	return newCanonicalFixtureBuckets(t, name, []observability.Bucket{bucket}, profile, generation)
+}
+
+func newCanonicalFixtureBuckets(
+	t *testing.T,
+	name string,
+	buckets []observability.Bucket,
+	profile string,
+	generation uint64,
+) *canonicalFixture {
 	t.Helper()
 	signals := []observability.Signal{observability.SignalTraces}
-	buckets := []observability.Bucket{bucket}
 	plan, err := config.CompileObservabilityV8(&config.ObservabilityV8Source{
 		Destinations: []config.ObservabilityV8DestinationSource{{
 			Name: name, Kind: config.ObservabilityV8DestinationOTLP, Preset: "galileo",
@@ -423,7 +622,7 @@ func newCanonicalFixture(
 	failures := &canonicalFailureCapture{}
 	consumer, err := NewCanonicalTraceConsumer(CanonicalTraceConsumerOptions{
 		Destination: destination, Generation: generation, Pipeline: projection,
-		Adapter: adapter, Dispatcher: canonicalDispatcherConfig(name, 4),
+		Adapter: adapter, Dispatcher: canonicalDispatcherConfig(name, 4, generation),
 		Limits: compatibility.DefaultLimits(), Observer: failures,
 	})
 	if err != nil {
@@ -436,6 +635,13 @@ func newCanonicalFixture(
 }
 
 func (fixture *canonicalFixture) modelRecord(t *testing.T, content string) observability.Record {
+	return fixture.modelRecordWithCanary(t, content, "")
+}
+
+func (fixture *canonicalFixture) modelRecordWithCanary(
+	t *testing.T,
+	content, canaryDestination string,
+) observability.Record {
 	t.Helper()
 	builder := fixture.builder(t)
 	sequence := fixture.sequence.Add(1)
@@ -450,6 +656,14 @@ func (fixture *canonicalFixture) modelRecord(t *testing.T, content string) obser
 			observability.TelemetryStructuredArmGenAIMessagePartText{Value: observability.TelemetryStructuredGenAITextPart{Content: "done"}},
 		}},
 	}}}
+	canary := observability.Absent[bool]()
+	canaryOperation := observability.Absent[string]()
+	canaryTarget := observability.Absent[string]()
+	if canaryDestination != "" {
+		canary = observability.Present(true)
+		canaryOperation = observability.Present("runtime-pipeline-test")
+		canaryTarget = observability.Present(canaryDestination)
+	}
 	record, err := builder.BuildSpanModelChat(observability.SpanModelChatInput{
 		Envelope: observability.FamilyEnvelopeInput{
 			Source: observability.SourceGateway,
@@ -475,7 +689,9 @@ func (fixture *canonicalFixture) modelRecord(t *testing.T, content string) obser
 		ResourceServiceName: "defenseclaw", ResourceServiceNamespace: "cisco.ai-defense",
 		ResourceServiceInstanceID: "instance-1", ResourceDeploymentEnvironmentName: "test",
 		ResourceDefenseClawInstanceID: "instance-1",
-		GenAIInputMessages:            observability.Present(input), DefenseClawTelemetryInputReported: true,
+		DefenseClawTelemetryCanary:    canary, DefenseClawTelemetryCanaryOperation: canaryOperation,
+		DefenseClawTelemetryCanaryDestination: canaryTarget,
+		GenAIInputMessages:                    observability.Present(input), DefenseClawTelemetryInputReported: true,
 		DefenseClawContentInputState: "preserved", DefenseClawContentInputOriginalBytes: observability.Present(int64(len(content))),
 		GenAIOutputMessages: observability.Present(output), DefenseClawTelemetryOutputReported: true,
 		DefenseClawContentOutputState: "preserved", DefenseClawContentOutputOriginalBytes: observability.Present(int64(4)),
@@ -487,6 +703,256 @@ func (fixture *canonicalFixture) modelRecord(t *testing.T, content string) obser
 		t.Fatal(err)
 	}
 	return record
+}
+
+func (fixture *canonicalFixture) richGalileoGraph(t *testing.T) []observability.Record {
+	t.Helper()
+	builder := fixture.builder(t)
+	const traceID = "89abcdef0123456789abcdef01234567"
+	input, output := richGalileoMessages("root request", "completed response")
+	resource := observability.TraceResourceInput{SchemaURL: "https://opentelemetry.io/schemas/1.42.0"}
+	envelope := func(spanID string) observability.FamilyEnvelopeInput {
+		return observability.FamilyEnvelopeInput{
+			Source: observability.SourceGateway,
+			Correlation: observability.Correlation{
+				RunID: "run-rich", SessionID: "session-rich", TurnID: "turn-rich",
+				TraceID: traceID, SpanID: spanID, AgentID: "agent-child",
+				AgentInstanceID: "instance-child", ToolInvocationID: "tool-call-rich",
+			},
+			Provenance: observability.FamilyProvenanceInput{
+				Producer: "defenseclaw", BinaryVersion: "8.0.0",
+				ConfigGeneration: int64(fixture.generation), ConfigDigest: fixture.plan.Digest(),
+			},
+		}
+	}
+	core := func(index uint64) (uint64, uint64) {
+		return 1_783_278_100_000_000_000 + index*1_000_000,
+			1_783_278_100_000_500_000 + index*1_000_000
+	}
+	resourceFields := func() (string, string, string, string, string) {
+		return "defenseclaw", "cisco.ai-defense", "instance-rich", "test", "instance-rich"
+	}
+
+	start, end := core(1)
+	service, namespace, instance, environment, defenseclawInstance := resourceFields()
+	root, err := builder.BuildSpanAgentInvoke(observability.SpanAgentInvokeInput{
+		Envelope: envelope("0000000000000001"), Outcome: observability.OutcomeCompleted,
+		Kind: "INTERNAL", StartTimeUnixNano: start, EndTimeUnixNano: end,
+		TraceState: observability.Present("dc=rich"), Flags: 0x101,
+		Status: observability.NewTraceStatusOK(), Resource: resource,
+		ResourceServiceName: service, ResourceServiceNamespace: namespace,
+		ResourceServiceInstanceID: instance, ResourceDeploymentEnvironmentName: environment,
+		ResourceDefenseClawInstanceID: defenseclawInstance,
+		DefenseClawAgentType:          "root", GenAIConversationID: observability.Present("conversation-rich"),
+		GenAIAgentID: observability.Present("agent-root"), GenAIAgentName: observability.Present("root-agent"),
+		DefenseClawAgentRootID:            observability.Present("agent-root"),
+		DefenseClawAgentLineageProvenance: observability.Present("reported"),
+		DefenseClawSessionRootID:          observability.Present("session-rich"),
+		DefenseClawAgentLifecycleID:       observability.Present("lifecycle-root"),
+		DefenseClawAgentExecutionID:       observability.Present("execution-root"),
+		DefenseClawAgentDepth:             observability.Present[int64](0),
+		DefenseClawAgentLifecycleEvent:    observability.Present("session_start"),
+		DefenseClawAgentLifecycleState:    observability.Present("active"),
+		DefenseClawAgentPhase:             observability.Present("planning"),
+		DefenseClawAgentPhaseCode:         observability.Present[int64](2),
+		DefenseClawAgentSequence:          observability.Present[int64](1),
+		GenAIInputMessages:                observability.Present(input), DefenseClawTelemetryInputReported: true,
+		DefenseClawContentInputState: "preserved", GenAIOutputMessages: observability.Present(output),
+		DefenseClawTelemetryOutputReported: true, DefenseClawContentOutputState: "preserved",
+		GenAIProviderName:                   observability.Present("defenseclaw"),
+		GenAIOperationName:                  observability.Present("invoke_agent"),
+		DefenseClawAgentReportedCostPresent: false, ConditionOperationTerminal: true,
+	})
+	if err != nil {
+		t.Fatalf("build rich root: %v", err)
+	}
+
+	start, end = core(2)
+	child, err := builder.BuildSpanAgentInvoke(observability.SpanAgentInvokeInput{
+		Envelope: envelope("0000000000000002"), Outcome: observability.OutcomeCompleted,
+		Kind: "INTERNAL", StartTimeUnixNano: start, EndTimeUnixNano: end,
+		ParentSpanID: observability.Present("0000000000000001"),
+		TraceState:   observability.Present("dc=rich"), Flags: 0x101,
+		Status: observability.NewTraceStatusOK(), Resource: resource,
+		ResourceServiceName: service, ResourceServiceNamespace: namespace,
+		ResourceServiceInstanceID: instance, ResourceDeploymentEnvironmentName: environment,
+		ResourceDefenseClawInstanceID: defenseclawInstance,
+		DefenseClawAgentType:          "subagent", GenAIConversationID: observability.Present("conversation-rich"),
+		GenAIAgentID: observability.Present("agent-child"), GenAIAgentName: observability.Present("reviewer"),
+		DefenseClawAgentRootID:            observability.Present("agent-root"),
+		DefenseClawAgentParentID:          observability.Present("agent-root"),
+		DefenseClawAgentLineageProvenance: observability.Present("reported"),
+		DefenseClawSessionRootID:          observability.Present("session-rich"),
+		DefenseClawSessionParentID:        observability.Present("session-rich"),
+		DefenseClawAgentLifecycleID:       observability.Present("lifecycle-child"),
+		DefenseClawAgentExecutionID:       observability.Present("execution-child"),
+		DefenseClawAgentDepth:             observability.Present[int64](1),
+		DefenseClawAgentLifecycleEvent:    observability.Present("subagent_start"),
+		DefenseClawAgentLifecycleState:    observability.Present("active"),
+		DefenseClawAgentPhase:             observability.Present("model"),
+		DefenseClawAgentPhaseCode:         observability.Present[int64](3),
+		DefenseClawAgentSequence:          observability.Present[int64](2),
+		GenAIInputMessages:                observability.Present(input), DefenseClawTelemetryInputReported: true,
+		DefenseClawContentInputState: "preserved", GenAIOutputMessages: observability.Present(output),
+		DefenseClawTelemetryOutputReported: true, DefenseClawContentOutputState: "preserved",
+		GenAIProviderName:                   observability.Present("defenseclaw"),
+		GenAIOperationName:                  observability.Present("invoke_agent"),
+		DefenseClawAgentReportedCostPresent: false, ConditionOperationTerminal: true,
+	})
+	if err != nil {
+		t.Fatalf("build rich subagent: %v", err)
+	}
+
+	start, end = core(3)
+	workflow, err := builder.BuildSpanWorkflowRun(observability.SpanWorkflowRunInput{
+		Envelope: envelope("0000000000000003"), Outcome: observability.OutcomeCompleted,
+		Kind: "INTERNAL", StartTimeUnixNano: start, EndTimeUnixNano: end,
+		ParentSpanID: observability.Present("0000000000000002"), TraceState: observability.Present("dc=rich"),
+		Flags: 0x101, Status: observability.NewTraceStatusOK(), Resource: resource,
+		ResourceServiceName: service, ResourceServiceNamespace: namespace,
+		ResourceServiceInstanceID: instance, ResourceDeploymentEnvironmentName: environment,
+		ResourceDefenseClawInstanceID: defenseclawInstance,
+		DefenseClawWorkflowName:       "review-turn", GenAIConversationID: observability.Present("conversation-rich"),
+		GenAIAgentID: observability.Present("agent-child"), DefenseClawAgentType: observability.Present("subagent"),
+		DefenseClawAgentRootID:            observability.Present("agent-root"),
+		DefenseClawAgentParentID:          observability.Present("agent-root"),
+		DefenseClawAgentLineageProvenance: observability.Present("reported"),
+		GenAIInputMessages:                observability.Present(input), DefenseClawTelemetryInputReported: true,
+		DefenseClawContentInputState: "preserved", GenAIOutputMessages: observability.Present(output),
+		DefenseClawTelemetryOutputReported: true, DefenseClawContentOutputState: "preserved",
+		DefenseClawAgentReportedCostPresent: false, ConditionOperationTerminal: true,
+	})
+	if err != nil {
+		t.Fatalf("build rich workflow: %v", err)
+	}
+
+	start, end = core(4)
+	model, err := builder.BuildSpanModelChat(observability.SpanModelChatInput{
+		Envelope: envelope("0000000000000004"), Outcome: observability.OutcomeCompleted,
+		Kind: "CLIENT", StartTimeUnixNano: start, EndTimeUnixNano: end,
+		ParentSpanID: observability.Present("0000000000000003"), TraceState: observability.Present("dc=rich"),
+		Flags: 0x101, Status: observability.NewTraceStatusOK(), Resource: resource,
+		ResourceServiceName: service, ResourceServiceNamespace: namespace,
+		ResourceServiceInstanceID: instance, ResourceDeploymentEnvironmentName: environment,
+		ResourceDefenseClawInstanceID: defenseclawInstance,
+		GenAIConversationID:           observability.Present("conversation-rich"), GenAIAgentID: observability.Present("agent-child"),
+		DefenseClawAgentRootID:            observability.Present("agent-root"),
+		DefenseClawAgentParentID:          observability.Present("agent-root"),
+		DefenseClawAgentLineageProvenance: observability.Present("reported"),
+		GenAIInputMessages:                observability.Present(input), DefenseClawTelemetryInputReported: true,
+		DefenseClawContentInputState: "preserved", GenAIOutputMessages: observability.Present(output),
+		DefenseClawTelemetryOutputReported: true, DefenseClawContentOutputState: "preserved",
+		GenAIOperationName: observability.Present("chat"), GenAIProviderName: observability.Present("openai"),
+		GenAIRequestModel: "gpt-rich", DefenseClawModelAttempt: observability.Present[int64](1),
+		DefenseClawModelStreaming: observability.Present(true), DefenseClawModelFirstTokenMs: observability.Present(12.5),
+		DefenseClawTelemetryTokensReported:  observability.Present(false),
+		DefenseClawAgentReportedCostPresent: false, ConditionOperationTerminal: true,
+	})
+	if err != nil {
+		t.Fatalf("build rich model: %v", err)
+	}
+
+	start, end = core(5)
+	tool, err := builder.BuildSpanToolExecute(observability.SpanToolExecuteInput{
+		Envelope: envelope("0000000000000005"), Outcome: observability.OutcomeCompleted,
+		Kind: "INTERNAL", StartTimeUnixNano: start, EndTimeUnixNano: end,
+		ParentSpanID: observability.Present("0000000000000003"), TraceState: observability.Present("dc=rich"),
+		Flags: 0x101, Status: observability.NewTraceStatusOK(), Resource: resource,
+		ResourceServiceName: service, ResourceServiceNamespace: namespace,
+		ResourceServiceInstanceID: instance, ResourceDeploymentEnvironmentName: environment,
+		ResourceDefenseClawInstanceID: defenseclawInstance,
+		GenAIConversationID:           observability.Present("conversation-rich"), GenAIAgentID: observability.Present("agent-child"),
+		DefenseClawAgentRootID:            observability.Present("agent-root"),
+		DefenseClawAgentParentID:          observability.Present("agent-root"),
+		DefenseClawAgentLineageProvenance: observability.Present("reported"),
+		GenAIInputMessages:                observability.Present(input), DefenseClawTelemetryInputReported: true,
+		DefenseClawContentInputState: "preserved", GenAIOutputMessages: observability.Present(output),
+		DefenseClawTelemetryOutputReported: true, DefenseClawContentOutputState: "preserved",
+		GenAIOperationName: observability.Present("execute_tool"), GenAIToolName: "search",
+		GenAIToolCallID:                     observability.Present("tool-call-rich"),
+		GenAIToolCallArguments:              observability.Present(observability.TelemetryStructuredGenAIToolCallArguments{}),
+		GenAIToolCallResult:                 observability.Present(observability.TelemetryStructuredGenAIToolCallResult{}),
+		DefenseClawToolStatus:               observability.Present("completed"),
+		DefenseClawToolProvider:             observability.Present("builtin"),
+		DefenseClawAgentReportedCostPresent: false, ConditionOperationTerminal: true,
+	})
+	if err != nil {
+		t.Fatalf("build rich tool: %v", err)
+	}
+
+	start, end = core(6)
+	retrieval, err := builder.BuildSpanRetrievalSearch(observability.SpanRetrievalSearchInput{
+		Envelope: envelope("0000000000000006"), Outcome: observability.OutcomeCompleted,
+		Kind: "CLIENT", StartTimeUnixNano: start, EndTimeUnixNano: end,
+		ParentSpanID: observability.Present("0000000000000005"), TraceState: observability.Present("dc=rich"),
+		Flags: 0x101, Status: observability.NewTraceStatusOK(), Resource: resource,
+		ResourceServiceName: service, ResourceServiceNamespace: namespace,
+		ResourceServiceInstanceID: instance, ResourceDeploymentEnvironmentName: environment,
+		ResourceDefenseClawInstanceID: defenseclawInstance,
+		GenAIConversationID:           observability.Present("conversation-rich"), GenAIAgentID: observability.Present("agent-child"),
+		DefenseClawAgentRootID:            observability.Present("agent-root"),
+		DefenseClawAgentParentID:          observability.Present("agent-root"),
+		DefenseClawAgentLineageProvenance: observability.Present("reported"),
+		GenAIInputMessages:                observability.Present(input), DefenseClawTelemetryInputReported: true,
+		DefenseClawContentInputState: "preserved", GenAIOutputMessages: observability.Present(output),
+		DefenseClawTelemetryOutputReported: true, DefenseClawContentOutputState: "preserved",
+		DBOperationName: observability.Present("search"), DBCollectionName: observability.Present("knowledge"),
+		DefenseClawRetrievalSourceID: "vector-store", DefenseClawRetrievalSourceType: observability.Present("vector"),
+		DefenseClawRetrievalResultCount: observability.Present[int64](2),
+		DefenseClawRetrievalTopK:        observability.Present[int64](5), ConditionOperationTerminal: true,
+	})
+	if err != nil {
+		t.Fatalf("build rich retrieval: %v", err)
+	}
+
+	start, end = core(7)
+	judge, err := builder.BuildSpanGuardrailJudge(observability.SpanGuardrailJudgeInput{
+		Envelope: envelope("0000000000000007"), Outcome: observability.OutcomeAllowed,
+		Kind: "CLIENT", StartTimeUnixNano: start, EndTimeUnixNano: end,
+		ParentSpanID: observability.Present("0000000000000004"), TraceState: observability.Present("dc=rich"),
+		Flags: 0x101, Status: observability.NewTraceStatusOK(), Resource: resource,
+		ResourceServiceName: service, ResourceServiceNamespace: namespace,
+		ResourceServiceInstanceID: instance, ResourceDeploymentEnvironmentName: environment,
+		ResourceDefenseClawInstanceID: defenseclawInstance,
+		GenAIConversationID:           observability.Present("conversation-rich"), GenAIAgentID: observability.Present("agent-child"),
+		DefenseClawAgentRootID:            observability.Present("agent-root"),
+		DefenseClawAgentParentID:          observability.Present("agent-root"),
+		DefenseClawAgentLineageProvenance: observability.Present("reported"),
+		DefenseClawEvaluationID:           observability.Present("evaluation-rich"),
+		DefenseClawFindingID:              observability.Present("finding-rich"),
+		DefenseClawGuardrailName:          observability.Present("llm-judge"),
+		DefenseClawGuardrailDecision:      observability.Present("allow"),
+		DefenseClawGuardrailMode:          observability.Present("enforce"),
+		DefenseClawGuardrailEnforced:      observability.Present(false),
+		DefenseClawGuardrailFindingCount:  observability.Present[int64](0),
+		DefenseClawJudgeKind:              "llm", GenAIOperationName: observability.Present("chat"),
+		GenAIProviderName: observability.Present("openai"), GenAIRequestModel: "judge-rich",
+		GenAIInputMessages: observability.Present(input), DefenseClawTelemetryInputReported: true,
+		DefenseClawContentInputState: "preserved", GenAIOutputMessages: observability.Present(output),
+		DefenseClawTelemetryOutputReported: true, DefenseClawContentOutputState: "preserved",
+		DefenseClawTelemetryTokensReported: observability.Present(false), ConditionOperationTerminal: true,
+	})
+	if err != nil {
+		t.Fatalf("build rich judge: %v", err)
+	}
+	return []observability.Record{root, child, workflow, model, tool, retrieval, judge}
+}
+
+func richGalileoMessages(
+	inputContent, outputContent string,
+) (observability.TelemetryStructuredGenAIInputMessages, observability.TelemetryStructuredGenAIOutputMessages) {
+	input := observability.TelemetryStructuredGenAIInputMessages{Items: []observability.TelemetryStructuredGenAIChatMessage{{
+		Role: "user", Parts: observability.TelemetryStructuredGenAIMessageParts{Items: []observability.TelemetryStructuredGenAIMessagePart{
+			observability.TelemetryStructuredArmGenAIMessagePartText{Value: observability.TelemetryStructuredGenAITextPart{Content: inputContent}},
+		}},
+	}}}
+	output := observability.TelemetryStructuredGenAIOutputMessages{Items: []observability.TelemetryStructuredGenAIOutputMessage{{
+		Role: "assistant", FinishReason: "stop",
+		Parts: observability.TelemetryStructuredGenAIMessageParts{Items: []observability.TelemetryStructuredGenAIMessagePart{
+			observability.TelemetryStructuredArmGenAIMessagePartText{Value: observability.TelemetryStructuredGenAITextPart{Content: outputContent}},
+		}},
+	}}}
+	return input, output
 }
 
 func (fixture *canonicalFixture) diagnosticRecord(t *testing.T, generation uint64) observability.Record {
@@ -542,13 +1008,13 @@ func (fixture *canonicalFixture) builder(t *testing.T) *observability.FamilyBuil
 	return builder
 }
 
-func canonicalDispatcherConfig(destination string, queue int) delivery.Config {
-	return canonicalDispatcherConfigWithDelay(destination, queue, 0)
+func canonicalDispatcherConfig(destination string, queue int, generation uint64) delivery.Config {
+	return canonicalDispatcherConfigWithDelay(destination, queue, generation, 0)
 }
 
-func canonicalDispatcherConfigWithDelay(destination string, queue int, delay time.Duration) delivery.Config {
+func canonicalDispatcherConfigWithDelay(destination string, queue int, generation uint64, delay time.Duration) delivery.Config {
 	return delivery.Config{
-		Destination: destination, Enabled: true, MaxQueueItems: queue, MaxQueueBytes: 8 * 1024 * 1024,
+		Destination: destination, Generation: generation, Signal: string(observability.SignalTraces), Enabled: true, MaxQueueItems: queue, MaxQueueBytes: 8 * 1024 * 1024,
 		MaxBatchItems: queue, MaxBatchBytes: 8 * 1024 * 1024, ScheduledDelay: delay,
 		AttemptTimeout: time.Second,
 		Retry: delivery.RetryPolicy{
