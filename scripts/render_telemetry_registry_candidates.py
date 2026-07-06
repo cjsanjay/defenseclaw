@@ -148,12 +148,16 @@ GENERATED_PREFIX: Final = "schemas/telemetry/generated"
 _SCHEMA_OUTPUT_PATH: Final = f"{GENERATED_PREFIX}/telemetry.schema.json"
 _CATALOG_OUTPUT_PATH: Final = f"{GENERATED_PREFIX}/catalog.json"
 _CATALOG_MARKDOWN_OUTPUT_PATH: Final = f"{GENERATED_PREFIX}/catalog.md"
+_V7_EXPORTER_SELECTION_OUTPUT_PATH: Final = (
+    f"{GENERATED_PREFIX}/compatibility/v7-exporter-selection.json"
+)
 _EXAMPLE_MANIFEST_OUTPUT_PATH: Final = f"{GENERATED_PREFIX}/examples/manifest.json"
 _OTLP_MANIFEST_OUTPUT_PATH: Final = f"{GENERATED_PREFIX}/otlp-fixtures/manifest.json"
 _BASE_CANDIDATE_OUTPUT_PATHS: Final = (
     _SCHEMA_OUTPUT_PATH,
     _CATALOG_OUTPUT_PATH,
     _CATALOG_MARKDOWN_OUTPUT_PATH,
+    _V7_EXPORTER_SELECTION_OUTPUT_PATH,
     _EXAMPLE_MANIFEST_OUTPUT_PATH,
     _OTLP_MANIFEST_OUTPUT_PATH,
 )
@@ -163,6 +167,29 @@ CANONICAL_JSON_DEFINITION: Final = "value:canonical_json"
 _SHA256: Final = re.compile(r"^[0-9a-f]{64}$")
 _GO_PUBLIC_IDENTIFIER: Final = re.compile(r"^[A-Z][A-Za-z0-9]*$")
 _GO_SOURCE_ID: Final = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:/#-]{0,511}$")
+_V7_COMPATIBILITY_TOKEN: Final = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$")
+_V7_AUDIT_GATEWAY_EVENT_KEYS: Final = (
+    "verdict",
+    "llm_prompt",
+    "llm_response",
+    "tool_invocation",
+)
+_V7_BUCKETS: Final = (
+    "compliance.activity",
+    "security.finding",
+    "guardrail.evaluation",
+    "enforcement.action",
+    "model.io",
+    "tool.activity",
+    "asset.scan",
+    "asset.lifecycle",
+    "network.egress",
+    "agent.lifecycle",
+    "ai.discovery",
+    "telemetry.ingest",
+    "platform.health",
+    "diagnostic",
+)
 _EXAMPLE_PATH_SEGMENT: Final = re.compile(r"^[a-z][a-z0-9-]{0,127}$")
 _DOS_DEVICE_STEM: Final = re.compile(
     r"^(?:con|prn|aux|nul|com[1-9¹²³]|lpt[1-9¹²³]|clock\$|conin\$|conout\$)$",
@@ -527,6 +554,7 @@ _TOP_LEVEL_FIELDS: Final = frozenset(
         "dependency_lock_path",
         "examples_path",
         "public_views_path",
+        "v7_exporter_selection_schema_path",
         "public_views",
         "input_digests",
         "dependencies",
@@ -544,6 +572,8 @@ _TOP_LEVEL_FIELDS: Final = frozenset(
         "structural_contract",
         "metric_cardinality_limit",
         "metric_compatibility_profile",
+        "v7_exporter_selection",
+        "v7_exporter_selection_schema",
         "domains",
         "group_resolution_order",
         "resolved_group_uses",
@@ -1760,6 +1790,178 @@ def _authority_marker(*, registry_version: int, digest: str, artifact: str) -> J
         "materialized_view_sha256": digest,
         "registry_version": registry_version,
     }
+
+
+def _validate_v7_exporter_selection_materialized(
+    fields: Mapping[str, FrozenJSON],
+    domains: tuple[CandidateDomain, ...],
+    groups: Mapping[str, Mapping[str, FrozenJSON]],
+) -> None:
+    if fields["v7_exporter_selection_schema_path"] != (
+        "schemas/telemetry/v8/compatibility/v7-exporter-selection.schema.json"
+    ):
+        raise CandidateRenderError("materialized v7 exporter selection schema path is invalid")
+    schema = _plain(fields["v7_exporter_selection_schema"])
+    if not isinstance(schema, dict) or schema.get("$id") != (
+        "https://defenseclaw.dev/schemas/telemetry/v8/compatibility/v7-exporter-selection.schema.json"
+    ):
+        raise CandidateRenderError("materialized v7 exporter selection schema is invalid")
+    selection = _plain(fields["v7_exporter_selection"])
+    required = {
+        "schema_version",
+        "source_config_version",
+        "projection_profile",
+        "collection",
+        "exporters",
+        "features",
+        "span_filter_operations",
+        "local_observability",
+    }
+    if not isinstance(selection, dict) or set(selection) != required:
+        raise CandidateRenderError("materialized v7 exporter selection fields are invalid")
+    if (
+        selection["schema_version"] != 1
+        or selection["source_config_version"] != 7
+        or selection["projection_profile"] != "legacy-v7"
+        or selection["local_observability"]
+        != {"complete": True, "profile_id": "local-observability-v1"}
+    ):
+        raise CandidateRenderError("materialized v7 exporter selection metadata is invalid")
+
+    buckets = set(_V7_BUCKETS)
+    known_events = {
+        value
+        for group in groups.values()
+        for value in (group.get("id"), group.get("event_name"), group.get("instrument_name"))
+        if isinstance(value, str)
+    }
+    mappings = [mapping for domain in domains for mapping in domain.producer_mappings]
+    audit_actions = sorted(mapping["key"] for mapping in mappings if mapping["producer"] == "audit_action")
+    gateway_mappings = {
+        mapping["key"]: mapping for mapping in mappings if mapping["producer"] == "gateway_event"
+    }
+
+    def identity_names(mapping: Mapping[str, FrozenJSON]) -> set[str]:
+        identities: list[Mapping[str, FrozenJSON]] = []
+        default = mapping.get("default_identity")
+        if isinstance(default, Mapping):
+            identities.append(default)
+        contexts = mapping.get("allowed_context_identities")
+        if not isinstance(contexts, tuple):
+            raise CandidateRenderError("materialized v7 producer identities are invalid")
+        identities.extend(identity for identity in contexts if isinstance(identity, Mapping))
+        if len(identities) != (1 if isinstance(default, Mapping) else 0) + len(contexts):
+            raise CandidateRenderError("materialized v7 producer identities are invalid")
+        names = {identity.get("event_name") for identity in identities}
+        if not names or any(not isinstance(name, str) for name in names):
+            raise CandidateRenderError("materialized v7 producer identities are incomplete")
+        return {name for name in names if isinstance(name, str)}
+
+    gateway_event_names = sorted(
+        {name for mapping in gateway_mappings.values() for name in identity_names(mapping)}
+    )
+    forwarded_event_names = sorted(
+        {
+            name
+            for key in _V7_AUDIT_GATEWAY_EVENT_KEYS
+            for name in identity_names(gateway_mappings[key])
+        }
+    )
+    known_events.update(gateway_event_names)
+    exporters = selection["exporters"]
+    expected_signals = {
+        "gateway_jsonl": {"logs"},
+        "gateway_console": {"logs"},
+        "audit_sink": {"logs"},
+        "generic_otlp": {"logs", "traces", "metrics"},
+        "galileo": {"traces"},
+        "local_observability": {"logs", "traces", "metrics"},
+    }
+    if not isinstance(exporters, dict) or set(exporters) != set(expected_signals):
+        raise CandidateRenderError("materialized v7 exporter inventory is invalid")
+
+    def validate_selectors(raw: Any) -> None:
+        if not isinstance(raw, list) or not 1 <= len(raw) <= 256:
+            raise CandidateRenderError("materialized v7 selector inventory is invalid")
+        for selector in raw:
+            if not isinstance(selector, dict) or not selector or not set(selector) <= {
+                "buckets",
+                "sources",
+                "actions",
+                "event_names",
+            }:
+                raise CandidateRenderError("materialized v7 selector shape is invalid")
+            for name, values in selector.items():
+                if (
+                    not isinstance(values, list)
+                    or not values
+                    or len(values) != len(set(values))
+                    or (name != "buckets" and values != sorted(values))
+                    or any(
+                        not isinstance(value, str)
+                        or value == "*"
+                        or _V7_COMPATIBILITY_TOKEN.fullmatch(value) is None
+                        for value in values
+                    )
+                ):
+                    raise CandidateRenderError("materialized v7 selector values are invalid")
+                allowed = buckets if name == "buckets" else (
+                    set(audit_actions) if name == "actions" else known_events if name == "event_names" else None
+                )
+                if allowed is not None and not set(values) <= allowed:
+                    raise CandidateRenderError("materialized v7 selector references are invalid")
+
+    for exporter, signal_names in expected_signals.items():
+        profile = exporters[exporter]
+        if not isinstance(profile, dict) or set(profile) != signal_names:
+            raise CandidateRenderError("materialized v7 exporter signal inventory is invalid")
+        for selectors in profile.values():
+            validate_selectors(selectors)
+    expected_gateway_selector = [{"event_names": gateway_event_names}]
+    span_event_names = sorted(
+        group_id for group_id, group in groups.items() if group.get("type") == "span"
+    )
+    expected_all_bucket_selector = [{"buckets": list(_V7_BUCKETS)}]
+    expected_all_span_selector = [{"event_names": span_event_names}]
+    collection = selection["collection"]
+    if not isinstance(collection, dict) or set(collection) != {
+        "always",
+        "otel.logs",
+        "otel.traces",
+        "otel.metrics",
+    }:
+        raise CandidateRenderError("materialized v7 collection inventory is invalid")
+    if collection["always"] != {
+        "logs": list(_V7_BUCKETS),
+        "traces": [],
+        "metrics": [],
+    }:
+        raise CandidateRenderError("materialized v7 always-collected log coverage is invalid")
+    for condition, selected_signal in (
+        ("otel.logs", "logs"),
+        ("otel.traces", "traces"),
+        ("otel.metrics", "metrics"),
+    ):
+        signals = collection[condition]
+        if not isinstance(signals, dict) or set(signals) != {"logs", "traces", "metrics"}:
+            raise CandidateRenderError("materialized v7 collection signal inventory is invalid")
+        if signals[selected_signal] != list(_V7_BUCKETS) or any(
+            signals[signal] for signal in ("logs", "traces", "metrics") if signal != selected_signal
+        ):
+            raise CandidateRenderError("materialized v7 conditional collection coverage is invalid")
+    if (
+        exporters["gateway_jsonl"]["logs"] != expected_gateway_selector
+        or exporters["gateway_console"]["logs"] != expected_gateway_selector
+        or exporters["audit_sink"]["logs"]
+        != [{"actions": audit_actions}, {"event_names": forwarded_event_names}]
+        or exporters["generic_otlp"]["logs"] != expected_all_bucket_selector
+        or exporters["generic_otlp"]["traces"] != expected_all_span_selector
+        or exporters["generic_otlp"]["metrics"] != expected_all_bucket_selector
+        or exporters["local_observability"]["logs"] != expected_all_bucket_selector
+        or exporters["local_observability"]["traces"] != expected_all_span_selector
+        or exporters["local_observability"]["metrics"] != expected_all_bucket_selector
+    ):
+        raise CandidateRenderError("materialized v7 producer-derived selectors disagree")
 
 
 def _candidate_conformance_scope() -> JSONObject:
@@ -5675,6 +5877,7 @@ def build_candidate_render_index(view: object) -> CandidateRenderIndex:
         mandatory_programs=mandatory_programs,
     )
     sorted_domains = tuple(sorted(domain_records, key=lambda item: item.id))
+    _validate_v7_exporter_selection_materialized(fields, sorted_domains, groups)
     expanded_producer_mappings = _expanded_producer_mappings(
         sorted_domains,
         enriched_families,
@@ -6829,6 +7032,23 @@ def render_candidate_artifacts_from_index(model: CandidateRenderIndex) -> Mappin
             "text/markdown; charset=utf-8",
             MARKDOWN_MARKER_PREFIX.encode("ascii"),
         ),
+    )
+
+    compatibility_marker = _authority_marker(
+        registry_version=model.registry_version,
+        digest=model.digest,
+        artifact="compatibility/v7-exporter-selection.json",
+    )
+    compatibility = _plain(model.fields["v7_exporter_selection"])
+    if not isinstance(compatibility, dict):
+        raise CandidateRenderError("v7 exporter selection is invalid")
+    add_json(
+        _V7_EXPORTER_SELECTION_OUTPUT_PATH,
+        {
+            "x-defenseclaw-generated": compatibility_marker,
+            **compatibility,
+            "registry_schema_version": model.schema_version,
+        },
     )
 
     example_entries: list[JSONObject] = []

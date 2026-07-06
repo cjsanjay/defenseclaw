@@ -17,12 +17,14 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from collections.abc import Mapping
 
 import defenseclaw.observability.v8_migration as migration_module
 import pytest
 import yaml
 from defenseclaw.observability.presets import GALILEO
+from defenseclaw.observability.schema_resources import v7_exporter_selection_bytes
 from defenseclaw.observability.v8_compatibility import V7CompatibilitySelection
 from defenseclaw.observability.v8_config import BUCKETS, load_validate_v8
 from defenseclaw.observability.v8_migration import (
@@ -31,103 +33,36 @@ from defenseclaw.observability.v8_migration import (
     convert_v7_observability_to_v8,
 )
 
-_EMPTY_SIGNALS = {"logs": [], "traces": [], "metrics": []}
-_GENERATED_COMPATIBILITY = {
-    "schema_version": 1,
-    "source_config_version": 7,
-    "registry_schema_version": 1,
-    "projection_profile": "legacy-v7",
-    "collection": {
-        "always": {
-            "logs": ["compliance.activity", "platform.health"],
-            "traces": [],
-            "metrics": [],
-        },
-        "otel.logs": {
-            **_EMPTY_SIGNALS,
-            "logs": ["security.finding", "model.io", "ai.discovery"],
-        },
-        "otel.traces": {
-            **_EMPTY_SIGNALS,
-            "traces": ["guardrail.evaluation", "model.io", "tool.activity", "agent.lifecycle", "ai.discovery"],
-        },
-        "otel.metrics": {
-            **_EMPTY_SIGNALS,
-            "metrics": ["model.io", "agent.lifecycle", "ai.discovery", "platform.health"],
-        },
-    },
-    "exporters": {
-        "gateway_jsonl": {"logs": [{"buckets": ["compliance.activity", "platform.health"]}]},
-        "gateway_console": {"logs": [{"buckets": ["compliance.activity", "platform.health"]}]},
-        "audit_sink": {"logs": [{"buckets": ["compliance.activity"], "actions": ["config-update", "scan"]}]},
-        "generic_otlp": {
-            "logs": [{"buckets": ["security.finding", "model.io", "ai.discovery"]}],
-            "traces": [
-                {
-                    "event_names": [
-                        "span.agent.invoke",
-                        "span.model.chat",
-                        "span.retrieval.search",
-                        "span.tool.execute",
-                        "span.workflow.run",
-                    ]
-                }
-            ],
-            "metrics": [{"buckets": ["model.io", "agent.lifecycle", "ai.discovery", "platform.health"]}],
-        },
-        "galileo": {
-            "traces": [
-                {
-                    "event_names": [
-                        "span.agent.invoke",
-                        "span.model.chat",
-                        "span.tool.execute",
-                    ]
-                }
-            ],
-        },
-        "local_observability": {
-            "logs": [
-                {
-                    "buckets": [
-                        "security.finding",
-                        "model.io",
-                        "tool.activity",
-                        "agent.lifecycle",
-                        "platform.health",
-                    ]
-                }
-            ],
-            "traces": [
-                {
-                    "event_names": [
-                        "span.agent.invoke",
-                        "span.model.chat",
-                        "span.retrieval.search",
-                        "span.tool.execute",
-                        "span.workflow.run",
-                    ]
-                }
-            ],
-            "metrics": [{"buckets": ["model.io", "agent.lifecycle", "platform.health"]}],
-        },
-    },
-    "features": {
-        "otel_individual_findings": [{"event_names": ["finding.observed"]}],
-    },
-    "span_filter_operations": {
-        "chat": {
-            "required_attributes": ["tenant.export_allowed"],
-            "selectors": [{"event_names": ["span.model.chat"]}],
-        },
-        "retrieve": {
-            "required_attributes": [],
-            "selectors": [{"event_names": ["span.retrieval.search"]}],
-        },
-    },
-    "local_observability": {"profile_id": "local-observability-v1", "complete": True},
-}
+_GENERATED_COMPATIBILITY = json.loads(v7_exporter_selection_bytes())
 _TYPED_COMPATIBILITY = V7CompatibilitySelection.from_mapping(_GENERATED_COMPATIBILITY)
+_ALL_BUCKETS = list(BUCKETS)
+_ALL_SPAN_EVENT_NAMES = [
+    "span.admin.operation",
+    "span.agent.invoke",
+    "span.agent.transition",
+    "span.ai.discovery",
+    "span.ai.discovery.detector",
+    "span.approval.resolve",
+    "span.asset.scan",
+    "span.asset.scan.phase",
+    "span.asset.transition",
+    "span.config.reload",
+    "span.destination.export",
+    "span.diagnostic.canary",
+    "span.enforcement.apply",
+    "span.finding.enrich",
+    "span.guardrail.apply",
+    "span.guardrail.judge",
+    "span.guardrail.phase",
+    "span.model.chat",
+    "span.model.embeddings",
+    "span.network.request",
+    "span.retrieval.search",
+    "span.telemetry.normalize",
+    "span.telemetry.receive",
+    "span.tool.execute",
+    "span.workflow.run",
+]
 
 
 def _convert(source: str | bytes, environment: Mapping[str, str] | None = None, **kwargs: object):
@@ -182,14 +117,28 @@ def test_already_valid_v8_is_an_exact_noop() -> None:
     assert result.environment_edits == ()
 
 
-def test_v7_requires_a_valid_generated_compatibility_selection() -> None:
-    with pytest.raises(V8MigrationDependencyError) as missing:
+def test_v7_loads_packaged_compatibility_and_fails_closed_when_it_is_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    result = convert_v7_observability_to_v8(
+        "config_version: 7\n",
+        {},
+        effective_data_dir="/var/lib/defenseclaw",
+    )
+    assert result.summary.destination_version == 8
+
+    monkeypatch.setattr(
+        migration_module,
+        "load_packaged_v7_compatibility_selection",
+        lambda: (_ for _ in ()).throw(FileNotFoundError("missing package resource")),
+    )
+    with pytest.raises(V8MigrationDependencyError) as unavailable:
         convert_v7_observability_to_v8(
             "config_version: 7\n",
             {},
             effective_data_dir="/var/lib/defenseclaw",
         )
-    assert missing.value.code == "compatibility_selection_required"
+    assert unavailable.value.code == "compatibility_selection_unavailable"
 
     malformed = dict(_GENERATED_COMPATIBILITY, schema_version=2)
     with pytest.raises(V8MigrationDependencyError) as invalid:
@@ -200,6 +149,24 @@ def test_v7_requires_a_valid_generated_compatibility_selection() -> None:
             compatibility_selection=malformed,
         )
     assert invalid.value.code == "compatibility_selection_invalid"
+
+
+def test_no_otel_upgrade_keeps_every_v7_local_log_bucket_collected() -> None:
+    result = _convert("config_version: 7\n")
+    observability = _document(result)["observability"]
+
+    assert observability["defaults"] == {
+        "collect": {"logs": False, "traces": False, "metrics": False},
+        "redaction_profile": "legacy-v7",
+    }
+    assert set(observability["buckets"]) == set(BUCKETS)
+    assert all(policy == {"collect": {"logs": True}} for policy in observability["buckets"].values())
+    assert all(
+        route["signals"] == ["logs"]
+        for destination_name in ("gateway-jsonl", "gateway-console")
+        for route in _destination({"observability": observability}, destination_name)["routes"]
+    )
+    load_validate_v8(result.candidate)
 
 
 def test_representative_mapping_is_valid_deterministic_and_idempotent() -> None:
@@ -271,9 +238,11 @@ notifications: {enabled: true}
         "collect": {"logs": False, "traces": False, "metrics": False},
         "redaction_profile": "legacy-v7",
     }
-    assert observability["buckets"]["compliance.activity"] == {"collect": {"logs": True}}
+    assert observability["buckets"]["compliance.activity"] == {
+        "collect": {"logs": True, "traces": True, "metrics": True}
+    }
     assert observability["buckets"]["model.io"] == {"collect": {"logs": True, "traces": True, "metrics": True}}
-    assert "ai.discovery" not in observability["buckets"]
+    assert observability["buckets"]["ai.discovery"] == {"collect": {"logs": True}}
     local = _destination(document, "local-observability")
     assert local["network_safety"] == {"allow_private_networks": True}
     assert {route["signals"][0] for route in local["routes"]} == {"logs", "traces", "metrics"}
@@ -281,14 +250,14 @@ notifications: {enabled: true}
     assert drop_route["selector"]["event_names"] == ["finding.observed"]
     log_route = next(route for route in local["routes"] if route["name"] == "legacy-local-observability-logs-1")
     assert "security.finding" in log_route["selector"]["buckets"]
-    assert "ai.discovery" not in log_route["selector"]["buckets"]
+    assert log_route["selector"]["buckets"] == _ALL_BUCKETS
     assert local["routes"][0] == {
         "name": "legacy-ai-discovery-disabled",
         "signals": ["logs", "traces", "metrics"],
         "selector": {"buckets": ["ai.discovery"]},
         "action": "drop",
     }
-    assert all(route.get("selector", {}).get("buckets") != list(BUCKETS) for route in local["routes"])
+    assert any(route.get("selector", {}).get("buckets") == list(BUCKETS) for route in local["routes"])
     metric_route = next(route for route in local["routes"] if route["signals"] == ["metrics"])
     assert "redaction_profile" not in metric_route
     rendered = first.candidate.decode()
@@ -1235,15 +1204,7 @@ otel:
         {
             "name": "legacy-local-observability-traces-1",
             "signals": ["traces"],
-            "selector": {
-                "event_names": [
-                    "span.agent.invoke",
-                    "span.model.chat",
-                    "span.retrieval.search",
-                    "span.tool.execute",
-                    "span.workflow.run",
-                ]
-            },
+            "selector": {"event_names": _ALL_SPAN_EVENT_NAMES},
             "redaction_profile": "legacy-v7",
         }
     ]
@@ -1258,21 +1219,13 @@ otel:
         {
             "name": "legacy-local-observability-logs-1",
             "signals": ["logs"],
-            "selector": {
-                "buckets": [
-                    "security.finding",
-                    "model.io",
-                    "tool.activity",
-                    "agent.lifecycle",
-                    "platform.health",
-                ]
-            },
+            "selector": {"buckets": _ALL_BUCKETS},
             "redaction_profile": "legacy-v7",
         },
         {
             "name": "legacy-local-observability-metrics-1",
             "signals": ["metrics"],
-            "selector": {"buckets": ["model.io", "agent.lifecycle", "platform.health"]},
+            "selector": {"buckets": _ALL_BUCKETS},
         },
     ]
     assert all(
@@ -1584,7 +1537,7 @@ otel:
         {
             "name": "legacy-generic-otlp-metrics-1",
             "signals": ["metrics"],
-            "selector": {"buckets": ["model.io", "agent.lifecycle", "ai.discovery", "platform.health"]},
+            "selector": {"buckets": _ALL_BUCKETS},
         }
     ]
     assert all("redaction_profile" not in route for route in metric_destination["routes"])
@@ -1637,7 +1590,7 @@ otel:
         {
             "name": "legacy-generic-otlp-logs-1",
             "signals": ["logs"],
-            "selector": {"buckets": ["security.finding", "model.io", "ai.discovery"]},
+            "selector": {"buckets": _ALL_BUCKETS},
             "redaction_profile": "legacy-v7",
         }
     ]
@@ -1859,27 +1812,19 @@ otel:
         {
             "name": "legacy-generic-otlp-logs-1",
             "signals": ["logs"],
-            "selector": {"buckets": ["security.finding", "model.io", "ai.discovery"]},
+            "selector": {"buckets": _ALL_BUCKETS},
             "redaction_profile": "legacy-v7",
         },
         {
             "name": "legacy-generic-otlp-traces-1",
             "signals": ["traces"],
-            "selector": {
-                "event_names": [
-                    "span.agent.invoke",
-                    "span.model.chat",
-                    "span.retrieval.search",
-                    "span.tool.execute",
-                    "span.workflow.run",
-                ]
-            },
+            "selector": {"event_names": _ALL_SPAN_EVENT_NAMES},
             "redaction_profile": "legacy-v7",
         },
         {
             "name": "legacy-generic-otlp-metrics-1",
             "signals": ["metrics"],
-            "selector": {"buckets": ["model.io", "agent.lifecycle", "ai.discovery", "platform.health"]},
+            "selector": {"buckets": _ALL_BUCKETS},
         },
     ]
 
@@ -1887,7 +1832,7 @@ otel:
     redacted_document = _document(redacted)
     assert _destination(redacted_document, "remote")["routes"] == expected_routes
     assert redacted_document["observability"]["defaults"]["redaction_profile"] == "legacy-v7"
-    assert "ai.discovery" not in redacted_document["observability"].get("buckets", {})
+    assert redacted_document["observability"]["buckets"]["ai.discovery"] == {"collect": {"logs": True}}
 
     unredacted = _convert(template.replace("__DISABLED__", "true"))
     unredacted_document = _document(unredacted)
@@ -1974,15 +1919,7 @@ otel:
     )
     destination = _destination(_document(result), "remote")
 
-    assert destination["routes"][0]["selector"] == {
-        "event_names": [
-            "span.agent.invoke",
-            "span.model.chat",
-            "span.retrieval.search",
-            "span.tool.execute",
-            "span.workflow.run",
-        ]
-    }
+    assert destination["routes"][0]["selector"] == {"event_names": _ALL_SPAN_EVENT_NAMES}
     assert "span_filter_translated_from_generated_compatibility_selection" not in result.warnings
 
 
@@ -2079,11 +2016,10 @@ otel:
       span_filter: {require_operation: retrieve}
 """
 
-    with pytest.raises(V8MigrationDependencyError) as captured:
-        _convert(source, compatibility_selection=None)
-    assert captured.value.code == "compatibility_selection_required"
+    packaged = _convert(source, compatibility_selection=None)
 
     result = _convert(source)
+    assert packaged.candidate == result.candidate
     custom = _destination(_document(result), "custom")
     assert custom["routes"] == [
         {
@@ -2268,24 +2204,75 @@ audit_sinks:
     load_validate_v8(result.candidate)
 
 
-def test_audit_action_without_exact_generated_route_has_actionable_error() -> None:
+def test_generated_audit_route_preserves_lifecycle_security_and_activity_actions_without_broadening() -> None:
     source = """config_version: 7
 audit_sinks:
   - name: splunk
     kind: splunk_hec
     enabled: true
-    actions: [guardrail-verdict]
+    actions: [gateway-agent-start, guardrail-verdict, config-update, scan, api-auth-failure]
     splunk_hec:
       endpoint: https://splunk.example.test/services/collector
       token_env: SPLUNK_TOKEN
 """
 
-    with pytest.raises(V8MigrationError) as captured:
-        _convert(source)
+    result = _convert(source)
+    selector = _destination(_document(result), "splunk")["routes"][0]["selector"]
+    assert selector == {
+        "actions": [
+            "api-auth-failure",
+            "config-update",
+            "gateway-agent-start",
+            "guardrail-verdict",
+            "scan",
+        ]
+    }
 
-    assert captured.value.code == "unrepresentable_audit_actions"
-    assert captured.value.path == "$.audit_sinks[].actions"
-    assert "exact generated audit route" in captured.value.action
+
+def test_unfiltered_audit_sink_preserves_only_the_four_v7_native_gateway_event_families() -> None:
+    result = _convert(
+        """config_version: 7
+audit_sinks:
+  - name: archive
+    kind: http_jsonl
+    enabled: true
+    http_jsonl: {url: https://collector.example.test}
+"""
+    )
+    routes = _destination(_document(result), "archive")["routes"]
+    assert routes[0] == {
+        "name": "legacy-audit-logs-1",
+        "signals": ["logs"],
+        "selector": {
+            "event_names": [
+                "guardrail.evaluation.completed",
+                "legacy.audit.gateway.chat.error",
+                "legacy.audit.gateway.session.message",
+                "legacy.audit.gateway.tool.call",
+                "legacy.audit.gateway.tool.call.blocked",
+                "legacy.audit.gateway.tool.result",
+                "legacy.audit.tool.call",
+                "legacy.audit.tool.result",
+                "model.call.failed",
+                "model.request",
+                "model.response",
+                "model.stream.completed",
+                "tool.invocation.blocked",
+                "tool.invocation.completed",
+                "tool.invocation.failed",
+                "tool.invocation.requested",
+                "tool.invocation.started",
+                "tool_end",
+                "tool_start",
+            ]
+        },
+        "redaction_profile": "legacy-v7",
+    }
+    action_selector = routes[1]["selector"]["actions"]
+    assert len(action_selector) == 188
+    assert {"config-update", "gateway-agent-start", "guardrail-verdict", "scan"}.issubset(action_selector)
+    assert "judge" not in routes[0]["selector"]["event_names"]
+    assert "diagnostic.message" not in routes[0]["selector"]["event_names"]
 
 
 def test_whitespace_only_audit_actions_preserve_v7_match_nothing_behavior() -> None:

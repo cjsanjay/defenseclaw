@@ -28,6 +28,9 @@ from typing import Final
 
 _SCHEMA_RESOURCE: Final = "_data/telemetry/v8/telemetry.schema.json"
 _CATALOG_RESOURCE: Final = "_data/telemetry/v8/catalog.json"
+_V7_EXPORTER_SELECTION_RESOURCE: Final = (
+    "_data/telemetry/v8/v7-exporter-selection.json"
+)
 
 
 def telemetry_v8_schema_bytes() -> bytes:
@@ -40,4 +43,13 @@ def telemetry_v8_catalog_bytes() -> bytes:
     return resources.files("defenseclaw").joinpath(_CATALOG_RESOURCE).read_bytes()
 
 
-__all__ = ["telemetry_v8_catalog_bytes", "telemetry_v8_schema_bytes"]
+def v7_exporter_selection_bytes() -> bytes:
+    """Return the generated v7-to-v8 exporter compatibility selection bytes."""
+    return resources.files("defenseclaw").joinpath(_V7_EXPORTER_SELECTION_RESOURCE).read_bytes()
+
+
+__all__ = [
+    "telemetry_v8_catalog_bytes",
+    "telemetry_v8_schema_bytes",
+    "v7_exporter_selection_bytes",
+]

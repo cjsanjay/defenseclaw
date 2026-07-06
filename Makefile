@@ -731,6 +731,8 @@ _bundle-data:
 	@# build staging; canonical generated authority remains under schemas/.
 	cp schemas/telemetry/generated/telemetry.schema.json cli/defenseclaw/_data/telemetry/v8/
 	cp schemas/telemetry/generated/catalog.json cli/defenseclaw/_data/telemetry/v8/
+	cp schemas/telemetry/generated/compatibility/v7-exporter-selection.json \
+		cli/defenseclaw/_data/telemetry/v8/v7-exporter-selection.json
 	@# splunk_local_bridge and local_observability_stack are bind-mounted by Docker
 	@# (Grafana, Loki, Splunk, etc.) when `defenseclaw obs up` is running. Prefer
 	@# rsync-with-delete over `rm -rf && cp -r` because Docker Desktop on macOS

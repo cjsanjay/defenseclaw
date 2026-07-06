@@ -25,12 +25,17 @@ metadata, and diagnostics never render source values or unknown keys.
 
 from __future__ import annotations
 
+import json
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any, Final, TypeAlias
 
+from defenseclaw.observability.schema_resources import (
+    telemetry_v8_catalog_bytes,
+    v7_exporter_selection_bytes,
+)
 from defenseclaw.observability.v8_config import BUCKETS, SIGNALS
 
 SCHEMA_VERSION: Final = 1
@@ -57,10 +62,17 @@ MAX_SELECTOR_VALUES: Final = 512
 MAX_SPAN_FILTER_OPERATIONS: Final = 256
 MAX_REQUIRED_ATTRIBUTES: Final = 128
 MAX_TOKEN_BYTES: Final = 128
+MAX_ARTIFACT_BYTES: Final = 128 * 1024
+MAX_CATALOG_BYTES: Final = 4 * 1024 * 1024
 
 _TOKEN: Final = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$")
+_SHA256: Final = re.compile(r"^[0-9a-f]{64}$")
+_GENERATED_FIELDS: Final = frozenset(
+    {"artifact", "authority", "generator", "materialized_view_sha256", "registry_version"}
+)
 _TOP_LEVEL_FIELDS: Final = frozenset(
     {
+        "x-defenseclaw-generated",
         "schema_version",
         "source_config_version",
         "registry_schema_version",
@@ -166,6 +178,10 @@ class V7CompatibilitySelection:
 
         root = _require_mapping(source, "$")
         _require_exact_fields(root, _TOP_LEVEL_FIELDS, "$")
+        _parse_generated_marker(
+            root["x-defenseclaw-generated"],
+            artifact="compatibility/v7-exporter-selection.json",
+        )
         _require_exact_integer(root["schema_version"], SCHEMA_VERSION, "$.schema_version")
         _require_exact_integer(root["source_config_version"], SOURCE_CONFIG_VERSION, "$.source_config_version")
         registry_schema_version = _require_positive_integer(
@@ -299,6 +315,122 @@ def load_v7_compatibility_selection(source: Mapping[str, Any]) -> V7Compatibilit
     """Convenience entry point used by generated-artifact consumers."""
 
     return V7CompatibilitySelection.from_mapping(source)
+
+
+def load_packaged_v7_compatibility_selection() -> V7CompatibilitySelection:
+    """Load the checked generated package resource with no checkout fallback."""
+
+    document = _parse_packaged_json(
+        v7_exporter_selection_bytes(),
+        maximum=MAX_ARTIFACT_BYTES,
+        resource="v7 exporter selection",
+    )
+    catalog = _parse_packaged_json(
+        telemetry_v8_catalog_bytes(),
+        maximum=MAX_CATALOG_BYTES,
+        resource="telemetry catalog",
+    )
+    selection_marker = _parse_generated_marker(
+        document.get("x-defenseclaw-generated"),
+        artifact="compatibility/v7-exporter-selection.json",
+    )
+    catalog_marker = _parse_generated_marker(
+        catalog.get("x-defenseclaw-generated"),
+        artifact="catalog.json",
+    )
+    if selection_marker != catalog_marker:
+        raise _error(
+            "artifact_epoch_mismatch",
+            "$.x-defenseclaw-generated",
+            "reinstall a package whose generated telemetry resources come from one registry epoch",
+        )
+    return load_v7_compatibility_selection(document)
+
+
+def _parse_packaged_json(raw: bytes, *, maximum: int, resource: str) -> Mapping[str, Any]:
+    if type(raw) is not bytes or len(raw) > maximum:
+        raise _error(
+            "invalid_artifact_size",
+            "$",
+            f"reinstall a package containing the bounded generated {resource}",
+        )
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        raise _error(
+            "invalid_artifact_encoding",
+            "$",
+            f"reinstall a package containing a UTF-8 generated {resource}",
+        ) from None
+    if text.startswith("\ufeff"):
+        raise _error(
+            "invalid_artifact_encoding",
+            "$",
+            f"reinstall a package containing a BOM-free generated {resource}",
+        )
+
+    def pairs(items: list[tuple[str, Any]]) -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        for key, value in items:
+            if key in result:
+                raise _error(
+                    "duplicate_artifact_key",
+                    "$",
+                    "reinstall a package containing strict generated JSON",
+                )
+            result[key] = value
+        return result
+
+    try:
+        document = json.loads(
+            text,
+            object_pairs_hook=pairs,
+            parse_constant=lambda _value: (_ for _ in ()).throw(ValueError()),
+        )
+    except V7CompatibilityError:
+        raise
+    except (ValueError, RecursionError):
+        raise _error(
+            "invalid_artifact_json",
+            "$",
+            "reinstall a package containing strict generated JSON",
+        ) from None
+    if not isinstance(document, Mapping):
+        raise _error(
+            "invalid_artifact_root",
+            "$",
+            "reinstall a package containing the generated object artifact",
+        )
+    return document
+
+
+def _parse_generated_marker(value: Any, *, artifact: str) -> tuple[str, int]:
+    marker = _require_mapping(value, "$.x-defenseclaw-generated")
+    _require_exact_fields(marker, _GENERATED_FIELDS, "$.x-defenseclaw-generated")
+    expected = {
+        "artifact": artifact,
+        "authority": "candidate-not-public-authority",
+        "generator": "defenseclaw-telemetry-candidate-renderer-v1",
+    }
+    for name, required in expected.items():
+        if marker[name] != required:
+            raise _error(
+                "invalid_generated_marker",
+                f"$.x-defenseclaw-generated.{name}",
+                "reinstall the compiler-owned generated compatibility artifact",
+            )
+    digest = marker["materialized_view_sha256"]
+    if not isinstance(digest, str) or _SHA256.fullmatch(digest) is None:
+        raise _error(
+            "invalid_generated_marker",
+            "$.x-defenseclaw-generated.materialized_view_sha256",
+            "reinstall the digest-bound generated compatibility artifact",
+        )
+    registry_version = _require_positive_integer(
+        marker["registry_version"],
+        "$.x-defenseclaw-generated.registry_version",
+    )
+    return digest, registry_version
 
 
 def _parse_collection(value: Any) -> ConditionCollection:

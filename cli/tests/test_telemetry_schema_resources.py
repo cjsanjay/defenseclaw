@@ -10,8 +10,11 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import subprocess
+import sys
+import zipfile
 from pathlib import Path
 from typing import Any
 
@@ -22,12 +25,17 @@ ROOT = Path(__file__).resolve().parents[2]
 SOURCE_DIR = ROOT / "schemas" / "telemetry" / "generated"
 STAGED_DIR = ROOT / "cli" / "defenseclaw" / "_data" / "telemetry" / "v8"
 EXPECTED_RESOURCES = {
-    "telemetry.schema.json": schema_resources.telemetry_v8_schema_bytes,
-    "catalog.json": schema_resources.telemetry_v8_catalog_bytes,
+    "telemetry.schema.json": ("telemetry.schema.json", schema_resources.telemetry_v8_schema_bytes),
+    "catalog.json": ("catalog.json", schema_resources.telemetry_v8_catalog_bytes),
+    "v7-exporter-selection.json": (
+        "compatibility/v7-exporter-selection.json",
+        schema_resources.v7_exporter_selection_bytes,
+    ),
 }
 EXPECTED_PACKAGE_DATA = {
     "_data/telemetry/v8/telemetry.schema.json",
     "_data/telemetry/v8/catalog.json",
+    "_data/telemetry/v8/v7-exporter-selection.json",
 }
 
 
@@ -41,12 +49,13 @@ def _load_pyproject() -> dict[str, Any]:
         return tomllib.load(stream)
 
 
-@pytest.mark.parametrize(("name", "loader"), EXPECTED_RESOURCES.items())
+@pytest.mark.parametrize(("name", "resource"), EXPECTED_RESOURCES.items())
 def test_packaged_telemetry_resource_matches_generated_source(
     name: str,
-    loader: Any,
+    resource: tuple[str, Any],
 ) -> None:
-    source = (SOURCE_DIR / name).read_bytes()
+    source_name, loader = resource
+    source = (SOURCE_DIR / source_name).read_bytes()
     staged = (STAGED_DIR / name).read_bytes()
     packaged = loader()
 
@@ -58,7 +67,7 @@ def test_packaged_telemetry_resource_matches_generated_source(
 
     document = json.loads(packaged)
     marker = document["x-defenseclaw-generated"]
-    assert marker["artifact"] == name
+    assert marker["artifact"] == source_name
     assert marker["registry_version"] == 1
 
 
@@ -72,6 +81,7 @@ def test_staged_telemetry_inventory_is_exact() -> None:
     [
         schema_resources.telemetry_v8_schema_bytes,
         schema_resources.telemetry_v8_catalog_bytes,
+        schema_resources.v7_exporter_selection_bytes,
     ],
 )
 def test_resource_loader_has_no_repository_fallback(
@@ -110,3 +120,44 @@ def test_telemetry_package_data_is_exact_and_staging_is_untracked() -> None:
             check=False,
         )
         assert ignored.returncode == 0
+
+
+def test_built_wheel_loads_v7_selection_from_installed_package_only(tmp_path: Path) -> None:
+    dist = tmp_path / "dist"
+    completed = subprocess.run(
+        ["uv", "build", "--wheel", "--out-dir", str(dist)],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert completed.returncode == 0, completed.stderr
+    wheel = next(dist.glob("*.whl"))
+    installed = tmp_path / "installed"
+    with zipfile.ZipFile(wheel) as archive:
+        archive.extractall(installed)
+
+    expected = (SOURCE_DIR / "compatibility/v7-exporter-selection.json").read_bytes()
+    code = f"""
+import hashlib
+import sys
+sys.path.insert(0, {str(installed)!r})
+from defenseclaw.observability.schema_resources import v7_exporter_selection_bytes
+from defenseclaw.observability.v8_compatibility import load_packaged_v7_compatibility_selection
+raw = v7_exporter_selection_bytes()
+selection = load_packaged_v7_compatibility_selection()
+audit_selector = next(selector for selector in selection.exporter_selectors('audit_sink', 'logs') if selector.actions)
+assert len(audit_selector.actions) == 188
+print(hashlib.sha256(raw).hexdigest())
+"""
+    loaded = subprocess.run(
+        [sys.executable, "-I", "-c", code],
+        cwd=tmp_path,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert loaded.returncode == 0, loaded.stderr
+    assert loaded.stdout.strip() == hashlib.sha256(expected).hexdigest()

@@ -829,6 +829,11 @@ def _domain_sources() -> dict[str, dict[str, Any]]:
     for domain in domains.values():
         for group in domain["groups"]:
             group["introduced_in"] = "telemetry-registry-v1"
+            if group["type"] in {"log", "span", "metric"}:
+                profiles = ["local-observability-v1"]
+                if group["id"] == "span.model.chat":
+                    profiles.insert(0, "galileo-rich-v2")
+                group.setdefault("x-defenseclaw", {})["compatibility_profiles"] = profiles
     return domains
 
 
@@ -842,6 +847,14 @@ def _fixture_root(tmp_path: Path) -> Path:
     schema_source = ROOT / "schemas/telemetry/v8/output-manifest.schema.json"
     schema_bytes = schema_source.read_bytes()
     (telemetry / "output-manifest.schema.json").write_bytes(schema_bytes)
+    compatibility_schema_source = (
+        ROOT / "schemas/telemetry/v8/compatibility/v7-exporter-selection.schema.json"
+    )
+    compatibility_schema_target = (
+        telemetry / "compatibility/v7-exporter-selection.schema.json"
+    )
+    compatibility_schema_target.parent.mkdir(parents=True)
+    compatibility_schema_target.write_bytes(compatibility_schema_source.read_bytes())
     for schema_baseline_source in (ROOT / "schemas/telemetry/v8/baselines/output-manifest").glob("*.schema.json"):
         schema_baseline_target = _install_manifest_schema_baseline(root, schema_baseline_source.read_bytes())
         assert schema_baseline_target.name == schema_baseline_source.name
@@ -869,6 +882,48 @@ def _fixture_root(tmp_path: Path) -> Path:
             contract.pop("empty_labels_reason", None)
         else:
             contract["empty_labels_reason"] = "Fixture producer emits no instrument labels."
+    fixture_selection = inventory["classes"]["v7_exporter_selection"]
+    fixture_selection["collection"] = {
+        "always": {
+            "logs": {"derive_buckets_from": "local_log_producers"},
+            "traces": [],
+            "metrics": [],
+        },
+        "otel.logs": {
+            "logs": {"derive_buckets_from": "catalog_v1"},
+            "traces": [],
+            "metrics": [],
+        },
+        "otel.traces": {
+            "logs": [],
+            "traces": {"derive_buckets_from": "catalog_v1"},
+            "metrics": [],
+        },
+        "otel.metrics": {
+            "logs": [],
+            "traces": [],
+            "metrics": {"derive_buckets_from": "emitted_metrics"},
+        },
+    }
+    fixture_selection["exporters"]["generic_otlp"] = {
+        "logs": {"derive_buckets_from": "catalog_v1"},
+        "traces": {"derive_event_names_from": "span_families"},
+        "metrics": {"derive_buckets_from": "emitted_metrics"},
+    }
+    fixture_selection["exporters"]["galileo"] = {
+        "traces": [{"event_names": ["span.model.chat"]}],
+    }
+    fixture_selection["exporters"]["local_observability"] = {
+        "logs": {"derive_buckets_from": "catalog_v1"},
+        "traces": {"derive_event_names_from": "span_families"},
+        "metrics": {"derive_buckets_from": "emitted_metrics"},
+    }
+    fixture_selection["features"] = {
+        "otel_individual_findings": [{"event_names": ["diagnostic.message"]}],
+    }
+    fixture_selection["span_filter_operations"] = {
+        "chat": {"required_attributes": [], "selectors": [{"event_names": ["span.model.chat"]}]},
+    }
     _write_yaml(inventory_target, inventory)
     lock_dependencies: list[dict[str, Any]] = []
     for dependency_id, repository, version, profile, revision, filename, attribute in DEPENDENCIES:
@@ -1430,9 +1485,19 @@ def _install_synthetic_candidate_renderers(
     }
 
     def portable_artifact(path: str) -> Any:
+        if path == "schemas/telemetry/generated/compatibility/v7-exporter-selection.json":
+            document = module._v7_exporter_selection_document(
+                ir.v7_exporter_selection,
+                schema_version=ir.schema_version,
+                registry_version=ir.registry_version,
+                materialized_view_sha256=ir.materialized_view.typed_canonical_json_sha256,
+            )
+            payload = (json.dumps(document, sort_keys=True) + "\n").encode()
+        else:
+            payload = b'{"x-defenseclaw-generated":true}\n'
         return SimpleNamespace(
             path=path,
-            payload=b'{"x-defenseclaw-generated":true}\n',
+            payload=payload,
             ownership_marker=b'"x-defenseclaw-generated"',
             mode=0o644,
         )
@@ -1643,9 +1708,9 @@ def test_real_candidate_outputs_validate_as_one_complete_manifest_inventory(
     records = manifest["ownership_inventory"]["artifacts"]
     record_by_path = {record["path"]: record for record in records}
 
-    assert len(outputs) - len(module.GO_CANDIDATE_OUTPUT_PATHS) - 1 == 55
-    assert len(records) == 62
-    assert len(desired) == len(manifest["outputs"]) == 63
+    assert len(outputs) - len(module.GO_CANDIDATE_OUTPUT_PATHS) - 1 == 56
+    assert len(records) == 63
+    assert len(desired) == len(manifest["outputs"]) == 64
     assert live_outputs == tuple(sorted(expected_live))
     assert not any(path.startswith(module.PUBLIC_VIEW_STAGED_PREFIX) for path in manifest["outputs"])
     assert expected_live <= set(record_by_path)
@@ -7868,6 +7933,7 @@ def test_every_hashed_authored_input_is_read_once_for_parse_and_digest(
         "schemas/telemetry/v8/operations.yaml",
         "schemas/telemetry/v8/examples.yaml",
         "schemas/telemetry/v8/public-views.yaml",
+        "schemas/telemetry/v8/compatibility/v7-exporter-selection.schema.json",
         "schemas/telemetry/v8/baselines/public-schemas-v7.normalized.json",
         "docs/design/observability-v8/current-state-inventory.yaml",
         *(f"schemas/telemetry/v8/upstream/{dependency[5]}" for dependency in DEPENDENCIES),
@@ -7901,6 +7967,93 @@ def test_every_hashed_authored_input_is_read_once_for_parse_and_digest(
     assert {path.relative_to(root).as_posix(): count for path, count in reads.items()} == {
         relative: 1 for relative in relative_paths
     }
+
+
+def test_v7_exporter_selection_is_derived_from_exhaustive_producer_mappings() -> None:
+    module = _load_generator_module("telemetry_registry_v7_exporter_selection")
+    ir = module.compile_registry(ROOT)
+    selection = ir.v7_exporter_selection
+
+    gateway_events = selection["exporters"]["gateway_jsonl"]["logs"][0]["event_names"]
+    console_events = selection["exporters"]["gateway_console"]["logs"][0]["event_names"]
+    audit_actions = selection["exporters"]["audit_sink"]["logs"][0]["actions"]
+    assert gateway_events == console_events == tuple(sorted(gateway_events))
+    assert len(gateway_events) == 168
+    assert len(audit_actions) == 188
+    assert {
+        "guardrail.evaluation.completed",
+        "finding.observed",
+        "legacy.audit.config.update",
+        "model.request",
+        "tool.invocation.requested",
+    }.issubset(gateway_events)
+    assert {
+        "api-auth-failure",
+        "config-update",
+        "gateway-agent-start",
+        "guardrail-verdict",
+        "scan",
+    }.issubset(audit_actions)
+    assert ir.v7_exporter_selection_schema_path in {digest.path for digest in ir.input_digests}
+
+    metric_groups = [group for domain in ir.domains for group in domain.groups if group.type == "metric"]
+    log_groups = [group for domain in ir.domains for group in domain.groups if group.type == "log"]
+    span_groups = [group for domain in ir.domains for group in domain.groups if group.type == "span"]
+    metric_buckets = tuple(
+        bucket
+        for bucket in module.EXPECTED_BUCKET_ORDER
+        if any(group.bucket == bucket for group in metric_groups)
+    )
+    assert len(metric_groups) == 131
+    assert len(log_groups) == 87
+    assert len(span_groups) == 25
+    assert len(metric_buckets) == 14
+    assert selection["collection"]["always"]["logs"] == tuple(module.EXPECTED_BUCKET_ORDER)
+    assert selection["collection"]["otel.logs"]["logs"] == tuple(module.EXPECTED_BUCKET_ORDER)
+    assert selection["collection"]["otel.traces"]["traces"] == tuple(module.EXPECTED_BUCKET_ORDER)
+    assert selection["collection"]["otel.metrics"]["metrics"] == metric_buckets
+    expected_span_names = tuple(sorted(group.id for group in span_groups))
+    for exporter in ("generic_otlp", "local_observability"):
+        assert selection["exporters"][exporter]["logs"] == (
+            {"buckets": tuple(module.EXPECTED_BUCKET_ORDER)},
+        )
+        assert selection["exporters"][exporter]["traces"] == (
+            {"event_names": expected_span_names},
+        )
+    assert selection["exporters"]["generic_otlp"]["metrics"] == ({"buckets": metric_buckets},)
+    assert selection["exporters"]["local_observability"]["metrics"] == ({"buckets": metric_buckets},)
+
+
+def test_v7_exporter_selection_derivation_tracks_mapping_identity_changes(tmp_path: Path) -> None:
+    root = _fixture_root(tmp_path)
+    operations_path = root / "schemas/telemetry/v8/operations.yaml"
+    operations = yaml.safe_load(operations_path.read_text(encoding="utf-8"))
+    mapping = next(item for item in operations["producer_mappings"] if item["producer"] == "gateway_event")
+    mapping["default_identity"] = {
+        "event_name": "fixture.event.0",
+        "bucket": "diagnostic",
+        "family": "fixture.log.0",
+    }
+    _write_yaml(operations_path, operations)
+
+    module = _load_generator_module("telemetry_registry_v7_derivation_change")
+    ir = module.compile_registry(root)
+    gateway_events = ir.v7_exporter_selection["exporters"]["gateway_jsonl"]["logs"][0]["event_names"]
+    assert gateway_events == ("diagnostic.message", "fixture.event.0")
+
+
+def test_v7_exporter_selection_rejects_hand_maintained_gateway_selector(tmp_path: Path) -> None:
+    root = _fixture_root(tmp_path)
+    inventory_path = root / "docs/design/observability-v8/current-state-inventory.yaml"
+    inventory = yaml.safe_load(inventory_path.read_text(encoding="utf-8"))
+    inventory["classes"]["v7_exporter_selection"]["exporters"]["gateway_jsonl"]["logs"] = [
+        {"buckets": ["diagnostic"]}
+    ]
+    _write_yaml(inventory_path, inventory)
+
+    module = _load_generator_module("telemetry_registry_v7_manual_selector")
+    with pytest.raises(module.RegistryError, match="expected the closed derive_event_names_from declaration"):
+        module.compile_registry(root)
 
 
 def test_structured_facts_participate_in_materialized_digest() -> None:

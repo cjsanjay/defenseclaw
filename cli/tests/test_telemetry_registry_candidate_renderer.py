@@ -741,11 +741,12 @@ def test_candidate_renderer_is_deterministic_complete_and_in_memory(
     assert {path: artifact.payload for path, artifact in from_index.items()} == {
         path: artifact.payload for path, artifact in artifacts.items()
     }
-    assert len(artifacts) == 55
+    assert len(artifacts) == 56
     assert {
         f"{PREFIX}/telemetry.schema.json",
         f"{PREFIX}/catalog.json",
         f"{PREFIX}/catalog.md",
+        f"{PREFIX}/compatibility/v7-exporter-selection.json",
         f"{PREFIX}/examples/manifest.json",
         f"{PREFIX}/otlp-fixtures/manifest.json",
     }.issubset(artifacts)
@@ -765,6 +766,77 @@ def test_candidate_renderer_is_deterministic_complete_and_in_memory(
     forged = dataclasses.replace(index, candidate_render_index_sha256="0" * 64)
     with pytest.raises(renderer.CandidateRenderError, match="digest-valid CandidateRenderIndex"):
         renderer.render_candidate_artifacts_from_index(forged)
+
+
+def test_v7_exporter_selection_is_schema_valid_exact_and_non_wildcard(
+    artifacts: Mapping[str, Any],
+) -> None:
+    document = _json(artifacts, "compatibility/v7-exporter-selection.json")
+    schema = json.loads(
+        (ROOT / "schemas/telemetry/v8/compatibility/v7-exporter-selection.schema.json").read_bytes()
+    )
+    jsonschema.Draft202012Validator.check_schema(schema)
+    jsonschema.Draft202012Validator(schema).validate(document)
+
+    gateway_events = document["exporters"]["gateway_jsonl"]["logs"][0]["event_names"]
+    console_events = document["exporters"]["gateway_console"]["logs"][0]["event_names"]
+    audit_actions = document["exporters"]["audit_sink"]["logs"][0]["actions"]
+    assert gateway_events == console_events == sorted(gateway_events)
+    assert len(gateway_events) == 168
+    assert len(audit_actions) == 188
+    assert {
+        "guardrail.evaluation.completed",
+        "finding.observed",
+        "legacy.audit.config.update",
+        "model.request",
+        "tool.invocation.requested",
+    }.issubset(gateway_events)
+    assert {
+        "api-auth-failure",
+        "config-update",
+        "gateway-agent-start",
+        "guardrail-verdict",
+        "scan",
+    }.issubset(audit_actions)
+    assert "*" not in json.dumps(document)
+    metric_buckets = document["exporters"]["generic_otlp"]["metrics"][0]["buckets"]
+    assert len(metric_buckets) == 14
+    assert document["collection"]["always"]["logs"] == metric_buckets
+    assert document["collection"]["otel.logs"]["logs"] == metric_buckets
+    assert document["collection"]["otel.traces"]["traces"] == metric_buckets
+    assert document["collection"]["otel.metrics"]["metrics"] == metric_buckets
+    assert document["exporters"]["generic_otlp"]["logs"][0]["buckets"] == metric_buckets
+    assert document["exporters"]["local_observability"]["logs"][0]["buckets"] == metric_buckets
+    assert document["exporters"]["local_observability"]["metrics"][0]["buckets"] == metric_buckets
+    generic_spans = document["exporters"]["generic_otlp"]["traces"][0]["event_names"]
+    assert len(generic_spans) == 25
+    assert document["exporters"]["local_observability"]["traces"][0]["event_names"] == generic_spans
+    catalog = _json(artifacts, "catalog.json")
+    log_families = [family for family in catalog["families"] if family["signal"] == "logs"]
+    span_families = [family for family in catalog["families"] if family["signal"] == "traces"]
+    metric_families = [family for family in catalog["families"] if family["signal"] == "metrics"]
+    assert len(log_families) == 87
+    assert len(span_families) == 25
+    assert len(metric_families) == 131
+    assert {family["bucket"] for family in log_families} == set(metric_buckets)
+    assert {family["id"] for family in span_families} == set(generic_spans)
+    assert {family["bucket"] for family in metric_families} == set(metric_buckets)
+
+
+def test_candidate_renderer_rejects_rehashed_v7_selector_drift(
+    renderer: ModuleType,
+    view: Any,
+) -> None:
+    facts = _copy_materialized(view.facts)
+    selection = facts["fields"]["v7_exporter_selection"]
+    audit_logs = list(selection["exporters"]["audit_sink"]["logs"])
+    actions = audit_logs[0]["actions"]
+    audit_logs[0]["actions"] = actions[:-1]
+    selection["exporters"]["audit_sink"]["logs"] = tuple(audit_logs)
+    forged = _retagged_view(renderer, view, facts)
+
+    with pytest.raises(renderer.CandidateRenderError, match="producer-derived selectors disagree"):
+        renderer.build_candidate_render_index(forged)
 
 
 def test_candidate_index_consumes_reviewed_go_symbol_contract_immutably_and_preserves_real_smoke(

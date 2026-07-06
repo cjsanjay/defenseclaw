@@ -554,6 +554,69 @@ classes:
       "gen_ai.client.operation.duration": {type: "histogram", unit: "s", labels: ["gen_ai.agent.id", "gen_ai.agent.name", "gen_ai.operation.name", "gen_ai.provider.name", "gen_ai.request.model"], callsites: ["internal/telemetry/metrics.go:1398"], dropped_by_current_global_v8_gate: []}
       "gen_ai.client.token.usage": {type: "histogram", unit: "{token}", labels: ["gen_ai.agent.id", "gen_ai.agent.name", "gen_ai.conversation.id", "gen_ai.operation.name", "gen_ai.provider.name", "gen_ai.request.model", "gen_ai.token.type"], callsites: ["internal/telemetry/metrics.go:1377", "internal/telemetry/metrics.go:2812"], dropped_by_current_global_v8_gate: []}
 
+  v7_exporter_selection:
+    source: canonical telemetry families plus this v7 current-state inventory
+    migration_disposition: preserve_compatibility_floor
+    schema_version: 1
+    source_config_version: 7
+    projection_profile: legacy-v7
+    collection:
+      always:
+        logs: {derive_buckets_from: local_log_producers}
+        traces: []
+        metrics: []
+      otel.logs:
+        logs: {derive_buckets_from: catalog_v1}
+        traces: []
+        metrics: []
+      otel.traces:
+        logs: []
+        traces: {derive_buckets_from: catalog_v1}
+        metrics: []
+      otel.metrics:
+        logs: []
+        traces: []
+        metrics: {derive_buckets_from: emitted_metrics}
+    exporters:
+      gateway_jsonl:
+        logs: {derive_event_names_from: gateway_event}
+      gateway_console:
+        logs: {derive_event_names_from: gateway_event}
+      audit_sink:
+        logs:
+          derive_actions_from: audit_action
+          derive_event_names_from_gateway_event_keys:
+            - verdict
+            - llm_prompt
+            - llm_response
+            - tool_invocation
+      generic_otlp:
+        logs: {derive_buckets_from: catalog_v1}
+        traces: {derive_event_names_from: span_families}
+        metrics: {derive_buckets_from: emitted_metrics}
+      galileo:
+        traces:
+          - {event_names: [span.agent.invoke, span.model.chat, span.tool.execute]}
+      local_observability:
+        logs: {derive_buckets_from: catalog_v1}
+        traces: {derive_event_names_from: span_families}
+        metrics: {derive_buckets_from: emitted_metrics}
+    features:
+      otel_individual_findings:
+        - {event_names: [finding.observed]}
+    span_filter_operations:
+      chat:
+        required_attributes: [tenant.export_allowed]
+        selectors:
+          - {event_names: [span.model.chat]}
+      retrieve:
+        required_attributes: []
+        selectors:
+          - {event_names: [span.retrieval.search]}
+    local_observability:
+      profile_id: local-observability-v1
+      complete: true
+
   schema_files:
     source_directory: schemas
     # Canonical v8 registry inputs/generated support data are implementation

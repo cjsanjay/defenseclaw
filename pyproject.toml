@@ -106,6 +106,7 @@ defenseclaw = [
     "_data/config/v8/*.md",
     "_data/telemetry/v8/telemetry.schema.json",
     "_data/telemetry/v8/catalog.json",
+    "_data/telemetry/v8/v7-exporter-selection.json",
     "inventory/ai_signatures.json",
     "inventory/hook_contracts.json",
     "_data/policies/openshell/*.rego",

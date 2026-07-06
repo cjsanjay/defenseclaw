@@ -60,6 +60,7 @@ from defenseclaw.observability.v8_compatibility import (
     V7CompatibilityError,
     V7CompatibilitySelection,
     V7Selector,
+    load_packaged_v7_compatibility_selection,
     load_v7_compatibility_selection,
 )
 from defenseclaw.observability.v8_config import (
@@ -475,12 +476,15 @@ def _resolve_compatibility_selection(
     if isinstance(value, V7CompatibilitySelection):
         return value
     if value is None:
-        raise V8MigrationDependencyError(
-            "compatibility_selection_required",
-            "$.observability",
-            "supply the generated v7 exporter compatibility selection",
-            source_name=source_name,
-        )
+        try:
+            return load_packaged_v7_compatibility_selection()
+        except (OSError, V7CompatibilityError):
+            raise V8MigrationDependencyError(
+                "compatibility_selection_unavailable",
+                "$.observability",
+                "reinstall DefenseClaw with the checked generated v7 exporter compatibility selection",
+                source_name=source_name,
+            ) from None
     try:
         return load_v7_compatibility_selection(value)
     except V7CompatibilityError as exc:
@@ -1946,11 +1950,14 @@ def _audit_selector_routes(
         merged: dict[str, Any] = _selector_mapping(selector)
         if requested:
             base_actions = tuple(merged.get("actions", ()))
-            actions = (
-                tuple(action for action in base_actions if action.strip().casefold() in requested)
-                if base_actions
-                else tuple(dict.fromkeys(requested_actions))
-            )
+            # Legacy sink action filters also excluded the separately mirrored
+            # gatewaylog.* records.  A selector for those native gateway
+            # families therefore cannot survive when an audit-action filter is
+            # present; adding the requested action would incorrectly AND an
+            # unrelated action onto the event-name selector.
+            if not base_actions:
+                continue
+            actions = tuple(action for action in base_actions if action.strip().casefold() in requested)
             if not actions:
                 continue
             merged["actions"] = list(actions)

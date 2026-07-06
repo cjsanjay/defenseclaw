@@ -17,13 +17,16 @@
 from __future__ import annotations
 
 import copy
+import json
 from dataclasses import FrozenInstanceError
 from typing import Any
 
+import defenseclaw.observability.v8_compatibility as compatibility_module
 import pytest
 from defenseclaw.observability.v8_compatibility import (
     V7CompatibilityError,
     V7CompatibilitySelection,
+    load_packaged_v7_compatibility_selection,
     load_v7_compatibility_selection,
 )
 
@@ -32,9 +35,30 @@ def _selector(**values: list[str]) -> dict[str, list[str]]:
     return values
 
 
+def _catalog_bytes(digest: str, registry_version: int = 1) -> bytes:
+    return json.dumps(
+        {
+            "x-defenseclaw-generated": {
+                "artifact": "catalog.json",
+                "authority": "candidate-not-public-authority",
+                "generator": "defenseclaw-telemetry-candidate-renderer-v1",
+                "materialized_view_sha256": digest,
+                "registry_version": registry_version,
+            }
+        }
+    ).encode()
+
+
 def _artifact() -> dict[str, Any]:
     empty_signals = {"logs": [], "traces": [], "metrics": []}
     return {
+        "x-defenseclaw-generated": {
+            "artifact": "compatibility/v7-exporter-selection.json",
+            "authority": "candidate-not-public-authority",
+            "generator": "defenseclaw-telemetry-candidate-renderer-v1",
+            "materialized_view_sha256": "0" * 64,
+            "registry_version": 1,
+        },
         "schema_version": 1,
         "source_config_version": 7,
         "registry_schema_version": 3,
@@ -137,6 +161,64 @@ def test_valid_narrow_artifact_exposes_exact_immutable_queries() -> None:
     assert selection.local_observability.complete is True
 
 
+def test_packaged_loader_reads_the_checked_generated_artifact() -> None:
+    selection = load_packaged_v7_compatibility_selection()
+
+    audit_selector = next(
+        selector for selector in selection.exporter_selectors("audit_sink", "logs") if selector.actions
+    )
+    assert len(audit_selector.actions) == 188
+    gateway_events = selection.exporter_selectors("gateway_jsonl", "logs")[0].event_names
+    assert {
+        "guardrail.evaluation.completed",
+        "finding.observed",
+        "legacy.audit.config.update",
+        "model.request",
+        "tool.invocation.requested",
+    }.issubset(gateway_events)
+    assert "*" not in gateway_events
+
+
+def test_packaged_loader_rejects_duplicate_keys_without_repository_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    raw = json.dumps(_artifact()).replace(
+        '"schema_version": 1',
+        '"schema_version": 1, "schema_version": 1',
+        1,
+    )
+    monkeypatch.setattr(compatibility_module, "v7_exporter_selection_bytes", lambda: raw.encode())
+
+    with pytest.raises(V7CompatibilityError) as captured:
+        load_packaged_v7_compatibility_selection()
+    assert captured.value.code == "duplicate_artifact_key"
+
+
+@pytest.mark.parametrize(
+    ("catalog_digest", "catalog_registry_version"),
+    [("1" * 64, 1), ("0" * 64, 2)],
+)
+def test_packaged_loader_rejects_mixed_registry_epoch_resources(
+    monkeypatch: pytest.MonkeyPatch,
+    catalog_digest: str,
+    catalog_registry_version: int,
+) -> None:
+    monkeypatch.setattr(
+        compatibility_module,
+        "v7_exporter_selection_bytes",
+        lambda: json.dumps(_artifact()).encode(),
+    )
+    monkeypatch.setattr(
+        compatibility_module,
+        "telemetry_v8_catalog_bytes",
+        lambda: _catalog_bytes(catalog_digest, catalog_registry_version),
+    )
+
+    with pytest.raises(V7CompatibilityError) as captured:
+        load_packaged_v7_compatibility_selection()
+    assert captured.value.code == "artifact_epoch_mismatch"
+
+
 def test_artifact_is_detached_deeply_immutable_and_hashable() -> None:
     source = _artifact()
     selection = V7CompatibilitySelection.from_mapping(source)
@@ -159,6 +241,7 @@ def test_artifact_is_detached_deeply_immutable_and_hashable() -> None:
 @pytest.mark.parametrize(
     "mutation",
     [
+        lambda value: value.pop("x-defenseclaw-generated"),
         lambda value: value.pop("collection"),
         lambda value: value.update({"future_extension": {}}),
         lambda value: value["exporters"].pop("audit_sink"),
@@ -182,6 +265,11 @@ def test_missing_or_unknown_fields_and_exporters_fail_closed(mutation: Any) -> N
         (("source_config_version",), 8, "unsupported_version"),
         (("registry_schema_version",), 0, "invalid_registry_version"),
         (("projection_profile",), "none", "invalid_projection_profile"),
+        (
+            ("x-defenseclaw-generated", "authority"),
+            "untrusted",
+            "invalid_generated_marker",
+        ),
         (
             ("local_observability", "profile_id"),
             "future-local-profile",

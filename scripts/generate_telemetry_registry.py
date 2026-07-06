@@ -657,8 +657,7 @@ EXPECTED_SEMANTIC_PROFILE: Final = {
     "openinference_profile": "openinference-semantic-conventions-v0.1.30",
     "galileo_compatibility_profile": "galileo-rich-v2",
 }
-EXPECTED_BUCKETS: Final = frozenset(
-    {
+EXPECTED_BUCKET_ORDER: Final = (
         "compliance.activity",
         "security.finding",
         "guardrail.evaluation",
@@ -673,8 +672,8 @@ EXPECTED_BUCKETS: Final = frozenset(
         "telemetry.ingest",
         "platform.health",
         "diagnostic",
-    }
 )
+EXPECTED_BUCKETS: Final = frozenset(EXPECTED_BUCKET_ORDER)
 EXPECTED_DOTTED_LOG_IDENTITIES: Final = 75
 EXPECTED_SPAN_FAMILIES: Final = 25
 EXPECTED_METRIC_FAMILIES: Final = 131
@@ -708,6 +707,10 @@ OUTPUT_MANIFEST_MARKER: Final = b'"generated_by": "scripts/generate_telemetry_re
 OUTPUT_MANIFEST_MODE: Final = 0o644
 OUTPUT_MANIFEST_MAX_BYTES: Final = 8 * 1024 * 1024
 OUTPUT_MANIFEST_SCHEMA_MAX_BYTES: Final = 64 * 1024
+V7_EXPORTER_SELECTION_SCHEMA: Final = Path(
+    "schemas/telemetry/v8/compatibility/v7-exporter-selection.schema.json"
+)
+V7_EXPORTER_SELECTION_SCHEMA_MAX_BYTES: Final = 128 * 1024
 PUBLIC_VIEW_BASELINE_MAX_BYTES: Final = 8 * 1024 * 1024
 PUBLIC_VIEW_PREDECESSOR_MAX_BYTES: Final = 8 * 1024 * 1024
 PUBLIC_VIEW_OWNERSHIP_MARKER: Final = b'"x-defenseclaw-generated"'
@@ -725,6 +728,7 @@ PORTABLE_STATIC_OUTPUT_PATHS: Final = (
     "schemas/telemetry/generated/telemetry.schema.json",
     "schemas/telemetry/generated/catalog.json",
     "schemas/telemetry/generated/catalog.md",
+    "schemas/telemetry/generated/compatibility/v7-exporter-selection.json",
     "schemas/telemetry/generated/examples/manifest.json",
     "schemas/telemetry/generated/otlp-fixtures/manifest.json",
 )
@@ -1279,6 +1283,11 @@ def _parse_json_strict_bytes(path: Path, raw: bytes) -> dict[str, Any]:
 def load_json_strict(path: Path) -> dict[str, Any]:
     raw, _ = _read_utf8(path)
     return _parse_json_strict_bytes(path, raw)
+
+
+def _load_json_strict_with_bytes(path: Path) -> tuple[bytes, dict[str, Any]]:
+    raw, _ = _read_utf8(path)
+    return raw, _parse_json_strict_bytes(path, raw)
 
 
 def _exact_keys(value: dict[str, Any], required: set[str], optional: set[str], path: str) -> None:
@@ -2255,6 +2264,7 @@ class RegistryIR:
     dependency_lock_path: str
     examples_path: str
     public_views_path: str
+    v7_exporter_selection_schema_path: str
     input_digests: tuple[InputDigest, ...]
     dependencies: tuple[DependencyIR, ...]
     semantic_profiles: tuple[SemanticProfileIR, ...]
@@ -2271,6 +2281,8 @@ class RegistryIR:
     structural_contract: StructuralContractIR
     metric_cardinality_limit: int
     metric_compatibility_profile: MetricCompatibilityProfileIR
+    v7_exporter_selection: Mapping[str, FrozenJSON]
+    v7_exporter_selection_schema: Mapping[str, FrozenJSON]
     domains: tuple[DomainIR, ...]
     group_resolution_order: tuple[str, ...]
     resolved_group_uses: Mapping[str, tuple[ResolvedAttributeUseIR, ...]]
@@ -2577,7 +2589,12 @@ def _parse_lock(
 
 def _parse_producer_inventory(
     root: Path,
-) -> tuple[dict[str, frozenset[str]], dict[str, MetricInventoryIR], InputDigest]:
+) -> tuple[
+    dict[str, frozenset[str]],
+    dict[str, MetricInventoryIR],
+    Mapping[str, FrozenJSON],
+    InputDigest,
+]:
     relative = "docs/design/observability-v8/current-state-inventory.yaml"
     path, normalized = _safe_relative(
         root,
@@ -2651,7 +2668,320 @@ def _parse_producer_inventory(
         )
     if len(metric_inventory) != EXPECTED_METRIC_FAMILIES:
         raise RegistryError(f"{normalized}.classes.emitted_metrics.items: expected {EXPECTED_METRIC_FAMILIES} entries")
-    return result, metric_inventory, InputDigest(normalized, _sha256(raw))
+    selection = classes.get("v7_exporter_selection")
+    if not isinstance(selection, dict):
+        raise RegistryError(f"{normalized}.classes.v7_exporter_selection: expected mapping")
+    _exact_keys(
+        selection,
+        {
+            "source",
+            "migration_disposition",
+            "schema_version",
+            "source_config_version",
+            "projection_profile",
+            "collection",
+            "exporters",
+            "features",
+            "span_filter_operations",
+            "local_observability",
+        },
+        set(),
+        f"{normalized}.classes.v7_exporter_selection",
+    )
+    if selection["source"] != "canonical telemetry families plus this v7 current-state inventory":
+        raise RegistryError(f"{normalized}.classes.v7_exporter_selection.source: unexpected authority")
+    if selection["migration_disposition"] != "preserve_compatibility_floor":
+        raise RegistryError(f"{normalized}.classes.v7_exporter_selection.migration_disposition: unexpected value")
+    selection_payload = {
+        key: value
+        for key, value in selection.items()
+        if key not in {"source", "migration_disposition"}
+    }
+    return result, metric_inventory, _freeze_mapping(selection_payload), InputDigest(normalized, _sha256(raw))
+
+
+def _read_v7_exporter_selection_schema(
+    root: Path,
+) -> tuple[Mapping[str, FrozenJSON], InputDigest]:
+    path, normalized = _safe_relative(
+        root,
+        V7_EXPORTER_SELECTION_SCHEMA.as_posix(),
+        "v7_exporter_selection_schema",
+        prefix=Path("schemas/telemetry/v8/compatibility"),
+    )
+    raw, schema = _load_json_strict_with_bytes(path)
+    if len(raw) > V7_EXPORTER_SELECTION_SCHEMA_MAX_BYTES:
+        raise RegistryError(f"{normalized}: schema exceeds the compiler byte limit")
+    try:
+        Draft202012Validator.check_schema(schema)
+    except Exception as exc:
+        raise RegistryError(f"{normalized}: invalid JSON Schema") from exc
+    return _freeze_mapping(schema), InputDigest(normalized, _sha256(raw))
+
+
+def _v7_exporter_selection_document(
+    selection: Mapping[str, FrozenJSON],
+    *,
+    schema_version: int,
+    registry_version: int,
+    materialized_view_sha256: str,
+) -> dict[str, Any]:
+    payload = _thaw_json(selection)
+    if not isinstance(payload, dict):
+        raise RegistryError("v7 exporter selection did not remain a mapping")
+    return {
+        "x-defenseclaw-generated": {
+            "artifact": "compatibility/v7-exporter-selection.json",
+            "authority": GO_CANDIDATE_AUTHORITY,
+            "generator": "defenseclaw-telemetry-candidate-renderer-v1",
+            "materialized_view_sha256": materialized_view_sha256,
+            "registry_version": registry_version,
+        },
+        **payload,
+        "registry_schema_version": schema_version,
+    }
+
+
+def _materialize_v7_exporter_selection(
+    selection: Mapping[str, FrozenJSON],
+    domains: tuple[DomainIR, ...] | list[DomainIR],
+    producer_inventory: Mapping[str, frozenset[str]],
+    metric_inventory: Mapping[str, MetricInventoryIR],
+) -> Mapping[str, FrozenJSON]:
+    """Replace closed producer-derived selectors with their canonical identities.
+
+    The current-state inventory owns the v7 policy shape, while the telemetry
+    registry's exhaustive producer mappings own the actual action and event-name
+    vocabulary.  Keeping only these derivation declarations in the inventory
+    prevents a second hand-maintained list from silently losing new producers.
+    """
+
+    payload = _thaw_json(selection)
+    if not isinstance(payload, dict) or not isinstance(payload.get("exporters"), dict):
+        raise RegistryError("v7 exporter selection source did not remain a mapping")
+    mappings = [mapping for domain in domains for mapping in domain.producer_mappings]
+    metric_groups = [group for domain in domains for group in domain.groups if group.type == "metric"]
+    metric_instruments = {group.instrument_name for group in metric_groups}
+    if None in metric_instruments or metric_instruments != set(metric_inventory):
+        raise RegistryError("v7 exporter selection metrics: current metric inventory is incomplete")
+    metric_buckets = list(EXPECTED_BUCKET_ORDER)
+    span_event_names = sorted(
+        group.id for domain in domains for group in domain.groups if group.type == "span"
+    )
+    if len(metric_groups) != EXPECTED_METRIC_FAMILIES or len(span_event_names) != EXPECTED_SPAN_FAMILIES:
+        raise RegistryError("v7 exporter selection metrics: canonical family coverage is incomplete")
+
+    collection = payload.get("collection")
+    always = collection.get("always") if isinstance(collection, dict) else None
+    always_logs = always.get("logs") if isinstance(always, dict) else None
+    if always_logs != {"derive_buckets_from": "local_log_producers"}:
+        raise RegistryError(
+            "v7 exporter selection collection.always.logs: expected local_log_producers derivation"
+        )
+    always["logs"] = list(EXPECTED_BUCKET_ORDER)
+    for condition, signal in (("otel.logs", "logs"), ("otel.traces", "traces")):
+        policy = collection.get(condition) if isinstance(collection, dict) else None
+        selected = policy.get(signal) if isinstance(policy, dict) else None
+        if selected != {"derive_buckets_from": "catalog_v1"}:
+            raise RegistryError(
+                f"v7 exporter selection collection.{condition}.{signal}: expected catalog_v1 derivation"
+            )
+        policy[signal] = list(EXPECTED_BUCKET_ORDER)
+    otel_metrics = collection.get("otel.metrics") if isinstance(collection, dict) else None
+    metric_collection = otel_metrics.get("metrics") if isinstance(otel_metrics, dict) else None
+    if metric_collection != {"derive_buckets_from": "emitted_metrics"}:
+        raise RegistryError(
+            "v7 exporter selection collection.otel.metrics.metrics: expected emitted_metrics derivation"
+        )
+    otel_metrics["metrics"] = metric_buckets
+    mappings_by_producer = {
+        producer: tuple(mapping for mapping in mappings if mapping.producer == producer)
+        for producer in EXPECTED_PRODUCER_COUNTS
+    }
+    for producer, expected_keys in producer_inventory.items():
+        observed_keys = {mapping.key for mapping in mappings_by_producer[producer]}
+        if observed_keys != expected_keys:
+            raise RegistryError(f"v7 exporter selection {producer}: producer inventory is incomplete")
+
+    gateway_event_names: set[str] = set()
+    for mapping in mappings_by_producer["gateway_event"]:
+        identities = (
+            () if mapping.default_identity is None else (mapping.default_identity,)
+        ) + mapping.allowed_context_identities
+        if not identities:
+            raise RegistryError(
+                f"v7 exporter selection gateway_event/{mapping.key}: no reachable canonical identity"
+            )
+        gateway_event_names.update(identity.event_name for identity in identities)
+    if not gateway_event_names:
+        raise RegistryError("v7 exporter selection gateway_event: empty canonical identity set")
+
+    exporters = payload["exporters"]
+    for exporter in ("generic_otlp", "local_observability"):
+        profile = exporters.get(exporter)
+        logs = profile.get("logs") if isinstance(profile, dict) else None
+        traces = profile.get("traces") if isinstance(profile, dict) else None
+        metrics = profile.get("metrics") if isinstance(profile, dict) else None
+        if logs != {"derive_buckets_from": "catalog_v1"}:
+            raise RegistryError(
+                f"v7 exporter selection exporters.{exporter}.logs: expected catalog_v1 derivation"
+            )
+        if traces != {"derive_event_names_from": "span_families"}:
+            raise RegistryError(
+                f"v7 exporter selection exporters.{exporter}.traces: expected span_families derivation"
+            )
+        if metrics != {"derive_buckets_from": "emitted_metrics"}:
+            raise RegistryError(
+                f"v7 exporter selection exporters.{exporter}.metrics: expected emitted_metrics derivation"
+            )
+        profile["logs"] = [{"buckets": list(EXPECTED_BUCKET_ORDER)}]
+        profile["traces"] = [{"event_names": span_event_names}]
+        profile["metrics"] = [{"buckets": metric_buckets}]
+    derivations: tuple[tuple[str, str, str], ...] = (
+        ("gateway_jsonl", "derive_event_names_from", "gateway_event"),
+        ("gateway_console", "derive_event_names_from", "gateway_event"),
+    )
+    for exporter, declaration, producer in derivations:
+        profile = exporters.get(exporter)
+        logs = profile.get("logs") if isinstance(profile, dict) else None
+        if logs != {declaration: producer}:
+            raise RegistryError(
+                f"v7 exporter selection exporters.{exporter}.logs: expected the closed {declaration} declaration"
+            )
+        profile["logs"] = [{"event_names": sorted(gateway_event_names)}]
+
+    audit_profile = exporters.get("audit_sink")
+    audit_logs = audit_profile.get("logs") if isinstance(audit_profile, dict) else None
+    expected_audit_gateway_keys = ("verdict", "llm_prompt", "llm_response", "tool_invocation")
+    if audit_logs != {
+        "derive_actions_from": "audit_action",
+        "derive_event_names_from_gateway_event_keys": list(expected_audit_gateway_keys),
+    }:
+        raise RegistryError(
+            "v7 exporter selection exporters.audit_sink.logs: expected the closed audit/gateway derivation declaration"
+        )
+    gateway_mapping_by_key = {
+        mapping.key: mapping for mapping in mappings_by_producer["gateway_event"]
+    }
+    forwarded_event_names: set[str] = set()
+    for key in expected_audit_gateway_keys:
+        mapping = gateway_mapping_by_key.get(key)
+        if mapping is None:
+            raise RegistryError(f"v7 exporter selection audit_sink: unknown gateway event key {key}")
+        identities = (
+            () if mapping.default_identity is None else (mapping.default_identity,)
+        ) + mapping.allowed_context_identities
+        forwarded_event_names.update(identity.event_name for identity in identities)
+    audit_profile["logs"] = [
+        {"actions": sorted(producer_inventory["audit_action"])},
+        {"event_names": sorted(forwarded_event_names)},
+    ]
+
+    return _freeze_mapping(payload)
+
+
+def _validate_v7_exporter_selection(
+    selection: Mapping[str, FrozenJSON],
+    schema: Mapping[str, FrozenJSON],
+    *,
+    schema_version: int,
+    registry_version: int,
+    groups: Mapping[str, GroupIR],
+    domains: tuple[DomainIR, ...] | list[DomainIR],
+    producer_inventory: Mapping[str, frozenset[str]],
+) -> None:
+    document = _v7_exporter_selection_document(
+        selection,
+        schema_version=schema_version,
+        registry_version=registry_version,
+        materialized_view_sha256="0" * 64,
+    )
+    validator = Draft202012Validator(_thaw_json(schema))
+    errors = sorted(validator.iter_errors(document), key=lambda item: tuple(str(part) for part in item.absolute_path))
+    if errors:
+        location = "/".join(str(part) for part in errors[0].absolute_path) or "$"
+        raise RegistryError(f"v7 exporter selection schema violation at {location}")
+
+    collection = document["collection"]
+    for condition in ("otel.logs", "otel.traces", "otel.metrics"):
+        selected_signal = condition.split(".", 1)[1]
+        if any(collection[condition][signal] for signal in ("logs", "traces", "metrics") if signal != selected_signal):
+            raise RegistryError(f"v7 exporter selection {condition}: cross-signal collection is forbidden")
+
+    canonical_buckets = set(EXPECTED_BUCKETS)
+    canonical_events = {
+        value
+        for group in groups.values()
+        for value in (group.id, group.event_name, group.instrument_name)
+        if value is not None
+    }
+    producer_events = {
+        identity.event_name
+        for domain in domains
+        for mapping in domain.producer_mappings
+        for identity in (
+            (() if mapping.default_identity is None else (mapping.default_identity,))
+            + mapping.allowed_context_identities
+        )
+    }
+    known_events = canonical_events | producer_events
+    canonical_actions = producer_inventory["audit_action"]
+    for condition in document["collection"].values():
+        for buckets in condition.values():
+            if not set(buckets).issubset(canonical_buckets):
+                raise RegistryError("v7 exporter selection collection references an unknown bucket")
+
+    selectors: list[Mapping[str, Any]] = []
+    for exporter in document["exporters"].values():
+        for signal_selectors in exporter.values():
+            selectors.extend(signal_selectors)
+    selectors.extend(document["features"].get("otel_individual_findings", ()))
+    for operation in document["span_filter_operations"].values():
+        selectors.extend(operation["selectors"])
+    for selector in selectors:
+        if not set(selector.get("buckets", ())).issubset(canonical_buckets):
+            raise RegistryError("v7 exporter selection references an unknown bucket")
+        if not set(selector.get("event_names", ())).issubset(known_events):
+            raise RegistryError("v7 exporter selection references an unknown event or family")
+        if not set(selector.get("actions", ())).issubset(canonical_actions):
+            raise RegistryError("v7 exporter selection references an unknown audit action")
+
+    for exporter, profile, signals in (
+        ("galileo", "galileo-rich-v2", ("traces",)),
+    ):
+        for signal in signals:
+            group_type = {"logs": "log", "traces": "span", "metrics": "metric"}[signal]
+            selected_groups: set[str] = set()
+            for selector in document["exporters"][exporter][signal]:
+                selected_buckets = set(selector.get("buckets", ()))
+                selected_events = set(selector.get("event_names", ()))
+                selected_groups.update(
+                    group.id
+                    for group in groups.values()
+                    if group.type == group_type
+                    and (
+                        (selected_buckets and group.bucket in selected_buckets)
+                        or (selected_events and group.id in selected_events)
+                    )
+                )
+            if not selected_groups:
+                raise RegistryError(f"v7 exporter selection {exporter}.{signal}: no canonical families selected")
+            ineligible = sorted(
+                group_id
+                for group_id in selected_groups
+                if profile not in (groups[group_id].compatibility_profiles or ())
+            )
+            if ineligible:
+                raise RegistryError(
+                    f"v7 exporter selection {exporter}.{signal}: families lack {profile} compatibility"
+                )
+
+    route_count = sum(
+        len(signal_selectors)
+        for signal_selectors in document["exporters"]["generic_otlp"].values()
+    ) + len(document["features"]["otel_individual_findings"])
+    if route_count > 256:
+        raise RegistryError("v7 exporter selection exceeds the generic OTel route limit")
 
 
 def _validate_json_compatible(value: Any, path: str, *, depth: int = 0) -> None:
@@ -7315,7 +7645,11 @@ def _resource_dynamic_fields(
     for reference, use in uses.items():
         if use.requirement_level == "required" and reference not in payload:
             errors.add("family_required_attribute_missing")
-    if len(custom) > contract.max_items or sum(len(key.encode()) + len(value.encode()) for key, value in custom) > contract.max_aggregate_utf8_bytes:
+    if (
+        len(custom) > contract.max_items
+        or sum(len(key.encode()) + len(value.encode()) for key, value in custom)
+        > contract.max_aggregate_utf8_bytes
+    ):
         errors.add("dynamic_attribute_value_invalid")
     return len(errors.codes) == initial_error_count
 
@@ -9583,7 +9917,12 @@ def compile_registry(root: Path) -> RegistryIR:
     if lock_relative != "schemas/telemetry/v8/semconv.lock.yaml":
         raise RegistryError("registry.dependency_lock: unexpected path")
     dependencies, lock_digest, structural_documents, structural_input_digests = _parse_lock(root, lock_relative)
-    producer_inventory, metric_inventory, inventory_digest = _parse_producer_inventory(root)
+    producer_inventory, metric_inventory, v7_exporter_selection, inventory_digest = (
+        _parse_producer_inventory(root)
+    )
+    v7_exporter_selection_schema, v7_exporter_selection_schema_digest = (
+        _read_v7_exporter_selection_schema(root)
+    )
     normalizers = _parse_normalizer_catalog(registry["normalizers"], "registry.normalizers")
     normalizers_by_id = {item.id: item for item in normalizers}
     structured_types = _parse_structured_types(
@@ -9932,6 +10271,21 @@ def compile_registry(root: Path) -> RegistryIR:
     resolved_domains, group_resolution_order, resolved_group_uses = _resolve_group_uses(tuple(domains))
     domains = list(resolved_domains)
     group_owners = {group.id: group for domain in domains for group in domain.groups}
+    v7_exporter_selection = _materialize_v7_exporter_selection(
+        v7_exporter_selection,
+        domains,
+        producer_inventory,
+        metric_inventory,
+    )
+    _validate_v7_exporter_selection(
+        v7_exporter_selection,
+        v7_exporter_selection_schema,
+        schema_version=schema_version,
+        registry_version=registry_version,
+        groups=group_owners,
+        domains=domains,
+        producer_inventory=producer_inventory,
+    )
     _validate_trace_derivation_coverage(structural_contract, group_owners)
     _validate_metric_attribute_safety(
         group_owners,
@@ -10002,6 +10356,7 @@ def compile_registry(root: Path) -> RegistryIR:
     input_digests = (
         registry_digest,
         manifest_schema_digest,
+        v7_exporter_selection_schema_digest,
         public_views_digest,
         public_views_baseline_digest,
         *domain_digests,
@@ -10019,6 +10374,7 @@ def compile_registry(root: Path) -> RegistryIR:
         "dependency_lock_path": lock_relative,
         "examples_path": examples_relative,
         "public_views_path": public_views_relative,
+        "v7_exporter_selection_schema_path": V7_EXPORTER_SELECTION_SCHEMA.as_posix(),
         "input_digests": tuple(input_digests),
         "dependencies": dependencies,
         "semantic_profiles": semantic_profiles,
@@ -10035,6 +10391,8 @@ def compile_registry(root: Path) -> RegistryIR:
         "structural_contract": structural_contract,
         "metric_cardinality_limit": metric_cardinality_limit,
         "metric_compatibility_profile": metric_compatibility_profile,
+        "v7_exporter_selection": v7_exporter_selection,
+        "v7_exporter_selection_schema": v7_exporter_selection_schema,
         "domains": tuple(domains),
         "group_resolution_order": group_resolution_order,
         "resolved_group_uses": resolved_group_uses,
@@ -10671,6 +11029,33 @@ def _validate_portable_candidate_inventory(
     return expected
 
 
+def _validate_rendered_v7_exporter_selection(
+    ir: RegistryIR,
+    portable_outputs: Mapping[str, Any],
+) -> None:
+    path = "schemas/telemetry/generated/compatibility/v7-exporter-selection.json"
+    output = portable_outputs.get(path)
+    payload = getattr(output, "payload", None)
+    if type(payload) is not bytes or len(payload) > V7_EXPORTER_SELECTION_SCHEMA_MAX_BYTES:
+        raise RegistryError("rendered v7 exporter selection payload is invalid")
+    document = _parse_json_strict_bytes(Path(path), payload)
+    expected = _v7_exporter_selection_document(
+        ir.v7_exporter_selection,
+        schema_version=ir.schema_version,
+        registry_version=ir.registry_version,
+        materialized_view_sha256=ir.materialized_view.typed_canonical_json_sha256,
+    )
+    if document != expected:
+        raise RegistryError("rendered v7 exporter selection disagrees with compiler authority")
+    errors = sorted(
+        Draft202012Validator(_thaw_json(ir.v7_exporter_selection_schema)).iter_errors(document),
+        key=lambda item: tuple(str(part) for part in item.absolute_path),
+    )
+    if errors:
+        location = "/".join(str(part) for part in errors[0].absolute_path) or "$"
+        raise RegistryError(f"rendered v7 exporter selection schema violation at {location}")
+
+
 def _validate_rendered_manifest_inventory(
     manifest: Mapping[str, Any],
     artifacts: Mapping[Path, Any],
@@ -10716,6 +11101,7 @@ def render_outputs(ir: RegistryIR) -> dict[Path, bytes]:
         index = portable_renderer.build_candidate_render_index(ir.materialized_view)
         portable_outputs = portable_renderer.render_candidate_artifacts_from_index(index)
         expected_portable_paths = _validate_portable_candidate_inventory(ir, portable_renderer, portable_outputs)
+        _validate_rendered_v7_exporter_selection(ir, portable_outputs)
         go_render = go_renderer.render_go_candidate(index)
         if tuple(coordinator.EXACT_GO_OUTPUT_PATHS) != GO_CANDIDATE_OUTPUT_PATHS:
             raise RegistryError("generated Go coordinator output paths disagree with the compiler contract")

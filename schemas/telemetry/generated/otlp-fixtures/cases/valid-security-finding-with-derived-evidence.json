@@ -3,7 +3,7 @@
     "artifact": "otlp-fixtures/cases/valid-security-finding-with-derived-evidence.json",
     "authority": "candidate-not-public-authority",
     "generator": "defenseclaw-telemetry-candidate-renderer-v1",
-    "materialized_view_sha256": "bf30a179be2802e22e659d0287177f639796fdbef28b508ea4d8bd67ce13f495",
+    "materialized_view_sha256": "8906e863763b2847efa595e90fb6a5ccfce6d5808d4be79677c2b67433eb0423",
     "registry_version": 1
   },
   "canonical_record": {
@@ -90,6 +90,6 @@
   "family": "log.finding.observed",
   "fixture_format": "defenseclaw-otlp-fixture-v1",
   "id": "valid-security-finding-with-derived-evidence",
-  "materialized_view_sha256": "bf30a179be2802e22e659d0287177f639796fdbef28b508ea4d8bd67ce13f495",
+  "materialized_view_sha256": "8906e863763b2847efa595e90fb6a5ccfce6d5808d4be79677c2b67433eb0423",
   "signal": "logs"
 }
