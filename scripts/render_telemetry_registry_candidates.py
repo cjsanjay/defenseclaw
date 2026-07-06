@@ -345,7 +345,7 @@ _STRUCTURED_EXPECTED_KNOWN_VALUES: Final = {
 }
 _STRUCTURED_DISPOSITIONS_SHA256: Final = "19aa6a80165bed241ae9e427b9b4f7cea9d0b7001c11e5f6460b84c89bd4c0c3"
 _STRUCTURED_TYPES_SHA256: Final = "912186e674a5296b588df0b602af5891e9ae13e100b2a3674616acf2041ec5e6"
-_STRUCTURAL_CONTRACT_SHA256: Final = "6b2d6e5f48ebfda90fb2db86d320580e10b1e93b835f114677247eb59dc49ace"
+_STRUCTURAL_CONTRACT_SHA256: Final = "63d9df50528f6a8838b25d53761d23697525cc1044f2c992afbec4115950b675"
 _CANONICAL_JSON_LIMITS: Final = {
     "max_depth": 8,
     "max_aggregate_members": 256,
@@ -1011,6 +1011,18 @@ _EXAMPLE_FIELDS: Final = frozenset(
     }
 )
 _STRUCTURAL_OBJECT_FIELDS: Final = frozenset({"id", "additional_properties", "fields"})
+_PROVENANCE_IMPORT_RULE_FIELDS: Final = frozenset(
+    {
+        "nonempty_string_fields",
+        "derivation_required_modes",
+        "derivation_forbidden_modes",
+        "source_aggregate_count_required_derivations",
+        "source_aggregate_count_forbidden_derivations",
+        "source_aggregate_count_forbidden_modes",
+        "exact_validation_owner",
+        "json_schema_runtime_only",
+    }
+)
 _STRUCTURAL_FIELD_FIELDS: Final = frozenset(
     {
         "name",
@@ -4389,6 +4401,7 @@ def _enriched_container_descriptors(
         "envelope": "",
         "correlation": "/correlation",
         "provenance": "/provenance",
+        "provenance_import": "/provenance/import",
         "trace_body": "/body",
         "trace_resource": "/body/resource",
         "trace_scope": "/body/scope",
@@ -6284,6 +6297,8 @@ def build_candidate_render_index(view: object) -> CandidateRenderIndex:
         "envelope",
         "correlation",
         "provenance",
+        "provenance_import",
+        "provenance_import_rules",
         "signal_arms",
         "trace_derivations",
         "trace_body",
@@ -6693,6 +6708,72 @@ def _object_schema(
     }
 
 
+def _apply_provenance_import_schema_rules(
+    schema: JSONObject,
+    raw_rules: FrozenJSON,
+) -> None:
+    rules = _tagged(raw_rules, "ProvenanceImportRulesIR", _PROVENANCE_IMPORT_RULE_FIELDS)
+    properties = schema.get("properties")
+    if not isinstance(properties, dict):
+        raise CandidateRenderError("provenance import schema has no property map")
+
+    def string_tuple(key: str) -> tuple[str, ...]:
+        values = rules.get(key)
+        if not isinstance(values, tuple) or any(not isinstance(item, str) for item in values):
+            raise CandidateRenderError(f"materialized provenance import {key} is invalid")
+        return values
+
+    for name in string_tuple("nonempty_string_fields"):
+        target = properties.get(name)
+        if not isinstance(target, dict) or target.get("type") != "string":
+            raise CandidateRenderError("provenance import nonempty rule references a non-string field")
+        target["minLength"] = 1
+    for target in properties.values():
+        if not isinstance(target, dict) or target.get("type") != "string":
+            continue
+        byte_limit = target.get("x-defenseclaw-max-utf8-bytes")
+        if type(byte_limit) is int:
+            # JSON Schema can publish only a coarse code-point cap here. Its
+            # accepted set is a superset of the stricter UTF-8 byte-bounded set;
+            # exact multibyte enforcement remains with the runtime validator.
+            target["maxLength"] = byte_limit
+
+    required_modes = string_tuple("derivation_required_modes")
+    forbidden_modes = string_tuple("derivation_forbidden_modes")
+    required_derivations = string_tuple("source_aggregate_count_required_derivations")
+    forbidden_derivations = string_tuple("source_aggregate_count_forbidden_derivations")
+    forbidden_count_modes = string_tuple("source_aggregate_count_forbidden_modes")
+    schema["allOf"] = [
+        {
+            "if": {"properties": {"mode": {"enum": list(required_modes)}}, "required": ["mode"]},
+            "then": {"required": ["derivation"]},
+        },
+        {
+            "if": {"properties": {"mode": {"enum": list(forbidden_modes)}}, "required": ["mode"]},
+            "then": {"not": {"required": ["derivation"]}},
+        },
+        {
+            "if": {"properties": {"derivation": {"enum": list(required_derivations)}}, "required": ["derivation"]},
+            "then": {"required": ["source_aggregate_count"]},
+        },
+        {
+            "if": {"properties": {"derivation": {"enum": list(forbidden_derivations)}}, "required": ["derivation"]},
+            "then": {"not": {"required": ["source_aggregate_count"]}},
+        },
+        {
+            "if": {"properties": {"mode": {"enum": list(forbidden_count_modes)}}, "required": ["mode"]},
+            "then": {"not": {"required": ["source_aggregate_count"]}},
+        },
+    ]
+    owner = rules.get("exact_validation_owner")
+    runtime_only = string_tuple("json_schema_runtime_only")
+    if not isinstance(owner, str) or not owner or not runtime_only:
+        raise CandidateRenderError("provenance import exact validation ownership is incomplete")
+    schema["x-defenseclaw-provenance-import-rules"] = _plain_ir(rules)
+    schema["x-defenseclaw-exact-validation-owner"] = owner
+    schema["x-defenseclaw-json-schema-runtime-only"] = list(runtime_only)
+
+
 def _event_definition(model: CandidateRenderIndex, event: Mapping[str, FrozenJSON], trace_event_def: str) -> JSONObject:
     event_name_value = event["event_name"]
     event_name = (
@@ -6856,6 +6937,7 @@ def _render_schema(model: CandidateRenderIndex, marker: JSONObject) -> JSONObjec
         "envelope",
         "correlation",
         "provenance",
+        "provenance_import",
         "trace_body",
         "trace_resource",
         "trace_scope",
@@ -6873,6 +6955,10 @@ def _render_schema(model: CandidateRenderIndex, marker: JSONObject) -> JSONObjec
         defs[f"structured:{type_id}"] = _structured_type_schema(structured)
     for key, raw in structural_nodes.items():
         defs[f"structural:{key}"] = _object_schema(model, contract[key], definition_names)
+    _apply_provenance_import_schema_rules(
+        defs["structural:provenance_import"],
+        contract["provenance_import_rules"],
+    )
 
     envelope_def = "structural:envelope"
     envelope = defs[envelope_def]
@@ -6947,6 +7033,13 @@ def _render_schema(model: CandidateRenderIndex, marker: JSONObject) -> JSONObjec
         "x-defenseclaw-trace-relations": [
             _plain_ir(_tagged(item, "StructuralRelationIR")) for item in contract["trace_relations"]
         ],
+        "x-defenseclaw-provenance-import-rules": _plain_ir(
+            _tagged(
+                contract["provenance_import_rules"],
+                "ProvenanceImportRulesIR",
+                _PROVENANCE_IMPORT_RULE_FIELDS,
+            )
+        ),
         "x-defenseclaw-canonical-to-otlp": _plain_ir(
             _tagged(contract["canonical_to_otlp"], "CanonicalOTLPRepresentationIR", _CANONICAL_OTLP_FIELDS)
         ),
@@ -7231,6 +7324,16 @@ def _render_catalog(
             "trace_relations": [
                 _plain_ir(_tagged(item, "StructuralRelationIR")) for item in contract["trace_relations"]
             ],
+            "provenance_import": _plain_ir(
+                _tagged(contract["provenance_import"], "StructuralObjectIR", _STRUCTURAL_OBJECT_FIELDS)
+            ),
+            "provenance_import_rules": _plain_ir(
+                _tagged(
+                    contract["provenance_import_rules"],
+                    "ProvenanceImportRulesIR",
+                    _PROVENANCE_IMPORT_RULE_FIELDS,
+                )
+            ),
             "canonical_to_otlp": _plain_ir(
                 _tagged(contract["canonical_to_otlp"], "CanonicalOTLPRepresentationIR", _CANONICAL_OTLP_FIELDS)
             ),

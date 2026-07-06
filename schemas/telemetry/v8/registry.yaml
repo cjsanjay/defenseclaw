@@ -752,7 +752,7 @@ structural_contract:
       - {name: outcome, type: string, required: false, semantic_ref: defenseclaw.outcome, field_class: metadata, sensitivity: safe, normalization: {id: enum-v1, overrides: {enum: [allowed, applied, approved, attempted, blocked, cancelled, completed, denied, failed, no_change, partial, quarantined, redacted, rejected, released, revoked, skipped, terminated, timed_out, validated]}}}
       - {name: mandatory, type: boolean, required: false, field_class: metadata, sensitivity: safe, normalization: {id: identity-v1}}
       - {name: correlation, type: object, required: true, object_ref: correlation, field_class: metadata, sensitivity: internal, normalization: {id: structured-content-v1, overrides: {max_utf8_bytes: 16384, max_item_utf8_bytes: 512, max_items: 20, max_depth: 1, max_properties: 20}}}
-      - {name: provenance, type: object, required: true, object_ref: provenance, field_class: metadata, sensitivity: internal, normalization: {id: structured-content-v1, overrides: {max_utf8_bytes: 4096, max_item_utf8_bytes: 256, max_items: 6, max_depth: 1, max_properties: 6}}}
+      - {name: provenance, type: object, required: true, object_ref: provenance, field_class: metadata, sensitivity: internal, normalization: {id: structured-content-v1, overrides: {max_utf8_bytes: 16384, max_item_utf8_bytes: 512, max_items: 20, max_depth: 2, max_properties: 20}}}
       - {name: body, type: canonical_json, required: false, semantic_ref: registry.family_payload, field_class: metadata, sensitivity: critical, normalization: {id: structured-content-v1, overrides: {max_utf8_bytes: 1048576, max_item_utf8_bytes: 65536, max_items: 8192, max_depth: 32, max_properties: 8192}}}
       - {name: instrument_data, type: object, required: false, object_ref: metric_instrument_data, field_class: metadata, sensitivity: internal, normalization: {id: structured-content-v1, overrides: {max_utf8_bytes: 1048576, max_item_utf8_bytes: 65536, max_items: 8192, max_depth: 32, max_properties: 8192}}}
       - {name: field_classes, type: field_class_map, required: true, semantic_ref: payload.rfc6901_field_classes, field_class: metadata, sensitivity: internal, normalization: {id: structured-content-v1, overrides: {max_utf8_bytes: 1048576, max_item_utf8_bytes: 4096, max_items: 8192, max_depth: 1, max_properties: 8192}}}
@@ -792,6 +792,32 @@ structural_contract:
       - {name: config_generation, type: int64, required: true, field_class: metadata, sensitivity: safe, normalization: {id: numeric-range-v1, overrides: {min: 0, max: 9223372036854775807}}}
       - {name: build_commit, type: string, required: false, field_class: identifier, sensitivity: safe, normalization: {id: digest-v1, overrides: {max_utf8_bytes: 128, pattern: '^[0-9a-f]+$'}}}
       - {name: config_digest, type: string, required: false, field_class: identifier, sensitivity: internal, normalization: {id: digest-v1, overrides: {max_utf8_bytes: 128, pattern: '^[0-9a-f]+$'}}}
+      - {name: import, type: object, required: false, object_ref: provenance_import, field_class: metadata, sensitivity: internal, normalization: {id: structured-content-v1, overrides: {max_utf8_bytes: 8192, max_item_utf8_bytes: 512, max_items: 13, max_depth: 1, max_properties: 13}}}
+  provenance_import:
+    additional_properties: false
+    fields:
+      - {name: protocol, type: string, required: true, const: otlp, field_class: metadata, sensitivity: safe, normalization: {id: enum-v1, overrides: {enum: [otlp]}}}
+      - {name: binding_id, type: string, required: true, field_class: identifier, sensitivity: internal, normalization: {id: bounded-v1, overrides: {max_utf8_bytes: 512}}}
+      - {name: mode, type: string, required: true, enum: [import, derive, import_and_derive], field_class: metadata, sensitivity: safe, normalization: {id: enum-v1, overrides: {enum: [import, derive, import_and_derive]}}}
+      - {name: derivation, type: string, required: false, enum: [field_value, elapsed_time, cumulative_delta, arithmetic_mean], field_class: metadata, sensitivity: safe, normalization: {id: enum-v1, overrides: {enum: [field_value, elapsed_time, cumulative_delta, arithmetic_mean]}}}
+      - {name: source_aggregate_count, type: uint64, required: false, field_class: metadata, sensitivity: safe, normalization: {id: numeric-range-v1, overrides: {min: 1, max: 18446744073709551615}}}
+      - {name: authenticated_source, type: string, required: true, field_class: identifier, sensitivity: internal, normalization: {id: bounded-v1, overrides: {max_utf8_bytes: 512}}}
+      - {name: upstream_instance_id, type: string, required: false, field_class: identifier, sensitivity: internal, normalization: {id: bounded-v1, overrides: {max_utf8_bytes: 512}}}
+      - {name: upstream_record_id, type: string, required: false, field_class: identifier, sensitivity: internal, normalization: {id: identifier-v1, overrides: {max_utf8_bytes: 128, pattern: '^([0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}|[a-z0-9][a-z0-9_.-]{0,127})$'}}}
+      - {name: upstream_service_name, type: string, required: false, field_class: metadata, sensitivity: internal, normalization: {id: bounded-v1, overrides: {max_utf8_bytes: 512}}}
+      - {name: upstream_redaction_profile, type: string, required: false, field_class: metadata, sensitivity: internal, normalization: {id: identifier-v1, overrides: {max_utf8_bytes: 128, pattern: '^[a-z0-9][a-z0-9_.-]{0,127}$'}}}
+      - {name: ingress_hop_count, type: uint32, required: true, field_class: metadata, sensitivity: safe, normalization: {id: numeric-range-v1, overrides: {min: 0, max: 4}}}
+      - {name: last_hop_instance_id, type: string, required: false, field_class: identifier, sensitivity: internal, normalization: {id: bounded-v1, overrides: {max_utf8_bytes: 512}}}
+      - {name: last_hop_destination, type: string, required: false, field_class: identifier, sensitivity: internal, normalization: {id: bounded-v1, overrides: {max_utf8_bytes: 512}}}
+    rules:
+      nonempty_string_fields: [binding_id, authenticated_source, upstream_instance_id, upstream_record_id, upstream_service_name, upstream_redaction_profile, last_hop_instance_id, last_hop_destination]
+      derivation_required_modes: [derive, import_and_derive]
+      derivation_forbidden_modes: [import]
+      source_aggregate_count_required_derivations: [arithmetic_mean]
+      source_aggregate_count_forbidden_derivations: [field_value, elapsed_time, cumulative_delta]
+      source_aggregate_count_forbidden_modes: [import]
+      exact_validation_owner: internal/observability.ImportProvenance.Validate
+      json_schema_runtime_only: [valid_utf8, utf8_byte_length]
   trace:
     derivations:
       - {id: trace-bucket-equality-v1, target_attribute: defenseclaw.bucket, source: envelope.bucket, equality: typed-json-exact, presence: when-registered}

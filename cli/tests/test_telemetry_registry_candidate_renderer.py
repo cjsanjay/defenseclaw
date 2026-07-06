@@ -389,14 +389,16 @@ def test_candidate_enrichment_is_complete_typed_and_recursively_immutable(
         "link": 1,
         "structured": 47,
     }
-    assert len(index.enriched_containers) == 102
+    assert len(index.enriched_containers) == 104
     assert Counter(item.context for item in index.enriched_containers.values()) == {
-        "structural_object": 10,
-        "structural_field": 16,
+        "structural_object": 11,
+        "structural_field": 17,
         "structured_type": 21,
         "structured_variant": 17,
         "structured_reference": 38,
     }
+    assert index.enriched_containers["structural:provenance_import"].path == "/provenance/import"
+    assert index.enriched_containers["structural-field:provenance:import"].reference_target == ("provenance_import")
     assert all(not hasattr(item, "field_class") for item in index.enriched_containers.values())
     assert all(not hasattr(item, "sensitivity") for item in index.enriched_containers.values())
     assert all(not hasattr(item, "normalization_id") for item in index.enriched_containers.values())
@@ -1608,7 +1610,7 @@ def test_bundle_is_complete_draft_2020_12_and_examples_have_exact_dispositions(
     assert schema["$schema"] == "https://json-schema.org/draft/2020-12/schema"
     assert schema["$id"] == "https://defenseclaw.dev/schemas/telemetry/v8/telemetry.schema.json"
     assert len(schema["oneOf"]) == 249
-    assert len(schema["$defs"]) == 727
+    assert len(schema["$defs"]) == 728
     assert set(schema["x-defenseclaw-conditions"][0]) == {"description", "enforcement", "false_requirement", "id"}
     assert "$type" not in json.dumps(schema["x-defenseclaw-conditions"])
     assert len(schema["x-defenseclaw-conditions"]) == 10
@@ -1710,6 +1712,150 @@ def test_bundle_is_complete_draft_2020_12_and_examples_have_exact_dispositions(
                 "occurrence": None,
             }
     assert observed == {True: 7, False: 6}
+
+
+def test_provenance_import_schema_is_closed_bounded_and_cross_field_exact(
+    artifacts: Mapping[str, Any],
+) -> None:
+    schema = _json(artifacts, "telemetry.schema.json")
+    catalog = _json(artifacts, "catalog.json")
+    validator = jsonschema.Draft202012Validator(schema)
+    import_schema = schema["$defs"]["structural:provenance_import"]
+    import_validator = _subschema_validator(schema, import_schema)
+    base_record = _json(
+        artifacts,
+        "examples/valid/valid-model-chat-with-honest-missing-content-and-usage.json",
+    )["record"]
+    assert validator.is_valid(base_record)
+    assert "import" not in base_record["provenance"]
+
+    valid_import = {
+        "protocol": "otlp",
+        "binding_id": "otlp.genai.span.operation.v1.chat",
+        "mode": "import_and_derive",
+        "derivation": "arithmetic_mean",
+        "source_aggregate_count": 2**64 - 1,
+        "authenticated_source": "codex",
+        "upstream_instance_id": "upstream-instance-1",
+        "upstream_record_id": "123E4567-E89B-12D3-A456-426614174000",
+        "upstream_service_name": "upstream-service",
+        "upstream_redaction_profile": "sensitive",
+        "ingress_hop_count": 4,
+        "last_hop_instance_id": "forwarder-instance-1",
+        "last_hop_destination": "otlp-primary",
+    }
+    valid_variants = (
+        valid_import,
+        {
+            key: value
+            for key, value in {
+                **valid_import,
+                "mode": "import",
+                "derivation": None,
+                "source_aggregate_count": None,
+            }.items()
+            if value is not None
+        },
+        {
+            key: value
+            for key, value in {
+                **valid_import,
+                "mode": "derive",
+                "derivation": "field_value",
+                "source_aggregate_count": None,
+                "upstream_record_id": "record.stable-01",
+            }.items()
+            if value is not None
+        },
+    )
+    for provenance_import in valid_variants:
+        assert import_validator.is_valid(provenance_import)
+        record = json.loads(json.dumps(base_record))
+        record["provenance"]["import"] = provenance_import
+        assert validator.is_valid(record)
+
+    invalid_imports = []
+
+    def invalid(**changes: Any) -> dict[str, Any]:
+        candidate = json.loads(json.dumps(valid_import))
+        for key, value in changes.items():
+            if value is None:
+                candidate.pop(key, None)
+            else:
+                candidate[key] = value
+        return candidate
+
+    invalid_imports.extend(
+        (
+            invalid(protocol="grpc"),
+            invalid(protocol=None),
+            invalid(binding_id=None),
+            invalid(binding_id=""),
+            invalid(authenticated_source=None),
+            invalid(ingress_hop_count=None),
+            invalid(mode="copy"),
+            invalid(derivation="histogram"),
+            invalid(source_aggregate_count=0),
+            invalid(source_aggregate_count="4"),
+            invalid(ingress_hop_count=5),
+            invalid(ingress_hop_count="4"),
+            invalid(upstream_record_id="{123e4567-e89b-12d3-a456-426614174000}"),
+            invalid(upstream_record_id="UPSTREAM-RECORD"),
+            invalid(upstream_redaction_profile="Sensitive Profile"),
+            {**valid_import, "unknown": "rejected"},
+            invalid(mode="import"),
+            invalid(derivation=None),
+            invalid(source_aggregate_count=None),
+            invalid(derivation="elapsed_time"),
+        )
+    )
+    for field in (
+        "binding_id",
+        "authenticated_source",
+        "upstream_instance_id",
+        "upstream_service_name",
+        "last_hop_instance_id",
+        "last_hop_destination",
+    ):
+        invalid_imports.extend((invalid(**{field: ""}), invalid(**{field: "x" * 513})))
+    invalid_imports.extend(
+        (
+            invalid(upstream_record_id="r" * 129),
+            invalid(upstream_redaction_profile="r" * 129),
+        )
+    )
+    pure_import_with_count = invalid(mode="import", derivation=None)
+    invalid_imports.append(pure_import_with_count)
+    for provenance_import in invalid_imports:
+        assert not import_validator.is_valid(provenance_import), provenance_import
+
+    rules = import_schema["x-defenseclaw-provenance-import-rules"]
+    assert rules == schema["x-defenseclaw-provenance-import-rules"]
+    assert rules == catalog["structural_contract"]["provenance_import_rules"]
+    assert import_schema["x-defenseclaw-exact-validation-owner"] == ("internal/observability.ImportProvenance.Validate")
+    assert import_schema["x-defenseclaw-json-schema-runtime-only"] == [
+        "valid_utf8",
+        "utf8_byte_length",
+    ]
+    assert import_schema["additionalProperties"] is False
+    assert set(import_schema["properties"]) == {
+        "protocol",
+        "binding_id",
+        "mode",
+        "derivation",
+        "source_aggregate_count",
+        "authenticated_source",
+        "upstream_instance_id",
+        "upstream_record_id",
+        "upstream_service_name",
+        "upstream_redaction_profile",
+        "ingress_hop_count",
+        "last_hop_instance_id",
+        "last_hop_destination",
+    }
+    assert import_schema["properties"]["binding_id"]["maxLength"] == 512
+    assert import_schema["properties"]["upstream_redaction_profile"]["maxLength"] == 128
+    assert catalog["structural_contract"]["provenance_import"]["id"] == "provenance_import"
 
 
 def test_custom_resource_schema_and_semantic_contract_are_exact(

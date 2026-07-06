@@ -758,6 +758,39 @@ STRUCTURAL_LIMIT_KEYS: Final = (
     "payload_encoded_bytes",
     "record_encoded_bytes",
 )
+PROVENANCE_IMPORT_RULE_KEYS: Final = (
+    "nonempty_string_fields",
+    "derivation_required_modes",
+    "derivation_forbidden_modes",
+    "source_aggregate_count_required_derivations",
+    "source_aggregate_count_forbidden_derivations",
+    "source_aggregate_count_forbidden_modes",
+    "exact_validation_owner",
+    "json_schema_runtime_only",
+)
+EXPECTED_PROVENANCE_IMPORT_RULES: Final = {
+    "nonempty_string_fields": (
+        "binding_id",
+        "authenticated_source",
+        "upstream_instance_id",
+        "upstream_record_id",
+        "upstream_service_name",
+        "upstream_redaction_profile",
+        "last_hop_instance_id",
+        "last_hop_destination",
+    ),
+    "derivation_required_modes": ("derive", "import_and_derive"),
+    "derivation_forbidden_modes": ("import",),
+    "source_aggregate_count_required_derivations": ("arithmetic_mean",),
+    "source_aggregate_count_forbidden_derivations": (
+        "field_value",
+        "elapsed_time",
+        "cumulative_delta",
+    ),
+    "source_aggregate_count_forbidden_modes": ("import",),
+    "exact_validation_owner": "internal/observability.ImportProvenance.Validate",
+    "json_schema_runtime_only": ("valid_utf8", "utf8_byte_length"),
+}
 _STRUCTURAL_FIELD_TYPE: Final = frozenset(
     {
         "boolean",
@@ -960,6 +993,7 @@ OTLP_FIELD_MAPPINGS: Final = {
     },
     "metric_instrument_data": {},
     "provenance": {},
+    "provenance_import": {},
 }
 
 NORMALIZER_KIND_CONTRACTS: Final = {
@@ -1905,6 +1939,18 @@ class StructuralObjectIR:
 
 
 @dataclass(frozen=True, slots=True)
+class ProvenanceImportRulesIR:
+    nonempty_string_fields: tuple[str, ...]
+    derivation_required_modes: tuple[str, ...]
+    derivation_forbidden_modes: tuple[str, ...]
+    source_aggregate_count_required_derivations: tuple[str, ...]
+    source_aggregate_count_forbidden_derivations: tuple[str, ...]
+    source_aggregate_count_forbidden_modes: tuple[str, ...]
+    exact_validation_owner: str
+    json_schema_runtime_only: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class SignalArmIR:
     signal: str
     payload_field: str
@@ -1983,6 +2029,8 @@ class StructuralContractIR:
     envelope: StructuralObjectIR
     correlation: StructuralObjectIR
     provenance: StructuralObjectIR
+    provenance_import: StructuralObjectIR
+    provenance_import_rules: ProvenanceImportRulesIR
     signal_arms: tuple[SignalArmIR, ...]
     trace_derivations: tuple[TraceDerivationIR, ...]
     trace_body: StructuralObjectIR
@@ -5752,6 +5800,252 @@ def _parse_structural_object(
     return StructuralObjectIR(object_id, False, fields)
 
 
+def _parse_provenance_import_rules(
+    value: Any,
+    path: str,
+    provenance_import: StructuralObjectIR,
+) -> ProvenanceImportRulesIR:
+    if not isinstance(value, dict):
+        raise RegistryError(f"{path}: expected mapping")
+    _exact_keys(value, set(PROVENANCE_IMPORT_RULE_KEYS), set(), path)
+    parsed_sequences = {
+        key: _string_list(value[key], f"{path}.{key}")
+        for key in PROVENANCE_IMPORT_RULE_KEYS
+        if key not in {"exact_validation_owner"}
+    }
+    owner = _string(value["exact_validation_owner"], f"{path}.exact_validation_owner")
+    observed: dict[str, str | tuple[str, ...]] = dict(parsed_sequences)
+    observed["exact_validation_owner"] = owner
+    if observed != EXPECTED_PROVENANCE_IMPORT_RULES:
+        raise RegistryError(f"{path}: differs from the canonical provenance import rules")
+
+    fields = {field.name: field for field in provenance_import.fields}
+    upstream_record_id_pattern = (
+        "^([0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}|[a-z0-9][a-z0-9_.-]{0,127})$"
+    )
+    expected_shapes: tuple[
+        tuple[
+            str,
+            str,
+            bool,
+            bool,
+            FrozenJSON | None,
+            tuple[FrozenJSON, ...],
+            str,
+            str,
+            str,
+            Mapping[str, FrozenJSON],
+        ],
+        ...,
+    ] = (
+        (
+            "protocol",
+            "string",
+            True,
+            True,
+            "otlp",
+            (),
+            "metadata",
+            "safe",
+            "enum-v1",
+            {"enum": ("otlp",), "max_utf8_bytes": 256},
+        ),
+        (
+            "binding_id",
+            "string",
+            True,
+            False,
+            None,
+            (),
+            "identifier",
+            "internal",
+            "bounded-v1",
+            {"max_items": 256, "max_item_utf8_bytes": 4096, "max_utf8_bytes": 512},
+        ),
+        (
+            "mode",
+            "string",
+            True,
+            False,
+            None,
+            ("import", "derive", "import_and_derive"),
+            "metadata",
+            "safe",
+            "enum-v1",
+            {"enum": ("import", "derive", "import_and_derive"), "max_utf8_bytes": 256},
+        ),
+        (
+            "derivation",
+            "string",
+            False,
+            False,
+            None,
+            ("field_value", "elapsed_time", "cumulative_delta", "arithmetic_mean"),
+            "metadata",
+            "safe",
+            "enum-v1",
+            {"enum": ("field_value", "elapsed_time", "cumulative_delta", "arithmetic_mean"), "max_utf8_bytes": 256},
+        ),
+        (
+            "source_aggregate_count",
+            "uint64",
+            False,
+            False,
+            None,
+            (),
+            "metadata",
+            "safe",
+            "numeric-range-v1",
+            {"min": 1, "max": 18446744073709551615},
+        ),
+        (
+            "authenticated_source",
+            "string",
+            True,
+            False,
+            None,
+            (),
+            "identifier",
+            "internal",
+            "bounded-v1",
+            {"max_items": 256, "max_item_utf8_bytes": 4096, "max_utf8_bytes": 512},
+        ),
+        (
+            "upstream_instance_id",
+            "string",
+            False,
+            False,
+            None,
+            (),
+            "identifier",
+            "internal",
+            "bounded-v1",
+            {"max_items": 256, "max_item_utf8_bytes": 4096, "max_utf8_bytes": 512},
+        ),
+        (
+            "upstream_record_id",
+            "string",
+            False,
+            False,
+            None,
+            (),
+            "identifier",
+            "internal",
+            "identifier-v1",
+            {
+                "max_utf8_bytes": 128,
+                "pattern": upstream_record_id_pattern,
+            },
+        ),
+        (
+            "upstream_service_name",
+            "string",
+            False,
+            False,
+            None,
+            (),
+            "metadata",
+            "internal",
+            "bounded-v1",
+            {"max_items": 256, "max_item_utf8_bytes": 4096, "max_utf8_bytes": 512},
+        ),
+        (
+            "upstream_redaction_profile",
+            "string",
+            False,
+            False,
+            None,
+            (),
+            "metadata",
+            "internal",
+            "identifier-v1",
+            {"max_utf8_bytes": 128, "pattern": "^[a-z0-9][a-z0-9_.-]{0,127}$"},
+        ),
+        (
+            "ingress_hop_count",
+            "uint32",
+            True,
+            False,
+            None,
+            (),
+            "metadata",
+            "safe",
+            "numeric-range-v1",
+            {"min": 0, "max": 4},
+        ),
+        (
+            "last_hop_instance_id",
+            "string",
+            False,
+            False,
+            None,
+            (),
+            "identifier",
+            "internal",
+            "bounded-v1",
+            {"max_items": 256, "max_item_utf8_bytes": 4096, "max_utf8_bytes": 512},
+        ),
+        (
+            "last_hop_destination",
+            "string",
+            False,
+            False,
+            None,
+            (),
+            "identifier",
+            "internal",
+            "bounded-v1",
+            {"max_items": 256, "max_item_utf8_bytes": 4096, "max_utf8_bytes": 512},
+        ),
+    )
+    if tuple(fields) != tuple(item[0] for item in expected_shapes):
+        raise RegistryError(f"{path}: provenance import field inventory mismatch")
+    for expected in expected_shapes:
+        name, field_type, required, const_present, const, enum, field_class, sensitivity, normalizer, constraints = (
+            expected
+        )
+        field = fields[name]
+        if (
+            field.field_type,
+            field.required,
+            field.const_present,
+            field.const,
+            field.enum,
+            field.field_class,
+            field.sensitivity,
+            field.normalization.id if field.normalization is not None else None,
+            dict(field.normalization.effective_constraints) if field.normalization is not None else None,
+        ) != (
+            field_type,
+            required,
+            const_present,
+            const,
+            enum,
+            field_class,
+            sensitivity,
+            normalizer,
+            dict(constraints),
+        ):
+            raise RegistryError(f"{path}: provenance import field {name} differs from the canonical contract")
+        if any(
+            item is not None
+            for item in (field.object_ref, field.item_ref, field.semantic_ref, field.semantic_format, field.otlp_target)
+        ):
+            raise RegistryError(f"{path}: provenance import field {name} has an unsupported external binding")
+    if not set(parsed_sequences["nonempty_string_fields"]) <= fields.keys():
+        raise RegistryError(f"{path}.nonempty_string_fields: references an unknown field")
+    return ProvenanceImportRulesIR(
+        parsed_sequences["nonempty_string_fields"],
+        parsed_sequences["derivation_required_modes"],
+        parsed_sequences["derivation_forbidden_modes"],
+        parsed_sequences["source_aggregate_count_required_derivations"],
+        parsed_sequences["source_aggregate_count_forbidden_derivations"],
+        parsed_sequences["source_aggregate_count_forbidden_modes"],
+        owner,
+        parsed_sequences["json_schema_runtime_only"],
+    )
+
+
 def _parse_otlp_representation(value: Any, path: str) -> CanonicalOTLPRepresentationIR:
     if not isinstance(value, dict):
         raise RegistryError(f"{path}: expected mapping")
@@ -5902,6 +6196,7 @@ def _parse_structural_contract(
             "envelope",
             "correlation",
             "provenance",
+            "provenance_import",
             "trace",
             "metric",
             "canonical_to_otlp",
@@ -6000,6 +6295,29 @@ def _parse_structural_contract(
         raise RegistryError(f"{path}.envelope.signal_arms: expected canonical signal order")
     correlation = _parse_structural_object(value["correlation"], f"{path}.correlation", "correlation", normalizers)
     provenance = _parse_structural_object(value["provenance"], f"{path}.provenance", "provenance", normalizers)
+    provenance_import_raw = value["provenance_import"]
+    if not isinstance(provenance_import_raw, dict):
+        raise RegistryError(f"{path}.provenance_import: expected mapping")
+    _exact_keys(
+        provenance_import_raw,
+        {"additional_properties", "fields", "rules"},
+        set(),
+        f"{path}.provenance_import",
+    )
+    provenance_import = _parse_structural_object(
+        {
+            "additional_properties": provenance_import_raw["additional_properties"],
+            "fields": provenance_import_raw["fields"],
+        },
+        f"{path}.provenance_import",
+        "provenance_import",
+        normalizers,
+    )
+    provenance_import_rules = _parse_provenance_import_rules(
+        provenance_import_raw["rules"],
+        f"{path}.provenance_import.rules",
+        provenance_import,
+    )
     trace = value["trace"]
     if not isinstance(trace, dict):
         raise RegistryError(f"{path}.trace: expected mapping")
@@ -6120,6 +6438,7 @@ def _parse_structural_contract(
     structural_objects = {
         "correlation": correlation,
         "provenance": provenance,
+        "provenance_import": provenance_import,
         "trace_body": trace_body,
         "trace_resource": resource,
         "trace_scope": scope,
@@ -6155,6 +6474,8 @@ def _parse_structural_contract(
         envelope,
         correlation,
         provenance,
+        provenance_import,
+        provenance_import_rules,
         tuple(arms),
         tuple(derivations),
         trace_body,
@@ -7513,6 +7834,31 @@ def _validate_structural_object_value(
     return len(errors.codes) == initial_error_count
 
 
+def _provenance_import_rules_accept(
+    payload: Any,
+    rules: ProvenanceImportRulesIR,
+) -> bool:
+    if not isinstance(payload, dict):
+        return False
+    if any(field in payload and payload[field] == "" for field in rules.nonempty_string_fields):
+        return False
+    mode = payload.get("mode")
+    has_derivation = "derivation" in payload
+    derivation = payload.get("derivation")
+    has_count = "source_aggregate_count" in payload
+    if mode in rules.derivation_required_modes and not has_derivation:
+        return False
+    if mode in rules.derivation_forbidden_modes and has_derivation:
+        return False
+    if mode in rules.source_aggregate_count_forbidden_modes and has_count:
+        return False
+    if derivation in rules.source_aggregate_count_required_derivations and not has_count:
+        return False
+    if derivation in rules.source_aggregate_count_forbidden_derivations and has_count:
+        return False
+    return True
+
+
 def _registered_dynamic_fields(
     payload: Any,
     group: GroupIR,
@@ -7761,6 +8107,7 @@ def _validate_example_record(
     object_lookup = {
         "correlation": structural_contract.correlation,
         "provenance": structural_contract.provenance,
+        "provenance_import": structural_contract.provenance_import,
         "trace_body": structural_contract.trace_body,
         "trace_resource": structural_contract.trace_resource,
         "trace_scope": structural_contract.trace_scope,
@@ -7781,6 +8128,15 @@ def _validate_example_record(
         object_lookup,
         errors,
     )
+    if (
+        isinstance(provenance, dict)
+        and "import" in provenance
+        and not _provenance_import_rules_accept(
+            provenance["import"],
+            structural_contract.provenance_import_rules,
+        )
+    ):
+        errors.add("provenance_import_rule_invalid")
     if not isinstance(correlation, dict) or any(name not in correlation for name in arm.required_correlation_fields):
         errors.add("trace_correlation_identity_missing")
     if record.get("outcome") not in (group.allowed_outcomes or ()):
@@ -8886,6 +9242,7 @@ def _validate_structural_contract_bindings(
         contract.envelope,
         contract.correlation,
         contract.provenance,
+        contract.provenance_import,
         contract.trace_body,
         contract.trace_resource,
         contract.trace_scope,

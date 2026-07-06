@@ -10,6 +10,7 @@ import importlib.util
 import io
 import json
 import os
+import re
 import stat
 import subprocess
 import sys
@@ -838,6 +839,273 @@ def _domain_sources() -> dict[str, dict[str, Any]]:
     return domains
 
 
+def _fixture_inbound_bindings() -> dict[str, Any]:
+    """Return a closed synthetic inbound catalog using only fixture families."""
+
+    def predicate(
+        location: str,
+        key: str,
+        operator: str,
+        *,
+        values: list[str | int] | None = None,
+        value_type: str = "string",
+    ) -> dict[str, Any]:
+        result: dict[str, Any] = {
+            "location": location,
+            "key": key,
+            "operator": operator,
+            "value_type": value_type,
+        }
+        if values is not None:
+            result["values"] = values
+        return result
+
+    def binding(
+        binding_id: str,
+        signal: str,
+        sources: list[str],
+        mode: str,
+        expansion: dict[str, Any],
+        predicates: list[dict[str, Any]],
+        *,
+        aliases: list[str] | None = None,
+        derived_targets: list[dict[str, str]] | None = None,
+        native: bool = False,
+    ) -> dict[str, Any]:
+        return {
+            "id": binding_id,
+            "signal": signal,
+            "sources": sources,
+            "mode": mode,
+            "expansion": expansion,
+            "discriminator": {"kind": f"fixture-{signal}-v1", "predicates": predicates},
+            "mapping": {"strategy": "fixture-mapping-v1", "alias_sets": aliases or []},
+            "derived_targets": derived_targets or [],
+            "time_rule": "fixture-time-v1",
+            "outcome_rule": "forbidden",
+            "native_round_trip": native,
+        }
+
+    alias_specs = (
+        ("conversation-id-v1", "gen_ai.conversation.id", ["conversation.id"]),
+        ("request-id-v1", "defenseclaw.request.id", ["request.id"]),
+        ("provider-v1", "gen_ai.provider.name", ["provider"]),
+        ("request-model-v1", "gen_ai.request.model", ["model"]),
+        ("input-content-v1", "gen_ai.input.messages", ["prompt"]),
+        ("output-content-v1", "gen_ai.output.messages", ["response"]),
+        ("input-tokens-v1", "gen_ai.usage.input_tokens", ["input_tokens"]),
+        ("output-tokens-v1", "gen_ai.usage.output_tokens", ["output_tokens"]),
+        ("log-duration-seconds-v1", "$derived_duration_seconds", ["duration_seconds"]),
+    )
+    aliases = [
+        {
+            "id": alias_id,
+            "target": target,
+            "value_type": "double" if alias_id == "log-duration-seconds-v1" else "string",
+            "normalization": "bounded-v1",
+            "sources": sources,
+        }
+        for alias_id, target, sources in alias_specs
+    ]
+    binding_classes = [
+        binding(
+            "otlp.native.log.v8",
+            "logs",
+            ["any_authenticated"],
+            "import",
+            {"kind": "all_signal_families"},
+            [
+                predicate("leaf_attribute", "defenseclaw.event.name", "equals_target_event"),
+                predicate(
+                    "leaf_attribute",
+                    "defenseclaw.telemetry.forward.instance_id",
+                    "present",
+                ),
+                predicate("log_body", "$body", "projected_record_json"),
+            ],
+            native=True,
+        ),
+        binding(
+            "otlp.native.span.v8",
+            "traces",
+            ["any_authenticated"],
+            "import",
+            {"kind": "all_signal_families"},
+            [
+                predicate("scope_name", "$scope_name", "equals_contract"),
+                predicate("leaf_attribute", "defenseclaw.span.family", "equals_target_family"),
+                predicate(
+                    "leaf_attribute",
+                    "defenseclaw.telemetry.forward.instance_id",
+                    "present",
+                ),
+            ],
+            native=True,
+        ),
+        binding(
+            "otlp.native.metric.v8",
+            "metrics",
+            ["any_authenticated"],
+            "import",
+            {"kind": "reversible_metric_families", "instrument_types": ["counter", "gauge", "updowncounter"]},
+            [
+                predicate("scope_name", "$scope_name", "equals_contract"),
+                predicate(
+                    "resource_attribute",
+                    "defenseclaw.telemetry.forward.instance_id",
+                    "present",
+                ),
+                predicate("instrument_name", "$instrument_name", "equals_target_instrument"),
+                predicate("metric_point", "$point_shape", "reversible_target_shape"),
+            ],
+            native=True,
+        ),
+        binding(
+            "otlp.genai.span.operation.v1",
+            "traces",
+            ["any_authenticated"],
+            "import_and_derive",
+            {
+                "kind": "cases",
+                "cases": [
+                    {
+                        "id_suffix": suffix,
+                        "primary_family": family,
+                        "operation": operation,
+                        "required_key": "defenseclaw.test.name",
+                    }
+                    for suffix, family, operation in (
+                        ("invoke-agent", "span.fixture.0", "invoke_agent"),
+                        ("chat", "span.model.chat", "chat"),
+                        ("embeddings", "span.fixture.1", "embeddings"),
+                        ("execute-tool", "span.fixture.2", "execute_tool"),
+                        ("retrieval", "span.fixture.3", "retrieval"),
+                        ("invoke-workflow", "span.fixture.4", "invoke_workflow"),
+                    )
+                ],
+            },
+            [
+                predicate("leaf_attribute", "gen_ai.operation.name", "equals_expansion_operation"),
+                predicate("leaf_attribute", "$expansion_required_key", "present"),
+                predicate("span", "$ended", "valid_ended_span", value_type="structural"),
+            ],
+            aliases=["conversation-id-v1", "provider-v1", "request-model-v1"],
+        ),
+        binding(
+            "otlp.codex.user_prompt.v1",
+            "logs",
+            ["codex"],
+            "import",
+            {"kind": "singleton", "primary_family": "diagnostic.message"},
+            [predicate("leaf_attribute", "event.name", "equals", values=["codex.user_prompt"])],
+            aliases=["conversation-id-v1", "input-content-v1"],
+        ),
+        binding(
+            "otlp.claudecode.user_prompt.v1",
+            "logs",
+            ["claudecode"],
+            "import",
+            {"kind": "singleton", "primary_family": "fixture.log.0"},
+            [predicate("leaf_attribute", "event.name", "equals", values=["claude_code.user_prompt"])],
+            aliases=["conversation-id-v1", "input-content-v1"],
+        ),
+        binding(
+            "otlp.codex.response_completed.v1",
+            "logs",
+            ["codex"],
+            "import_and_derive",
+            {"kind": "singleton", "primary_family": "fixture.log.1"},
+            [
+                predicate("leaf_attribute", "event.name", "equals", values=["codex.sse_event"]),
+                predicate("leaf_attribute", "event.kind", "equals", values=["response.completed"]),
+            ],
+            aliases=["conversation-id-v1", "output-content-v1"],
+            derived_targets=[
+                {"family": "metric.gen_ai.client.token.usage", "strategy": "fixture-token-v1"},
+                {"family": "metric.gen_ai.client.operation.duration", "strategy": "fixture-duration-v1"},
+            ],
+        ),
+        binding(
+            "otlp.claudecode.token_usage.v1",
+            "metrics",
+            ["claudecode"],
+            "derive",
+            {"kind": "singleton", "primary_family": "metric.gen_ai.client.token.usage"},
+            [
+                predicate(
+                    "instrument_name",
+                    "$instrument_name",
+                    "equals",
+                    values=["claude_code.token.usage"],
+                )
+            ],
+            aliases=["conversation-id-v1"],
+        ),
+        binding(
+            "otlp.genai.duration.metric.v1",
+            "metrics",
+            ["any_authenticated"],
+            "derive",
+            {
+                "kind": "source_cases",
+                "primary_family": "metric.gen_ai.client.operation.duration",
+                "cases": [
+                    {"id_suffix": suffix, "instrument_name": instrument}
+                    for suffix, instrument in (
+                        ("gen-ai-client", "gen_ai.client.operation.duration"),
+                        ("gen-ai", "gen_ai.operation.duration"),
+                        ("llm", "llm.operation.duration"),
+                        ("claude-code", "claude_code.operation.duration"),
+                        ("codex", "codex.operation.duration"),
+                    )
+                ],
+            },
+            [predicate("instrument_name", "$instrument_name", "equals_expansion_instrument")],
+            aliases=["provider-v1", "request-model-v1"],
+        ),
+    ]
+    assert [item["id"] for item in aliases] == [item[0] for item in alias_specs]
+    assert [item["id"] for item in binding_classes] == [
+        "otlp.native.log.v8",
+        "otlp.native.span.v8",
+        "otlp.native.metric.v8",
+        "otlp.genai.span.operation.v1",
+        "otlp.codex.user_prompt.v1",
+        "otlp.claudecode.user_prompt.v1",
+        "otlp.codex.response_completed.v1",
+        "otlp.claudecode.token_usage.v1",
+        "otlp.genai.duration.metric.v1",
+    ]
+    return {
+        "version": 1,
+        "max_forward_hops": 4,
+        "unknown_fields": "drop_and_count",
+        "semantic_resource_instance_key": "defenseclaw.instance.id",
+        "forward_instance_key": "defenseclaw.telemetry.forward.instance_id",
+        "forward_destination_key": "defenseclaw.telemetry.forward.destination",
+        "forward_hop_count_key": "defenseclaw.telemetry.forward.hop_count",
+        "record_id_key": "defenseclaw.record.id",
+        "scope_name": "defenseclaw.telemetry",
+        "scope_schema_url": "https://defenseclaw.io/schemas/telemetry/v8",
+        "resource_schema_url": "https://opentelemetry.io/schemas/1.42.0",
+        "alias_sets": aliases,
+        "binding_classes": binding_classes,
+        "derivation_attachments": [
+            {
+                "id": "otlp.genai.duration.span.v1",
+                "parent_class": "otlp.genai.span.operation.v1",
+                "family": "metric.gen_ai.client.operation.duration",
+                "strategy": "elapsed-time-v1",
+            }
+        ],
+        "fixture_policy": {
+            "encodings": ["json", "protobuf"],
+            "classes": ["positive", "negative", "single_fault"],
+            "protobuf_representation": "canonical_protojson",
+        },
+    }
+
+
 def _fixture_root(tmp_path: Path) -> Path:
     root = tmp_path / "repository"
     (root / ".git").mkdir(parents=True)
@@ -992,6 +1260,7 @@ def _fixture_root(tmp_path: Path) -> Path:
             "dependency_lock": "schemas/telemetry/v8/semconv.lock.yaml",
             "examples": "examples.yaml",
             "public_views": "schemas/telemetry/v8/public-views.yaml",
+            "inbound_bindings": _fixture_inbound_bindings(),
             "semantic_profiles": [
                 {
                     "id": "defenseclaw-genai-rich-v1",
@@ -5297,11 +5566,10 @@ def test_updater_validation_failure_preserves_all_existing_bytes(tmp_path: Path)
     assert {path: path.read_bytes() for path in before} == before
 
 
-def test_structural_contract_ir_is_closed_lossless_and_runtime_bound(tmp_path: Path) -> None:
-    root = _fixture_root(tmp_path)
+def test_structural_contract_ir_is_closed_lossless_and_runtime_bound() -> None:
     module = _load_generator_module("telemetry_registry_structural_contract")
 
-    ir = module.compile_registry(root)
+    ir = module.compile_registry(ROOT)
 
     contract = ir.structural_contract
     assert contract.id == "defenseclaw.canonical-record"
@@ -5457,6 +5725,63 @@ def test_structural_contract_ir_is_closed_lossless_and_runtime_bound(tmp_path: P
     )
     assert contract.metric_instrument_data.fields[0].field_type == "metric_number"
     assert contract.metric_instrument_data.fields[0].semantic_ref == "registry.metric_value"
+    assert tuple(field.name for field in contract.provenance_import.fields) == (
+        "protocol",
+        "binding_id",
+        "mode",
+        "derivation",
+        "source_aggregate_count",
+        "authenticated_source",
+        "upstream_instance_id",
+        "upstream_record_id",
+        "upstream_service_name",
+        "upstream_redaction_profile",
+        "ingress_hop_count",
+        "last_hop_instance_id",
+        "last_hop_destination",
+    )
+    provenance_fields = {field.name: field for field in contract.provenance.fields}
+    assert provenance_fields["import"].object_ref == "provenance_import"
+    assert provenance_fields["import"].required is False
+    assert dict(provenance_fields["import"].normalization.effective_constraints) == {
+        "max_utf8_bytes": 8192,
+        "max_item_utf8_bytes": 512,
+        "max_items": 13,
+        "max_depth": 1,
+        "max_properties": 13,
+    }
+    import_fields = {field.name: field for field in contract.provenance_import.fields}
+    assert import_fields["protocol"].const == "otlp"
+    assert import_fields["mode"].enum == ("import", "derive", "import_and_derive")
+    assert import_fields["derivation"].enum == (
+        "field_value",
+        "elapsed_time",
+        "cumulative_delta",
+        "arithmetic_mean",
+    )
+    assert dict(import_fields["source_aggregate_count"].normalization.effective_constraints) == {
+        "min": 1,
+        "max": 2**64 - 1,
+    }
+    assert dict(import_fields["ingress_hop_count"].normalization.effective_constraints) == {
+        "min": 0,
+        "max": 4,
+    }
+    assert import_fields["upstream_record_id"].normalization.effective_constraints["pattern"] == (
+        "^([0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}|[a-z0-9][a-z0-9_.-]{0,127})$"
+    )
+    assert contract.provenance_import_rules.derivation_required_modes == (
+        "derive",
+        "import_and_derive",
+    )
+    assert contract.provenance_import_rules.source_aggregate_count_required_derivations == ("arithmetic_mean",)
+    assert contract.provenance_import_rules.exact_validation_owner == (
+        "internal/observability.ImportProvenance.Validate"
+    )
+    assert contract.provenance_import_rules.json_schema_runtime_only == (
+        "valid_utf8",
+        "utf8_byte_length",
+    )
     assert [(arm.signal, arm.payload_field) for arm in contract.signal_arms] == [
         ("logs", "body"),
         ("traces", "body"),
@@ -5512,6 +5837,114 @@ def test_structural_contract_ir_is_closed_lossless_and_runtime_bound(tmp_path: P
     assert contract.canonical_to_otlp.any_value_mapping[-1] == ("object", "kvlistValue")
     with pytest.raises(TypeError):
         contract.limits.values["payload_depth"] = 8
+
+
+def test_provenance_import_contract_enforces_exact_runtime_only_and_cross_field_rules() -> None:
+    module = _load_generator_module("telemetry_registry_provenance_import_rules")
+    contract = module.compile_registry(ROOT).structural_contract
+    fields = {field.name: field for field in contract.provenance_import.fields}
+    rules = contract.provenance_import_rules
+    valid = {
+        "protocol": "otlp",
+        "binding_id": "otlp.genai.span.operation.v1.chat",
+        "mode": "import_and_derive",
+        "derivation": "arithmetic_mean",
+        "source_aggregate_count": 4,
+        "authenticated_source": "codex",
+        "upstream_instance_id": "upstream-instance-1",
+        "upstream_record_id": "123E4567-E89B-12D3-A456-426614174000",
+        "upstream_service_name": "upstream-service",
+        "upstream_redaction_profile": "sensitive",
+        "ingress_hop_count": 4,
+        "last_hop_instance_id": "forwarder-instance-1",
+        "last_hop_destination": "otlp-primary",
+    }
+
+    errors = module._ExampleErrorCollector([])
+    lookup = {"provenance_import": contract.provenance_import}
+    assert module._validate_structural_object_value(valid, contract.provenance_import, lookup, errors)
+    assert module._provenance_import_rules_accept(valid, rules)
+
+    valid_variants = (
+        {**valid, "mode": "import", "derivation": None, "source_aggregate_count": None},
+        {**valid, "mode": "derive", "derivation": "field_value", "source_aggregate_count": None},
+        {**valid, "upstream_record_id": "record.stable-01"},
+    )
+    for candidate in valid_variants:
+        candidate = {key: value for key, value in candidate.items() if value is not None}
+        candidate_errors = module._ExampleErrorCollector([])
+        assert module._validate_structural_object_value(
+            candidate,
+            contract.provenance_import,
+            lookup,
+            candidate_errors,
+        )
+        assert module._provenance_import_rules_accept(candidate, rules)
+
+    invalid_cross_field = (
+        {**valid, "mode": "import"},
+        {key: value for key, value in valid.items() if key != "derivation"},
+        {key: value for key, value in valid.items() if key != "source_aggregate_count"},
+        {**valid, "derivation": "elapsed_time"},
+        {**valid, "binding_id": ""},
+    )
+    assert all(not module._provenance_import_rules_accept(candidate, rules) for candidate in invalid_cross_field)
+
+    assert not module._structural_value_accepts("é" * 257, fields["binding_id"])
+    assert not module._structural_value_accepts("\udcff", fields["binding_id"])
+    assert module._structural_value_accepts(
+        "123E4567-E89B-12D3-A456-426614174000",
+        fields["upstream_record_id"],
+    )
+    assert not module._structural_value_accepts("UPSTREAM-RECORD", fields["upstream_record_id"])
+
+
+@pytest.mark.parametrize(
+    ("mutation", "expected"),
+    [
+        (
+            lambda contract: contract["provenance_import"]["rules"].__setitem__(
+                "derivation_required_modes", ["derive"]
+            ),
+            "differs from the canonical provenance import rules",
+        ),
+        (
+            lambda contract: contract["provenance_import"]["fields"][1]["normalization"]["overrides"].__setitem__(
+                "max_utf8_bytes", 511
+            ),
+            "provenance import field binding_id differs from the canonical contract",
+        ),
+        (
+            lambda contract: contract["provenance_import"]["rules"].__setitem__("unknown", True),
+            "unknown keys ['unknown']",
+        ),
+    ],
+)
+def test_provenance_import_registry_contract_fails_closed(
+    mutation: Any,
+    expected: str,
+) -> None:
+    module = _load_generator_module(
+        "telemetry_registry_provenance_import_drift_" + hashlib.sha256(expected.encode()).hexdigest()[:8]
+    )
+    ir = module.compile_registry(ROOT)
+    registry = yaml.safe_load((ROOT / "schemas/telemetry/v8/registry.yaml").read_text(encoding="utf-8"))
+    raw = registry["structural_contract"]["provenance_import"]
+    mutation(registry["structural_contract"])
+    normalizers = {normalizer.id: normalizer for normalizer in ir.normalizers}
+    provenance_import = module._parse_structural_object(
+        {"additional_properties": raw["additional_properties"], "fields": raw["fields"]},
+        "registry.structural_contract.provenance_import",
+        "provenance_import",
+        normalizers,
+    )
+
+    with pytest.raises(module.RegistryError, match=re.escape(expected)):
+        module._parse_provenance_import_rules(
+            raw["rules"],
+            "registry.structural_contract.provenance_import.rules",
+            provenance_import,
+        )
 
 
 def test_family_schema_version_materializes_as_uint32_with_exact_otlp_projection() -> None:

@@ -3,7 +3,7 @@
     "artifact": "telemetry.schema.json",
     "authority": "candidate-not-public-authority",
     "generator": "defenseclaw-telemetry-candidate-renderer-v1",
-    "materialized_view_sha256": "4db020882cd3277e90863f3db88eeb8ea535ac1807a6ba5fc8bcc3e80a699014",
+    "materialized_view_sha256": "55e42da13a62e6a9a92756f2aeffa0be6251c75d08a66a88bca8cde6c88c403b",
     "registry_version": 1
   },
   "$defs": {
@@ -151403,24 +151403,24 @@
         },
         "provenance": {
           "$ref": "#/$defs/structural:provenance",
-          "maxItems": 6,
-          "maxProperties": 6,
+          "maxItems": 20,
+          "maxProperties": 20,
           "x-defenseclaw-field-class": "metadata",
           "x-defenseclaw-json-schema-item-bound-scope": "root-collection-safe-subset",
           "x-defenseclaw-json-schema-property-bound-scope": "root-object-safe-subset",
-          "x-defenseclaw-max-depth": 1,
+          "x-defenseclaw-max-depth": 2,
           "x-defenseclaw-max-depth-enforcement": "builder-runtime-container-depth-gate",
           "x-defenseclaw-max-depth-semantics": "maximum-container-depth-root-zero",
-          "x-defenseclaw-max-item-utf8-bytes": 256,
+          "x-defenseclaw-max-item-utf8-bytes": 512,
           "x-defenseclaw-max-item-utf8-bytes-enforcement": "builder-runtime-string-leaf-utf8-byte-gate",
           "x-defenseclaw-max-item-utf8-bytes-semantics": "every-string-element-or-structured-string-leaf",
-          "x-defenseclaw-max-items": 6,
+          "x-defenseclaw-max-items": 20,
           "x-defenseclaw-max-items-enforcement": "builder-runtime-recursive-aggregate-gate",
           "x-defenseclaw-max-items-semantics": "recursive-aggregate-members",
-          "x-defenseclaw-max-properties": 6,
+          "x-defenseclaw-max-properties": 20,
           "x-defenseclaw-max-properties-enforcement": "builder-runtime-recursive-property-count-gate",
           "x-defenseclaw-max-properties-semantics": "recursive-object-property-count",
-          "x-defenseclaw-max-utf8-bytes": 4096,
+          "x-defenseclaw-max-utf8-bytes": 16384,
           "x-defenseclaw-max-utf8-bytes-enforcement": "builder-runtime-shape-aware-utf8-byte-gate",
           "x-defenseclaw-max-utf8-bytes-semantics": "canonical-json-utf8",
           "x-defenseclaw-sensitivity": "internal"
@@ -151649,6 +151649,30 @@
           "x-defenseclaw-field-class": "metadata",
           "x-defenseclaw-sensitivity": "safe"
         },
+        "import": {
+          "$ref": "#/$defs/structural:provenance_import",
+          "maxItems": 13,
+          "maxProperties": 13,
+          "x-defenseclaw-field-class": "metadata",
+          "x-defenseclaw-json-schema-item-bound-scope": "root-collection-safe-subset",
+          "x-defenseclaw-json-schema-property-bound-scope": "root-object-safe-subset",
+          "x-defenseclaw-max-depth": 1,
+          "x-defenseclaw-max-depth-enforcement": "builder-runtime-container-depth-gate",
+          "x-defenseclaw-max-depth-semantics": "maximum-container-depth-root-zero",
+          "x-defenseclaw-max-item-utf8-bytes": 512,
+          "x-defenseclaw-max-item-utf8-bytes-enforcement": "builder-runtime-string-leaf-utf8-byte-gate",
+          "x-defenseclaw-max-item-utf8-bytes-semantics": "every-string-element-or-structured-string-leaf",
+          "x-defenseclaw-max-items": 13,
+          "x-defenseclaw-max-items-enforcement": "builder-runtime-recursive-aggregate-gate",
+          "x-defenseclaw-max-items-semantics": "recursive-aggregate-members",
+          "x-defenseclaw-max-properties": 13,
+          "x-defenseclaw-max-properties-enforcement": "builder-runtime-recursive-property-count-gate",
+          "x-defenseclaw-max-properties-semantics": "recursive-object-property-count",
+          "x-defenseclaw-max-utf8-bytes": 8192,
+          "x-defenseclaw-max-utf8-bytes-enforcement": "builder-runtime-shape-aware-utf8-byte-gate",
+          "x-defenseclaw-max-utf8-bytes-semantics": "canonical-json-utf8",
+          "x-defenseclaw-sensitivity": "internal"
+        },
         "producer": {
           "pattern": "^(?:^[a-z][a-z0-9_.-]{0,63}$)$(?![\\s\\S])",
           "type": "string",
@@ -151677,6 +151701,358 @@
       ],
       "type": "object",
       "x-defenseclaw-structural-object": "provenance"
+    },
+    "structural:provenance_import": {
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "mode": {
+                "enum": [
+                  "derive",
+                  "import_and_derive"
+                ]
+              }
+            },
+            "required": [
+              "mode"
+            ]
+          },
+          "then": {
+            "required": [
+              "derivation"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "mode": {
+                "enum": [
+                  "import"
+                ]
+              }
+            },
+            "required": [
+              "mode"
+            ]
+          },
+          "then": {
+            "not": {
+              "required": [
+                "derivation"
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "derivation": {
+                "enum": [
+                  "arithmetic_mean"
+                ]
+              }
+            },
+            "required": [
+              "derivation"
+            ]
+          },
+          "then": {
+            "required": [
+              "source_aggregate_count"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "derivation": {
+                "enum": [
+                  "field_value",
+                  "elapsed_time",
+                  "cumulative_delta"
+                ]
+              }
+            },
+            "required": [
+              "derivation"
+            ]
+          },
+          "then": {
+            "not": {
+              "required": [
+                "source_aggregate_count"
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "mode": {
+                "enum": [
+                  "import"
+                ]
+              }
+            },
+            "required": [
+              "mode"
+            ]
+          },
+          "then": {
+            "not": {
+              "required": [
+                "source_aggregate_count"
+              ]
+            }
+          }
+        }
+      ],
+      "properties": {
+        "authenticated_source": {
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string",
+          "x-defenseclaw-field-class": "identifier",
+          "x-defenseclaw-json-schema-item-bound-scope": "root-collection-safe-subset",
+          "x-defenseclaw-max-item-utf8-bytes": 4096,
+          "x-defenseclaw-max-item-utf8-bytes-enforcement": "builder-runtime-string-leaf-utf8-byte-gate",
+          "x-defenseclaw-max-item-utf8-bytes-semantics": "every-string-element-or-structured-string-leaf",
+          "x-defenseclaw-max-items": 256,
+          "x-defenseclaw-max-items-enforcement": "builder-runtime-recursive-aggregate-gate",
+          "x-defenseclaw-max-items-semantics": "recursive-aggregate-members",
+          "x-defenseclaw-max-utf8-bytes": 512,
+          "x-defenseclaw-max-utf8-bytes-enforcement": "builder-runtime-shape-aware-utf8-byte-gate",
+          "x-defenseclaw-max-utf8-bytes-semantics": "raw-scalar-string-utf8",
+          "x-defenseclaw-sensitivity": "internal"
+        },
+        "binding_id": {
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string",
+          "x-defenseclaw-field-class": "identifier",
+          "x-defenseclaw-json-schema-item-bound-scope": "root-collection-safe-subset",
+          "x-defenseclaw-max-item-utf8-bytes": 4096,
+          "x-defenseclaw-max-item-utf8-bytes-enforcement": "builder-runtime-string-leaf-utf8-byte-gate",
+          "x-defenseclaw-max-item-utf8-bytes-semantics": "every-string-element-or-structured-string-leaf",
+          "x-defenseclaw-max-items": 256,
+          "x-defenseclaw-max-items-enforcement": "builder-runtime-recursive-aggregate-gate",
+          "x-defenseclaw-max-items-semantics": "recursive-aggregate-members",
+          "x-defenseclaw-max-utf8-bytes": 512,
+          "x-defenseclaw-max-utf8-bytes-enforcement": "builder-runtime-shape-aware-utf8-byte-gate",
+          "x-defenseclaw-max-utf8-bytes-semantics": "raw-scalar-string-utf8",
+          "x-defenseclaw-sensitivity": "internal"
+        },
+        "derivation": {
+          "enum": [
+            "field_value",
+            "elapsed_time",
+            "cumulative_delta",
+            "arithmetic_mean"
+          ],
+          "maxLength": 256,
+          "type": "string",
+          "x-defenseclaw-enum-enforcement": "builder-runtime-typed-json-enum-gate",
+          "x-defenseclaw-enum-membership-semantics": "typed-json-scalar",
+          "x-defenseclaw-field-class": "metadata",
+          "x-defenseclaw-max-utf8-bytes": 256,
+          "x-defenseclaw-max-utf8-bytes-enforcement": "builder-runtime-shape-aware-utf8-byte-gate",
+          "x-defenseclaw-max-utf8-bytes-semantics": "raw-scalar-string-utf8",
+          "x-defenseclaw-sensitivity": "safe"
+        },
+        "ingress_hop_count": {
+          "maximum": 4,
+          "minimum": 0,
+          "type": "integer",
+          "x-defenseclaw-field-class": "metadata",
+          "x-defenseclaw-sensitivity": "safe"
+        },
+        "last_hop_destination": {
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string",
+          "x-defenseclaw-field-class": "identifier",
+          "x-defenseclaw-json-schema-item-bound-scope": "root-collection-safe-subset",
+          "x-defenseclaw-max-item-utf8-bytes": 4096,
+          "x-defenseclaw-max-item-utf8-bytes-enforcement": "builder-runtime-string-leaf-utf8-byte-gate",
+          "x-defenseclaw-max-item-utf8-bytes-semantics": "every-string-element-or-structured-string-leaf",
+          "x-defenseclaw-max-items": 256,
+          "x-defenseclaw-max-items-enforcement": "builder-runtime-recursive-aggregate-gate",
+          "x-defenseclaw-max-items-semantics": "recursive-aggregate-members",
+          "x-defenseclaw-max-utf8-bytes": 512,
+          "x-defenseclaw-max-utf8-bytes-enforcement": "builder-runtime-shape-aware-utf8-byte-gate",
+          "x-defenseclaw-max-utf8-bytes-semantics": "raw-scalar-string-utf8",
+          "x-defenseclaw-sensitivity": "internal"
+        },
+        "last_hop_instance_id": {
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string",
+          "x-defenseclaw-field-class": "identifier",
+          "x-defenseclaw-json-schema-item-bound-scope": "root-collection-safe-subset",
+          "x-defenseclaw-max-item-utf8-bytes": 4096,
+          "x-defenseclaw-max-item-utf8-bytes-enforcement": "builder-runtime-string-leaf-utf8-byte-gate",
+          "x-defenseclaw-max-item-utf8-bytes-semantics": "every-string-element-or-structured-string-leaf",
+          "x-defenseclaw-max-items": 256,
+          "x-defenseclaw-max-items-enforcement": "builder-runtime-recursive-aggregate-gate",
+          "x-defenseclaw-max-items-semantics": "recursive-aggregate-members",
+          "x-defenseclaw-max-utf8-bytes": 512,
+          "x-defenseclaw-max-utf8-bytes-enforcement": "builder-runtime-shape-aware-utf8-byte-gate",
+          "x-defenseclaw-max-utf8-bytes-semantics": "raw-scalar-string-utf8",
+          "x-defenseclaw-sensitivity": "internal"
+        },
+        "mode": {
+          "enum": [
+            "import",
+            "derive",
+            "import_and_derive"
+          ],
+          "maxLength": 256,
+          "type": "string",
+          "x-defenseclaw-enum-enforcement": "builder-runtime-typed-json-enum-gate",
+          "x-defenseclaw-enum-membership-semantics": "typed-json-scalar",
+          "x-defenseclaw-field-class": "metadata",
+          "x-defenseclaw-max-utf8-bytes": 256,
+          "x-defenseclaw-max-utf8-bytes-enforcement": "builder-runtime-shape-aware-utf8-byte-gate",
+          "x-defenseclaw-max-utf8-bytes-semantics": "raw-scalar-string-utf8",
+          "x-defenseclaw-sensitivity": "safe"
+        },
+        "protocol": {
+          "const": "otlp",
+          "enum": [
+            "otlp"
+          ],
+          "maxLength": 256,
+          "type": "string",
+          "x-defenseclaw-enum-enforcement": "builder-runtime-typed-json-enum-gate",
+          "x-defenseclaw-enum-membership-semantics": "typed-json-scalar",
+          "x-defenseclaw-field-class": "metadata",
+          "x-defenseclaw-max-utf8-bytes": 256,
+          "x-defenseclaw-max-utf8-bytes-enforcement": "builder-runtime-shape-aware-utf8-byte-gate",
+          "x-defenseclaw-max-utf8-bytes-semantics": "raw-scalar-string-utf8",
+          "x-defenseclaw-sensitivity": "safe"
+        },
+        "source_aggregate_count": {
+          "maximum": 18446744073709551615,
+          "minimum": 1,
+          "type": "integer",
+          "x-defenseclaw-field-class": "metadata",
+          "x-defenseclaw-sensitivity": "safe"
+        },
+        "upstream_instance_id": {
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string",
+          "x-defenseclaw-field-class": "identifier",
+          "x-defenseclaw-json-schema-item-bound-scope": "root-collection-safe-subset",
+          "x-defenseclaw-max-item-utf8-bytes": 4096,
+          "x-defenseclaw-max-item-utf8-bytes-enforcement": "builder-runtime-string-leaf-utf8-byte-gate",
+          "x-defenseclaw-max-item-utf8-bytes-semantics": "every-string-element-or-structured-string-leaf",
+          "x-defenseclaw-max-items": 256,
+          "x-defenseclaw-max-items-enforcement": "builder-runtime-recursive-aggregate-gate",
+          "x-defenseclaw-max-items-semantics": "recursive-aggregate-members",
+          "x-defenseclaw-max-utf8-bytes": 512,
+          "x-defenseclaw-max-utf8-bytes-enforcement": "builder-runtime-shape-aware-utf8-byte-gate",
+          "x-defenseclaw-max-utf8-bytes-semantics": "raw-scalar-string-utf8",
+          "x-defenseclaw-sensitivity": "internal"
+        },
+        "upstream_record_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^(?:^([0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}|[a-z0-9][a-z0-9_.-]{0,127})$)$(?![\\s\\S])",
+          "type": "string",
+          "x-defenseclaw-field-class": "identifier",
+          "x-defenseclaw-max-utf8-bytes": 128,
+          "x-defenseclaw-max-utf8-bytes-enforcement": "builder-runtime-shape-aware-utf8-byte-gate",
+          "x-defenseclaw-max-utf8-bytes-semantics": "raw-scalar-string-utf8",
+          "x-defenseclaw-pattern-enforcement": "builder-runtime-and-anchored-public-schema",
+          "x-defenseclaw-pattern-semantics": "portable-re2-full-match",
+          "x-defenseclaw-pattern-source": "^([0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}|[a-z0-9][a-z0-9_.-]{0,127})$",
+          "x-defenseclaw-sensitivity": "internal"
+        },
+        "upstream_redaction_profile": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^(?:^[a-z0-9][a-z0-9_.-]{0,127}$)$(?![\\s\\S])",
+          "type": "string",
+          "x-defenseclaw-field-class": "metadata",
+          "x-defenseclaw-max-utf8-bytes": 128,
+          "x-defenseclaw-max-utf8-bytes-enforcement": "builder-runtime-shape-aware-utf8-byte-gate",
+          "x-defenseclaw-max-utf8-bytes-semantics": "raw-scalar-string-utf8",
+          "x-defenseclaw-pattern-enforcement": "builder-runtime-and-anchored-public-schema",
+          "x-defenseclaw-pattern-semantics": "portable-re2-full-match",
+          "x-defenseclaw-pattern-source": "^[a-z0-9][a-z0-9_.-]{0,127}$",
+          "x-defenseclaw-sensitivity": "internal"
+        },
+        "upstream_service_name": {
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string",
+          "x-defenseclaw-field-class": "metadata",
+          "x-defenseclaw-json-schema-item-bound-scope": "root-collection-safe-subset",
+          "x-defenseclaw-max-item-utf8-bytes": 4096,
+          "x-defenseclaw-max-item-utf8-bytes-enforcement": "builder-runtime-string-leaf-utf8-byte-gate",
+          "x-defenseclaw-max-item-utf8-bytes-semantics": "every-string-element-or-structured-string-leaf",
+          "x-defenseclaw-max-items": 256,
+          "x-defenseclaw-max-items-enforcement": "builder-runtime-recursive-aggregate-gate",
+          "x-defenseclaw-max-items-semantics": "recursive-aggregate-members",
+          "x-defenseclaw-max-utf8-bytes": 512,
+          "x-defenseclaw-max-utf8-bytes-enforcement": "builder-runtime-shape-aware-utf8-byte-gate",
+          "x-defenseclaw-max-utf8-bytes-semantics": "raw-scalar-string-utf8",
+          "x-defenseclaw-sensitivity": "internal"
+        }
+      },
+      "required": [
+        "protocol",
+        "binding_id",
+        "mode",
+        "authenticated_source",
+        "ingress_hop_count"
+      ],
+      "type": "object",
+      "x-defenseclaw-exact-validation-owner": "internal/observability.ImportProvenance.Validate",
+      "x-defenseclaw-json-schema-runtime-only": [
+        "valid_utf8",
+        "utf8_byte_length"
+      ],
+      "x-defenseclaw-provenance-import-rules": {
+        "derivation_forbidden_modes": [
+          "import"
+        ],
+        "derivation_required_modes": [
+          "derive",
+          "import_and_derive"
+        ],
+        "exact_validation_owner": "internal/observability.ImportProvenance.Validate",
+        "json_schema_runtime_only": [
+          "valid_utf8",
+          "utf8_byte_length"
+        ],
+        "nonempty_string_fields": [
+          "binding_id",
+          "authenticated_source",
+          "upstream_instance_id",
+          "upstream_record_id",
+          "upstream_service_name",
+          "upstream_redaction_profile",
+          "last_hop_instance_id",
+          "last_hop_destination"
+        ],
+        "source_aggregate_count_forbidden_derivations": [
+          "field_value",
+          "elapsed_time",
+          "cumulative_delta"
+        ],
+        "source_aggregate_count_forbidden_modes": [
+          "import"
+        ],
+        "source_aggregate_count_required_derivations": [
+          "arithmetic_mean"
+        ]
+      },
+      "x-defenseclaw-structural-object": "provenance_import"
     },
     "structural:trace_body": {
       "additionalProperties": false,
@@ -156455,6 +156831,41 @@
     ],
     "version": 1
   },
+  "x-defenseclaw-provenance-import-rules": {
+    "derivation_forbidden_modes": [
+      "import"
+    ],
+    "derivation_required_modes": [
+      "derive",
+      "import_and_derive"
+    ],
+    "exact_validation_owner": "internal/observability.ImportProvenance.Validate",
+    "json_schema_runtime_only": [
+      "valid_utf8",
+      "utf8_byte_length"
+    ],
+    "nonempty_string_fields": [
+      "binding_id",
+      "authenticated_source",
+      "upstream_instance_id",
+      "upstream_record_id",
+      "upstream_service_name",
+      "upstream_redaction_profile",
+      "last_hop_instance_id",
+      "last_hop_destination"
+    ],
+    "source_aggregate_count_forbidden_derivations": [
+      "field_value",
+      "elapsed_time",
+      "cumulative_delta"
+    ],
+    "source_aggregate_count_forbidden_modes": [
+      "import"
+    ],
+    "source_aggregate_count_required_derivations": [
+      "arithmetic_mean"
+    ]
+  },
   "x-defenseclaw-structured-bindings": [
     {
       "attribute": "gen_ai.input.messages",
@@ -159421,7 +159832,7 @@
   ],
   "x-defenseclaw-versions": {
     "bucket_catalog_version": 1,
-    "materialized_view_sha256": "4db020882cd3277e90863f3db88eeb8ea535ac1807a6ba5fc8bcc3e80a699014",
+    "materialized_view_sha256": "55e42da13a62e6a9a92756f2aeffa0be6251c75d08a66a88bca8cde6c88c403b",
     "registry_version": 1,
     "schema_version": 1
   }
