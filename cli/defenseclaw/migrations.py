@@ -2564,6 +2564,17 @@ MIGRATIONS: list[tuple[str, str, Callable[[MigrationContext], None]]] = [
         "insecure_skip_verify=true",
         _migrate_0_8_0,
     ),
+    (
+        # Forward-keyed to the first release after the published 0.8.3 tag.
+        # The source tree remains pinned at 0.8.0 between releases; the
+        # upgrade-manifest generator deliberately omits this row until the
+        # release workflow stamps the checkout to 0.8.4.
+        "0.8.4",
+        "Convert the active observability configuration to schema v8, "
+        "validate it with the installed target gateway, and activate it "
+        "transactionally during defenseclaw upgrade",
+        _migrate_observability_v8,
+    ),
 ]
 
 

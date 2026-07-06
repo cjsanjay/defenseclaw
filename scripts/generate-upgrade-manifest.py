@@ -122,13 +122,12 @@ def build_manifest() -> dict[str, Any]:
     version = current_version()
     migrations = migration_versions()
     current_t = _ver_tuple(version)
-    future = [migration for migration in migrations if _ver_tuple(migration) > current_t]
-    if future:
-        raise RuntimeError(
-            "migration registry contains versions newer than the package version "
-            f"{version}: {', '.join(future)}. Bump the release version first."
-        )
-
+    # Migration rows may be forward-keyed before a release is cut. This lets a
+    # migration land and pass source CI without pretending that the unstamped
+    # checkout is already the future release. The release workflow stamps all
+    # package version sources from the tag before invoking this generator, so a
+    # row becomes mandatory in the manifest precisely when the release version
+    # reaches that row.
     required = [migration for migration in migrations if _ver_tuple(migration) <= current_t]
     return {
         "schema_version": 1,

@@ -11,6 +11,7 @@ from unittest.mock import Mock, patch
 
 from defenseclaw import migration_state
 from defenseclaw.migrations import (
+    MIGRATIONS,
     MigrationContext,
     ObservabilityV8UpgradeMigrationError,
     _migrate_observability_v8,
@@ -45,6 +46,10 @@ class TestObservabilityV8UpgradeMigration(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.root.cleanup()
+
+    def test_registry_runs_migration_only_at_forward_release_key(self) -> None:
+        rows = [(version, fn) for version, _description, fn in MIGRATIONS if fn is _migrate_observability_v8]
+        self.assertEqual(rows, [("0.8.4", _migrate_observability_v8)])
 
     def test_convert_validate_activate_order_and_exact_active_paths(self) -> None:
         calls: list[str] = []
@@ -329,7 +334,6 @@ class TestObservabilityV8UpgradeMigration(unittest.TestCase):
         self.assertEqual(raised.exception.code, "environment_read_failed")
 
     def test_cursor_marks_only_after_activation_success_and_retries_failure(self) -> None:
-        registry = [("0.8.4", "observability v8", _migrate_observability_v8)]
         cursor_dir = os.path.join(self.root.name, "cursor-data")
         os.makedirs(cursor_dir)
         with open(os.path.join(cursor_dir, "config.yaml"), "wb") as config_file:
@@ -341,7 +345,6 @@ class TestObservabilityV8UpgradeMigration(unittest.TestCase):
             ]
         )
         with (
-            patch("defenseclaw.migrations.MIGRATIONS", registry),
             patch("defenseclaw.migrations._migrate_config_v7_named_otel_destinations", return_value=False),
             patch("defenseclaw.migrations.convert_v7_observability_to_v8", return_value=object()),
             patch("defenseclaw.migrations.activate_v8_migration", activation),

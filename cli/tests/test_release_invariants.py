@@ -44,9 +44,10 @@ import re
 import runpy
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from defenseclaw import __version__
-from defenseclaw.migrations import MIGRATIONS, _ver_tuple
+from defenseclaw.migrations import MIGRATIONS, _migrate_observability_v8, _ver_tuple
 
 # Repo root is two parents up from this test file:
 #   cli/tests/test_release_invariants.py → cli/tests → cli → <repo root>
@@ -109,8 +110,7 @@ class TestReleaseInvariants(unittest.TestCase):
             self.assertRegex(
                 ver,
                 r"^\d+\.\d+\.\d+$",
-                f"migration version {ver!r} must be canonical "
-                f"semver X.Y.Z (no pre-release suffixes, no v-prefix)",
+                f"migration version {ver!r} must be canonical semver X.Y.Z (no pre-release suffixes, no v-prefix)",
             )
 
     def test_migration_registry_is_sorted_ascending(self):
@@ -122,8 +122,7 @@ class TestReleaseInvariants(unittest.TestCase):
         self.assertEqual(
             versions,
             sorted_versions,
-            "MIGRATIONS list must be sorted ascending by semver. "
-            f"got {versions}, expected {sorted_versions}",
+            f"MIGRATIONS list must be sorted ascending by semver. got {versions}, expected {sorted_versions}",
         )
 
     def test_migration_descriptions_are_non_empty(self):
@@ -167,6 +166,33 @@ class TestReleaseInvariants(unittest.TestCase):
         expected = [version for version, _desc, _fn in MIGRATIONS if _ver_tuple(version) <= _ver_tuple(__version__)]
         self.assertEqual(manifest["release_version"], __version__)
         self.assertEqual(manifest["required_cli_migrations"], expected)
+
+    def test_observability_v8_migration_is_forward_keyed_once_at_0_8_4(self):
+        """Published 0.8.0 cursors must not suppress the v8 migration."""
+        matching = [entry for entry in MIGRATIONS if entry[0] == "0.8.4"]
+        self.assertEqual(len(matching), 1)
+        version, description, migration = matching[0]
+        self.assertEqual(version, "0.8.4")
+        self.assertIs(migration, _migrate_observability_v8)
+        self.assertIn("observability configuration", description)
+
+    def test_unstamped_source_manifest_omits_forward_keyed_migration(self):
+        """The pinned source version must describe only released migrations."""
+        generator = runpy.run_path(str(_REPO_ROOT / "scripts" / "generate-upgrade-manifest.py"))
+        build_manifest = generator["build_manifest"]
+        with patch.dict(build_manifest.__globals__, {"current_version": lambda: "0.8.0"}):
+            manifest = build_manifest()
+        self.assertNotIn("0.8.4", manifest["required_cli_migrations"])
+
+    def test_stamped_0_8_4_manifest_requires_observability_v8_migration(self):
+        """Release stamping turns the forward row into a mandatory contract."""
+        generator = runpy.run_path(str(_REPO_ROOT / "scripts" / "generate-upgrade-manifest.py"))
+        build_manifest = generator["build_manifest"]
+        with patch.dict(build_manifest.__globals__, {"current_version": lambda: "0.8.4"}):
+            manifest = build_manifest()
+        self.assertEqual(manifest["release_version"], "0.8.4")
+        self.assertEqual(manifest["migration_failure_policy"], "fail")
+        self.assertIn("0.8.4", manifest["required_cli_migrations"])
 
 
 if __name__ == "__main__":  # pragma: no cover
