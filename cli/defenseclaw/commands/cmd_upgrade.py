@@ -32,7 +32,9 @@ import json
 import os
 import platform
 import re
+import secrets
 import shutil
+import stat
 import subprocess
 import tarfile
 import tempfile
@@ -1919,8 +1921,7 @@ def _create_backup(cfg) -> str:
     data_dir = cfg.data_dir if cfg else os.path.expanduser("~/.defenseclaw")
     backup_root = os.path.join(data_dir, "backups")
     timestamp = datetime.datetime.now().strftime("%Y%m%dT%H%M%S")
-    backup_dir = os.path.join(backup_root, f"upgrade-{timestamp}")
-    os.makedirs(backup_dir, exist_ok=True)
+    backup_dir = _create_private_backup_directory(backup_root, timestamp)
 
     # Back up every file the connector-v3 migration may touch. Listing
     # them explicitly (rather than copying the whole data_dir) keeps
@@ -1963,6 +1964,94 @@ def _create_backup(cfg) -> str:
         ux.ok("Backed up: openclaw.json")
 
     return backup_dir
+
+
+def _create_private_backup_directory(backup_root: str, timestamp: str) -> str:
+    """Create a unique upgrade backup below a private, non-symlink root.
+
+    Observability-v8 activation stores recovery copies in the same ``backups``
+    root and intentionally rejects roots readable by group or other users.
+    Older upgrade releases created this root using the process umask (normally
+    0755), so an upgrade to v8 must securely tighten an operator-owned root
+    before the target migration starts.  Descriptor-relative creation keeps a
+    same-second retry unique and prevents a swapped root from redirecting the
+    new backup directory.
+    """
+
+    try:
+        os.mkdir(backup_root, 0o700)
+    except FileExistsError:
+        pass
+
+    if os.name != "posix":
+        # A changed v8 configuration fails closed before activation on Windows
+        # because Python cannot preserve native DACLs.  Keep ordinary upgrades
+        # functional while still requesting the narrowest portable mode.
+        root_info = os.lstat(backup_root)
+        if stat.S_ISLNK(root_info.st_mode) or not stat.S_ISDIR(root_info.st_mode):
+            raise OSError("backup root is not a real directory")
+        os.chmod(backup_root, 0o700)
+        return tempfile.mkdtemp(prefix=f"upgrade-{timestamp}-", dir=backup_root)
+
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    root_descriptor = os.open(backup_root, flags)
+    directory_descriptor = -1
+    directory_name = ""
+    try:
+        root_info = os.fstat(root_descriptor)
+        if not stat.S_ISDIR(root_info.st_mode):
+            raise OSError("backup root is not a directory")
+        os.fchmod(root_descriptor, 0o700)
+        root_info = os.fstat(root_descriptor)
+        if stat.S_IMODE(root_info.st_mode) != 0o700:
+            raise OSError("backup root permissions are not private")
+
+        for _ in range(128):
+            directory_name = f"upgrade-{timestamp}-{secrets.token_hex(8)}"
+            try:
+                os.mkdir(directory_name, 0o700, dir_fd=root_descriptor)
+                break
+            except FileExistsError:
+                continue
+        else:
+            raise OSError("unable to allocate a unique upgrade backup")
+
+        directory_descriptor = os.open(directory_name, flags, dir_fd=root_descriptor)
+        os.fchmod(directory_descriptor, 0o700)
+        directory_info = os.fstat(directory_descriptor)
+        if not stat.S_ISDIR(directory_info.st_mode) or stat.S_IMODE(directory_info.st_mode) != 0o700:
+            raise OSError("backup directory permissions are not private")
+
+        public_root = os.lstat(backup_root)
+        if stat.S_ISLNK(public_root.st_mode) or (public_root.st_dev, public_root.st_ino) != (
+            root_info.st_dev,
+            root_info.st_ino,
+        ):
+            raise OSError("backup root changed during creation")
+        backup_dir = os.path.join(backup_root, directory_name)
+        public_directory = os.lstat(backup_dir)
+        if stat.S_ISLNK(public_directory.st_mode) or (public_directory.st_dev, public_directory.st_ino) != (
+            directory_info.st_dev,
+            directory_info.st_ino,
+        ):
+            raise OSError("backup directory changed during creation")
+        os.fsync(directory_descriptor)
+        os.fsync(root_descriptor)
+        return backup_dir
+    except BaseException:
+        if directory_descriptor >= 0:
+            os.close(directory_descriptor)
+            directory_descriptor = -1
+        if directory_name:
+            try:
+                os.rmdir(directory_name, dir_fd=root_descriptor)
+            except OSError:
+                pass
+        raise
+    finally:
+        if directory_descriptor >= 0:
+            os.close(directory_descriptor)
+        os.close(root_descriptor)
 
 
 def _run_silent(cmd: list[str], ok_msg: str, fail_msg: str) -> bool:

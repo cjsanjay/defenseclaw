@@ -2,6 +2,7 @@ import hashlib
 import io
 import json
 import os
+import stat
 import tarfile
 import unittest
 import zipfile
@@ -93,6 +94,37 @@ class TestUpgradeBackup(unittest.TestCase):
                 "config.toml.json",
             )
             self.assertTrue(os.path.isfile(copied))
+
+    @unittest.skipIf(os.name != "posix", "POSIX mode contract")
+    def test_create_backup_tightens_legacy_root_and_makes_unique_private_directories(self):
+        cfg = Config()
+        with TemporaryDirectory() as data_dir:
+            cfg.data_dir = data_dir
+            cfg.claw.home_dir = os.path.join(data_dir, "openclaw")
+            backup_root = os.path.join(data_dir, "backups")
+            os.mkdir(backup_root, 0o755)
+            os.chmod(backup_root, 0o755)
+
+            first = _create_backup(cfg)
+            second = _create_backup(cfg)
+
+            self.assertNotEqual(first, second)
+            self.assertEqual(stat.S_IMODE(os.stat(backup_root).st_mode), 0o700)
+            self.assertEqual(stat.S_IMODE(os.stat(first).st_mode), 0o700)
+            self.assertEqual(stat.S_IMODE(os.stat(second).st_mode), 0o700)
+
+    @unittest.skipUnless(hasattr(os, "symlink"), "symlinks unavailable")
+    def test_create_backup_refuses_symlink_root(self):
+        cfg = Config()
+        with TemporaryDirectory() as data_dir, TemporaryDirectory() as target:
+            cfg.data_dir = data_dir
+            cfg.claw.home_dir = os.path.join(data_dir, "openclaw")
+            os.symlink(target, os.path.join(data_dir, "backups"))
+
+            with self.assertRaises(OSError):
+                _create_backup(cfg)
+
+            self.assertEqual(os.listdir(target), [])
 
 
 class TestUpgradeWheelInstall(unittest.TestCase):
