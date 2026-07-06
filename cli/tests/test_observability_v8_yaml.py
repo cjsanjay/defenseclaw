@@ -375,6 +375,26 @@ def test_sequence_insertion_must_be_contiguous() -> None:
     assert caught.value.code == "unreachable_mutation_path"
 
 
+def test_destination_signal_override_can_be_removed_as_one_policy_unit() -> None:
+    source = """config_version: 8
+observability:
+  destinations:
+    - name: collector
+      kind: otlp
+      endpoint: collector.example.test:4317
+      signal_overrides:
+        traces: {path: /v1/traces}
+        logs: {path: /v1/logs}
+      send: {signals: [logs], buckets: ['*'], redaction_profile: none}
+"""
+    prepared = prepare_v8_yaml_write(
+        source,
+        [V8YAMLMutation.delete(("observability", "destinations", 0, "signal_overrides", "traces"))],
+    )
+    destination = yaml.safe_load(prepared.candidate)["observability"]["destinations"][0]
+    assert destination["signal_overrides"] == {"logs": {"path": "/v1/logs"}}
+
+
 def test_candidate_exceeding_source_limit_is_rejected() -> None:
     source = "config_version: 8\nobservability: {}\n"
     oversized = "x" * 4_194_304

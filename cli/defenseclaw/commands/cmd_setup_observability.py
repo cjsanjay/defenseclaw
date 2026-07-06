@@ -41,6 +41,7 @@ from __future__ import annotations
 
 import json as _json
 import os
+import re
 import socket
 import ssl
 import urllib.error
@@ -58,6 +59,7 @@ from defenseclaw.context import AppContext, pass_ctx
 from defenseclaw.observability import (
     PRESETS,
     Destination,
+    Preset,
     WriteResult,
     apply_preset,
     list_destinations,
@@ -79,6 +81,8 @@ from defenseclaw.observability.writer import (
     _apply_secret,
     _build_sink_entry,
     _destination_name,
+    _render_header_template,
+    _render_template,
     _resolve_inputs,
     _resolve_target,
     _sink_endpoint,
@@ -217,6 +221,37 @@ def add_destination(  # noqa: PLR0912, PLR0913 — many flags to mirror preset p
         signal_tuple = parsed  # type: ignore[assignment]
 
     connector_name = (connector or "").strip()
+    if _v8_operator_status(app.cfg.data_dir) is not None:
+        if connector_name:
+            raise click.ClickException(
+                "v8 destinations are process-wide; use route selectors to constrain a connector"
+            )
+        try:
+            result, warnings = _add_v8_destination(
+                app.cfg.data_dir,
+                preset,
+                inputs,
+                name=name,
+                enabled=enabled,
+                signals=signal_tuple,
+                token_value=token_value,
+                target=target,
+                dry_run=dry_run,
+            )
+        except ValueError as exc:
+            raise click.ClickException(str(exc)) from exc
+        mode = "DRY-RUN " if dry_run else ""
+        changed = "updated" if result.changed else "already configured"
+        click.echo(f"  {mode}{preset.display_name}: {changed}")
+        for warning in warnings:
+            click.echo(f"  warning: {warning}")
+        if app.logger and not dry_run:
+            app.logger.log_action(
+                ACTION_SETUP_OBSERVABILITY,
+                "config",
+                f"action=add-v8 preset={preset.id}",
+            )
+        return
     try:
         if connector_name:
             result = _apply_sink_to_connector(
@@ -274,6 +309,14 @@ def add_destination(  # noqa: PLR0912, PLR0913 — many flags to mirror preset p
 def list_cmd(app: AppContext, emit_json: bool, connector: str | None) -> None:
     """List configured observability destinations."""
     connector_name = (connector or "").strip()
+    v8_status = _v8_operator_status(app.cfg.data_dir)
+    if v8_status is not None:
+        if connector_name:
+            raise click.ClickException(
+                "v8 destinations are process-wide; use route selectors to constrain a connector"
+            )
+        _print_v8_destination_list(v8_status, emit_json=emit_json)
+        return
     if connector_name:
         dests = _connector_destinations(app.cfg.data_dir, connector_name)
         if dests is None:
@@ -326,6 +369,9 @@ def list_cmd(app: AppContext, emit_json: bool, connector: str | None) -> None:
 def enable_cmd(app: AppContext, name: str, connector: str | None) -> None:
     """Enable a destination (``name=otel`` targets the gateway exporter)."""
     connector_name = (connector or "").strip()
+    if _v8_operator_status(app.cfg.data_dir) is not None:
+        _set_v8_destination_enabled(app.cfg.data_dir, name, True, connector_name)
+        return
     try:
         if connector_name:
             result = _set_connector_sink_enabled(app.cfg.data_dir, connector_name, name, True)
@@ -344,6 +390,9 @@ def enable_cmd(app: AppContext, name: str, connector: str | None) -> None:
 def disable_cmd(app: AppContext, name: str, connector: str | None) -> None:
     """Disable a destination."""
     connector_name = (connector or "").strip()
+    if _v8_operator_status(app.cfg.data_dir) is not None:
+        _set_v8_destination_enabled(app.cfg.data_dir, name, False, connector_name)
+        return
     try:
         if connector_name:
             result = _set_connector_sink_enabled(app.cfg.data_dir, connector_name, name, False)
@@ -372,6 +421,9 @@ def remove_cmd(app: AppContext, name: str, connector: str | None, yes: bool) -> 
     if not yes and not click.confirm(f"  Remove destination {label}?", default=False):
         click.echo("  Aborted.")
         return
+    if _v8_operator_status(app.cfg.data_dir) is not None:
+        _remove_v8_destination(app.cfg.data_dir, name, connector_name)
+        return
     try:
         if connector_name:
             result = _remove_connector_sink(app.cfg.data_dir, connector_name, name)
@@ -391,13 +443,21 @@ def remove_cmd(app: AppContext, name: str, connector: str | None, yes: bool) -> 
 @observability.command("test")
 @click.argument("name")
 @click.option("--timeout", type=float, default=5.0, help="Per-probe timeout in seconds")
+@click.option(
+    "--write-probe",
+    is_flag=True,
+    help="For v8, send one marked content-free probe to the named destination.",
+)
 @pass_ctx
-def test_cmd(app: AppContext, name: str, timeout: float) -> None:
+def test_cmd(app: AppContext, name: str, timeout: float, write_probe: bool) -> None:
     """Probe a destination for reachability + auth.
 
     Safe to run — we POST a marker event for webhook/HEC sinks and TCP
     dial OTLP endpoints. Failures are reported with actionable hints.
     """
+    if _v8_operator_status(app.cfg.data_dir) is not None:
+        _test_v8_destination(app.cfg.data_dir, name, timeout, write_probe=write_probe)
+        return
     dests = {d.name: d for d in list_destinations(app.cfg.data_dir)}
     d = dests.get(name)
     if d is None:
@@ -559,6 +619,439 @@ def migrate_splunk_cmd(app: AppContext, do_apply: bool) -> None:
             ACTION_SETUP_OBSERVABILITY, "config",
             f"action=migrate-splunk name={name}",
         )
+
+
+# ---------------------------------------------------------------------------
+# Exact-v8 operator path
+# ---------------------------------------------------------------------------
+
+
+def _add_v8_destination(
+    data_dir: str,
+    preset: Preset,
+    inputs: dict[str, str],
+    *,
+    name: str | None,
+    enabled: bool,
+    signals,
+    token_value: str | None,
+    target: str | None,
+    dry_run: bool,
+):
+    """Add or update one v8 destination through the surgical writer."""
+
+    from defenseclaw.observability.v8_writer import mutate_v8_config
+    from defenseclaw.observability.v8_yaml import V8YAMLMutation
+
+    resolved = _resolve_inputs(preset, inputs)
+    destination_name = _destination_name(preset, name, resolved)
+    if not _SINK_NAME_RE.fullmatch(destination_name):
+        raise ValueError(
+            f"destination name {destination_name!r} must match {_SINK_NAME_RE.pattern}"
+        )
+    destination = _build_v8_preset_destination(
+        preset,
+        resolved,
+        name=destination_name,
+        enabled=enabled,
+        signals=signals,
+        target=target,
+    )
+    authored = _v8_authored_destinations(data_dir)
+    matches = [
+        (index, existing)
+        for index, existing in enumerate(authored)
+        if existing.get("name") == destination_name
+    ]
+    if len(matches) > 1:
+        raise ValueError(f"destination {destination_name!r} is duplicated in the v8 source")
+    if matches:
+        index, existing = matches[0]
+        if existing.get("kind") != destination["kind"]:
+            raise ValueError(
+                f"destination {destination_name!r} already has kind {existing.get('kind')!r}; "
+                "remove it before changing adapter kind"
+            )
+        mutations = _v8_destination_update_mutations(index, existing, destination)
+    else:
+        mutations = [
+            V8YAMLMutation.set(
+                ("observability", "destinations", len(authored)),
+                destination,
+            )
+        ]
+
+    stored_secret = token_value
+    warnings: list[str] = []
+    if preset.id == "grafana-cloud":
+        if stored_secret and not stored_secret.startswith("Basic "):
+            stored_secret = "Basic " + stored_secret
+        elif not stored_secret:
+            warnings.append(
+                "GRAFANA_OTLP_TOKEN must contain the complete Authorization value, including the Basic prefix"
+            )
+    warnings.extend(_apply_secret(data_dir, preset, stored_secret, dry_run=dry_run))
+    result = mutate_v8_config(
+        config_path_for_data_dir(data_dir),
+        mutations,
+        data_dir=data_dir,
+        dry_run=dry_run,
+    )
+    return result, warnings
+
+
+def _v8_authored_destinations(data_dir: str) -> list[dict[str, Any]]:
+    from defenseclaw.observability.v8_config import load_validate_v8
+
+    path = config_path_for_data_dir(data_dir)
+    source = load_validate_v8(path.read_bytes(), source_name=str(path)).source
+    observability = source.get("observability")
+    if not isinstance(observability, dict):
+        return []
+    destinations = observability.get("destinations")
+    if not isinstance(destinations, list):
+        return []
+    return [dict(value) for value in destinations if isinstance(value, dict)]
+
+
+def _build_v8_preset_destination(
+    preset: Preset,
+    inputs: dict[str, str],
+    *,
+    name: str,
+    enabled: bool,
+    signals,
+    target: str | None,
+) -> dict[str, Any]:
+    resolved_target = _resolve_target(preset, target)
+    explicit_signals = tuple(signals or ())
+
+    if resolved_target == "audit_sinks" and preset.id != "otlp":
+        legacy = _build_sink_entry(preset, inputs, name=name, enabled=enabled)
+        kind = str(legacy["kind"])
+        block = legacy.get(kind)
+        if not isinstance(block, dict):
+            raise ValueError(f"preset {preset.id!r} did not produce a valid {kind} transport")
+        destination: dict[str, Any] = {"name": name, "kind": kind, "enabled": enabled}
+        if kind == "splunk_hec":
+            destination.update(
+                {
+                    key: block[key]
+                    for key in ("endpoint", "token_env", "index", "source", "sourcetype")
+                    if key in block
+                }
+            )
+            if block.get("insecure_skip_verify") is True:
+                destination["tls"] = {"insecure_skip_verify": True}
+            if preset.id == "splunk-hec":
+                destination["network_safety"] = {"allow_private_networks": True}
+        elif kind == "http_jsonl":
+            destination["endpoint"] = block["url"]
+            destination["method"] = block.get("method", "POST")
+            if block.get("bearer_env"):
+                destination["bearer_env"] = block["bearer_env"]
+        else:
+            raise ValueError(f"preset {preset.id!r} maps to unsupported v8 kind {kind!r}")
+        return destination
+
+    endpoint = _render_template(preset.endpoint_template, inputs)
+    protocol = (inputs.get("protocol") or preset.otel_protocol or "grpc").strip()
+    if protocol == "http" and not endpoint.lower().startswith(("http://", "https://")):
+        endpoint = "https://" + endpoint
+    destination = {
+        "name": name,
+        "kind": "otlp",
+        "enabled": enabled,
+        "endpoint": endpoint,
+    }
+    destination["protocol"] = "http/protobuf" if protocol == "http" else protocol
+    if preset.id == "galileo":
+        destination["preset"] = "galileo"
+        if explicit_signals and explicit_signals != ("traces",):
+            raise ValueError("the Galileo preset supports traces only")
+
+    headers: dict[str, Any] = {}
+    for key, template in preset.otel_headers.items():
+        rendered = _render_header_template(template, inputs)
+        headers[key] = _v8_header_value(rendered)
+    if preset.id == "honeycomb" and inputs.get("dataset"):
+        headers["x-honeycomb-dataset"] = inputs["dataset"]
+    if headers:
+        destination["headers"] = headers
+    if preset.signal_url_paths:
+        destination["signal_overrides"] = {
+            signal: {"path": path}
+            for signal, path in preset.signal_url_paths.items()
+            if not explicit_signals or signal in explicit_signals
+        }
+    if preset.otel_tls_insecure:
+        destination["tls"] = {"insecure": True}
+        destination["network_safety"] = {"allow_private_networks": True}
+
+    selected = explicit_signals
+    if resolved_target == "audit_sinks":
+        selected = ("logs",)
+    if selected:
+        destination["send"] = {
+            "signals": list(selected),
+            "buckets": ["*"],
+            "redaction_profile": "none",
+        }
+    return destination
+
+
+def _v8_header_value(value: str) -> Any:
+    match = re.fullmatch(r"\$\{([A-Z_][A-Z0-9_]*)\}", value)
+    if match:
+        return {"env": match.group(1)}
+    composite = re.fullmatch(r"Basic \$\{([A-Z_][A-Z0-9_]*)\}", value)
+    if composite:
+        return {"env": composite.group(1)}
+    if "${" in value:
+        raise ValueError("v8 secret-backed headers must be a whole environment reference")
+    return value
+
+
+def _v8_destination_update_mutations(
+    index: int,
+    existing: dict[str, Any],
+    destination: dict[str, Any],
+):
+    from defenseclaw.observability.v8_yaml import V8YAMLMutation
+
+    base = ("observability", "destinations", index)
+    mutations = []
+    for field in (
+        "name",
+        "kind",
+        "enabled",
+        "preset",
+        "path",
+        "listen",
+        "endpoint",
+        "protocol",
+        "method",
+        "token_env",
+        "bearer_env",
+        "index",
+        "source",
+        "sourcetype",
+        "timeout_ms",
+    ):
+        if field in destination:
+            mutations.append(V8YAMLMutation.set((*base, field), destination[field]))
+    for field in ("tls", "network_safety", "batch", "rotation"):
+        nested = destination.get(field)
+        if isinstance(nested, dict):
+            for key, value in nested.items():
+                mutations.append(V8YAMLMutation.set((*base, field, key), value))
+    headers = destination.get("headers")
+    if isinstance(headers, dict):
+        for key, value in headers.items():
+            mutations.append(V8YAMLMutation.set((*base, "headers", key), value))
+    overrides = destination.get("signal_overrides")
+    send = destination.get("send")
+    if isinstance(send, dict):
+        desired_overrides = overrides if isinstance(overrides, dict) else {}
+        existing_overrides = existing.get("signal_overrides")
+        if isinstance(existing_overrides, dict):
+            for signal in existing_overrides:
+                if signal not in desired_overrides:
+                    mutations.append(
+                        V8YAMLMutation.delete((*base, "signal_overrides", signal))
+                    )
+        for signal, override in desired_overrides.items():
+            if isinstance(override, dict):
+                for key, value in override.items():
+                    mutations.append(
+                        V8YAMLMutation.set((*base, "signal_overrides", signal, key), value)
+                    )
+    if isinstance(send, dict):
+        if existing.get("routes"):
+            raise ValueError(
+                "cannot replace advanced routes with --signals; remove routes explicitly first"
+            )
+        for key, value in send.items():
+            mutations.append(V8YAMLMutation.set((*base, "send", key), value))
+    return mutations
+
+
+def _v8_operator_status(data_dir: str):
+    """Return canonical v8 status, ``None`` for an exact pre-v8 source."""
+
+    from defenseclaw.config_inspect import ConfigInspectError
+    from defenseclaw.observability.v8_config import V8ConfigError
+    from defenseclaw.observability.v8_status import (
+        inspect_v8_operator_status,
+        source_is_v8,
+    )
+
+    path = config_path_for_data_dir(data_dir)
+    try:
+        if not source_is_v8(path):
+            return None
+        return inspect_v8_operator_status(path)
+    except (ConfigInspectError, V8ConfigError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
+
+
+def _print_v8_destination_list(status, *, emit_json: bool) -> None:
+    rows = [
+        {
+            "name": destination.name,
+            "kind": destination.kind,
+            "enabled": destination.enabled,
+            "generated": destination.generated,
+            "signals": list(destination.selected_signals),
+            "capabilities": list(destination.capabilities),
+            "policy": destination.policy_form,
+            "bucket_count": len(destination.buckets),
+            "redaction": destination.redaction_label,
+            "target": destination.endpoint,
+        }
+        for destination in status.destinations
+    ]
+    if emit_json:
+        click.echo(_json.dumps(rows, indent=2))
+        return
+    click.echo()
+    ux.section("Observability v8 destinations")
+    click.echo(
+        f"  {'NAME':<24} {'KIND':<12} {'STATE':<9} {'SIGNALS':<22} "
+        f"{'BUCKETS':<8} {'POLICY':<20} REDACTION"
+    )
+    for row in rows:
+        state = "enabled" if row["enabled"] else "disabled"
+        signals = ",".join(row["signals"]) or "none"
+        click.echo(
+            f"  {row['name'][:23]:<24} {row['kind'][:11]:<12} {state:<9} "
+            f"{signals[:21]:<22} {row['bucket_count']:<8} "
+            f"{row['policy'][:19]:<20} {row['redaction']}"
+        )
+    click.echo(
+        f"  Retention: {status.retention_days} days"
+        if status.retention_days
+        else "  Retention: unbounded"
+    )
+    click.echo(f"  Plan digest: {status.plan_digest}")
+    click.echo()
+
+
+def _v8_source_destination_index(data_dir: str, name: str) -> int:
+    from defenseclaw.observability.v8_config import load_validate_v8
+
+    path = config_path_for_data_dir(data_dir)
+    validated = load_validate_v8(path.read_bytes(), source_name=str(path)).source
+    observability = validated.get("observability")
+    if not isinstance(observability, dict):
+        observability = {}
+    destinations = observability.get("destinations")
+    if not isinstance(destinations, list):
+        destinations = []
+    matches = [
+        index
+        for index, destination in enumerate(destinations)
+        if isinstance(destination, dict) and destination.get("name") == name
+    ]
+    if len(matches) != 1:
+        if name == "local-sqlite":
+            raise click.ClickException(
+                "local-sqlite is mandatory and cannot be disabled or removed"
+            )
+        known = ", ".join(
+            sorted(
+                str(destination.get("name"))
+                for destination in destinations
+                if isinstance(destination, dict) and destination.get("name")
+            )
+        )
+        suffix = (
+            f"; configured destinations: {known}"
+            if known
+            else "; no optional destinations are configured"
+        )
+        raise click.ClickException(f"no configurable v8 destination named {name!r}{suffix}")
+    return matches[0]
+
+
+def _set_v8_destination_enabled(
+    data_dir: str,
+    name: str,
+    enabled: bool,
+    connector: str,
+) -> None:
+    from defenseclaw.observability.v8_writer import mutate_v8_config
+    from defenseclaw.observability.v8_yaml import V8YAMLMutation
+
+    if connector:
+        raise click.ClickException(
+            "v8 destinations are process-wide; use route selectors to constrain a connector"
+        )
+    index = _v8_source_destination_index(data_dir, name)
+    result = mutate_v8_config(
+        config_path_for_data_dir(data_dir),
+        [V8YAMLMutation.set(("observability", "destinations", index, "enabled"), enabled)],
+        data_dir=data_dir,
+    )
+    state = "enabled" if enabled else "disabled"
+    suffix = "" if result.changed else " (already set)"
+    click.echo(f"  {name}: {state}{suffix}")
+
+
+def _remove_v8_destination(data_dir: str, name: str, connector: str) -> None:
+    from defenseclaw.observability.v8_writer import mutate_v8_config
+    from defenseclaw.observability.v8_yaml import V8YAMLMutation
+
+    if connector:
+        raise click.ClickException(
+            "v8 destinations are process-wide; use route selectors to constrain a connector"
+        )
+    index = _v8_source_destination_index(data_dir, name)
+    mutate_v8_config(
+        config_path_for_data_dir(data_dir),
+        [V8YAMLMutation.delete(("observability", "destinations", index))],
+        data_dir=data_dir,
+    )
+    click.echo(f"  {name}: removed")
+
+
+def _test_v8_destination(
+    data_dir: str,
+    name: str,
+    timeout: float,
+    *,
+    write_probe: bool,
+) -> None:
+    from defenseclaw.config_inspect import ConfigInspectError, inspect_v8_config
+    from defenseclaw.observability.destination_test import (
+        DestinationTestError,
+        canonical_local_compliance_recorder,
+        run_destination_test,
+    )
+
+    path = config_path_for_data_dir(data_dir)
+    try:
+        inspected = inspect_v8_config("effective", config_path=str(path), data_dir=data_dir)
+        result = run_destination_test(
+            inspected.effective or {},
+            name=name,
+            data_dir=inspected.data_dir,
+            timeout=timeout,
+            write_probe=write_probe,
+            compliance=canonical_local_compliance_recorder(
+                config_path=inspected.source,
+                data_dir=inspected.data_dir,
+            ),
+        )
+    except ConfigInspectError as exc:
+        raise click.ClickException(str(exc)) from exc
+    except DestinationTestError as exc:
+        raise click.ClickException(
+            f"destination test failed ({exc.failure_class}): {exc.message}"
+        ) from exc
+    click.echo(f"  {result.destination}: {result.mode} succeeded")
+    click.echo(f"  protocol={result.protocol}; endpoints={result.endpoint_count}")
+    click.echo(f"  probe_id={result.probe_id}; compliance activity recorded locally")
 
 
 # ---------------------------------------------------------------------------

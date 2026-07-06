@@ -1057,6 +1057,8 @@ def _supported_destination_path(path: YAMLPath) -> bool:
         return path[4] in _DESTINATION_NESTED[field_name]
     if len(path) == 5 and field_name == "headers":
         return isinstance(path[4], str) and bool(path[4])
+    if len(path) == 5 and field_name == "signal_overrides":
+        return path[4] in _SIGNALS
     if len(path) == 6 and field_name == "signal_overrides":
         return path[4] in _SIGNALS and path[5] in {"endpoint", "path"}
     if field_name == "send":

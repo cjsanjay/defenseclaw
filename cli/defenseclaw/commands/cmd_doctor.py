@@ -2506,7 +2506,13 @@ def _check_cisco_ai_defense(cfg, r: _DoctorResult) -> None:
 
 
 def _check_observability(cfg, r: _DoctorResult) -> None:
-    """Walk every observability destination (gateway OTel + audit_sinks)
+    """Inspect the active observability configuration without exporting data.
+
+    Exact-v8 sources are rendered from the masked canonical Go effective plan,
+    including generated defaults, bucket membership, redaction, and retention.
+    Older sources retain the legacy OTel/audit-sink probes below.
+
+    Walk every observability destination (gateway OTel + audit_sinks)
     and probe each one according to its kind.
 
     This replaces the old Splunk-only check. Destinations are discovered
@@ -2515,6 +2521,26 @@ def _check_observability(cfg, r: _DoctorResult) -> None:
     branching. Disabled destinations are skipped, not failed — users
     often keep e.g. a dev Datadog sink disabled in prod configs.
     """
+    from defenseclaw.config import config_path_for_data_dir
+    from defenseclaw.config_inspect import ConfigInspectError
+    from defenseclaw.observability.v8_config import V8ConfigError
+    from defenseclaw.observability.v8_status import inspect_v8_operator_status, source_is_v8
+
+    config_path = config_path_for_data_dir(cfg.data_dir)
+    try:
+        is_v8 = source_is_v8(config_path)
+    except V8ConfigError as exc:
+        _emit("fail", "Observability v8 configuration", str(exc), r=r)
+        return
+    if is_v8:
+        try:
+            status = inspect_v8_operator_status(config_path)
+        except (ConfigInspectError, ValueError) as exc:
+            _emit("fail", "Observability v8 effective plan", str(exc), r=r)
+            return
+        _check_observability_v8_status(status, r)
+        return
+
     from defenseclaw.observability import list_destinations
     from defenseclaw.observability.presets import PRESETS
 
@@ -2550,6 +2576,51 @@ def _check_observability(cfg, r: _DoctorResult) -> None:
             _probe_http_jsonl(cfg, d, r)
         else:
             _emit("warn", label, f"no probe for kind '{d.kind}'", r=r)
+
+
+def _check_observability_v8_status(status, r: _DoctorResult) -> None:
+    """Render one canonical v8 operator snapshot into doctor checks."""
+
+    retention = "unbounded" if status.unbounded_retention else f"{status.retention_days} days"
+    local_path = status.local_path or "built-in data directory"
+    _emit(
+        "warn" if status.unbounded_retention else "pass",
+        "Local SQLite",
+        f"retention={retention}; path={local_path}",
+        r=r,
+    )
+    if status.judge_bodies_path:
+        _emit(
+            "pass",
+            "Judge-body store",
+            f"configured separately at {status.judge_bodies_path}",
+            r=r,
+        )
+
+    for destination in status.destinations:
+        signals = ",".join(destination.selected_signals) or "none"
+        detail = (
+            f"kind={destination.kind}; signals={signals}; policy={destination.policy_form}; "
+            f"buckets={len(destination.buckets)}; redaction={destination.redaction_label}"
+        )
+        if destination.endpoint:
+            detail += f"; target={destination.endpoint}"
+        _emit(
+            "pass" if destination.enabled else "skip",
+            f"Destination: {destination.name}",
+            detail if destination.enabled else f"disabled; {detail}",
+            r=r,
+        )
+
+    collected = sum(bool(bucket.collected_signals) for bucket in status.buckets)
+    _emit(
+        "pass",
+        "Bucket catalog",
+        f"version={status.bucket_catalog_version}; collected={collected}/{len(status.buckets)}",
+        r=r,
+    )
+    for code, path, summary in status.warnings:
+        _emit("warn", f"Observability warning: {code}", f"{path}: {summary}", r=r)
 
 
 def _probe_otel_destination(cfg, d, r: _DoctorResult) -> None:
