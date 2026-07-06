@@ -3,11 +3,11 @@
 ```yaml
 spec_status: approved-for-implementation
 goal_status: active
-current_phase: P3-P5
+current_phase: P3-P7
 target_config_version: 8
 baseline_commit: fd13acedfcffc0cc431d5a72f329b56b50b22baa
-last_verified_commit: e39a7f84485691a506316947c220d0284b293170
-last_updated: 2026-07-05
+last_verified_commit: 94e48e12f1515086d4120e77defe43c4acc3bd20
+last_updated: 2026-07-06
 ```
 
 ## Goal Contract
@@ -31,8 +31,8 @@ or a plausible-looking dashboard is not completion.
 
 | Field | Value |
 |---|---|
-| Active work package | `P3-WP02`, `P3-WP04`, `P4-WP01..03`, `P5-WP04..05` — close the remaining registry fact gaps, then expand the production-bound generated producer cutover without data loss or invented fields |
-| Ready queue | Regenerate the enriched security/operations registry once; migrate judge failures, scan/finding, asset, egress, discovery, and ingest producers through typed generated families; then close Galileo and the P3/P4/P5 gates |
+| Active work package | `P3-WP02`, `P3-WP04`, `P4-WP01..03`, `P5-WP04..05`, `P7-WP01..02` — finish producer/destination coverage and wire the reviewed cooperative activation transaction into the quiesced upgrade path |
+| Ready queue | Close remaining inbound OTLP/Galileo and producer topology gaps; complete native Prometheus generated-record activation; then finish P3/P4/P5 gates, P6 dashboards/docs, and production upgrade integration |
 | Blocked | None |
 | Next phase gate | `P3-GATE` — destination isolation plus Galileo and local-observability compatibility |
 | Root coordinator | Primary Codex thread |
@@ -254,7 +254,7 @@ substitute a converter-local family list, `*`, or all-catalog-buckets fallback.
 
 | ID | Status | Owner | Depends on | Deliverable | Verification/evidence |
 |---|---|---|---|---|---|
-| `P6-WP01` | `IN_PROGRESS` | root + inspection/destination subagents | `P4-GATE`, `P5-GATE` | Validate/effective/reference/plan/destination-test UX | Commit `ff4d566f5` completes truthful effective/provenance/plan inspection, exact compatibility availability, and reload applicability with normal/race/vet/CLI/real-listener evidence. The safe single-destination handshake/write-probe command and its local-only compliance record remain. |
+| `P6-WP01` | `DONE` | root + inspection/destination subagents | `P4-GATE`, `P5-GATE` | Validate/effective/reference/plan/destination-test UX | Commits `ff4d566f5` and `94e48e12f` complete truthful effective/provenance/plan inspection plus the safe single-destination handshake/write-probe command. Attempt and terminal activity use generated typed families, authenticate through an internal loopback helper without exposing the bearer to Python/argv, persist exactly once through the local-only SQLite path, reduce to the mandatory floor when collection is disabled, and never fan out to optional destinations. Clean detached-worktree generator, Go, CLI, race, and failure-path gates passed. |
 | `P6-WP02` | `TODO` | unassigned | `P6-WP01` | Setup/TUI/doctor destination, privacy, retention, and health UX | Python/TUI integration tests |
 | `P6-WP03` | `TODO` | unassigned | `P3-WP05`, `P5-GATE` | Coordinated dashboard/rule/query migration and local-stack validation | 14 dashboards/313+ panels static/live checks |
 | `P6-WP04` | `TODO` | unassigned | `P6-WP01..03` | User/admin/developer/migration/release documentation | Link/schema/example checks |
@@ -417,6 +417,7 @@ only “passed.” A relevant change invalidates old evidence.
 | `V-0106` | 2026-07-05 | `70e78287b` | P6-WP01 process-stable Prometheus reload contract | Three-run focused generation-pipeline regression; full destinations package | An enabled native Prometheus listener is restart-only even when its binding is unchanged. Reload rejects before constructing a second listener or provider, leaves the original graph/provider/listener/canary serving, sends no traffic to the replacement OTLP endpoint, and retires the original generation only on close without mutating OTel process globals. | root + destination-test subagent |
 | `V-0107` | 2026-07-06 | `dc4797439` | P5-WP05 generated metric-contract substrate | Full normal tests for `./internal/observability/... ./internal/telemetry ./internal/config ./schemas`; focused three-run normal and race regressions; full telemetry/runtime race; scoped vet; registry generator `--check`; diff check | The digest-bound generated local profile plus canonical catalog now owns all 131 metric descriptors, including exact bucket, instrument/value types, unit, temporality, authored `null` versus empty histogram boundaries, 2,048-cardinality policy, canonical labels, and local aliases. Generic and local projections are independent; metrics-only local identity is preserved; duplicate destinations/families/sinks and unstable sink identities fail closed; failed flushes do not skip later destinations; rollback and retirement shut each stable sink exactly once. One graph lease spans collection-before-builder, generated construction, projection, and synchronous handoff, so reload cannot retire an in-flight generation. No destination factory or producer is presented as activated before its real sink exists. | root + generated-metric subagent |
 | `V-0108` | 2026-07-06 | `1bd90a44d` | P3-WP02/P5-WP05 generated OTLP metric activation | `go test ./internal/telemetry ./internal/observability/destinations/otlp ./internal/observability/destinations -count=1`; the same three packages under `-race`; scoped `go vet`; gofmt/diff checks; ten-run lifecycle/transport stress by the bounded implementation agent | Each selected OTLP destination now owns a private generated-record SDK provider, periodic reader, exporter, guarded HTTP/gRPC transport, exact immutable generation resource, and instrument cache. Real HTTP protobuf evidence proves canonical versus local label dialect and exact resource/unit/delta/boundary behavior; real gRPC evidence covers every instrument/value combination present in the 131-family catalog. Reload keeps generations and endpoints disjoint, old records cannot enter a new generation, one failing destination cannot suppress its sibling, partial construction rolls back exactly once, and shutdown timeout/retry/idempotence shares one terminal operation. Native Prometheus generated-record activation and producer-wide cutover remain open and are not claimed here. | root + OTLP metric subagent |
+| `V-0109` | 2026-07-06 | `94e48e12f1515086d4120e77defe43c4acc3bd20` | P6-WP01 local-only destination-test closure and registry successor | Registry generator write/check; 538 generator tests; partitioned complete 239 candidate-renderer tests; 78 Go API/fixture/producer/renderer tests; full `./internal/observability/... ./internal/cli` and gateway suites; focused race/vet; 56 CLI/spec/inventory tests; Ruff/gofmt/diff checks; clean detached-worktree generator, Go, gateway-handler, and Python rerun | The registry successor contains 93 logs, 25 spans, 131 metrics, 1,911 public declarations, 203 producer mappings, and 8,077 expanded producer rows with a reviewed content-addressed symbol baseline. An explicit destination test records generated attempted/completed compliance families through authenticated loopback and a runtime local-only operation, with exactly-once SQLite evidence, collection-disabled minimal floor behavior, bounded content-free fields, and zero optional fan-out. The Go helper resolves the bearer internally; Python, argv, output, error text, and records never contain it. Verification tools now recognize the generated metric allowlist and the intentional v7 selection contract without weakening unknown-authority rejection. The exact commit was rechecked in a detached worktree, proving independence from the concurrent P7 activation foundation. | root + destination-test subagent |
 
 Final integration requires, at minimum:
 
