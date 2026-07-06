@@ -48,6 +48,17 @@ func (err *GeneratedMetricError) Code() GeneratedMetricErrorCode {
 // The supplied graph snapshot must be used for generated provenance.
 type GeneratedMetricBuilder func(EmitContext) (observability.Record, error)
 
+const maxGeneratedMetricBatchItems = 16
+
+// GeneratedMetricBatchItem is one exact generated family occurrence in a
+// request-bounded metric group. A batch is not a transaction at remote sinks;
+// its guarantee is that collection, construction, and delivery for every item
+// use the same immutable runtime generation and lease.
+type GeneratedMetricBatchItem struct {
+	Family  observability.EventName
+	Builder GeneratedMetricBuilder
+}
+
 // RecordGeneratedMetric holds one runtimegraph lease across collection gating,
 // generated construction, projection, and synchronous destination handoff.
 // A disabled family returns an empty result without invoking builder.
@@ -65,6 +76,41 @@ func (runtime *Runtime) RecordGeneratedMetric(
 	}
 	defer lease.Release()
 	return runtime.recordGeneratedMetricWithLease(ctx, lease, family, builder)
+}
+
+// RecordGeneratedMetricBatch pins one runtime generation across a bounded
+// group of related metric observations. Each family retains its independent
+// collection gate, so a disabled family never invokes its builder. Delivery is
+// sequential and truthful: results before a failure describe already-attempted
+// occurrences, and no later builder runs after the first failure.
+func (runtime *Runtime) RecordGeneratedMetricBatch(
+	ctx context.Context,
+	items []GeneratedMetricBatchItem,
+) ([]telemetry.V8MetricRecordResult, error) {
+	if runtime == nil || runtime.manager == nil || ctx == nil || len(items) == 0 ||
+		len(items) > maxGeneratedMetricBatchItems {
+		return nil, &GeneratedMetricError{code: GeneratedMetricInvalidInput}
+	}
+	for _, item := range items {
+		if item.Family == "" || item.Builder == nil ||
+			!observability.IsRegisteredEventNameForSignal(observability.SignalMetrics, item.Family) {
+			return nil, &GeneratedMetricError{code: GeneratedMetricInvalidInput}
+		}
+	}
+	lease, err := runtime.manager.Acquire(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer lease.Release()
+	results := make([]telemetry.V8MetricRecordResult, len(items))
+	for index, item := range items {
+		result, recordErr := runtime.recordGeneratedMetricWithLease(ctx, lease, item.Family, item.Builder)
+		results[index] = result
+		if recordErr != nil {
+			return results, recordErr
+		}
+	}
+	return results, nil
 }
 
 func (runtime *Runtime) recordGeneratedMetricWithLease(

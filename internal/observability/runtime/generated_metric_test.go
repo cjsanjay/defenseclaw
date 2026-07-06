@@ -17,6 +17,7 @@ import (
 )
 
 const generatedMetricFamily = observability.EventName("defenseclaw.connector.hook.latency")
+const generatedMetricBatchFamily = observability.EventName("defenseclaw.connector.hook.invocations")
 
 type runtimeMetricSink struct {
 	started      chan struct{}
@@ -66,7 +67,7 @@ func (pipelines *runtimeMetricPipelines) build(
 	pipelines.mu.Unlock()
 	return telemetry.V8GenerationPipelines{MetricPipelines: []telemetry.V8GenerationMetricPipeline{{
 		Destination: "capture", Projection: telemetry.V8MetricProjectionCanonical,
-		SelectedFamilies: []observability.EventName{generatedMetricFamily}, Sink: sink,
+		SelectedFamilies: []observability.EventName{generatedMetricFamily, generatedMetricBatchFamily}, Sink: sink,
 	}}}, nil
 }
 
@@ -127,6 +128,116 @@ func runtimeGeneratedMetricRecord(
 			DefenseClawMetricResult:    observability.Present("ok"),
 		},
 	)
+}
+
+func runtimeGeneratedMetricBatchRecord(
+	t *testing.T,
+	snapshot EmitContext,
+) (observability.Record, error) {
+	t.Helper()
+	builder, err := observability.NewFamilyBuilder(
+		observability.ClockFunc(func() time.Time { return time.Unix(201, 0).UTC() }),
+		observability.OccurrenceIDGeneratorFunc(func() (string, error) { return "runtime-metric-2", nil }),
+	)
+	if err != nil {
+		return observability.Record{}, err
+	}
+	return builder.BuildMetricDefenseClawConnectorHookInvocations(
+		observability.MetricDefenseClawConnectorHookInvocationsInput{
+			Envelope: observability.FamilyEnvelopeInput{
+				Source: "gateway",
+				Provenance: observability.FamilyProvenanceInput{
+					Producer: "defenseclaw", BinaryVersion: "8.0.0",
+					ConfigGeneration: int64(snapshot.Generation()), ConfigDigest: snapshot.Digest(),
+				},
+			},
+			Value: 1, DefenseClawConnectorSource: observability.Present("codex"),
+			DefenseClawMetricEventType: observability.Present("prompt"),
+			DefenseClawMetricReason:    observability.Present("allow"),
+			DefenseClawMetricResult:    observability.Present("ok"),
+		},
+	)
+}
+
+func TestGeneratedMetricBatchIsLazyBoundedAndGenerationPinned(t *testing.T) {
+	dependencies := newRuntimeTestDependencies(t)
+	pipelines := &runtimeMetricPipelines{sinks: make(map[uint64]*runtimeMetricSink)}
+	options := dependencies.options()
+	options.TelemetryProviderFactory = telemetry.NewV8ProviderFactory(telemetry.V8ProviderOptions{
+		Version: "8.0.0", Environment: "test", ServiceInstanceID: "generated-metric-batch",
+		GenerationPipelines: pipelines.build,
+	})
+	disabled := runtimeGeneratedMetricPlan(t, dependencies, "")
+	runtime, err := New(t.Context(), runtimegraph.ConfigFromPlan(disabled, false), options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if closeErr := runtime.Close(ctx); closeErr != nil {
+			t.Errorf("close runtime: %v", closeErr)
+		}
+	})
+	var builds atomic.Int64
+	var generationsMu sync.Mutex
+	var generations []uint64
+	item := func(family observability.EventName, build GeneratedMetricBuilder) GeneratedMetricBatchItem {
+		return GeneratedMetricBatchItem{Family: family, Builder: func(snapshot EmitContext) (observability.Record, error) {
+			builds.Add(1)
+			generationsMu.Lock()
+			generations = append(generations, snapshot.Generation())
+			generationsMu.Unlock()
+			return build(snapshot)
+		}}
+	}
+	items := []GeneratedMetricBatchItem{
+		item(generatedMetricFamily, func(snapshot EmitContext) (observability.Record, error) {
+			return runtimeGeneratedMetricRecord(t, snapshot)
+		}),
+		item(generatedMetricBatchFamily, func(snapshot EmitContext) (observability.Record, error) {
+			return runtimeGeneratedMetricBatchRecord(t, snapshot)
+		}),
+	}
+	results, batchErr := runtime.RecordGeneratedMetricBatch(t.Context(), items)
+	if batchErr != nil || len(results) != 2 || builds.Load() != 0 {
+		t.Fatalf("disabled results=%+v builds=%d err=%v", results, builds.Load(), batchErr)
+	}
+	enabled := runtimeGeneratedMetricPlan(t, dependencies, observability.BucketAgentLifecycle)
+	if result, reloadErr := runtime.Reload(t.Context(), runtimegraph.ConfigFromPlan(enabled, false)); reloadErr != nil || result.Status() != runtimegraph.ReloadApplied {
+		t.Fatalf("enable reload=%s err=%v", result.Status(), reloadErr)
+	}
+	results, batchErr = runtime.RecordGeneratedMetricBatch(t.Context(), items)
+	if batchErr != nil || len(results) != 2 || builds.Load() != 2 {
+		t.Fatalf("enabled results=%+v builds=%d err=%v", results, builds.Load(), batchErr)
+	}
+	for index, result := range results {
+		if result != (telemetry.V8MetricRecordResult{Matched: 1, Delivered: 1}) {
+			t.Fatalf("result[%d]=%+v", index, result)
+		}
+	}
+	generationsMu.Lock()
+	gotGenerations := append([]uint64(nil), generations...)
+	generationsMu.Unlock()
+	if len(gotGenerations) != 2 || gotGenerations[0] != 2 || gotGenerations[1] != 2 {
+		t.Fatalf("batch generations=%v, want [2 2]", gotGenerations)
+	}
+	if pipelines.sink(t, 2).records.Load() != 2 {
+		t.Fatalf("batch sink records=%d, want 2", pipelines.sink(t, 2).records.Load())
+	}
+	before := builds.Load()
+	invalid := items[0]
+	invalid.Builder = nil
+	if _, err := runtime.RecordGeneratedMetricBatch(t.Context(), []GeneratedMetricBatchItem{invalid}); err == nil || builds.Load() != before {
+		t.Fatalf("invalid batch error=%v builds=%d want=%d", err, builds.Load(), before)
+	}
+	tooLarge := make([]GeneratedMetricBatchItem, maxGeneratedMetricBatchItems+1)
+	for index := range tooLarge {
+		tooLarge[index] = items[index%len(items)]
+	}
+	if _, err := runtime.RecordGeneratedMetricBatch(t.Context(), tooLarge); err == nil || builds.Load() != before {
+		t.Fatalf("oversized batch error=%v builds=%d want=%d", err, builds.Load(), before)
+	}
 }
 
 func TestGeneratedMetricRuntimeGatesBeforeBuilderAndPinsLeaseThroughRecord(t *testing.T) {

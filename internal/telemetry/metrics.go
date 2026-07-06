@@ -1868,6 +1868,14 @@ func normalizeMetricIdentityLabel(value string) string {
 	return out
 }
 
+// NormalizeMetricIdentityLabel preserves the established PR #403/#412 join
+// identity used across Prometheus, Loki, and Tempo. Generated v8 producer
+// adapters use this exported spelling so v7 and v8 do not maintain separate
+// normalization vocabularies during the producer cutover.
+func NormalizeMetricIdentityLabel(value string) string {
+	return normalizeMetricIdentityLabel(value)
+}
+
 func normalizeHookActionMetricLabel(action string) string {
 	a := strings.ToLower(strings.TrimSpace(action))
 	switch a {

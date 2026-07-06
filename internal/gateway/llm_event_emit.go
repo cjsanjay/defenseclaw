@@ -1397,7 +1397,19 @@ func emitLegacyHookLifecycleEvent(ctx context.Context, meta llmEventMeta) {
 }
 
 func (a *APIServer) recordHookLifecycleMetric(ctx context.Context, meta llmEventMeta) {
-	if a == nil || a.otel == nil || strings.TrimSpace(meta.AgentID) == "" {
+	if a == nil || strings.TrimSpace(meta.AgentID) == "" {
+		return
+	}
+	if emitter := a.observabilityV8RuntimeEmitter(); emitter != nil {
+		// Runtime ownership is sticky. A missing capability or failed generated
+		// batch must never resurrect the legacy SDK path after v8 has admitted
+		// this process, even when a test injected a legacy provider.
+		if runtime, ok := emitter.(hookLifecycleMetricV8Runtime); ok {
+			_ = a.recordHookLifecycleMetricsV8(ctx, runtime, meta)
+		}
+		return
+	}
+	if a.otel == nil {
 		return
 	}
 	a.otel.RecordAgentLifecycle(ctx, telemetry.AgentLifecycleObservation{
