@@ -246,6 +246,27 @@ func (pipeline *LocalLogPipeline) Process(
 	metadata router.Metadata,
 	builder router.RecordBuilder,
 ) (LocalLogOutcome, error) {
+	return pipeline.process(ctx, metadata, builder, false)
+}
+
+// ProcessLocalOnly applies the same collection, mandatory-floor, generated
+// record, central-redaction, and SQLite contracts as Process while refusing to
+// construct optional destination projections. It is reserved for explicitly
+// local control-plane evidence such as destination connectivity tests.
+func (pipeline *LocalLogPipeline) ProcessLocalOnly(
+	ctx context.Context,
+	metadata router.Metadata,
+	builder router.RecordBuilder,
+) (LocalLogOutcome, error) {
+	return pipeline.process(ctx, metadata, builder, true)
+}
+
+func (pipeline *LocalLogPipeline) process(
+	ctx context.Context,
+	metadata router.Metadata,
+	builder router.RecordBuilder,
+	localOnly bool,
+) (LocalLogOutcome, error) {
 	if pipeline == nil || pipeline.evaluator == nil || pipeline.projector == nil ||
 		pipeline.appender == nil || pipeline.failures == nil {
 		return LocalLogOutcome{}, &Error{code: ErrorInvalidDependency}
@@ -309,6 +330,9 @@ func (pipeline *LocalLogPipeline) Process(
 		return LocalLogOutcome{}, boundedPipelineError(ErrorLocalWrite, err)
 	}
 	outcome.localPersisted = true
+	if localOnly {
+		return outcome, nil
+	}
 
 	for _, delivery := range optional {
 		profile, found := pipeline.catalog.Resolve(redaction.ProfileName(delivery.RedactionProfile))

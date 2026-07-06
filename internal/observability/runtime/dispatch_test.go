@@ -267,6 +267,53 @@ func TestQueueOnlyDispatcherSeparatesProjectedQueueBytesFromEncodedWriteBytes(t 
 	}
 }
 
+func TestRuntimeEmitLocalOnlyPersistsWithoutOptionalProjectionOrFanout(t *testing.T) {
+	dependencies := newRuntimeTestDependencies(t)
+	plan := runtimeTestPlan(t, dependencies.storePath, dependencies.judgePath, 90,
+		func(source *config.ObservabilityV8Source) {
+			source.Destinations = []config.ObservabilityV8DestinationSource{
+				runtimeConsoleDestination("must-not-receive", "none", 0),
+			}
+		},
+	)
+	adapter := newRuntimeRecordingAdapter(1)
+	factory := runtimeAdapterFactoryFunc(func(
+		context.Context,
+		config.ObservabilityV8EffectiveDestination,
+		telemetry.V8ResourceContext,
+	) (delivery.Adapter, DestinationAdapterCleanup, error) {
+		return adapter, func(context.Context) error { return nil }, nil
+	})
+	runtime := runtimeWithAdapterFactory(t, dependencies, plan, factory, nil)
+	const recordID = "runtime-local-only"
+	outcome, err := runtime.EmitLocalOnly(
+		t.Context(), diagnosticMetadata(t), runtimeContentRecordBuilder(recordID, "must stay local"),
+	)
+	if err != nil || !outcome.LocalPersisted() || len(outcome.OptionalWork()) != 0 ||
+		len(outcome.OptionalFailures()) != 0 {
+		t.Fatalf("local-only outcome persisted=%t work=%d failures=%d err=%v",
+			outcome.LocalPersisted(), len(outcome.OptionalWork()), len(outcome.OptionalFailures()), err)
+	}
+	select {
+	case item := <-adapter.delivered:
+		t.Fatalf("local-only record reached destination: %#v", item.identity)
+	case <-time.After(100 * time.Millisecond):
+	}
+	events, err := dependencies.store.ListEvents(16)
+	if err != nil {
+		t.Fatal(err)
+	}
+	count := 0
+	for _, event := range events {
+		if event.ID == recordID {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("local-only SQLite count=%d, want exactly one", count)
+	}
+}
+
 func TestRuntimeAdapterFactoryReceivesDetachedUnmaskedRuntimeDestination(t *testing.T) {
 	dependencies := newRuntimeTestDependencies(t)
 	plan := runtimeTestPlan(t, dependencies.storePath, dependencies.judgePath, 90,

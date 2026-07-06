@@ -235,6 +235,28 @@ func (runtime *Runtime) Emit(
 	metadata router.Metadata,
 	builder EmitBuilder,
 ) (pipeline.LocalLogOutcome, error) {
+	return runtime.emit(ctx, metadata, builder, false)
+}
+
+// EmitLocalOnly pins the same immutable graph and persists through the same
+// central local pipeline as Emit, but it never constructs or enqueues optional
+// destination work. It is intentionally separate from ordinary routing so a
+// connectivity test cannot export the audit record to the destination under
+// test or to any sibling destination.
+func (runtime *Runtime) EmitLocalOnly(
+	ctx context.Context,
+	metadata router.Metadata,
+	builder EmitBuilder,
+) (pipeline.LocalLogOutcome, error) {
+	return runtime.emit(ctx, metadata, builder, true)
+}
+
+func (runtime *Runtime) emit(
+	ctx context.Context,
+	metadata router.Metadata,
+	builder EmitBuilder,
+	localOnly bool,
+) (pipeline.LocalLogOutcome, error) {
 	if runtime == nil || runtime.manager == nil || ctx == nil || builder == nil {
 		return pipeline.LocalLogOutcome{}, &Error{code: ErrorInvalidDependency}
 	}
@@ -255,7 +277,11 @@ func (runtime *Runtime) Emit(
 	snapshot := EmitContext{
 		plan: graph.Plan(), digest: graph.Digest(), generation: graph.Generation(),
 	}
-	outcome, processErr := local.Process(ctx, metadata, func(admission router.Admission) (observability.Record, error) {
+	process := local.Process
+	if localOnly {
+		process = local.ProcessLocalOnly
+	}
+	outcome, processErr := process(ctx, metadata, func(admission router.Admission) (observability.Record, error) {
 		record, err := builder(snapshot, admission)
 		if err != nil {
 			return observability.Record{}, err
@@ -271,6 +297,9 @@ func (runtime *Runtime) Emit(
 		return outcome, processErr
 	}
 	if !outcome.LocalPersisted() {
+		return outcome, nil
+	}
+	if localOnly {
 		return outcome, nil
 	}
 	dispatchValue, dispatchOK := lease.Component(DestinationDispatchComponentName)

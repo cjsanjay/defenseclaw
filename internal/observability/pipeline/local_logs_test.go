@@ -372,6 +372,37 @@ func TestLocalLogPipelineIsolatesOptionalProjectionFailure(t *testing.T) {
 	}
 }
 
+func TestLocalLogPipelineLocalOnlyNeverProjectsOptionalDestinations(t *testing.T) {
+	logs := []observability.Signal{observability.SignalLogs}
+	allBuckets := []observability.Bucket{"*"}
+	source := &config.ObservabilityV8Source{Destinations: []config.ObservabilityV8DestinationSource{
+		{Name: "must-not-project", Kind: config.ObservabilityV8DestinationConsole, Send: &config.ObservabilityV8SendSource{
+			Signals: logs, Buckets: allBuckets, RedactionProfile: "sensitive",
+		}},
+	}}
+	projector := &selectiveProjector{
+		engine: mustEngine(t), failProfile: redaction.ProfileSensitive,
+		failure: redaction.ProjectionFailureSerialization,
+	}
+	pipeline, appender := mustPipeline(t, source, projector)
+	test := findCatalogLogCase(t, observability.BucketComplianceActivity)
+	outcome, err := pipeline.ProcessLocalOnly(
+		context.Background(), mustMetadata(t, test),
+		func(admission router.Admission) (observability.Record, error) {
+			return buildClassifiedLogWithContent(test, admission, "local-only", "private@example.test")
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !outcome.LocalPersisted() || len(appender.snapshot()) != 1 ||
+		len(outcome.OptionalWork()) != 0 || len(outcome.OptionalFailures()) != 0 {
+		t.Fatalf("local-only outcome = local:%t appends:%d work:%d failures:%d",
+			outcome.LocalPersisted(), len(appender.snapshot()),
+			len(outcome.OptionalWork()), len(outcome.OptionalFailures()))
+	}
+}
+
 func TestLocalLogPipelineFansOutIndependentDestinationProjectionsAfterLocalWrite(t *testing.T) {
 	logs := []observability.Signal{observability.SignalLogs}
 	allBuckets := []observability.Bucket{"*"}
