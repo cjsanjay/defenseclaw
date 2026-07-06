@@ -129,6 +129,7 @@ def upgrade(
     ux.banner("Downloading Release Artifacts")
 
     staging_dir = tempfile.mkdtemp(prefix="defenseclaw-upgrade-")
+    restart_services = True
     try:
         # Resolve checksums.txt FIRST so any download we accept is verified
         # against a published manifest. Returns None for old releases that
@@ -294,30 +295,33 @@ def upgrade(
         # ``<data_dir>/.migration_state.json``. Best-effort: a missing
         # cursor module simply skips the summary.
         _print_migration_cursor_summary(data_dir)
-        _assert_required_cli_migrations(upgrade_manifest, data_dir)
+        try:
+            _assert_required_cli_migrations(upgrade_manifest, data_dir)
+        except SystemExit:
+            # A release-owned required migration is part of the target
+            # runtime contract.  Starting the newly installed gateway after
+            # that migration failed can pair target binaries with an
+            # incompatible source configuration (observability v8 is the
+            # first such migration).  Preserve the ordinary retry/cursor
+            # flow, but leave services stopped until the operator retries or
+            # deliberately restores the recovery backup.
+            restart_services = False
+            ux.err("Required migration failed; target services remain stopped.")
+            ux.subhead(f"Recovery backup: {backup_dir}", indent="    ")
+            raise
 
     finally:
         # Always clean up staging dir first, even if restart fails.
         shutil.rmtree(staging_dir, ignore_errors=True)
 
-        ux.banner("Starting Services")
-
-        _run_silent(["defenseclaw-gateway", "start"], "Gateway started", "Could not start gateway")
-
-        # Reuse _run_silent so the restart degrades gracefully when the
-        # `openclaw` CLI isn't installed. A bare subprocess.run() raises
-        # FileNotFoundError before check=False can take effect, which used
-        # to crash the upgrade command after services had already restarted.
-        if not _run_silent(
-            ["openclaw", "gateway", "restart"],
-            "OpenClaw gateway restarted — DefenseClaw plugin loaded",
-            "Could not restart OpenClaw gateway automatically",
-        ):
-            ux.subhead("Run manually: openclaw gateway restart")
-
-        # Health verification
-        ux.banner("Verifying Gateway Health")
-        _poll_health(app.cfg, health_timeout)
+        if not restart_services:
+            ux.banner("Services Remain Stopped")
+            ux.subhead(
+                "Fix the migration error and re-run `defenseclaw upgrade`; the unapplied migration will be retried.",
+                indent="  ",
+            )
+        else:
+            _start_and_verify_services(app, health_timeout)
 
     # ── Done ─────────────────────────────────────────────────────────────────
 
@@ -337,6 +341,29 @@ def upgrade(
             "upgrade", "defenseclaw",
             f"from={current_version} to={target_version} backup={backup_dir}",
         )
+
+
+def _start_and_verify_services(app: AppContext, health_timeout: int) -> None:
+    """Restart and verify services after every required migration succeeds."""
+
+    ux.banner("Starting Services")
+
+    _run_silent(["defenseclaw-gateway", "start"], "Gateway started", "Could not start gateway")
+
+    # Reuse _run_silent so the restart degrades gracefully when the
+    # `openclaw` CLI isn't installed. A bare subprocess.run() raises
+    # FileNotFoundError before check=False can take effect, which used
+    # to crash the upgrade command after services had already restarted.
+    if not _run_silent(
+        ["openclaw", "gateway", "restart"],
+        "OpenClaw gateway restarted — DefenseClaw plugin loaded",
+        "Could not restart OpenClaw gateway automatically",
+    ):
+        ux.subhead("Run manually: openclaw gateway restart")
+
+    # Health verification
+    ux.banner("Verifying Gateway Health")
+    _poll_health(app.cfg, health_timeout)
 
 
 # ---------------------------------------------------------------------------

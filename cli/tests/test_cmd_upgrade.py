@@ -233,6 +233,92 @@ class TestUpgradeSameVersionRepair(unittest.TestCase):
         self.assertEqual(result.exit_code, 0, msg=result.output)
         run_migrations.assert_called_once()
 
+    def test_required_migration_failure_leaves_target_services_stopped(self):
+        runner = CliRunner()
+        app = AppContext()
+        app.cfg = Config()
+
+        with TemporaryDirectory() as data_dir, ExitStack() as stack:
+            app.cfg.data_dir = data_dir
+            app.cfg.claw.home_dir = data_dir
+            backup_dir = os.path.join(data_dir, "backups", "upgrade")
+            stack.enter_context(patch("defenseclaw.__version__", "9.9.8"))
+            stack.enter_context(
+                patch(
+                    "defenseclaw.commands.cmd_upgrade._detect_platform",
+                    return_value=("darwin", "arm64"),
+                )
+            )
+            stack.enter_context(patch("defenseclaw.commands.cmd_upgrade._preflight_check"))
+            stack.enter_context(
+                patch(
+                    "defenseclaw.commands.cmd_upgrade._download_checksums",
+                    return_value={
+                        "defenseclaw_9.9.9_darwin_arm64.tar.gz": "0" * 64,
+                        "defenseclaw-9.9.9-py3-none-any.whl": "0" * 64,
+                        "upgrade-manifest.json": "0" * 64,
+                    },
+                )
+            )
+            stack.enter_context(
+                patch(
+                    "defenseclaw.commands.cmd_upgrade._download_upgrade_manifest",
+                    return_value={
+                        "migration_failure_policy": "fail",
+                        "required_cli_migrations": ["9.9.9"],
+                    },
+                )
+            )
+            stack.enter_context(
+                patch(
+                    "defenseclaw.commands.cmd_upgrade._download_gateway",
+                    return_value=(
+                        "/tmp/defenseclaw-gateway",
+                        "defenseclaw_9.9.9_darwin_arm64.tar.gz",
+                    ),
+                )
+            )
+            stack.enter_context(
+                patch(
+                    "defenseclaw.commands.cmd_upgrade._download_wheel",
+                    return_value=(
+                        "/tmp/defenseclaw.whl",
+                        "defenseclaw-9.9.9-py3-none-any.whl",
+                    ),
+                )
+            )
+            stack.enter_context(patch("defenseclaw.commands.cmd_upgrade._preflight_wheel_install"))
+            stack.enter_context(
+                patch(
+                    "defenseclaw.commands.cmd_upgrade._install_gateway",
+                    return_value="/tmp/installed-defenseclaw-gateway",
+                )
+            )
+            stack.enter_context(patch("defenseclaw.commands.cmd_upgrade._install_wheel"))
+            stack.enter_context(patch("defenseclaw.commands.cmd_upgrade._verify_installed_gateway_version"))
+            stack.enter_context(
+                patch(
+                    "defenseclaw.commands.cmd_upgrade._create_backup",
+                    return_value=backup_dir,
+                )
+            )
+            run_silent = stack.enter_context(patch("defenseclaw.commands.cmd_upgrade._run_silent"))
+            poll_health = stack.enter_context(patch("defenseclaw.commands.cmd_upgrade._poll_health"))
+            stack.enter_context(
+                patch("defenseclaw.commands.cmd_upgrade._run_installed_migrations", return_value=0)
+            )
+            stack.enter_context(patch("defenseclaw.commands.cmd_upgrade._print_migration_cursor_summary"))
+            result = runner.invoke(upgrade, ["--yes", "--version", "9.9.9"], obj=app)
+
+        self.assertEqual(result.exit_code, 1, msg=result.output)
+        self.assertIn("Required migration failed; target services remain stopped", result.output)
+        self.assertIn(f"Recovery backup: {backup_dir}", result.output)
+        self.assertIn("Services Remain Stopped", result.output)
+        self.assertNotIn("Upgrade Complete", result.output)
+        self.assertEqual(run_silent.call_count, 1)
+        self.assertEqual(run_silent.call_args.args[0], ["defenseclaw-gateway", "stop"])
+        poll_health.assert_not_called()
+
     def test_upgrade_preflights_wheel_before_gateway_install(self):
         runner = CliRunner()
         app = AppContext()
