@@ -1,0 +1,661 @@
+// Copyright 2026 Cisco Systems, Inc. and its affiliates
+// SPDX-License-Identifier: Apache-2.0
+
+package gateway
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/defenseclaw/defenseclaw/internal/audit"
+	"github.com/defenseclaw/defenseclaw/internal/config"
+	"github.com/defenseclaw/defenseclaw/internal/gatewaylog"
+	"github.com/defenseclaw/defenseclaw/internal/observability"
+	"github.com/defenseclaw/defenseclaw/internal/observability/destinations/localobservability"
+	"github.com/defenseclaw/defenseclaw/internal/observability/runtimegraph"
+	"github.com/defenseclaw/defenseclaw/internal/telemetry"
+	"github.com/defenseclaw/defenseclaw/internal/version"
+	collectortracepb "go.opentelemetry.io/proto/otlp/collector/trace/v1"
+	commonpb "go.opentelemetry.io/proto/otlp/common/v1"
+	tracepb "go.opentelemetry.io/proto/otlp/trace/v1"
+	"google.golang.org/protobuf/proto"
+)
+
+type sidecarV8BootstrapFixture struct {
+	sidecar    *Sidecar
+	store      *audit.Store
+	logger     *audit.Logger
+	dataDir    string
+	configPath string
+	raw        []byte
+}
+
+func newSidecarV8BootstrapFixture(t *testing.T, configVersion int, storePath string) sidecarV8BootstrapFixture {
+	t.Helper()
+	dataDir := t.TempDir()
+	if storePath == "" {
+		storePath = filepath.Join(dataDir, config.DefaultAuditDBName)
+	}
+	store, err := audit.NewStore(storePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Init(); err != nil {
+		_ = store.Close()
+		t.Fatal(err)
+	}
+	logger := audit.NewLogger(store)
+	configPath := filepath.Join(dataDir, "config.yaml")
+	cfg := &config.Config{
+		ConfigVersion: configVersion, ConfigFilePath: configPath,
+		DataDir: dataDir, AuditDB: storePath,
+		JudgeBodiesDB: filepath.Join(dataDir, config.DefaultJudgeBodiesDBName),
+		Environment:   "test",
+	}
+	sidecar := &Sidecar{cfg: cfg, store: store, logger: logger, health: NewSidecarHealth()}
+	sidecar.publishConfig(cfg)
+	previousVersion := version.Current().BinaryVersion
+	version.SetBinaryVersion("8.0.0-bootstrap-test")
+	previousRunID := gatewaylog.ProcessRunID()
+	previousInstanceID := gatewaylog.SidecarInstanceID()
+	gatewaylog.SetProcessRunID("bootstrap-run-001")
+	gatewaylog.SetSidecarInstanceID("bootstrap-instance-001")
+	t.Cleanup(func() {
+		_ = sidecar.closeOwnedObservabilityV8Runtime()
+		logger.Close()
+		_ = store.Close()
+		version.SetBinaryVersion(previousVersion)
+		gatewaylog.SetProcessRunID(previousRunID)
+		gatewaylog.SetSidecarInstanceID(previousInstanceID)
+	})
+	raw := []byte(fmt.Sprintf("config_version: 8\ndata_dir: %q\nobservability: {}\n", dataDir))
+	return sidecarV8BootstrapFixture{
+		sidecar: sidecar, store: store, logger: logger,
+		dataDir: dataDir, configPath: configPath, raw: raw,
+	}
+}
+
+func TestSidecarBootstrapObservabilityV8BindsOneValidatedOwnedRuntime(t *testing.T) {
+	fixture := newSidecarV8BootstrapFixture(t, 8, "")
+	proxy := &GuardrailProxy{}
+	fixture.sidecar.setGuardrailProxy(proxy)
+	bound, err := fixture.sidecar.BootstrapObservabilityRuntime(t.Context(), fixture.configPath, fixture.raw)
+	if err != nil || !bound {
+		t.Fatalf("bootstrap bound=%t error=%v", bound, err)
+	}
+	fixture.sidecar.observabilityV8Mu.Lock()
+	owner, ok := fixture.sidecar.observabilityV8.(*sidecarOwnedObservabilityV8Runtime)
+	fixture.sidecar.observabilityV8Mu.Unlock()
+	if !ok || owner == nil || owner.runtime == nil || owner.runtime.Active() == nil ||
+		owner.runtime.Active().Generation() != 1 {
+		t.Fatalf("owned runtime=%T %#v", fixture.sidecar.observabilityV8, owner)
+	}
+	if proxy.observabilityV8TraceRuntime() != owner {
+		t.Fatal("validated runtime was not bound to the existing proxy")
+	}
+	if rebound, secondErr := fixture.sidecar.BootstrapObservabilityRuntime(
+		t.Context(), fixture.configPath, fixture.raw,
+	); rebound || sidecarV8BootstrapCode(secondErr) != sidecarObservabilityV8BootstrapBinding {
+		t.Fatalf("duplicate bootstrap bound=%t error=%v", rebound, secondErr)
+	}
+	if err := fixture.sidecar.beginObservabilityV8Run(); err != nil {
+		t.Fatalf("validated bound v8 run gate: %v", err)
+	}
+}
+
+func TestSidecarBootstrapLocalObservabilityCanaryReachesAgent360Projection(t *testing.T) {
+	requests := make(chan *collectortracepb.ExportTraceServiceRequest, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/v1/traces" {
+			http.NotFound(writer, request)
+			return
+		}
+		body, _ := io.ReadAll(request.Body)
+		decoded := &collectortracepb.ExportTraceServiceRequest{}
+		if err := proto.Unmarshal(body, decoded); err != nil {
+			http.Error(writer, "invalid protobuf", http.StatusBadRequest)
+			return
+		}
+		requests <- decoded
+		response, _ := proto.Marshal(&collectortracepb.ExportTraceServiceResponse{})
+		writer.Header().Set("Content-Type", "application/x-protobuf")
+		_, _ = writer.Write(response)
+	}))
+	defer server.Close()
+
+	fixture := newSidecarV8BootstrapFixture(t, 8, "")
+	raw := []byte(fmt.Sprintf(
+		"config_version: 8\ndata_dir: %q\nobservability:\n  destinations:\n    - name: %s\n      kind: otlp\n      endpoint: %q\n      protocol: http/protobuf\n      tls:\n        insecure: true\n      network_safety:\n        allow_private_networks: true\n      batch:\n        max_export_batch_size: 2\n        scheduled_delay_ms: 10\n      send:\n        signals: [traces]\n        buckets: ['*']\n",
+		fixture.dataDir,
+		localobservability.DestinationName,
+		server.URL,
+	))
+	bound, err := fixture.sidecar.BootstrapObservabilityRuntime(
+		t.Context(), fixture.configPath, raw,
+	)
+	if err != nil || !bound {
+		t.Fatalf("bootstrap bound=%t error=%v", bound, err)
+	}
+	canary := fixture.sidecar.observabilityV8CanaryEmitter()
+	if canary == nil {
+		t.Fatal("owned runtime did not expose canary emitter")
+	}
+	result, err := canary.EmitTraceCanary(t.Context(), localobservability.DestinationName)
+	if err != nil || !result.Acknowledged || result.Generation != 1 ||
+		result.Destination != localobservability.DestinationName || result.TraceID == "" {
+		t.Fatalf("canary result=%+v error=%v", result, err)
+	}
+
+	var request *collectortracepb.ExportTraceServiceRequest
+	select {
+	case request = <-requests:
+	case <-time.After(2 * time.Second):
+		t.Fatal("local-observability receiver did not get canary trace")
+	}
+	spans := gatewayTraceRequestSpans(request)
+	if len(spans) != 2 {
+		t.Fatalf("captured canary spans = %d, want 2", len(spans))
+	}
+	var root, child *tracepb.Span
+	for _, span := range spans {
+		switch gatewayProtoAttribute(span.Attributes, "defenseclaw.span.family") {
+		case observability.TelemetryFamilyAgentInvoke:
+			root = span
+		case observability.TelemetryFamilyModelChat:
+			child = span
+		}
+	}
+	if root == nil || child == nil || root.Name != "invoke_agent diagnostic" || child.Name != "chat gpt-4o-mini" ||
+		fmt.Sprintf("%x", root.TraceId) != result.TraceID ||
+		!bytes.Equal(root.TraceId, child.TraceId) || !bytes.Equal(root.SpanId, child.ParentSpanId) {
+		t.Fatalf("canonical root/child pair root=%+v child=%+v result=%+v", root, child, result)
+	}
+	if gatewayProtoAttribute(root.Attributes, "defenseclaw.agent.type") != "diagnostic" ||
+		gatewayProtoAttribute(root.Attributes, "gen_ai.agent.type") != "diagnostic" {
+		t.Fatalf("Agent360 compatibility aliases = %q/%q",
+			gatewayProtoAttribute(root.Attributes, "defenseclaw.agent.type"),
+			gatewayProtoAttribute(root.Attributes, "gen_ai.agent.type"))
+	}
+}
+
+func TestSidecarBootstrapObservabilityV8LeavesV7CompletelyUntouched(t *testing.T) {
+	fixture := newSidecarV8BootstrapFixture(t, 7, "")
+	legacyOTel := &telemetry.Provider{}
+	fixture.sidecar.otel = legacyOTel
+	v7 := []byte("config_version: 7\notel:\n  enabled: false\n")
+	bound, err := fixture.sidecar.BootstrapObservabilityRuntime(t.Context(), fixture.configPath, v7)
+	if err != nil || bound {
+		t.Fatalf("v7 bootstrap bound=%t error=%v", bound, err)
+	}
+	if fixture.sidecar.observabilityV8Emitter() != nil || fixture.sidecar.otelSnapshot() != legacyOTel {
+		t.Fatal("v7 bootstrap changed legacy runtime state")
+	}
+	if err := fixture.sidecar.beginObservabilityV8Run(); err != nil {
+		t.Fatalf("v7 run gate changed: %v", err)
+	}
+}
+
+func TestSidecarBootstrapObservabilityV8FailsClosedBeforeServing(t *testing.T) {
+	dataDir := t.TempDir()
+	wrongStore := filepath.Join(dataDir, "wrong.db")
+	fixture := newSidecarV8BootstrapFixture(t, 8, wrongStore)
+	bound, err := fixture.sidecar.BootstrapObservabilityRuntime(t.Context(), fixture.configPath, fixture.raw)
+	if bound || sidecarV8BootstrapCode(err) != sidecarObservabilityV8BootstrapStore {
+		t.Fatalf("mismatched store bound=%t error=%v", bound, err)
+	}
+	if fixture.sidecar.observabilityV8Emitter() != nil {
+		t.Fatal("failed bootstrap left a partial runtime bound")
+	}
+	runErr := fixture.sidecar.beginObservabilityV8Run()
+	var gate *sidecarObservabilityError
+	if !errors.As(runErr, &gate) || gate.Code() != sidecarObservabilityInvalidBinding {
+		t.Fatalf("unbound v8 run gate error=%v", runErr)
+	}
+}
+
+func TestSidecarOwnedObservabilityV8ReloadsGenerationAndShutsDownBeforeStore(t *testing.T) {
+	fixture := newSidecarV8BootstrapFixture(t, 8, "")
+	bound, err := fixture.sidecar.BootstrapObservabilityRuntime(t.Context(), fixture.configPath, fixture.raw)
+	if err != nil || !bound {
+		t.Fatalf("bootstrap bound=%t error=%v", bound, err)
+	}
+	fixture.sidecar.observabilityV8Mu.Lock()
+	owner := fixture.sidecar.observabilityV8.(*sidecarOwnedObservabilityV8Runtime)
+	fixture.sidecar.observabilityV8Mu.Unlock()
+	reloadRaw := []byte(fmt.Sprintf(
+		"config_version: 8\ndata_dir: %q\nobservability:\n  local:\n    retention_days: 30\n",
+		fixture.dataDir,
+	))
+	result, reloadErr := fixture.sidecar.ReloadObservabilityRuntime(
+		t.Context(), fixture.configPath, reloadRaw,
+	)
+	if reloadErr != nil || result.Status() != runtimegraph.ReloadApplied ||
+		owner.runtime.Active() == nil || owner.runtime.Active().Generation() != 2 ||
+		owner.runtime.Active().RetentionDays() != 30 {
+		t.Fatalf("reload=%s error=%v graph=%+v", result.Status(), reloadErr, owner.runtime.Active())
+	}
+	if !fixture.store.Ready() {
+		t.Fatal("runtime reload closed the caller-owned SQLite store")
+	}
+	if err := fixture.sidecar.closeOwnedObservabilityV8Runtime(); err != nil {
+		t.Fatal(err)
+	}
+	owner.lifecycleMu.RLock()
+	closed := owner.closed
+	owner.lifecycleMu.RUnlock()
+	if !closed || fixture.sidecar.observabilityV8Emitter() != nil || !fixture.store.Ready() {
+		t.Fatalf("shutdown closed=%t emitter=%v store-ready=%t", closed, fixture.sidecar.observabilityV8Emitter(), fixture.store.Ready())
+	}
+	if err := fixture.sidecar.closeOwnedObservabilityV8Runtime(); err != nil {
+		t.Fatalf("idempotent shutdown: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+	if _, err := fixture.sidecar.ReloadObservabilityRuntime(ctx, fixture.configPath, reloadRaw); err == nil {
+		t.Fatal("closed runtime accepted reload")
+	}
+}
+
+func TestSidecarConfigManagerReloadsFileChangedAfterBootstrap(t *testing.T) {
+	fixture := newSidecarV8BootstrapFixture(t, 8, "")
+	initialRaw := []byte(fmt.Sprintf(
+		"config_version: 8\ndata_dir: %q\nenvironment: test\nobservability: {}\n",
+		fixture.dataDir,
+	))
+	if err := os.WriteFile(fixture.configPath, initialRaw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	initial, err := config.LoadFromFile(fixture.configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture.sidecar.publishConfig(initial)
+	legacyOTel := &telemetry.Provider{}
+	fixture.sidecar.otel = legacyOTel
+	bound, err := fixture.sidecar.BootstrapObservabilityRuntime(
+		t.Context(), fixture.configPath, initialRaw,
+	)
+	if err != nil || !bound {
+		t.Fatalf("bootstrap bound=%t error=%v", bound, err)
+	}
+	activeDigest := fixture.sidecar.observabilityV8ActivePlanDigest()
+	if activeDigest == "" {
+		t.Fatal("bootstrapped runtime has no active plan digest")
+	}
+
+	// This source is installed by the test hook immediately after fsnotify is
+	// registered and before startup reconciliation. The serving gate must not
+	// report ready until this buffered registration-window mutation is active.
+	nextRaw := []byte(fmt.Sprintf(
+		"config_version: 8\ndata_dir: %q\nenvironment: test\nguardrail:\n  mode: action\nobservability:\n  local:\n    retention_days: 30\n",
+		fixture.dataDir,
+	))
+	mgr := newConfigManagerWithSnapshot(
+		fixture.configPath,
+		initial,
+		nil,
+		nil,
+		activeDigest,
+		fixture.sidecar.applyConfigReloadSnapshot,
+	)
+	var hookErr error
+	mgr.afterWatchAdded = func() { hookErr = os.WriteFile(fixture.configPath, nextRaw, 0o600) }
+	runCtx, cancel := context.WithCancel(t.Context())
+	ready := make(chan error, 1)
+	runDone := make(chan error, 1)
+	go func() { runDone <- mgr.runWithStartupReconcile(runCtx, ready) }()
+	if err := <-ready; err != nil {
+		cancel()
+		t.Fatal(err)
+	}
+	if hookErr != nil {
+		cancel()
+		t.Fatal(hookErr)
+	}
+	fixture.sidecar.observabilityV8Mu.Lock()
+	owner := fixture.sidecar.observabilityV8.(*sidecarOwnedObservabilityV8Runtime)
+	fixture.sidecar.observabilityV8Mu.Unlock()
+	if owner.runtime.Active().Generation() != 2 || owner.runtime.Active().RetentionDays() != 30 {
+		t.Fatalf("active graph generation/retention = %d/%d",
+			owner.runtime.Active().Generation(), owner.runtime.Active().RetentionDays())
+	}
+	if got := fixture.sidecar.currentConfig().Guardrail.Mode; got != "action" {
+		t.Fatalf("sidecar config guardrail mode = %q", got)
+	}
+	if fixture.sidecar.otelSnapshot() != legacyOTel {
+		t.Fatal("schema v8 reload rebuilt the legacy OTel provider")
+	}
+	cancel()
+	if err := <-runDone; !errors.Is(err, context.Canceled) {
+		t.Fatalf("config manager shutdown error = %v", err)
+	}
+}
+
+func TestSidecarConfigManagerV8RuntimeFailureRollsBackGraphAndConfig(t *testing.T) {
+	fixture := newSidecarV8BootstrapFixture(t, 8, "")
+	initialRaw := []byte(fmt.Sprintf(
+		"config_version: 8\ndata_dir: %q\nenvironment: original\nobservability: {}\n",
+		fixture.dataDir,
+	))
+	if err := os.WriteFile(fixture.configPath, initialRaw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	initial, err := config.LoadFromFile(fixture.configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture.sidecar.publishConfig(initial)
+	bound, err := fixture.sidecar.BootstrapObservabilityRuntime(
+		t.Context(), fixture.configPath, initialRaw,
+	)
+	if err != nil || !bound {
+		t.Fatalf("bootstrap bound=%t error=%v", bound, err)
+	}
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+
+	mgr := newConfigManagerWithSnapshot(
+		fixture.configPath,
+		initial,
+		nil,
+		nil,
+		fixture.sidecar.observabilityV8ActivePlanDigest(),
+		fixture.sidecar.applyConfigReloadSnapshot,
+	)
+	failingRaw := []byte(fmt.Sprintf(
+		"config_version: 8\ndata_dir: %q\nenvironment: original\nguardrail:\n  mode: action\nobservability:\n  destinations:\n    - name: occupied\n      kind: prometheus\n      listen: %q\n      path: /metrics\n",
+		fixture.dataDir,
+		listener.Addr().String(),
+	))
+	if err := os.WriteFile(fixture.configPath, failingRaw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	err = mgr.Reload(t.Context(), "test")
+	if err == nil {
+		t.Fatal("occupied Prometheus listener reload unexpectedly succeeded")
+	}
+	fixture.sidecar.observabilityV8Mu.Lock()
+	owner := fixture.sidecar.observabilityV8.(*sidecarOwnedObservabilityV8Runtime)
+	fixture.sidecar.observabilityV8Mu.Unlock()
+	if owner.runtime.Active().Generation() != 1 || fixture.sidecar.currentConfig().Guardrail.Mode != "observe" ||
+		mgr.Current().Guardrail.Mode != "observe" || mgr.gen.Load() != 0 {
+		t.Fatalf("rollback graph/sidecar/manager/gen = %d/%q/%q/%d",
+			owner.runtime.Active().Generation(), fixture.sidecar.currentConfig().Guardrail.Mode,
+			mgr.Current().Guardrail.Mode, mgr.gen.Load())
+	}
+}
+
+func TestSidecarConfigManagerV8RestartModeDoesNotHotApplyPlan(t *testing.T) {
+	fixture := newSidecarV8BootstrapFixture(t, 8, "")
+	initialRaw := []byte(fmt.Sprintf(
+		"config_version: 8\ndata_dir: %q\nenvironment: original\ngateway:\n  config_reload:\n    mode: restart\nobservability: {}\n",
+		fixture.dataDir,
+	))
+	if err := os.WriteFile(fixture.configPath, initialRaw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	initial, err := config.LoadFromFile(fixture.configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture.sidecar.publishConfig(initial)
+	bound, err := fixture.sidecar.BootstrapObservabilityRuntime(
+		t.Context(), fixture.configPath, initialRaw,
+	)
+	if err != nil || !bound {
+		t.Fatalf("bootstrap bound=%t error=%v", bound, err)
+	}
+	helperCalled := false
+	previousHelper := launchConfigRestartHelper
+	launchConfigRestartHelper = func() error {
+		helperCalled = true
+		return nil
+	}
+	t.Cleanup(func() { launchConfigRestartHelper = previousHelper })
+	runCtx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	fixture.sidecar.setRunCancel(cancel)
+
+	mgr := newConfigManagerWithSnapshot(
+		fixture.configPath,
+		initial,
+		nil,
+		nil,
+		fixture.sidecar.observabilityV8ActivePlanDigest(),
+		fixture.sidecar.applyConfigReloadSnapshot,
+	)
+	nextRaw := []byte(fmt.Sprintf(
+		"config_version: 8\ndata_dir: %q\nenvironment: original\ngateway:\n  config_reload:\n    mode: restart\nobservability:\n  local:\n    retention_days: 30\n",
+		fixture.dataDir,
+	))
+	if err := os.WriteFile(fixture.configPath, nextRaw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := mgr.Reload(t.Context(), "test"); err != nil {
+		t.Fatal(err)
+	}
+	fixture.sidecar.observabilityV8Mu.Lock()
+	owner := fixture.sidecar.observabilityV8.(*sidecarOwnedObservabilityV8Runtime)
+	fixture.sidecar.observabilityV8Mu.Unlock()
+	if !helperCalled || owner.runtime.Active().Generation() != 1 ||
+		fixture.sidecar.currentConfig().Environment != "original" {
+		t.Fatalf("restart helper/generation/environment = %t/%d/%q",
+			helperCalled, owner.runtime.Active().Generation(), fixture.sidecar.currentConfig().Environment)
+	}
+	select {
+	case <-runCtx.Done():
+	default:
+		t.Fatal("restart-mode v8 change did not request process restart")
+	}
+}
+
+func TestSidecarConfigManagerV8NonObservabilityHotChangeDoesNotReloadGraph(t *testing.T) {
+	fixture := newSidecarV8BootstrapFixture(t, 8, "")
+	initialRaw := []byte(fmt.Sprintf(
+		"config_version: 8\ndata_dir: %q\nnotifications:\n  enabled: false\nobservability: {}\n",
+		fixture.dataDir,
+	))
+	if err := os.WriteFile(fixture.configPath, initialRaw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	initial, err := config.LoadFromFile(fixture.configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture.sidecar.publishConfig(initial)
+	bound, err := fixture.sidecar.BootstrapObservabilityRuntime(
+		t.Context(), fixture.configPath, initialRaw,
+	)
+	if err != nil || !bound {
+		t.Fatalf("bootstrap bound=%t error=%v", bound, err)
+	}
+	mgr := newConfigManagerWithSnapshot(
+		fixture.configPath,
+		initial,
+		nil,
+		nil,
+		fixture.sidecar.observabilityV8ActivePlanDigest(),
+		fixture.sidecar.applyConfigReloadSnapshot,
+	)
+	nextRaw := []byte(fmt.Sprintf(
+		"config_version: 8\ndata_dir: %q\nnotifications:\n  enabled: true\nobservability: {}\n",
+		fixture.dataDir,
+	))
+	if err := os.WriteFile(fixture.configPath, nextRaw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := mgr.Reload(t.Context(), "test"); err != nil {
+		t.Fatal(err)
+	}
+	fixture.sidecar.observabilityV8Mu.Lock()
+	owner := fixture.sidecar.observabilityV8.(*sidecarOwnedObservabilityV8Runtime)
+	fixture.sidecar.observabilityV8Mu.Unlock()
+	if owner.runtime.Active().Generation() != 1 || !fixture.sidecar.currentConfig().Notifications.Enabled {
+		t.Fatalf("generation/notifications = %d/%t",
+			owner.runtime.Active().Generation(), fixture.sidecar.currentConfig().Notifications.Enabled)
+	}
+}
+
+func TestSidecarConfigManagerV8ResourceIdentityChangeRequiresRestart(t *testing.T) {
+	fixture := newSidecarV8BootstrapFixture(t, 8, "")
+	initialRaw := []byte(fmt.Sprintf(
+		"config_version: 8\ndata_dir: %q\nenvironment: original\nobservability: {}\n",
+		fixture.dataDir,
+	))
+	if err := os.WriteFile(fixture.configPath, initialRaw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	initial, err := config.LoadFromFile(fixture.configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture.sidecar.publishConfig(initial)
+	bound, err := fixture.sidecar.BootstrapObservabilityRuntime(
+		t.Context(), fixture.configPath, initialRaw,
+	)
+	if err != nil || !bound {
+		t.Fatalf("bootstrap bound=%t error=%v", bound, err)
+	}
+	mgr := newConfigManagerWithSnapshot(
+		fixture.configPath,
+		initial,
+		nil,
+		nil,
+		fixture.sidecar.observabilityV8ActivePlanDigest(),
+		fixture.sidecar.applyConfigReloadSnapshot,
+	)
+	nextRaw := []byte(fmt.Sprintf(
+		"config_version: 8\ndata_dir: %q\nenvironment: changed\nobservability: {}\n",
+		fixture.dataDir,
+	))
+	if err := os.WriteFile(fixture.configPath, nextRaw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	err = mgr.Reload(t.Context(), "test")
+	if err == nil || !strings.Contains(err.Error(), "environment") {
+		t.Fatalf("resource identity reload error = %v", err)
+	}
+	fixture.sidecar.observabilityV8Mu.Lock()
+	owner := fixture.sidecar.observabilityV8.(*sidecarOwnedObservabilityV8Runtime)
+	fixture.sidecar.observabilityV8Mu.Unlock()
+	if owner.runtime.Active().Generation() != 1 ||
+		fixture.sidecar.currentConfig().Environment != "original" ||
+		mgr.Current().Environment != "original" {
+		t.Fatalf("identity rollback generation/sidecar/manager = %d/%q/%q",
+			owner.runtime.Active().Generation(), fixture.sidecar.currentConfig().Environment,
+			mgr.Current().Environment)
+	}
+}
+
+func TestSidecarRunEarlyFailureClosesOwnedObservabilityV8Runtime(t *testing.T) {
+	t.Run("token synthesis", func(t *testing.T) {
+		fixture := newSidecarV8BootstrapFixture(t, 8, "")
+		bound, err := fixture.sidecar.BootstrapObservabilityRuntime(
+			t.Context(), fixture.configPath, fixture.raw,
+		)
+		if err != nil || !bound {
+			t.Fatalf("bootstrap bound=%t error=%v", bound, err)
+		}
+		blockedDataDir := filepath.Join(t.TempDir(), "not-a-directory")
+		if err := os.WriteFile(blockedDataDir, []byte("blocked"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("DEFENSECLAW_GATEWAY_TOKEN", "")
+		t.Setenv("OPENCLAW_GATEWAY_TOKEN", "")
+		t.Setenv("TEST_V8_EARLY_FAILURE_TOKEN", "")
+		next := fixture.sidecar.currentConfig()
+		next.DataDir = blockedDataDir
+		next.Gateway.Token = ""
+		next.Gateway.TokenEnv = "TEST_V8_EARLY_FAILURE_TOKEN"
+		fixture.sidecar.publishConfig(next)
+
+		err = fixture.sidecar.Run(t.Context())
+		if err == nil || !strings.Contains(err.Error(), "gateway token synthesis") {
+			t.Fatalf("Run token failure = %v", err)
+		}
+		assertSidecarOwnedV8ClosedAfterRunFailure(t, fixture)
+	})
+
+	t.Run("startup watcher reconcile", func(t *testing.T) {
+		fixture := newSidecarV8BootstrapFixture(t, 8, "")
+		bound, err := fixture.sidecar.BootstrapObservabilityRuntime(
+			t.Context(), fixture.configPath, fixture.raw,
+		)
+		if err != nil || !bound {
+			t.Fatalf("bootstrap bound=%t error=%v", bound, err)
+		}
+		next := fixture.sidecar.currentConfig()
+		next.Gateway.Token = "already-resolved-token"
+		fixture.sidecar.publishConfig(next)
+		invalid := []byte(fmt.Sprintf(
+			"config_version: 8\ndata_dir: %q\nobservability:\n  destinationz: []\n",
+			fixture.dataDir,
+		))
+		if err := os.WriteFile(fixture.configPath, invalid, 0o600); err != nil {
+			t.Fatal(err)
+		}
+
+		err = fixture.sidecar.Run(t.Context())
+		if err == nil || !strings.Contains(err.Error(), "reconcile observability v8 config") {
+			t.Fatalf("Run reconcile failure = %v", err)
+		}
+		assertSidecarOwnedV8ClosedAfterRunFailure(t, fixture)
+	})
+}
+
+func assertSidecarOwnedV8ClosedAfterRunFailure(t *testing.T, fixture sidecarV8BootstrapFixture) {
+	t.Helper()
+	if fixture.sidecar.observabilityV8Emitter() != nil || !fixture.store.Ready() {
+		t.Fatalf("failed Run left owned runtime/store state = %T/%t",
+			fixture.sidecar.observabilityV8Emitter(), fixture.store.Ready())
+	}
+}
+
+func gatewayTraceRequestSpans(request *collectortracepb.ExportTraceServiceRequest) []*tracepb.Span {
+	var spans []*tracepb.Span
+	if request == nil {
+		return spans
+	}
+	for _, resource := range request.ResourceSpans {
+		if resource == nil {
+			continue
+		}
+		for _, scope := range resource.ScopeSpans {
+			if scope != nil {
+				spans = append(spans, scope.Spans...)
+			}
+		}
+	}
+	return spans
+}
+
+func gatewayProtoAttribute(attributes []*commonpb.KeyValue, key string) string {
+	for _, attribute := range attributes {
+		if attribute != nil && attribute.Key == key && attribute.Value != nil {
+			return attribute.Value.GetStringValue()
+		}
+	}
+	return ""
+}
+
+func sidecarV8BootstrapCode(err error) sidecarObservabilityV8BootstrapErrorCode {
+	var target *sidecarObservabilityV8BootstrapError
+	if errors.As(err, &target) {
+		return target.Code()
+	}
+	return ""
+}

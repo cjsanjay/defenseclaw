@@ -26,6 +26,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/defenseclaw/defenseclaw/internal/config"
 	"github.com/defenseclaw/defenseclaw/internal/gateway"
 	"github.com/defenseclaw/defenseclaw/internal/sandbox"
 )
@@ -106,6 +107,9 @@ func runSidecar(_ *cobra.Command, _ []string) error {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	if err := bootstrapConfiguredObservabilityRuntime(ctx, cfg, activeObservabilityV8Startup, sc); err != nil {
+		return err
+	}
 
 	// Always capture the common shutdown signals so we can cancel ctx
 	// cleanly. Previously this function also installed wide signal
@@ -186,6 +190,40 @@ func runSidecar(_ *cobra.Command, _ []string) error {
 			os.Getpid())
 	}
 	return runErr
+}
+
+type observabilityRuntimeBootstrapper interface {
+	BootstrapObservabilityRuntime(context.Context, string, []byte) (bool, error)
+}
+
+// bootstrapConfiguredObservabilityRuntime is the single CLI activation gate
+// between Sidecar construction and serving. A v8 Config without the validated
+// source snapshot is rejected, as is a bootstrap that reports a no-op: schema
+// v8 must never fall through to the legacy exporters or serve partially bound.
+// Schema v7 is an exact no-op and does not invoke the bootstrapper.
+func bootstrapConfiguredObservabilityRuntime(
+	ctx context.Context,
+	c *config.Config,
+	startup *observabilityV8Startup,
+	bootstrapper observabilityRuntimeBootstrapper,
+) error {
+	if c == nil {
+		return fmt.Errorf("sidecar: observability bootstrap: config is unavailable")
+	}
+	if c.ConfigVersion != 8 {
+		return nil
+	}
+	if ctx == nil || startup == nil || strings.TrimSpace(startup.sourceName) == "" || len(startup.raw) == 0 || bootstrapper == nil {
+		return fmt.Errorf("sidecar: observability v8 bootstrap state is incomplete")
+	}
+	bound, err := bootstrapper.BootstrapObservabilityRuntime(ctx, startup.sourceName, startup.raw)
+	if err != nil {
+		return fmt.Errorf("sidecar: observability v8 bootstrap: %w", err)
+	}
+	if !bound {
+		return fmt.Errorf("sidecar: observability v8 bootstrap did not bind a runtime")
+	}
+	return nil
 }
 
 // sidecarDiagEnabled reports whether DEFENSECLAW_SIDECAR_DIAG is set to a

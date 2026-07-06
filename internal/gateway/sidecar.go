@@ -583,10 +583,19 @@ func (s *Sidecar) swapAIDiscovery(next *inventory.ContinuousDiscoveryService) *i
 // Run starts all subsystems as independent goroutines. Each subsystem runs
 // in its own goroutine so that a gateway disconnect does not stop the watcher
 // or API server. Run blocks until ctx is cancelled, then shuts everything down.
-func (s *Sidecar) Run(ctx context.Context) error {
+func (s *Sidecar) Run(ctx context.Context) (runErr error) {
 	if err := s.beginObservabilityV8Run(); err != nil {
 		return err
 	}
+	// Bootstrap-owned workers must retire on every return path, including
+	// failures before the normal shutdown block is reached. The explicit normal
+	// close below preserves close-before-store ordering; this deferred call is
+	// idempotent and covers startup lifecycle/token/watcher failures.
+	defer func() {
+		if err := s.closeOwnedObservabilityV8Runtime(); err != nil && runErr == nil {
+			runErr = err
+		}
+	}()
 	runCtx, runCancel := context.WithCancel(ctx)
 	defer runCancel()
 	s.setRunCancel(runCancel)
@@ -672,15 +681,39 @@ func (s *Sidecar) Run(ctx context.Context) error {
 	if strings.TrimSpace(configPath) == "" {
 		configPath = config.ConfigPath()
 	}
-	s.configMgr = NewConfigManager(configPath, s.currentConfig(), s.logger, s.health, s.applyConfigReload)
+	s.configMgr = newConfigManagerWithSnapshot(
+		configPath,
+		s.currentConfig(),
+		s.logger,
+		s.health,
+		s.observabilityV8ActivePlanDigest(),
+		s.applyConfigReloadSnapshot,
+	)
+	var configStartupReady chan error
+	if s.currentConfig().ConfigVersion == 8 {
+		configStartupReady = make(chan error, 1)
+	}
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		if err := s.configMgr.Run(runCtx); err != nil && runCtx.Err() == nil {
+		var err error
+		if configStartupReady != nil {
+			err = s.configMgr.runWithStartupReconcile(runCtx, configStartupReady)
+		} else {
+			err = s.configMgr.Run(runCtx)
+		}
+		if err != nil && runCtx.Err() == nil {
 			fmt.Fprintf(os.Stderr, "[sidecar] config manager exited with error: %v\n", err)
 			errCh <- err
 		}
 	}()
+	if configStartupReady != nil {
+		if err := <-configStartupReady; err != nil {
+			runCancel()
+			wg.Wait()
+			return fmt.Errorf("sidecar: reconcile observability v8 config: %w", err)
+		}
+	}
 
 	// Goroutine 1: Gateway connection loop. Runs only when an OpenClaw
 	// fleet is configured (see gatewayShouldConnectForConfiguredConnector).
@@ -765,6 +798,12 @@ func (s *Sidecar) Run(ctx context.Context) error {
 	}
 	if webhooks := s.webhooksSnapshot(); webhooks != nil {
 		webhooks.Close()
+	}
+	// Bootstrap-owned observability v8 state must retire before either SQLite
+	// store is drained or closed. Caller-bound v7/test runtimes remain caller
+	// owned and are deliberately ignored by this helper.
+	if err := s.closeOwnedObservabilityV8Runtime(); err != nil {
+		return err
 	}
 	// Drain the async judge-persistence queue BEFORE the audit DB
 	// handle is closed: any rows still buffered after a SIGTERM
@@ -1088,7 +1127,43 @@ func buildSharedJudge(cfg *config.Config, rp *guardrail.RulePack) *LLMJudge {
 }
 
 func (s *Sidecar) applyConfigReload(ctx context.Context, oldCfg, newCfg *config.Config, diff ConfigDiff) error {
-	if configReloadMode(newCfg) == "restart" && !onlyConfigReloadModeChanged(oldCfg, newCfg) {
+	return s.applyConfigReloadSnapshot(ctx, oldCfg, newCfg, diff, configReloadSource{})
+}
+
+func (s *Sidecar) applyConfigReloadSnapshot(
+	ctx context.Context,
+	oldCfg, newCfg *config.Config,
+	diff ConfigDiff,
+	source configReloadSource,
+) error {
+	if oldCfg != nil && newCfg != nil && (oldCfg.ConfigVersion == 8) != (newCfg.ConfigVersion == 8) {
+		return fmt.Errorf(
+			"config reload cannot change schema version between v%d and v%d; restart the gateway",
+			oldCfg.ConfigVersion, newCfg.ConfigVersion,
+		)
+	}
+	isV8 := newCfg != nil && newCfg.ConfigVersion == 8
+	v8PlanChanged := false
+	if isV8 {
+		if strings.TrimSpace(source.sourceName) == "" || len(source.raw) == 0 ||
+			source.compiledV8 == nil || source.compiledV8.Plan == nil {
+			return fmt.Errorf("config reload schema v8 requires the validated source snapshot")
+		}
+		compiledLocal := source.compiledV8.Plan.Snapshot().Local
+		if source.compiledV8.DataDir != newCfg.DataDir ||
+			compiledLocal.Path != newCfg.AuditDB ||
+			compiledLocal.JudgeBodiesPath != newCfg.JudgeBodiesDB {
+			return fmt.Errorf("config reload schema v8 candidate does not match its compiled local paths")
+		}
+		activeDigest := s.observabilityV8ActivePlanDigest()
+		if activeDigest == "" {
+			return fmt.Errorf("config reload schema v8 has no active owned runtime graph")
+		}
+		v8PlanChanged = source.compiledV8.Plan.Digest() != activeDigest
+	}
+	onlyReloadModeChange := onlyConfigReloadModeChanged(oldCfg, newCfg) &&
+		len(diff.Changed) == 1 && diff.Changed[0] == "gateway"
+	if configReloadMode(newCfg) == "restart" && !onlyReloadModeChange {
 		if s == nil || s.currentConfig() == nil || newCfg == nil {
 			return nil
 		}
@@ -1116,8 +1191,11 @@ func (s *Sidecar) applyConfigReload(ctx context.Context, oldCfg, newCfg *config.
 
 	guardrailRestart := guardrailNeedsRestart(oldCfg, newCfg)
 	apiRestart := apiNeedsRestart(oldCfg, newCfg)
-	otelReload := otelNeedsReload(oldCfg, newCfg)
-	auditSinksReload := auditSinksNeedReload(oldCfg, newCfg)
+	// Schema v8 owns every telemetry destination through its runtime graph.
+	// Rebuilding the legacy providers/managers as well would double-export the
+	// same record and give two independent redaction/routing policies authority.
+	otelReload := !isV8 && otelNeedsReload(oldCfg, newCfg)
+	auditSinksReload := !isV8 && auditSinksNeedReload(oldCfg, newCfg)
 	watcherRestart := watcherNeedsRestart(oldCfg, newCfg) || otelReload
 	aiRestart := aiDiscoveryNeedsRestart(oldCfg, newCfg) || otelReload
 	rulePackReload := rulePackNeedsReload(oldCfg, newCfg)
@@ -1129,6 +1207,25 @@ func (s *Sidecar) applyConfigReload(ctx context.Context, oldCfg, newCfg *config.
 	}
 
 	var nextOTel *telemetry.Provider
+	var nextSinks *sinks.Manager
+	var nextAIDiscovery *inventory.ContinuousDiscoveryService
+	preparedCommitted := false
+	defer func() {
+		if preparedCommitted {
+			return
+		}
+		if nextAIDiscovery != nil {
+			if store := nextAIDiscovery.InventoryStore(); store != nil {
+				_ = store.Close()
+			}
+		}
+		if nextSinks != nil {
+			_ = nextSinks.Close()
+		}
+		if nextOTel != nil {
+			_ = nextOTel.Shutdown(context.Background())
+		}
+	}()
 	if otelReload {
 		p, err := s.buildReloadOTelProvider(ctx, &next)
 		if err != nil {
@@ -1137,22 +1234,15 @@ func (s *Sidecar) applyConfigReload(ctx context.Context, oldCfg, newCfg *config.
 		nextOTel = p
 	}
 
-	var nextSinks *sinks.Manager
 	if auditSinksReload {
 		mgr, err := sinkconfig.BuildAuditSinks(next.AuditSinks, next.Observability, version.Current().BinaryVersion)
 		if err != nil {
-			if mgr != nil {
-				_ = mgr.Close()
-			}
-			if nextOTel != nil {
-				_ = nextOTel.Shutdown(context.Background())
-			}
+			nextSinks = mgr
 			return fmt.Errorf("config reload audit sinks: %w", err)
 		}
 		nextSinks = mgr
 	}
 
-	var nextAIDiscovery *inventory.ContinuousDiscoveryService
 	if aiRestart {
 		tel := s.otelSnapshot()
 		if otelReload {
@@ -1160,12 +1250,6 @@ func (s *Sidecar) applyConfigReload(ctx context.Context, oldCfg, newCfg *config.
 		}
 		svc, err := inventory.NewContinuousDiscoveryService(&next, tel, s.events)
 		if err != nil {
-			if nextSinks != nil {
-				_ = nextSinks.Close()
-			}
-			if nextOTel != nil {
-				_ = nextOTel.Shutdown(context.Background())
-			}
 			return fmt.Errorf("config reload ai_discovery: %w", err)
 		}
 		nextAIDiscovery = svc
@@ -1192,20 +1276,24 @@ func (s *Sidecar) applyConfigReload(ctx context.Context, oldCfg, newCfg *config.
 	if aiRestart && nextAIDiscovery != nil && strings.TrimSpace(next.Gateway.Token) == "" {
 		apiToken, err := s.ensureGatewayTokenSynthesis()
 		if err != nil {
-			if nextSinks != nil {
-				_ = nextSinks.Close()
-			}
-			if nextOTel != nil {
-				_ = nextOTel.Shutdown(context.Background())
-			}
 			return fmt.Errorf("config reload application protection gateway token: %w", err)
 		}
 		next.Gateway.Token = apiToken
 	}
 
+	// The v8 runtime graph is the first mutation and the commit boundary. Its
+	// reload builds and canary-validates the complete candidate off-path, then
+	// atomically publishes it. Everything below is deliberately infallible, so
+	// a rejected graph leaves both the prior graph and Config authoritative.
+	if v8PlanChanged {
+		if _, err := s.ReloadObservabilityRuntime(ctx, source.sourceName, source.raw); err != nil {
+			return fmt.Errorf("config reload observability v8: %w", err)
+		}
+	}
+
 	redaction.SetDisableAll(next.Privacy.DisableRedaction)
 	appliedCfg := current
-	if !onlyConfigReloadModeChanged(oldCfg, newCfg) {
+	if !onlyReloadModeChange {
 		appliedCfg = s.publishConfig(&next)
 	}
 
@@ -1305,6 +1393,7 @@ func (s *Sidecar) applyConfigReload(ctx context.Context, oldCfg, newCfg *config.
 	if aiRestart {
 		signalRestart(s.aiRestartCh)
 	}
+	preparedCommitted = true
 	return nil
 }
 

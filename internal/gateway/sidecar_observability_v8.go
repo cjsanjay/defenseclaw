@@ -110,6 +110,12 @@ func (s *Sidecar) beginObservabilityV8Run() error {
 	if s.observabilityV8Run {
 		return &sidecarObservabilityError{code: sidecarObservabilityRunStarted}
 	}
+	// A validated v8 process must have completed mandatory runtime assembly
+	// before any subsystem starts serving. v7 and test configurations preserve
+	// the exact unbound legacy behavior.
+	if cfg := s.currentConfig(); cfg != nil && cfg.ConfigVersion == 8 && s.observabilityV8 == nil {
+		return &sidecarObservabilityError{code: sidecarObservabilityInvalidBinding}
+	}
 	s.observabilityV8Run = true
 	return nil
 }

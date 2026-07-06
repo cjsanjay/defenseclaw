@@ -19,6 +19,8 @@ package gateway
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -34,6 +36,7 @@ import (
 	"github.com/defenseclaw/defenseclaw/internal/config"
 	"github.com/defenseclaw/defenseclaw/internal/inventory"
 	"github.com/defenseclaw/defenseclaw/internal/telemetry"
+	"github.com/defenseclaw/defenseclaw/internal/version"
 )
 
 func TestConfigManagerReloadAppliesAndPublishesSnapshot(t *testing.T) {
@@ -96,6 +99,298 @@ func TestConfigManagerReloadRejectsInvalidAndKeepsSnapshot(t *testing.T) {
 	}
 	if got := mgr.Current().Guardrail.Mode; got != "observe" {
 		t.Fatalf("current mode changed to %q after failed reload", got)
+	}
+}
+
+func TestConfigManagerV8ReloadCompilesAndPassesExactStableSnapshot(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, config.DefaultConfigName)
+	initialRaw := []byte("config_version: 8\ndata_dir: " + dir + "\nobservability: {}\n")
+	if err := os.WriteFile(path, initialRaw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	initial, err := config.LoadFromFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nextRaw := []byte("config_version: 8\ndata_dir: " + dir + "\nobservability:\n  local:\n    retention_days: 30\n")
+	applied := false
+	mgr := newConfigManagerWithSnapshot(
+		path, initial, nil, nil, "",
+		func(_ context.Context, _, next *config.Config, diff ConfigDiff, source configReloadSource) error {
+			applied = true
+			if source.sourceName != path || !bytes.Equal(source.raw, nextRaw) {
+				t.Fatalf("source snapshot = %q/%q", source.sourceName, source.raw)
+			}
+			if source.compiledV8 == nil || source.compiledV8.Plan == nil ||
+				source.compiledV8.Plan.Snapshot().Local.RetentionDays != 30 {
+				t.Fatalf("compiled source = %+v", source.compiledV8)
+			}
+			if next.DataDir != dir || next.AuditDB != filepath.Join(dir, config.DefaultAuditDBName) ||
+				next.JudgeBodiesDB != filepath.Join(dir, config.DefaultJudgeBodiesDBName) {
+				t.Fatalf("projected paths = data=%q audit=%q judge=%q", next.DataDir, next.AuditDB, next.JudgeBodiesDB)
+			}
+			if !slices.Contains(diff.Changed, "observability") {
+				t.Fatalf("changed = %v, missing canonical plan change", diff.Changed)
+			}
+			return nil
+		},
+	)
+	if err := os.WriteFile(path, nextRaw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := mgr.Reload(context.Background(), "test"); err != nil {
+		t.Fatal(err)
+	}
+	if !applied || mgr.gen.Load() != 1 || mgr.Current().ConfigVersion != 8 {
+		t.Fatalf("applied/gen/version = %t/%d/%d", applied, mgr.gen.Load(), mgr.Current().ConfigVersion)
+	}
+	if got, want := version.Current().ContentHash, configContentHashForTest(nextRaw); got != want {
+		t.Fatalf("successful reload content hash = %q, want %q", got, want)
+	}
+}
+
+func TestConfigManagerV8ReloadRejectsInvalidSourceBeforeApply(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, config.DefaultConfigName)
+	initialRaw := []byte("config_version: 8\ndata_dir: " + dir + "\nobservability: {}\n")
+	if err := os.WriteFile(path, initialRaw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	initial, err := config.LoadFromFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	initialHash := version.Current().ContentHash
+	mgr := newConfigManagerWithSnapshot(
+		path, initial, nil, nil, "",
+		func(context.Context, *config.Config, *config.Config, ConfigDiff, configReloadSource) error {
+			t.Fatal("invalid v8 source reached apply")
+			return nil
+		},
+	)
+	invalid := []byte("config_version: 8\ndata_dir: " + dir + "\nobservability:\n  destinationz: []\n")
+	if err := os.WriteFile(path, invalid, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := mgr.Reload(context.Background(), "test"); err == nil || !strings.Contains(err.Error(), "destinationz") {
+		t.Fatalf("invalid v8 reload error = %v", err)
+	}
+	if mgr.gen.Load() != 0 || mgr.Current().ConfigVersion != 8 {
+		t.Fatalf("invalid reload published generation/config = %d/%d", mgr.gen.Load(), mgr.Current().ConfigVersion)
+	}
+	if got := version.Current().ContentHash; got != initialHash {
+		t.Fatalf("rejected reload changed content hash from %q to %q", initialHash, got)
+	}
+}
+
+func TestConfigManagerApplyFailureDoesNotPublishCandidateProvenance(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, config.DefaultConfigName)
+	initialRaw := []byte("config_version: 8\ndata_dir: " + dir + "\nobservability: {}\n")
+	if err := os.WriteFile(path, initialRaw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	initial, err := config.LoadFromFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	initialHash := version.Current().ContentHash
+	wantErr := errors.New("candidate rejected")
+	mgr := newConfigManagerWithSnapshot(
+		path, initial, nil, nil, "",
+		func(context.Context, *config.Config, *config.Config, ConfigDiff, configReloadSource) error {
+			return wantErr
+		},
+	)
+	nextRaw := []byte("config_version: 8\ndata_dir: " + dir + "\nobservability:\n  local:\n    retention_days: 30\n")
+	if err := os.WriteFile(path, nextRaw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := mgr.Reload(context.Background(), "test"); !errors.Is(err, wantErr) {
+		t.Fatalf("apply error = %v", err)
+	}
+	if got := version.Current().ContentHash; got != initialHash {
+		t.Fatalf("apply failure changed content hash from %q to %q", initialHash, got)
+	}
+}
+
+func TestConfigManagerAcceptedNoOpPublishesSnapshotProvenance(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, config.DefaultConfigName)
+	raw := []byte("config_version: 7\ndata_dir: " + dir + "\nguardrail:\n  mode: observe\n")
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	initial, err := config.LoadFromFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mgr := NewConfigManager(path, initial, nil, nil, nil)
+	version.SetContentHash([]byte("unrelated prior provenance"))
+	if err := mgr.Reload(context.Background(), "test"); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := version.Current().ContentHash, configContentHashForTest(raw); got != want {
+		t.Fatalf("no-op reload content hash = %q, want %q", got, want)
+	}
+}
+
+func TestConfigManagerRejectsContinuouslyMutatingSource(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, config.DefaultConfigName)
+	first := []byte("config_version: 8\ndata_dir: " + dir + "\nobservability: {}\n")
+	second := []byte("config_version: 8\ndata_dir: " + dir + "\nobservability:\n  local:\n    retention_days: 30\n")
+	if err := os.WriteFile(path, first, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	initial, err := config.LoadFromFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mgr := newConfigManagerWithSnapshot(
+		path, initial, nil, nil, "",
+		func(context.Context, *config.Config, *config.Config, ConfigDiff, configReloadSource) error {
+			t.Fatal("unstable source reached apply")
+			return nil
+		},
+	)
+	realLoad := mgr.loadSnapshot
+	writeSecond := true
+	mgr.loadSnapshot = func(candidatePath string, raw []byte) (*config.Config, error) {
+		candidate, loadErr := realLoad(candidatePath, raw)
+		next := first
+		if writeSecond {
+			next = second
+		}
+		writeSecond = !writeSecond
+		if writeErr := os.WriteFile(candidatePath, next, 0o600); writeErr != nil {
+			t.Fatalf("mutate config during load: %v", writeErr)
+		}
+		return candidate, loadErr
+	}
+
+	err = mgr.Reload(context.Background(), "test")
+	if err == nil || !strings.Contains(err.Error(), "changed during capture") {
+		t.Fatalf("unstable source error = %v", err)
+	}
+	if mgr.gen.Load() != 0 {
+		t.Fatalf("unstable source published generation %d", mgr.gen.Load())
+	}
+}
+
+func TestConfigManagerABAReloadStillDecodesCapturedSnapshot(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, config.DefaultConfigName)
+	initialRaw := []byte("config_version: 7\ndata_dir: " + dir + "\nguardrail:\n  mode: observe\n  block_message: initial---\n")
+	snapshotA := []byte("config_version: 7\ndata_dir: " + dir + "\nguardrail:\n  mode: action\n  block_message: snapshot-A\n")
+	transientB := []byte("config_version: 7\ndata_dir: " + dir + "\nguardrail:\n  mode: action\n  block_message: ambient--B\n")
+	if len(snapshotA) != len(transientB) {
+		t.Fatal("ABA fixture sources must have identical size")
+	}
+	if err := os.WriteFile(path, initialRaw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	initial, err := config.LoadFromFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	applied := false
+	mgr := newConfigManagerWithSnapshot(
+		path, initial, nil, nil, "",
+		func(_ context.Context, _ *config.Config, next *config.Config, _ ConfigDiff, source configReloadSource) error {
+			applied = true
+			if !bytes.Equal(source.raw, snapshotA) || next.Guardrail.BlockMessage != "snapshot-A" {
+				t.Fatalf("apply source/candidate = %q/%q", source.raw, next.Guardrail.BlockMessage)
+			}
+			return nil
+		},
+	)
+	if err := os.WriteFile(path, snapshotA, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	realLoad := mgr.loadSnapshot
+	loads := 0
+	mgr.loadSnapshot = func(candidatePath string, captured []byte) (*config.Config, error) {
+		loads++
+		before, statErr := os.Stat(candidatePath)
+		if statErr != nil {
+			t.Fatal(statErr)
+		}
+		if writeErr := os.WriteFile(candidatePath, transientB, before.Mode()); writeErr != nil {
+			t.Fatal(writeErr)
+		}
+		candidate, loadErr := realLoad(candidatePath, captured)
+		if writeErr := os.WriteFile(candidatePath, snapshotA, before.Mode()); writeErr != nil {
+			t.Fatal(writeErr)
+		}
+		if timeErr := os.Chtimes(candidatePath, before.ModTime(), before.ModTime()); timeErr != nil {
+			t.Fatal(timeErr)
+		}
+		return candidate, loadErr
+	}
+	if err := mgr.Reload(context.Background(), "test"); err != nil {
+		t.Fatal(err)
+	}
+	if !applied || loads != 1 || mgr.Current().Guardrail.BlockMessage != "snapshot-A" {
+		t.Fatalf("ABA applied/loads/current = %t/%d/%q", applied, loads, mgr.Current().Guardrail.BlockMessage)
+	}
+}
+
+func TestConfigManagerRejectsV7V8HotTransitions(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		initialRaw []byte
+		nextRaw    func(string) []byte
+	}{
+		{
+			name:       "v7_to_v8",
+			initialRaw: []byte("config_version: 7\nguardrail:\n  mode: observe\n"),
+			nextRaw: func(dir string) []byte {
+				return []byte("config_version: 8\ndata_dir: " + dir + "\nobservability: {}\n")
+			},
+		},
+		{
+			name:       "v8_to_v7",
+			initialRaw: nil,
+			nextRaw: func(string) []byte {
+				return []byte("config_version: 7\nguardrail:\n  mode: action\n")
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, config.DefaultConfigName)
+			initialRaw := test.initialRaw
+			if initialRaw == nil {
+				initialRaw = []byte("config_version: 8\ndata_dir: " + dir + "\nobservability: {}\n")
+			}
+			if err := os.WriteFile(path, initialRaw, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			initial, err := config.LoadFromFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			applied := false
+			mgr := newConfigManagerWithSnapshot(
+				path, initial, nil, nil, "",
+				func(context.Context, *config.Config, *config.Config, ConfigDiff, configReloadSource) error {
+					applied = true
+					return nil
+				},
+			)
+			if err := os.WriteFile(path, test.nextRaw(dir), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			err = mgr.Reload(context.Background(), "test")
+			if err == nil || !strings.Contains(err.Error(), "cannot change schema version") || applied {
+				t.Fatalf("transition error/applied = %v/%t", err, applied)
+			}
+			if mgr.Current().ConfigVersion != initial.ConfigVersion || mgr.gen.Load() != 0 {
+				t.Fatalf("transition published version/generation = %d/%d", mgr.Current().ConfigVersion, mgr.gen.Load())
+			}
+		})
 	}
 }
 
@@ -214,6 +509,27 @@ func TestDiffConfigsMarksRuntimeTopologyRestartRequired(t *testing.T) {
 		if !slices.Contains(diff.RestartRequired, want) {
 			t.Fatalf("restart_required = %v, missing %s", diff.RestartRequired, want)
 		}
+	}
+}
+
+func TestDiffConfigsV8ResourceIdentityRequiresRestartWhileV7RemainsHot(t *testing.T) {
+	for _, version := range []int{7, 8} {
+		t.Run(fmt.Sprintf("v%d", version), func(t *testing.T) {
+			oldCfg := config.DefaultConfig()
+			oldCfg.ConfigVersion = version
+			newCfg := cloneConfig(oldCfg)
+			newCfg.Environment = "next"
+			newCfg.TenantID = "tenant-next"
+			newCfg.WorkspaceID = "workspace-next"
+			newCfg.DiscoverySource = "source-next"
+			diff := diffConfigs(oldCfg, newCfg)
+			for _, field := range []string{"environment", "tenant_id", "workspace_id", "discovery_source"} {
+				gotRestart := slices.Contains(diff.RestartRequired, field)
+				if gotRestart != (version == 8) {
+					t.Fatalf("v%d restart_required=%v field=%s", version, diff.RestartRequired, field)
+				}
+			}
+		})
 	}
 }
 
@@ -671,4 +987,9 @@ func writeConfigForManagerTest(t *testing.T, path, dataDir, mode string) {
 	if err := os.WriteFile(path, []byte(raw), 0o600); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
+}
+
+func configContentHashForTest(raw []byte) string {
+	sum := sha256.Sum256(raw)
+	return hex.EncodeToString(sum[:])
 }

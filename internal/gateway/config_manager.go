@@ -17,9 +17,11 @@
 package gateway
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -34,9 +36,14 @@ import (
 	"github.com/defenseclaw/defenseclaw/internal/audit"
 	"github.com/defenseclaw/defenseclaw/internal/config"
 	"github.com/defenseclaw/defenseclaw/internal/managed"
+	"github.com/defenseclaw/defenseclaw/internal/version"
 )
 
 const configReloadDebounce = 500 * time.Millisecond
+
+const configReloadSnapshotAttempts = 3
+
+const configReloadStartupQuietPeriod = 25 * time.Millisecond
 
 type ConfigDiff struct {
 	Changed         []string
@@ -45,11 +52,41 @@ type ConfigDiff struct {
 
 type configApplyFunc func(ctx context.Context, oldCfg, newCfg *config.Config, diff ConfigDiff) error
 
+// configReloadSource is the stable, exact file snapshot used to construct a
+// reload candidate. For schema v8, compiledV8 was derived from these exact raw
+// bytes before diff/apply. Keeping it private prevents callers from treating
+// the source (which may contain secrets) as a logging or API payload.
+type configReloadSource struct {
+	sourceName string
+	raw        []byte
+	compiledV8 *config.ObservabilityV8CompiledConfig
+}
+
+type configSnapshotApplyFunc func(
+	ctx context.Context,
+	oldCfg, newCfg *config.Config,
+	diff ConfigDiff,
+	source configReloadSource,
+) error
+
+type configFileSnapshot struct {
+	raw  []byte
+	info os.FileInfo
+}
+
+type configSnapshotLoader func(string, []byte) (*config.Config, error)
+type configFileSnapshotReader func(string) (configFileSnapshot, error)
+
 type ConfigManager struct {
-	path   string
-	apply  configApplyFunc
-	logger *audit.Logger
-	health *SidecarHealth
+	path            string
+	apply           configApplyFunc
+	applySnapshot   configSnapshotApplyFunc
+	logger          *audit.Logger
+	health          *SidecarHealth
+	loadSnapshot    configSnapshotLoader
+	readSnapshot    configFileSnapshotReader
+	v8PlanDigest    string
+	afterWatchAdded func()
 
 	current atomic.Value // *config.Config
 	gen     atomic.Uint64
@@ -57,14 +94,43 @@ type ConfigManager struct {
 }
 
 func NewConfigManager(path string, initial *config.Config, logger *audit.Logger, health *SidecarHealth, apply configApplyFunc) *ConfigManager {
+	return newConfigManager(path, initial, logger, health, apply, nil)
+}
+
+func newConfigManagerWithSnapshot(
+	path string,
+	initial *config.Config,
+	logger *audit.Logger,
+	health *SidecarHealth,
+	initialV8PlanDigest string,
+	apply configSnapshotApplyFunc,
+) *ConfigManager {
+	m := newConfigManager(path, initial, logger, health, nil, apply)
+	if initial != nil && initial.ConfigVersion == 8 {
+		m.v8PlanDigest = strings.TrimSpace(initialV8PlanDigest)
+	}
+	return m
+}
+
+func newConfigManager(
+	path string,
+	initial *config.Config,
+	logger *audit.Logger,
+	health *SidecarHealth,
+	apply configApplyFunc,
+	applySnapshot configSnapshotApplyFunc,
+) *ConfigManager {
 	if strings.TrimSpace(path) == "" {
 		path = config.ConfigPath()
 	}
 	m := &ConfigManager{
-		path:   filepath.Clean(path),
-		apply:  apply,
-		logger: logger,
-		health: health,
+		path:          filepath.Clean(path),
+		apply:         apply,
+		applySnapshot: applySnapshot,
+		logger:        logger,
+		health:        health,
+		loadSnapshot:  config.LoadCandidateFromBytes,
+		readSnapshot:  readConfigFileSnapshot,
 	}
 	if initial != nil {
 		m.current.Store(cloneConfig(initial))
@@ -84,7 +150,23 @@ func (m *ConfigManager) Current() *config.Config {
 }
 
 func (m *ConfigManager) Run(ctx context.Context) error {
+	return m.run(ctx, nil)
+}
+
+// runWithStartupReconcile installs the watcher first, reconciles the currently
+// active snapshot while filesystem events are already buffered, and reports
+// readiness only after a quiet event window. Sidecar uses this as its v8
+// serving gate; ordinary v7 callers retain Run's existing behavior.
+func (m *ConfigManager) runWithStartupReconcile(ctx context.Context, ready chan<- error) error {
+	return m.run(ctx, ready)
+}
+
+func (m *ConfigManager) run(ctx context.Context, startupReady chan<- error) error {
 	if m == nil {
+		if startupReady != nil {
+			startupReady <- nil
+			close(startupReady)
+		}
 		return nil
 	}
 	if m.health != nil {
@@ -95,6 +177,7 @@ func (m *ConfigManager) Run(ctx context.Context) error {
 	}
 	fsw, err := fsnotify.NewWatcher()
 	if err != nil {
+		signalConfigStartupReady(startupReady, err)
 		if m.health != nil {
 			m.health.SetConfig(StateError, err.Error(), map[string]interface{}{"path": m.path})
 		}
@@ -104,10 +187,21 @@ func (m *ConfigManager) Run(ctx context.Context) error {
 
 	dir := filepath.Dir(m.path)
 	if err := fsw.Add(dir); err != nil {
+		signalConfigStartupReady(startupReady, err)
 		if m.health != nil {
 			m.health.SetConfig(StateError, err.Error(), map[string]interface{}{"path": m.path})
 		}
 		return fmt.Errorf("config watcher: watch %s: %w", dir, err)
+	}
+	if m.afterWatchAdded != nil {
+		m.afterWatchAdded()
+	}
+	if startupReady != nil {
+		if err := m.reconcileStartup(ctx, fsw); err != nil {
+			signalConfigStartupReady(startupReady, err)
+			return err
+		}
+		signalConfigStartupReady(startupReady, nil)
 	}
 
 	timer := time.NewTimer(time.Hour)
@@ -147,6 +241,58 @@ func (m *ConfigManager) Run(ctx context.Context) error {
 	}
 }
 
+func (m *ConfigManager) reconcileStartup(ctx context.Context, fsw *fsnotify.Watcher) error {
+	if m == nil || fsw == nil {
+		return fmt.Errorf("config startup reconciliation is unavailable")
+	}
+	for {
+		if err := m.Reload(ctx, "startup_reconcile"); err != nil {
+			return err
+		}
+		timer := time.NewTimer(configReloadStartupQuietPeriod)
+		dirty := false
+		for {
+			select {
+			case <-ctx.Done():
+				if !timer.Stop() {
+					<-timer.C
+				}
+				return ctx.Err()
+			case event := <-fsw.Events:
+				if m.matches(event.Name) && event.Op&(fsnotify.Write|fsnotify.Create|fsnotify.Rename) != 0 {
+					dirty = true
+				}
+			case watchErr := <-fsw.Errors:
+				if watchErr != nil && m.health != nil {
+					m.health.SetConfig(StateError, watchErr.Error(), map[string]interface{}{"path": m.path})
+				}
+			case <-timer.C:
+				if dirty {
+					break
+				}
+				return nil
+			}
+			if dirty {
+				if !timer.Stop() {
+					select {
+					case <-timer.C:
+					default:
+					}
+				}
+				break
+			}
+		}
+	}
+}
+
+func signalConfigStartupReady(ready chan<- error, err error) {
+	if ready == nil {
+		return
+	}
+	ready <- err
+	close(ready)
+}
+
 func (m *ConfigManager) Reload(ctx context.Context, reason string) error {
 	if m == nil {
 		return nil
@@ -155,7 +301,7 @@ func (m *ConfigManager) Reload(ctx context.Context, reason string) error {
 	defer m.mu.Unlock()
 
 	oldCfg := m.Current()
-	next, err := config.LoadFromFile(m.path)
+	next, source, err := m.loadStableCandidate(ctx)
 	if err != nil {
 		if m.health != nil {
 			m.health.SetConfig(StateError, err.Error(), map[string]interface{}{
@@ -166,11 +312,25 @@ func (m *ConfigManager) Reload(ctx context.Context, reason string) error {
 		}
 		return err
 	}
+	if oldCfg != nil && (oldCfg.ConfigVersion == 8) != (next.ConfigVersion == 8) {
+		return fmt.Errorf(
+			"config reload cannot change schema version between v%d and v%d; restart the gateway",
+			oldCfg.ConfigVersion, next.ConfigVersion,
+		)
+	}
 	if oldCfg != nil && managed.IsManagedEnterprise(oldCfg.DeploymentMode) && !managed.IsManagedEnterprise(next.DeploymentMode) {
 		return fmt.Errorf("config reload cannot downgrade deployment_mode from managed_enterprise")
 	}
 	diff := diffConfigs(oldCfg, next)
+	if next.ConfigVersion == 8 && source.compiledV8 != nil && source.compiledV8.Plan != nil &&
+		source.compiledV8.Plan.Digest() != m.v8PlanDigest {
+		diff.Changed = sortedUniqueStrings(append(diff.Changed, "observability"))
+	}
 	if len(diff.Changed) == 0 {
+		if source.compiledV8 != nil && source.compiledV8.Plan != nil {
+			m.v8PlanDigest = source.compiledV8.Plan.Digest()
+		}
+		version.SetContentHash(source.raw)
 		if m.health != nil {
 			m.health.SetConfig(StateRunning, "", map[string]interface{}{
 				"path":       m.path,
@@ -181,10 +341,19 @@ func (m *ConfigManager) Reload(ctx context.Context, reason string) error {
 		}
 		return nil
 	}
-	if m.apply != nil {
-		if err := m.apply(ctx, oldCfg, next, diff); err != nil {
+	if next.ConfigVersion == 8 && m.applySnapshot == nil {
+		return fmt.Errorf("config reload schema v8 requires a source-aware apply callback")
+	}
+	if m.applySnapshot != nil || m.apply != nil {
+		var applyErr error
+		if m.applySnapshot != nil {
+			applyErr = m.applySnapshot(ctx, oldCfg, next, diff, cloneConfigReloadSource(source))
+		} else {
+			applyErr = m.apply(ctx, oldCfg, next, diff)
+		}
+		if applyErr != nil {
 			if m.health != nil {
-				m.health.SetConfig(StateError, err.Error(), map[string]interface{}{
+				m.health.SetConfig(StateError, applyErr.Error(), map[string]interface{}{
 					"path":             m.path,
 					"generation":       m.gen.Load(),
 					"reason":           reason,
@@ -192,11 +361,15 @@ func (m *ConfigManager) Reload(ctx context.Context, reason string) error {
 					"restart_required": diff.RestartRequired,
 				})
 			}
-			return err
+			return applyErr
 		}
 	}
 	gen := m.gen.Add(1)
 	m.current.Store(cloneConfig(next))
+	if source.compiledV8 != nil && source.compiledV8.Plan != nil {
+		m.v8PlanDigest = source.compiledV8.Plan.Digest()
+	}
+	version.SetContentHash(source.raw)
 	if m.logger != nil {
 		_ = m.logger.LogActionCtx(ctx, string(audit.ActionConfigUpdate), m.path,
 			fmt.Sprintf("generation=%d changed=%s reason=%s", gen, strings.Join(diff.Changed, ","), reason))
@@ -212,6 +385,123 @@ func (m *ConfigManager) Reload(ctx context.Context, reason string) error {
 		})
 	}
 	return nil
+}
+
+func (m *ConfigManager) loadStableCandidate(ctx context.Context) (*config.Config, configReloadSource, error) {
+	if m == nil || m.loadSnapshot == nil || m.readSnapshot == nil {
+		return nil, configReloadSource{}, fmt.Errorf("config reload snapshot loader is unavailable")
+	}
+	for attempt := 1; attempt <= configReloadSnapshotAttempts; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return nil, configReloadSource{}, err
+		}
+		before, beforeErr := m.readSnapshot(m.path)
+		if beforeErr != nil {
+			if isConfigSnapshotChanged(beforeErr) {
+				continue
+			}
+			return nil, configReloadSource{}, beforeErr
+		}
+		next, loadErr := m.loadSnapshot(m.path, before.raw)
+		after, afterErr := m.readSnapshot(m.path)
+		if afterErr != nil {
+			if isConfigSnapshotChanged(afterErr) {
+				continue
+			}
+			return nil, configReloadSource{}, afterErr
+		}
+		if !sameConfigFileSnapshot(before, after) {
+			continue
+		}
+		if loadErr != nil {
+			return nil, configReloadSource{}, loadErr
+		}
+		if next == nil {
+			return nil, configReloadSource{}, fmt.Errorf("config reload loader returned no candidate")
+		}
+		source := configReloadSource{
+			sourceName: m.path,
+			raw:        append([]byte(nil), before.raw...),
+		}
+		if next.ConfigVersion == 8 {
+			compiled, compileErr := config.ParseCompileObservabilityV8(
+				m.path,
+				before.raw,
+				config.ObservabilityV8CompileOptions{DefaultDataDir: next.DataDir},
+			)
+			if compileErr != nil {
+				return nil, configReloadSource{}, compileErr
+			}
+			if compiled == nil || compiled.Plan == nil {
+				return nil, configReloadSource{}, fmt.Errorf("config reload v8 compiler returned no effective plan")
+			}
+			snapshot := compiled.Plan.Snapshot()
+			if strings.TrimSpace(snapshot.Local.Path) == "" || strings.TrimSpace(snapshot.Local.JudgeBodiesPath) == "" {
+				return nil, configReloadSource{}, fmt.Errorf("config reload v8 local store paths are incomplete")
+			}
+			next.DataDir = compiled.DataDir
+			next.AuditDB = snapshot.Local.Path
+			next.JudgeBodiesDB = snapshot.Local.JudgeBodiesPath
+			source.compiledV8 = compiled
+		}
+		return next, source, nil
+	}
+	return nil, configReloadSource{}, fmt.Errorf(
+		"config reload source changed during capture after %d attempts; retry after the writer is idle",
+		configReloadSnapshotAttempts,
+	)
+}
+
+func cloneConfigReloadSource(source configReloadSource) configReloadSource {
+	source.raw = append([]byte(nil), source.raw...)
+	return source
+}
+
+type configSnapshotChangedError struct{}
+
+func (configSnapshotChangedError) Error() string {
+	return "config source changed while it was being read"
+}
+
+func isConfigSnapshotChanged(err error) bool {
+	_, ok := err.(configSnapshotChangedError)
+	return ok
+}
+
+func readConfigFileSnapshot(path string) (configFileSnapshot, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return configFileSnapshot{}, fmt.Errorf("config reload read %s: %w", path, err)
+	}
+	defer file.Close()
+	before, err := file.Stat()
+	if err != nil {
+		return configFileSnapshot{}, fmt.Errorf("config reload stat %s: %w", path, err)
+	}
+	raw, err := io.ReadAll(file)
+	if err != nil {
+		return configFileSnapshot{}, fmt.Errorf("config reload read %s: %w", path, err)
+	}
+	after, err := file.Stat()
+	if err != nil {
+		return configFileSnapshot{}, fmt.Errorf("config reload stat %s: %w", path, err)
+	}
+	if !sameConfigFileInfo(before, after) || int64(len(raw)) != after.Size() {
+		return configFileSnapshot{}, configSnapshotChangedError{}
+	}
+	return configFileSnapshot{raw: raw, info: after}, nil
+}
+
+func sameConfigFileSnapshot(left, right configFileSnapshot) bool {
+	return bytes.Equal(left.raw, right.raw) && sameConfigFileInfo(left.info, right.info)
+}
+
+func sameConfigFileInfo(left, right os.FileInfo) bool {
+	if left == nil || right == nil {
+		return false
+	}
+	return os.SameFile(left, right) && left.Size() == right.Size() &&
+		left.ModTime().Equal(right.ModTime()) && left.Mode() == right.Mode()
 }
 
 func cloneConfig(in *config.Config) *config.Config {
@@ -352,6 +642,26 @@ func diffConfigs(oldCfg, newCfg *config.Config) ConfigDiff {
 	}
 	if oldCfg.DeploymentMode != newCfg.DeploymentMode {
 		restart = append(restart, "deployment_mode")
+	}
+	// The v8 provider factory captures these resource-identity values once at
+	// process bootstrap. A plan-only graph reload cannot safely rewrite them;
+	// publishing the Config as hot would make exported telemetry retain stale
+	// identity. Keep the existing v7 hot behavior, but require a process restart
+	// for v8 until provider-factory replacement is part of the transaction.
+	if oldCfg.ConfigVersion == 8 && newCfg.ConfigVersion == 8 {
+		for _, identity := range []struct {
+			path    string
+			changed bool
+		}{
+			{path: "environment", changed: oldCfg.Environment != newCfg.Environment},
+			{path: "tenant_id", changed: oldCfg.TenantID != newCfg.TenantID},
+			{path: "workspace_id", changed: oldCfg.WorkspaceID != newCfg.WorkspaceID},
+			{path: "discovery_source", changed: oldCfg.DiscoverySource != newCfg.DiscoverySource},
+		} {
+			if identity.changed {
+				restart = append(restart, identity.path)
+			}
+		}
 	}
 	return ConfigDiff{Changed: changed, RestartRequired: sortedUniqueStrings(restart)}
 }

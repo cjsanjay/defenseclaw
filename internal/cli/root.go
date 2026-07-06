@@ -33,12 +33,23 @@ import (
 )
 
 var (
-	cfg          *config.Config
-	auditStore   *audit.Store
-	auditLog     *audit.Logger
-	otelProvider *telemetry.Provider
-	appVersion   string
+	cfg                          *config.Config
+	auditStore                   *audit.Store
+	auditLog                     *audit.Logger
+	otelProvider                 *telemetry.Provider
+	appVersion                   string
+	activeObservabilityV8Startup *observabilityV8Startup
 )
+
+// observabilityV8Startup is the immutable source snapshot that was validated
+// before any v8-owned stores or exporters were constructed. The sidecar passes
+// this exact byte sequence to the authoritative runtime bootstrap immediately
+// before Run, preventing a file change between validation and activation from
+// producing a mixed generation.
+type observabilityV8Startup struct {
+	sourceName string
+	raw        []byte
+}
 
 func SetVersion(v string) {
 	appVersion = v
@@ -60,6 +71,11 @@ and exposes a local REST API for the Python CLI.
 
 Run without arguments to start the sidecar daemon.`,
 	PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
+		// Cobra normally executes this process once, but tests and embedders can
+		// execute the command tree repeatedly. Never let a previous v8 source
+		// select the startup path for a later v7 invocation.
+		activeObservabilityV8Startup = nil
+
 		// Load the data-dir .env BEFORE config.Load() so that
 		// token_env-style references in audit_sinks (e.g.
 		// SplunkHECSinkConfig.TokenEnv → os.Getenv) can resolve against
@@ -73,6 +89,12 @@ Run without arguments to start the sidecar daemon.`,
 		cfg, err = config.Load()
 		if err != nil {
 			return fmt.Errorf("failed to load config — run 'defenseclaw init' first: %w", err)
+		}
+		if cfg.ConfigVersion == 8 {
+			activeObservabilityV8Startup, err = prepareObservabilityV8Startup(cfg)
+			if err != nil {
+				return fmt.Errorf("failed to prepare observability v8: %w", err)
+			}
 		}
 		// Apply the persisted redaction kill-switch BEFORE any
 		// audit-store / telemetry init so even the very first
@@ -107,8 +129,14 @@ Run without arguments to start the sidecar daemon.`,
 		if resolved := filepath.Join(cfg.DataDir, ".env"); resolved != filepath.Join(config.DefaultDataPath(), ".env") {
 			loadDotEnvIntoOS(resolved)
 		}
-		initAuditSinks()
-		initOTelProvider()
+		if activeObservabilityV8Startup == nil {
+			// Schema v7 retains the existing independently-owned audit sink and
+			// OTel provider lifecycle. Schema v8 constructs both exclusively in
+			// Sidecar.BootstrapObservabilityRuntime so records cannot be exported
+			// twice or through two competing policy engines.
+			initAuditSinks()
+			initOTelProvider()
+		}
 		return nil
 	},
 	PersistentPostRun: func(_ *cobra.Command, _ []string) {
@@ -134,6 +162,63 @@ Run without arguments to start the sidecar daemon.`,
 	},
 	RunE:         runSidecar,
 	SilenceUsage: true,
+}
+
+// prepareObservabilityV8Startup performs the canonical strict parse and
+// compilation before the audit SQLite store is opened. It also projects the
+// compiler-owned local paths into the legacy Config fields consumed by
+// NewSidecar. This path projection is compatibility wiring only: the compiled
+// v8 plan remains authoritative and the runtime bootstrap validates that the
+// opened stores match it exactly.
+func prepareObservabilityV8Startup(c *config.Config) (*observabilityV8Startup, error) {
+	if c == nil || c.ConfigVersion != 8 {
+		return nil, fmt.Errorf("schema version 8 is required")
+	}
+	sourceName := strings.TrimSpace(c.ConfigFilePath)
+	if sourceName == "" {
+		sourceName = config.ConfigPath()
+	}
+	absSource, err := filepath.Abs(sourceName)
+	if err != nil {
+		return nil, fmt.Errorf("resolve config source: %w", err)
+	}
+	raw, err := readConfigV8Source(absSource)
+	if err != nil {
+		return nil, err
+	}
+
+	// Destination secrets may be persisted in the installation-local .env.
+	// Config.Load has already resolved data_dir from this same source, so make
+	// those values available before strict destination validation.
+	defaultDataDir := strings.TrimSpace(c.DataDir)
+	if defaultDataDir == "" {
+		defaultDataDir = config.DefaultDataPath()
+	}
+	loadDotEnvIntoOS(filepath.Join(defaultDataDir, ".env"))
+
+	compiled, err := config.ParseCompileObservabilityV8(
+		absSource,
+		raw,
+		config.ObservabilityV8CompileOptions{DefaultDataDir: defaultDataDir},
+	)
+	if err != nil {
+		return nil, err
+	}
+	if compiled == nil || compiled.Plan == nil {
+		return nil, fmt.Errorf("canonical compiler returned no effective plan")
+	}
+	snapshot := compiled.Plan.Snapshot()
+	if strings.TrimSpace(snapshot.Local.Path) == "" || strings.TrimSpace(snapshot.Local.JudgeBodiesPath) == "" {
+		return nil, fmt.Errorf("effective local store paths are incomplete")
+	}
+
+	c.DataDir = compiled.DataDir
+	c.AuditDB = snapshot.Local.Path
+	c.JudgeBodiesDB = snapshot.Local.JudgeBodiesPath
+	return &observabilityV8Startup{
+		sourceName: absSource,
+		raw:        append([]byte(nil), raw...),
+	}, nil
 }
 
 // Execute runs the root command and returns the exit code. The actual

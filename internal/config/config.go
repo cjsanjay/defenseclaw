@@ -2117,11 +2117,38 @@ func LoadFromFile(configFile string) (*Config, error) {
 	return loadFromFile(configFile, false)
 }
 
+// LoadFromBytes applies the same defaults, migrations, environment bindings,
+// compatibility decoding, and validation as LoadFromFile, but decodes the
+// supplied immutable source bytes instead of rereading configFile. configFile
+// remains the source identity for relative defaults, diagnostics, trust checks,
+// and ConfigFilePath. Runtime-file migration is deliberately disabled because
+// a captured snapshot must never cause an ambient-path rewrite.
+func LoadFromBytes(configFile string, raw []byte) (*Config, error) {
+	return loadConfigSource(configFile, false, append([]byte(nil), raw...), true, true)
+}
+
+// LoadCandidateFromBytes decodes an exact reload candidate without publishing
+// process-global provenance. The caller must set version.SetContentHash only
+// after the candidate has passed every compile/apply transaction boundary.
+func LoadCandidateFromBytes(configFile string, raw []byte) (*Config, error) {
+	return loadConfigSource(configFile, false, append([]byte(nil), raw...), true, false)
+}
+
 func LoadFromFileWithRuntimeMigration(configFile string) (*Config, error) {
 	return loadFromFile(configFile, true)
 }
 
 func loadFromFile(configFile string, migrateRuntime bool) (*Config, error) {
+	return loadConfigSource(configFile, migrateRuntime, nil, false, true)
+}
+
+func loadConfigSource(
+	configFile string,
+	migrateRuntime bool,
+	sourceBytes []byte,
+	sourceProvided bool,
+	publishProvenance bool,
+) (*Config, error) {
 	// viper holds a process-global keystore. Without resetting it, a
 	// previous Load() (e.g. from another binary path or test case)
 	// leaves stale keys behind — including a legacy `splunk.*` block
@@ -2165,7 +2192,14 @@ func loadFromFile(configFile string, migrateRuntime bool) (*Config, error) {
 	// yaml.v3 (literal keys), then strip it from the bytes we feed to
 	// Viper so Viper never sees the problematic shape, and reinstate
 	// it on the decoded Config afterwards.
-	otelAttrs, cleanedBytes, err := extractOTelResourceAttributes(configFile)
+	var otelAttrs map[string]string
+	var cleanedBytes []byte
+	var err error
+	if sourceProvided {
+		otelAttrs, cleanedBytes, err = extractOTelResourceAttributesBytes(sourceBytes)
+	} else {
+		otelAttrs, cleanedBytes, err = extractOTelResourceAttributes(configFile)
+	}
 	if err != nil {
 		if ReportConfigLoadError != nil {
 			ReportConfigLoadError(context.Background(), "otel_attrs_parse")
@@ -2173,7 +2207,7 @@ func loadFromFile(configFile string, migrateRuntime bool) (*Config, error) {
 		return nil, fmt.Errorf("config: parse otel.resource.attributes: %w", err)
 	}
 
-	if cleanedBytes != nil {
+	if sourceProvided || cleanedBytes != nil {
 		if err := viper.ReadConfig(bytes.NewReader(cleanedBytes)); err != nil {
 			if ReportConfigLoadError != nil {
 				ReportConfigLoadError(context.Background(), "read_config")
@@ -2402,7 +2436,9 @@ func loadFromFile(configFile string, migrateRuntime bool) (*Config, error) {
 	// extractOTelResourceAttributes; fall back to a re-marshal when
 	// the file did not exist (first boot / default config) so the
 	// hash is still stable across identical in-memory configs.
-	seedProvenanceOnLoad(configFile, &cfg)
+	if publishProvenance {
+		seedProvenanceOnLoadSource(configFile, &cfg, sourceBytes, sourceProvided)
+	}
 
 	// Managed-enterprise config is an administrator-owned trust boundary while
 	// data_dir is intentionally writable by the lower-privilege service account.
@@ -2450,6 +2486,22 @@ func warnDisableRedactionConfig(cfg *Config) {
 // is the correct behavior for transient read races (editor saving
 // in-place under us) where the next successful Load() will re-seed.
 func seedProvenanceOnLoad(configFile string, cfg *Config) {
+	seedProvenanceOnLoadSource(configFile, cfg, nil, false)
+}
+
+func seedProvenanceOnLoadSource(configFile string, cfg *Config, sourceBytes []byte, sourceProvided bool) {
+	if sourceProvided && len(sourceBytes) > 0 {
+		version.SetContentHash(sourceBytes)
+		return
+	}
+	if sourceProvided {
+		// Preserve the file loader's empty-source behavior without consulting a
+		// path that may now contain different bytes.
+		if data, err := yaml.Marshal(cfg); err == nil && len(data) > 0 {
+			version.SetContentHash(data)
+		}
+		return
+	}
 	if data, err := os.ReadFile(configFile); err == nil && len(data) > 0 {
 		version.SetContentHash(data)
 		return
@@ -2490,7 +2542,10 @@ func extractOTelResourceAttributes(configFile string) (map[string]string, []byte
 		}
 		return nil, nil, fmt.Errorf("read %s: %w", configFile, err)
 	}
+	return extractOTelResourceAttributesBytes(data)
+}
 
+func extractOTelResourceAttributesBytes(data []byte) (map[string]string, []byte, error) {
 	var root yaml.Node
 	if err := yaml.Unmarshal(data, &root); err != nil {
 		return nil, nil, fmt.Errorf("yaml unmarshal: %w", err)

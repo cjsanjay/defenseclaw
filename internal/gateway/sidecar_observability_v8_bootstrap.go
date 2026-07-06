@@ -1,0 +1,626 @@
+// Copyright 2026 Cisco Systems, Inc. and its affiliates
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// SPDX-License-Identifier: Apache-2.0
+
+package gateway
+
+import (
+	"context"
+	"net"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/google/uuid"
+	"gopkg.in/yaml.v3"
+
+	"github.com/defenseclaw/defenseclaw/internal/audit"
+	"github.com/defenseclaw/defenseclaw/internal/config"
+	"github.com/defenseclaw/defenseclaw/internal/gatewaylog"
+	"github.com/defenseclaw/defenseclaw/internal/observability"
+	"github.com/defenseclaw/defenseclaw/internal/observability/delivery"
+	"github.com/defenseclaw/defenseclaw/internal/observability/destinations"
+	"github.com/defenseclaw/defenseclaw/internal/observability/destinations/galileo"
+	"github.com/defenseclaw/defenseclaw/internal/observability/destinations/localobservability"
+	"github.com/defenseclaw/defenseclaw/internal/observability/destinations/otlp"
+	"github.com/defenseclaw/defenseclaw/internal/observability/destinations/prometheus"
+	"github.com/defenseclaw/defenseclaw/internal/observability/destinations/push"
+	"github.com/defenseclaw/defenseclaw/internal/observability/pipeline"
+	"github.com/defenseclaw/defenseclaw/internal/observability/redaction"
+	"github.com/defenseclaw/defenseclaw/internal/observability/router"
+	observabilityruntime "github.com/defenseclaw/defenseclaw/internal/observability/runtime"
+	"github.com/defenseclaw/defenseclaw/internal/observability/runtimegraph"
+	"github.com/defenseclaw/defenseclaw/internal/telemetry"
+	"github.com/defenseclaw/defenseclaw/internal/version"
+)
+
+const sidecarObservabilityV8CloseTimeout = 30 * time.Second
+
+type sidecarObservabilityV8BootstrapErrorCode string
+
+const (
+	sidecarObservabilityV8BootstrapInvalid      sidecarObservabilityV8BootstrapErrorCode = "invalid_input"
+	sidecarObservabilityV8BootstrapCompile      sidecarObservabilityV8BootstrapErrorCode = "config_rejected"
+	sidecarObservabilityV8BootstrapStore        sidecarObservabilityV8BootstrapErrorCode = "store_unavailable"
+	sidecarObservabilityV8BootstrapRedaction    sidecarObservabilityV8BootstrapErrorCode = "redaction_unavailable"
+	sidecarObservabilityV8BootstrapReporter     sidecarObservabilityV8BootstrapErrorCode = "reporter_unavailable"
+	sidecarObservabilityV8BootstrapDestinations sidecarObservabilityV8BootstrapErrorCode = "destinations_unavailable"
+	sidecarObservabilityV8BootstrapRuntime      sidecarObservabilityV8BootstrapErrorCode = "runtime_unavailable"
+	sidecarObservabilityV8BootstrapBinding      sidecarObservabilityV8BootstrapErrorCode = "binding_rejected"
+	sidecarObservabilityV8BootstrapReload       sidecarObservabilityV8BootstrapErrorCode = "reload_rejected"
+	sidecarObservabilityV8BootstrapClose        sidecarObservabilityV8BootstrapErrorCode = "shutdown_degraded"
+)
+
+// sidecarObservabilityV8BootstrapError is content-free. Config validation
+// remains the operator-facing source-location boundary; runtime assembly must
+// not return database paths, endpoints, secret references, or driver errors.
+type sidecarObservabilityV8BootstrapError struct {
+	code  sidecarObservabilityV8BootstrapErrorCode
+	cause error
+}
+
+func (err *sidecarObservabilityV8BootstrapError) Error() string {
+	if err == nil {
+		return "sidecar observability v8 bootstrap failed"
+	}
+	return "sidecar observability v8 bootstrap failed: " + string(err.code)
+}
+
+func (err *sidecarObservabilityV8BootstrapError) Unwrap() error {
+	if err == nil {
+		return nil
+	}
+	return err.cause
+}
+
+func (err *sidecarObservabilityV8BootstrapError) Code() sidecarObservabilityV8BootstrapErrorCode {
+	if err == nil {
+		return ""
+	}
+	return err.code
+}
+
+// BootstrapObservabilityRuntime validates and assembles the complete
+// observability-v8 graph before Sidecar.Run starts serving. A v7 document is a
+// strict no-op and returns false, preserving the existing logger, OTel provider,
+// audit sinks, reload behavior, and caller-owned shutdown path.
+//
+// A v8 document is parsed through the authoritative schema/compiler in this
+// method. Assembly or binding failure returns an error and leaves the Sidecar
+// unbound, so a caller cannot accidentally serve with a partial v8 runtime.
+func (s *Sidecar) BootstrapObservabilityRuntime(
+	ctx context.Context,
+	sourceName string,
+	raw []byte,
+) (bool, error) {
+	if s == nil || ctx == nil || strings.TrimSpace(sourceName) == "" || len(raw) == 0 {
+		return false, newSidecarObservabilityV8BootstrapError(sidecarObservabilityV8BootstrapInvalid, nil)
+	}
+	configVersion, err := sidecarObservabilityConfigVersion(raw)
+	if err != nil {
+		return false, err
+	}
+	if configVersion != 8 {
+		return false, nil
+	}
+	cfg := s.currentConfig()
+	if cfg == nil || cfg.ConfigVersion != 8 || strings.TrimSpace(cfg.DataDir) == "" {
+		return false, newSidecarObservabilityV8BootstrapError(sidecarObservabilityV8BootstrapInvalid, nil)
+	}
+	s.observabilityV8Mu.Lock()
+	alreadyBound := s.observabilityV8 != nil || s.observabilityV8Run
+	s.observabilityV8Mu.Unlock()
+	if alreadyBound {
+		return false, newSidecarObservabilityV8BootstrapError(sidecarObservabilityV8BootstrapBinding, nil)
+	}
+	compiled, err := config.ParseCompileObservabilityV8(
+		sourceName,
+		raw,
+		config.ObservabilityV8CompileOptions{DefaultDataDir: cfg.DataDir},
+	)
+	if err != nil || compiled == nil || compiled.Plan == nil {
+		if err != nil {
+			return false, err
+		}
+		return false, newSidecarObservabilityV8BootstrapError(sidecarObservabilityV8BootstrapCompile, nil)
+	}
+	owner, err := s.prepareObservabilityV8Runtime(ctx, compiled)
+	if err != nil {
+		return false, err
+	}
+	if err := s.bindObservabilityRuntime(owner); err != nil {
+		_ = owner.closeWithTimeout()
+		return false, newSidecarObservabilityV8BootstrapError(sidecarObservabilityV8BootstrapBinding, err)
+	}
+	return true, nil
+}
+
+// ReloadObservabilityRuntime validates a complete v8 document before asking
+// the existing process-owned Runtime to transactionally publish a successor
+// graph. v7 documents and data-directory changes are rejected; neither can
+// mutate the active generation.
+func (s *Sidecar) ReloadObservabilityRuntime(
+	ctx context.Context,
+	sourceName string,
+	raw []byte,
+) (runtimegraph.ReloadResult, error) {
+	if s == nil || ctx == nil || strings.TrimSpace(sourceName) == "" || len(raw) == 0 {
+		return runtimegraph.ReloadResult{}, newSidecarObservabilityV8BootstrapError(sidecarObservabilityV8BootstrapInvalid, nil)
+	}
+	version, err := sidecarObservabilityConfigVersion(raw)
+	if err != nil || version != 8 {
+		if err != nil {
+			return runtimegraph.ReloadResult{}, err
+		}
+		return runtimegraph.ReloadResult{}, newSidecarObservabilityV8BootstrapError(sidecarObservabilityV8BootstrapCompile, nil)
+	}
+	s.observabilityV8Mu.Lock()
+	owner, ok := s.observabilityV8.(*sidecarOwnedObservabilityV8Runtime)
+	s.observabilityV8Mu.Unlock()
+	if !ok || owner == nil {
+		return runtimegraph.ReloadResult{}, newSidecarObservabilityV8BootstrapError(sidecarObservabilityV8BootstrapInvalid, nil)
+	}
+	compiled, compileErr := config.ParseCompileObservabilityV8(
+		sourceName,
+		raw,
+		config.ObservabilityV8CompileOptions{DefaultDataDir: owner.dataDir},
+	)
+	if compileErr != nil || compiled == nil || compiled.Plan == nil ||
+		filepath.Clean(compiled.DataDir) != owner.dataDir {
+		if compileErr != nil {
+			return runtimegraph.ReloadResult{}, compileErr
+		}
+		return runtimegraph.ReloadResult{}, newSidecarObservabilityV8BootstrapError(sidecarObservabilityV8BootstrapCompile, nil)
+	}
+	result, reloadErr := owner.reload(ctx, compiled.Plan, owner.retainJudgeBodies)
+	if reloadErr != nil {
+		return result, newSidecarObservabilityV8BootstrapError(sidecarObservabilityV8BootstrapReload, reloadErr)
+	}
+	return result, nil
+}
+
+func (s *Sidecar) prepareObservabilityV8Runtime(
+	ctx context.Context,
+	compiled *config.ObservabilityV8CompiledConfig,
+) (*sidecarOwnedObservabilityV8Runtime, error) {
+	if s == nil || ctx == nil || compiled == nil || compiled.Plan == nil || s.store == nil ||
+		!s.store.Ready() || s.currentConfig() == nil {
+		return nil, newSidecarObservabilityV8BootstrapError(sidecarObservabilityV8BootstrapInvalid, nil)
+	}
+	snapshot := compiled.Plan.Snapshot()
+	if snapshot.Local.Path == "" || filepath.Clean(snapshot.Local.Path) != filepath.Clean(s.store.DatabasePath()) {
+		return nil, newSidecarObservabilityV8BootstrapError(sidecarObservabilityV8BootstrapStore, nil)
+	}
+	if s.judgeBodyStore != nil {
+		configuredJudgePath := strings.TrimSpace(s.currentConfig().JudgeBodiesDB)
+		if configuredJudgePath == "" {
+			configuredJudgePath = filepath.Join(compiled.DataDir, config.DefaultJudgeBodiesDBName)
+		}
+		if filepath.Clean(snapshot.Local.JudgeBodiesPath) != filepath.Clean(configuredJudgePath) {
+			return nil, newSidecarObservabilityV8BootstrapError(sidecarObservabilityV8BootstrapStore, nil)
+		}
+	}
+	key, err := redaction.LoadOrCreateCorrelationKey(compiled.DataDir)
+	if err != nil {
+		return nil, newSidecarObservabilityV8BootstrapError(sidecarObservabilityV8BootstrapRedaction, err)
+	}
+	engine, err := redaction.NewEngineWithCorrelationKey(key)
+	if err != nil {
+		return nil, newSidecarObservabilityV8BootstrapError(sidecarObservabilityV8BootstrapRedaction, err)
+	}
+	signer, err := pipeline.NewCorrelationKeyProjectionIntegritySigner(key)
+	if err != nil {
+		return nil, newSidecarObservabilityV8BootstrapError(sidecarObservabilityV8BootstrapRedaction, err)
+	}
+	processRunID := gatewaylog.ProcessRunID()
+	if processRunID == "" {
+		return nil, newSidecarObservabilityV8BootstrapError(sidecarObservabilityV8BootstrapReporter, nil)
+	}
+	binaryVersion := version.Current().BinaryVersion
+	if binaryVersion == "" {
+		return nil, newSidecarObservabilityV8BootstrapError(sidecarObservabilityV8BootstrapReporter, nil)
+	}
+	reporter, err := observabilityruntime.NewReloadReporter(
+		s.store, engine, signer, processRunID, binaryVersion,
+	)
+	if err != nil {
+		return nil, newSidecarObservabilityV8BootstrapError(sidecarObservabilityV8BootstrapReporter, err)
+	}
+	failureBuilder, err := observability.NewRecordBuilder(
+		observability.ClockFunc(func() time.Time { return time.Now().UTC() }),
+		observability.OccurrenceIDGeneratorFunc(func() (string, error) { return uuid.NewString(), nil }),
+	)
+	if err != nil {
+		return nil, newSidecarObservabilityV8BootstrapError(sidecarObservabilityV8BootstrapRuntime, err)
+	}
+	reaper, err := audit.NewRetentionReaper(
+		s.store, s.judgeBodyStore, int64(snapshot.Local.RetentionDays), audit.RetentionOptions{},
+	)
+	if err != nil {
+		return nil, newSidecarObservabilityV8BootstrapError(sidecarObservabilityV8BootstrapRuntime, err)
+	}
+	retention, err := observabilityruntime.NewRetentionController(
+		reaper, observabilityruntime.RetentionControllerOptions{Reporter: sidecarV8RetentionObserver{s: s}},
+	)
+	if err != nil {
+		return nil, newSidecarObservabilityV8BootstrapError(sidecarObservabilityV8BootstrapRuntime, err)
+	}
+	deliveryObserver := delivery.ObserverFunc(func(transition delivery.HealthTransition) {
+		s.observeObservabilityV8Delivery(transition)
+	})
+	destinationFactory, err := destinations.NewFactory(destinations.Options{
+		ConsoleStream: destinations.ConsoleStderr,
+		Stdout:        os.Stdout, Stderr: os.Stderr,
+		Secrets:  sidecarObservabilityV8SecretResolver{},
+		CALoader: destinations.CAFileLoaderFunc(sidecarLoadObservabilityV8CA),
+		Resolver: net.DefaultResolver, Dialer: &net.Dialer{},
+		Warnings: push.WarningObserverFunc(func(warning push.Warning) {
+			s.observeObservabilityV8Warning(warning)
+		}),
+		RedactionEngine: engine, DeliveryObserver: deliveryObserver,
+		OTLPCanonicalObserver: otlp.CanonicalObserverFunc(func(failure otlp.CanonicalFailure) {
+			s.observeObservabilityV8OTLP(failure)
+		}),
+		GalileoObserver: galileo.CanonicalObserverFunc(func(failure galileo.CanonicalFailure) {
+			s.observeObservabilityV8Galileo(failure)
+		}),
+		LocalObserver: localobservability.ObserverFunc(func(failure localobservability.Failure) {
+			s.observeObservabilityV8Local(failure)
+		}),
+	})
+	if err != nil {
+		return nil, newSidecarObservabilityV8BootstrapError(sidecarObservabilityV8BootstrapDestinations, err)
+	}
+	cfg := s.currentConfig()
+	providerFactory := telemetry.NewV8ProviderFactory(telemetry.V8ProviderOptions{
+		Version: binaryVersion, Environment: cfg.Environment,
+		ServiceInstanceID:     gatewaylog.SidecarInstanceID(),
+		DefenseClawInstanceID: gatewaylog.SidecarInstanceID(),
+		TenantID:              cfg.TenantID, WorkspaceID: cfg.WorkspaceID,
+		DeploymentMode: cfg.DeploymentMode, ConnectorMode: string(cfg.Claw.Mode),
+		DiscoverySource: cfg.DiscoverySource, DeviceKeyFile: cfg.Gateway.DeviceKeyFile,
+		GenerationPipelines: destinationFactory.GenerationPipelineFactory(prometheus.Options{}),
+	})
+	retainJudgeBodies := s.judgeStore != nil
+	runtime, err := observabilityruntime.New(
+		ctx,
+		runtimegraph.ConfigFromPlan(compiled.Plan, retainJudgeBodies),
+		observabilityruntime.Options{
+			Store: s.store, Engine: engine, Signer: signer,
+			RecordBuilder: failureBuilder, Reporter: reporter,
+			EventHistoryHealthReporter: sidecarV8EventHistoryObserver{s: s},
+			RetentionController:        retention,
+			DestinationAdapterFactory:  destinationFactory,
+			DestinationObserver:        deliveryObserver,
+			TelemetryProviderFactory:   providerFactory,
+		},
+	)
+	if err != nil {
+		return nil, newSidecarObservabilityV8BootstrapError(sidecarObservabilityV8BootstrapRuntime, err)
+	}
+	return &sidecarOwnedObservabilityV8Runtime{
+		runtime: runtime, dataDir: filepath.Clean(compiled.DataDir),
+		retainJudgeBodies: retainJudgeBodies,
+	}, nil
+}
+
+type sidecarOwnedObservabilityV8Runtime struct {
+	runtime           *observabilityruntime.Runtime
+	dataDir           string
+	retainJudgeBodies bool
+	lifecycleMu       sync.RWMutex
+	closed            bool
+}
+
+func (owner *sidecarOwnedObservabilityV8Runtime) Emit(
+	ctx context.Context,
+	metadata router.Metadata,
+	builder observabilityruntime.EmitBuilder,
+) (pipeline.LocalLogOutcome, error) {
+	if owner == nil || owner.runtime == nil {
+		return pipeline.LocalLogOutcome{}, newSidecarObservabilityV8BootstrapError(sidecarObservabilityV8BootstrapClose, nil)
+	}
+	owner.lifecycleMu.RLock()
+	defer owner.lifecycleMu.RUnlock()
+	if owner.closed {
+		return pipeline.LocalLogOutcome{}, newSidecarObservabilityV8BootstrapError(sidecarObservabilityV8BootstrapClose, nil)
+	}
+	return owner.runtime.Emit(ctx, metadata, builder)
+}
+
+func (owner *sidecarOwnedObservabilityV8Runtime) EmitTraceCanary(
+	ctx context.Context,
+	destination string,
+) (observabilityruntime.TraceCanaryResult, error) {
+	if owner == nil || owner.runtime == nil {
+		return observabilityruntime.TraceCanaryResult{}, newSidecarObservabilityV8BootstrapError(sidecarObservabilityV8BootstrapClose, nil)
+	}
+	owner.lifecycleMu.RLock()
+	defer owner.lifecycleMu.RUnlock()
+	if owner.closed {
+		return observabilityruntime.TraceCanaryResult{}, newSidecarObservabilityV8BootstrapError(sidecarObservabilityV8BootstrapClose, nil)
+	}
+	return owner.runtime.EmitTraceCanary(ctx, destination)
+}
+
+func (owner *sidecarOwnedObservabilityV8Runtime) StartAgentTrace(
+	ctx context.Context,
+	input observability.SpanAgentInvokeInput,
+) (context.Context, *observabilityruntime.AgentTrace, error) {
+	if owner == nil || owner.runtime == nil {
+		return ctx, nil, newSidecarObservabilityV8BootstrapError(sidecarObservabilityV8BootstrapClose, nil)
+	}
+	owner.lifecycleMu.RLock()
+	defer owner.lifecycleMu.RUnlock()
+	if owner.closed {
+		return ctx, nil, newSidecarObservabilityV8BootstrapError(sidecarObservabilityV8BootstrapClose, nil)
+	}
+	return owner.runtime.StartAgentTrace(ctx, input)
+}
+
+func (owner *sidecarOwnedObservabilityV8Runtime) StartModelTrace(
+	ctx context.Context,
+	input observability.SpanModelChatInput,
+) (context.Context, *observabilityruntime.ModelTrace, error) {
+	if owner == nil || owner.runtime == nil {
+		return ctx, nil, newSidecarObservabilityV8BootstrapError(sidecarObservabilityV8BootstrapClose, nil)
+	}
+	owner.lifecycleMu.RLock()
+	defer owner.lifecycleMu.RUnlock()
+	if owner.closed {
+		return ctx, nil, newSidecarObservabilityV8BootstrapError(sidecarObservabilityV8BootstrapClose, nil)
+	}
+	return owner.runtime.StartModelTrace(ctx, input)
+}
+
+func (owner *sidecarOwnedObservabilityV8Runtime) reload(
+	ctx context.Context,
+	plan *config.ObservabilityV8Plan,
+	retainJudgeBodies bool,
+) (runtimegraph.ReloadResult, *runtimegraph.Error) {
+	if owner == nil || owner.runtime == nil {
+		var manager *runtimegraph.Manager
+		_, err := manager.Acquire(ctx)
+		return runtimegraph.ReloadResult{}, err
+	}
+	owner.lifecycleMu.RLock()
+	defer owner.lifecycleMu.RUnlock()
+	if owner.closed {
+		var manager *runtimegraph.Manager
+		_, err := manager.Acquire(ctx)
+		return runtimegraph.ReloadResult{}, err
+	}
+	return owner.runtime.Reload(ctx, runtimegraph.ConfigFromPlan(plan, retainJudgeBodies))
+}
+
+func (owner *sidecarOwnedObservabilityV8Runtime) closeWithTimeout() error {
+	ctx, cancel := context.WithTimeout(context.Background(), sidecarObservabilityV8CloseTimeout)
+	defer cancel()
+	return owner.close(ctx)
+}
+
+func (owner *sidecarOwnedObservabilityV8Runtime) close(ctx context.Context) error {
+	if owner == nil || owner.runtime == nil {
+		return nil
+	}
+	owner.lifecycleMu.Lock()
+	defer owner.lifecycleMu.Unlock()
+	if owner.closed {
+		return nil
+	}
+	if err := owner.runtime.Close(ctx); err != nil {
+		return newSidecarObservabilityV8BootstrapError(sidecarObservabilityV8BootstrapClose, err)
+	}
+	owner.closed = true
+	return nil
+}
+
+// closeOwnedObservabilityV8Runtime closes only bootstrap-owned runtimes. The
+// public BindObservabilityRuntime path remains caller-owned for v7 and tests.
+func (s *Sidecar) closeOwnedObservabilityV8Runtime() error {
+	if s == nil {
+		return nil
+	}
+	s.observabilityV8Mu.Lock()
+	owner, ok := s.observabilityV8.(*sidecarOwnedObservabilityV8Runtime)
+	s.observabilityV8Mu.Unlock()
+	if !ok || owner == nil {
+		return nil
+	}
+	if err := owner.closeWithTimeout(); err != nil {
+		return err
+	}
+	s.observabilityV8Mu.Lock()
+	if s.observabilityV8 == owner {
+		s.observabilityV8 = nil
+		s.observabilityV8Trace = nil
+	}
+	s.observabilityV8Mu.Unlock()
+	if proxy := s.proxySnapshot(); proxy != nil {
+		proxy.bindObservabilityV8Trace(nil)
+	}
+	return nil
+}
+
+// observabilityV8ActivePlanDigest returns the plan identity actually owned by
+// the live graph. ConfigManager must seed from this value rather than rereading
+// config.yaml: the file can legitimately change after bootstrap but before the
+// watcher starts, and treating that newer file as already active would suppress
+// the first required reload.
+func (s *Sidecar) observabilityV8ActivePlanDigest() string {
+	if s == nil {
+		return ""
+	}
+	s.observabilityV8Mu.Lock()
+	owner, ok := s.observabilityV8.(*sidecarOwnedObservabilityV8Runtime)
+	s.observabilityV8Mu.Unlock()
+	if !ok || owner == nil || owner.runtime == nil {
+		return ""
+	}
+	owner.lifecycleMu.RLock()
+	defer owner.lifecycleMu.RUnlock()
+	if owner.closed || owner.runtime.Active() == nil {
+		return ""
+	}
+	return owner.runtime.Active().Digest()
+}
+
+type sidecarObservabilityV8SecretResolver struct{}
+
+func (sidecarObservabilityV8SecretResolver) ResolveObservabilitySecret(name string) (string, bool) {
+	if value, ok := config.GetKey(name); ok && strings.TrimSpace(value) != "" {
+		return value, true
+	}
+	value, ok := os.LookupEnv(name)
+	return value, ok && strings.TrimSpace(value) != ""
+}
+
+func sidecarLoadObservabilityV8CA(ctx context.Context, path string) ([]byte, error) {
+	if ctx == nil || strings.TrimSpace(path) == "" {
+		return nil, newSidecarObservabilityV8BootstrapError(sidecarObservabilityV8BootstrapInvalid, nil)
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, newSidecarObservabilityV8BootstrapError(sidecarObservabilityV8BootstrapDestinations, nil)
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return data, nil
+}
+
+func sidecarObservabilityConfigVersion(raw []byte) (int, error) {
+	if len(raw) > config.V8YAMLMaxSourceBytes {
+		return 0, newSidecarObservabilityV8BootstrapError(sidecarObservabilityV8BootstrapCompile, nil)
+	}
+	var envelope struct {
+		ConfigVersion int `yaml:"config_version"`
+	}
+	if err := yaml.Unmarshal(raw, &envelope); err != nil {
+		return 0, err
+	}
+	return envelope.ConfigVersion, nil
+}
+
+func (s *Sidecar) observeObservabilityV8Delivery(transition delivery.HealthTransition) {
+	if s == nil || s.health == nil {
+		return
+	}
+	state := StateRunning
+	if transition.Current == delivery.HealthDegraded || transition.Current == delivery.HealthStopped {
+		state = StateError
+	}
+	s.health.SetTelemetry(state, "", map[string]interface{}{
+		"destination": transition.Destination,
+		"state":       string(transition.Current),
+		"reason":      string(transition.Reason),
+	})
+}
+
+func (s *Sidecar) observeObservabilityV8Warning(warning push.Warning) {
+	if s == nil || s.health == nil {
+		return
+	}
+	s.health.SetTelemetry(StateError, "", map[string]interface{}{
+		"destination": warning.Destination,
+		"warning":     string(warning.Code),
+	})
+}
+
+func (s *Sidecar) observeObservabilityV8Galileo(failure galileo.CanonicalFailure) {
+	if s == nil || s.health == nil {
+		return
+	}
+	s.health.SetTelemetry(StateError, "", map[string]interface{}{
+		"destination": failure.Destination,
+		"generation":  failure.Generation,
+		"failure":     string(failure.Code),
+	})
+}
+
+func (s *Sidecar) observeObservabilityV8OTLP(failure otlp.CanonicalFailure) {
+	if s == nil || s.health == nil {
+		return
+	}
+	s.health.SetTelemetry(StateError, "", map[string]interface{}{
+		"destination": failure.Destination,
+		"generation":  failure.Generation,
+		"failure":     string(failure.Code),
+	})
+}
+
+func (s *Sidecar) observeObservabilityV8Local(failure localobservability.Failure) {
+	if s == nil || s.health == nil {
+		return
+	}
+	s.health.SetTelemetry(StateError, "", map[string]interface{}{
+		"destination": failure.Destination,
+		"generation":  failure.Generation,
+		"failure":     string(failure.Code),
+	})
+}
+
+type sidecarV8RetentionObserver struct{ s *Sidecar }
+
+func (observer sidecarV8RetentionObserver) ReportRetentionController(
+	status observabilityruntime.RetentionControllerStatus,
+) {
+	if observer.s == nil || observer.s.health == nil {
+		return
+	}
+	state := StateRunning
+	if status.State == observabilityruntime.RetentionStateDegraded {
+		state = StateError
+	}
+	observer.s.health.SetTelemetry(state, "", map[string]interface{}{
+		"retention_state": string(status.State),
+		"retention_days":  status.RetentionDays,
+		"failure":         string(status.Failure),
+	})
+}
+
+type sidecarV8EventHistoryObserver struct{ s *Sidecar }
+
+func (observer sidecarV8EventHistoryObserver) ReportEventHistoryHealth(
+	code audit.EventHistoryHealthCode,
+) {
+	if observer.s == nil || observer.s.health == nil {
+		return
+	}
+	observer.s.health.SetTelemetry(StateError, "", map[string]interface{}{
+		"event_history_failure": string(code),
+	})
+}
+
+func newSidecarObservabilityV8BootstrapError(
+	code sidecarObservabilityV8BootstrapErrorCode,
+	cause error,
+) error {
+	switch {
+	case cause == context.Canceled:
+		cause = context.Canceled
+	case cause == context.DeadlineExceeded:
+		cause = context.DeadlineExceeded
+	default:
+		cause = nil
+	}
+	return &sidecarObservabilityV8BootstrapError{code: code, cause: cause}
+}
+
+var (
+	_ sidecarRuntimeEmitter                = (*sidecarOwnedObservabilityV8Runtime)(nil)
+	_ sidecarRuntimeCanaryEmitter          = (*sidecarOwnedObservabilityV8Runtime)(nil)
+	_ proxyV8TraceRuntime                  = (*sidecarOwnedObservabilityV8Runtime)(nil)
+	_ config.ObservabilityV8SecretResolver = sidecarObservabilityV8SecretResolver{}
+)
