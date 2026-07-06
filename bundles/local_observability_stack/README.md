@@ -141,6 +141,28 @@ sidecar.
 | `tempo`          | 3200, 9095         | HTTP query (3200), gRPC (9095). Traces enter via the collector on 4317 |
 | `grafana`        | 3000               | admin / admin; anon Viewer role enabled (loopback only)     |
 
+## DefenseClaw upgrades
+
+`defenseclaw upgrade` refreshes an installed copy of this bundle as part of
+the ordinary one-command upgrade. It validates the complete target manifest,
+backs up every DefenseClaw-managed file under the upgrade backup's
+`local-observability-stack/managed/` directory, and then activates the target
+files as an all-or-rollback transaction.
+
+Files that exist only in the installed stack are operator-owned and remain in
+place. If an operator changes a path also shipped by DefenseClaw, the target
+version replaces that managed path, records the conflict in
+`refresh-backup.json`, and retains the exact previous bytes in the backup.
+The four Compose named volumes (`prometheus-data`, `loki-data`, `tempo-data`,
+and `grafana-data`) are never reset by upgrade. A stack that was running is
+stopped with `down` (without `-v`), refreshed, restarted, and checked for
+service readiness plus all fourteen dashboard UIDs.
+
+A refresh/rollback safety failure leaves target services stopped and reports
+the recovery backup. A later stack restart/readiness failure is reported as
+degraded without undoing an otherwise healthy gateway upgrade; recover with
+`defenseclaw setup local-observability up`.
+
 ## Teardown
 
 ```bash
@@ -166,6 +188,7 @@ Equivalent raw invocations (same container outcome):
 - The collector's `debug` exporter is on for every pipeline. Tail
   `./run.sh logs otel-collector` to watch raw OTLP frames while
   iterating on the sidecar contract.
-- No persistence contract: `./run.sh reset` is non-destructive to the
-  rest of your system but wipes every metric / log / trace you've
-  captured.
+- `./run.sh reset` is explicitly destructive to local observability
+  history: it leaves the rest of your system alone but wipes every
+  metric, log, and trace in the four named volumes. Ordinary upgrades
+  and `down` never invoke this reset path.

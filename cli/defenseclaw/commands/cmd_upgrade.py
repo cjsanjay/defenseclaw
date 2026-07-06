@@ -54,6 +54,15 @@ _UPGRADE_PROTOCOL_VERSION = 1
 _UPGRADE_MANIFEST_FILENAME = "upgrade-manifest.json"
 
 
+class _LocalBundleUpgradeInvocationError(RuntimeError):
+    """Value-safe target-wheel local bundle failure."""
+
+    def __init__(self, code: str, phase: str) -> None:
+        self.code = code
+        self.phase = phase
+        super().__init__(f"local observability bundle refresh failed ({code}, {phase})")
+
+
 @click.command("upgrade")
 @click.option("--yes", "-y", is_flag=True, help="Skip confirmation prompts")
 @click.option("--version", "target_version", default=None, help="Upgrade to a specific release version (e.g. 0.3.1)")
@@ -130,6 +139,7 @@ def upgrade(
 
     staging_dir = tempfile.mkdtemp(prefix="defenseclaw-upgrade-")
     restart_services = True
+    local_bundle_upgrade: dict[str, object] | None = None
     try:
         # Resolve checksums.txt FIRST so any download we accept is verified
         # against a published manifest. Returns None for old releases that
@@ -142,7 +152,9 @@ def upgrade(
             _UPGRADE_MANIFEST_FILENAME,
         ]
         checksums = _download_checksums(
-            target_version, staging_dir, allow_unverified=allow_unverified,
+            target_version,
+            staging_dir,
+            allow_unverified=allow_unverified,
         )
         if checksums is None:
             # F-0581 (BREAKING CHANGE): the only signed integrity manifest is
@@ -192,18 +204,29 @@ def upgrade(
             # the gap is left in place and _verify_sha256 fails closed on the
             # unrecognized artifact.
             _fill_missing_checksums_from_release_assets(
-                target_version, checksums, artifact_names,
+                target_version,
+                checksums,
+                artifact_names,
                 allow_unverified=allow_unverified,
             )
 
         upgrade_manifest = _download_upgrade_manifest(
-            target_version, staging_dir, checksums, allow_unverified=allow_unverified,
+            target_version,
+            staging_dir,
+            checksums,
+            allow_unverified=allow_unverified,
         )
         gw_binary_path, _gw_tarball_name = _download_gateway(
-            target_version, os_name, arch, staging_dir, checksums,
+            target_version,
+            os_name,
+            arch,
+            staging_dir,
+            checksums,
         )
         whl_path, _whl_name = _download_wheel(
-            target_version, staging_dir, checksums,
+            target_version,
+            staging_dir,
+            checksums,
         )
         _preflight_wheel_install(whl_path, os_name)
     except SystemExit:
@@ -215,13 +238,11 @@ def upgrade(
     if not yes:
         click.echo()
         click.echo(f"  {ux.bold('This will:')}")
+        click.echo(f"    {ux.dim('1.')} Back up ~/.defenseclaw/ and ~/.openclaw/openclaw.json")
+        click.echo(f"    {ux.dim('2.')} Stop the gateway, replace binaries from downloaded artifacts")
         click.echo(
-            f"    {ux.dim('1.')} Back up ~/.defenseclaw/ and ~/.openclaw/openclaw.json"
+            f"    {ux.dim('3.')} Run version-specific migrations and refresh any installed local observability bundle"
         )
-        click.echo(
-            f"    {ux.dim('2.')} Stop the gateway, replace binaries from downloaded artifacts"
-        )
-        click.echo(f"    {ux.dim('3.')} Run version-specific migrations")
         click.echo(f"    {ux.dim('4.')} Restart services and verify health")
         click.echo()
         if not click.confirm("  Proceed?", default=False):
@@ -255,19 +276,14 @@ def upgrade(
 
         ux.banner("Running Migrations")
 
-        openclaw_home = os.path.expanduser(
-            app.cfg.claw.home_dir if app.cfg else "~/.openclaw"
-        )
+        openclaw_home = os.path.expanduser(app.cfg.claw.home_dir if app.cfg else "~/.openclaw")
         # Thread the operator's data_dir through so migrations that
         # touch ``<data_dir>/.env`` / ``<data_dir>/active_connector.json``
         # / etc. (introduced in the connector-v3 wave, PR #194) hit the
         # right path even when the operator runs with a non-default
         # ``DEFENSECLAW_HOME``. Falls back to the upgrade module's
         # default expansion when the config could not be loaded.
-        data_dir = (
-            app.cfg.data_dir if app.cfg and app.cfg.data_dir
-            else os.path.expanduser("~/.defenseclaw")
-        )
+        data_dir = app.cfg.data_dir if app.cfg and app.cfg.data_dir else os.path.expanduser("~/.defenseclaw")
 
         migration_failed = False
         try:
@@ -310,6 +326,40 @@ def upgrade(
             ux.subhead(f"Recovery backup: {backup_dir}", indent="    ")
             raise
 
+        try:
+            local_bundle_upgrade = _run_installed_local_observability_bundle_upgrade(
+                data_dir,
+                backup_dir,
+                target_version,
+                os_name=os_name,
+            )
+        except _LocalBundleUpgradeInvocationError as exc:
+            restart_services = False
+            ux.err("Local observability bundle refresh failed; target services remain stopped.")
+            ux.subhead(
+                f"failure={exc.code} phase={exc.phase}",
+                indent="    ",
+            )
+            ux.subhead(f"Recovery backup: {backup_dir}", indent="    ")
+            raise SystemExit(1) from None
+
+        if local_bundle_upgrade and local_bundle_upgrade.get("installed"):
+            changed = local_bundle_upgrade.get("changed_paths", [])
+            conflicts = local_bundle_upgrade.get("conflict_paths", [])
+            changed_count = len(changed) if isinstance(changed, list) else 0
+            ux.ok(
+                "Local observability bundle verified"
+                + (f" ({changed_count} managed files refreshed)" if changed_count else " (already current)")
+            )
+            if isinstance(conflicts, list) and conflicts:
+                ux.warn(
+                    "Overwritten local modifications were retained in the upgrade backup:",
+                    indent="  ",
+                )
+                for path in conflicts[:10]:
+                    if isinstance(path, str):
+                        ux.subhead(path, indent="    ")
+
     finally:
         # Always clean up staging dir first, even if restart fails.
         shutil.rmtree(staging_dir, ignore_errors=True)
@@ -317,11 +367,17 @@ def upgrade(
         if not restart_services:
             ux.banner("Services Remain Stopped")
             ux.subhead(
-                "Fix the migration error and re-run `defenseclaw upgrade`; the unapplied migration will be retried.",
+                "Fix the reported upgrade error and re-run `defenseclaw upgrade`; "
+                "required work will be retried from the recovery backup state.",
                 indent="  ",
             )
         else:
-            _start_and_verify_services(app, health_timeout)
+            _start_and_verify_services(
+                app,
+                health_timeout,
+                local_bundle_upgrade=local_bundle_upgrade,
+                os_name=os_name,
+            )
 
     # ── Done ─────────────────────────────────────────────────────────────────
 
@@ -338,12 +394,19 @@ def upgrade(
 
     if app.logger:
         app.logger.log_action(
-            "upgrade", "defenseclaw",
+            "upgrade",
+            "defenseclaw",
             f"from={current_version} to={target_version} backup={backup_dir}",
         )
 
 
-def _start_and_verify_services(app: AppContext, health_timeout: int) -> None:
+def _start_and_verify_services(
+    app: AppContext,
+    health_timeout: int,
+    *,
+    local_bundle_upgrade: dict[str, object] | None = None,
+    os_name: str | None = None,
+) -> None:
     """Restart and verify services after every required migration succeeds."""
 
     ux.banner("Starting Services")
@@ -365,10 +428,48 @@ def _start_and_verify_services(app: AppContext, health_timeout: int) -> None:
     ux.banner("Verifying Gateway Health")
     _poll_health(app.cfg, health_timeout)
 
+    if local_bundle_upgrade and local_bundle_upgrade.get("restart_required") is True:
+        ux.banner("Restarting Local Observability")
+        data_dir = app.cfg.data_dir if app.cfg and app.cfg.data_dir else os.path.expanduser("~/.defenseclaw")
+        try:
+            restart = _run_installed_local_observability_bundle_restart(
+                data_dir,
+                health_timeout=max(health_timeout, 1),
+                os_name=os_name,
+            )
+        except _LocalBundleUpgradeInvocationError as exc:
+            ux.warn(
+                "Local observability restart/readiness is degraded; the gateway upgrade remains healthy.",
+                indent="  ",
+            )
+            ux.subhead(f"failure={exc.code} phase={exc.phase}", indent="    ")
+            ux.subhead(
+                "Recover with: defenseclaw setup local-observability up",
+                indent="    ",
+            )
+        else:
+            errors = restart.get("degraded_errors", [])
+            if restart.get("restarted") is True and not errors:
+                ux.ok("Local observability restarted; services and dashboard inventory verified")
+            else:
+                ux.warn(
+                    "Local observability restart/readiness is degraded; the gateway upgrade remains healthy.",
+                    indent="  ",
+                )
+                if isinstance(errors, list):
+                    for error in errors[:5]:
+                        if isinstance(error, str):
+                            ux.subhead(error, indent="    ")
+                ux.subhead(
+                    "Recover with: defenseclaw setup local-observability up",
+                    indent="    ",
+                )
+
 
 # ---------------------------------------------------------------------------
 # GitHub release helpers
 # ---------------------------------------------------------------------------
+
 
 def _normalize_target_version(version: str) -> str:
     """Return a canonical release version or abort on unsafe input."""
@@ -572,7 +673,10 @@ def _download_checksums(
         return None
 
     _verify_checksums_sigstore(
-        version, staging_dir, dest, allow_unverified=allow_unverified,
+        version,
+        staging_dir,
+        dest,
+        allow_unverified=allow_unverified,
     )
 
     out: dict[str, str] = {}
@@ -746,14 +850,12 @@ def _fail_missing_upgrade_manifest(message: str, allow_unverified: bool) -> None
     """
     if allow_unverified:
         ux.warn(
-            f"{message}; continuing without release-specific upgrade policy "
-            "(--allow-unverified).",
+            f"{message}; continuing without release-specific upgrade policy (--allow-unverified).",
             indent="  ",
         )
         return
     ux.err(
-        f"{message} — refusing to upgrade without the release's mandatory "
-        "upgrade policy.",
+        f"{message} — refusing to upgrade without the release's mandatory upgrade policy.",
         indent="  ",
     )
     ux.subhead("Re-run with --allow-unverified to override (UNSAFE).", indent="    ")
@@ -822,10 +924,7 @@ def _download_upgrade_manifest(
     manifest = _validate_upgrade_manifest(payload, version)
     required = manifest["required_cli_migrations"]
     if required:
-        ux.ok(
-            "Upgrade manifest loaded "
-            f"(required migrations: {', '.join(required)})"
-        )
+        ux.ok(f"Upgrade manifest loaded (required migrations: {', '.join(required)})")
     else:
         ux.ok("Upgrade manifest loaded")
     return manifest
@@ -853,8 +952,7 @@ def _validate_upgrade_manifest(payload: object, version: str) -> dict[str, objec
     release_version = payload.get("release_version")
     if release_version != version:
         ux.err(
-            f"{_UPGRADE_MANIFEST_FILENAME} release_version mismatch: "
-            f"expected {version}, got {release_version!r}.",
+            f"{_UPGRADE_MANIFEST_FILENAME} release_version mismatch: expected {version}, got {release_version!r}.",
             indent="  ",
         )
         raise SystemExit(1)
@@ -875,8 +973,7 @@ def _validate_upgrade_manifest(payload: object, version: str) -> dict[str, objec
     policy = payload.get("migration_failure_policy", "warn")
     if policy not in ("warn", "fail"):
         ux.err(
-            f"{_UPGRADE_MANIFEST_FILENAME} has invalid migration_failure_policy: "
-            f"{policy!r}.",
+            f"{_UPGRADE_MANIFEST_FILENAME} has invalid migration_failure_policy: {policy!r}.",
             indent="  ",
         )
         raise SystemExit(1)
@@ -884,8 +981,7 @@ def _validate_upgrade_manifest(payload: object, version: str) -> dict[str, objec
     required_raw = payload.get("required_cli_migrations", [])
     if not isinstance(required_raw, list) or not all(isinstance(v, str) for v in required_raw):
         ux.err(
-            f"{_UPGRADE_MANIFEST_FILENAME} required_cli_migrations must be "
-            "a list of version strings.",
+            f"{_UPGRADE_MANIFEST_FILENAME} required_cli_migrations must be a list of version strings.",
             indent="  ",
         )
         raise SystemExit(1)
@@ -894,8 +990,7 @@ def _validate_upgrade_manifest(payload: object, version: str) -> dict[str, objec
     for migration_version in required_raw:
         if not _VERSION_RE.fullmatch(migration_version):
             ux.err(
-                f"{_UPGRADE_MANIFEST_FILENAME} contains invalid migration "
-                f"version {migration_version!r}.",
+                f"{_UPGRADE_MANIFEST_FILENAME} contains invalid migration version {migration_version!r}.",
                 indent="  ",
             )
             raise SystemExit(1)
@@ -940,17 +1035,14 @@ def _assert_required_cli_migrations(
 
     state = migration_state.load(data_dir)
     missing = [
-        version
-        for version in required
-        if isinstance(version, str) and not migration_state.is_applied(state, version)
+        version for version in required if isinstance(version, str) and not migration_state.is_applied(state, version)
     ]
     if not missing:
         return
 
     label = "Required" if policy == "fail" else "Expected"
     ux.warn(
-        f"{label} migration(s) were not recorded in the migration cursor: "
-        + ", ".join(missing),
+        f"{label} migration(s) were not recorded in the migration cursor: " + ", ".join(missing),
         indent="  ",
     )
     if policy == "fail":
@@ -999,7 +1091,7 @@ def _fetch_release_asset_digests(version: str) -> dict[str, str] | None:
         prefix = "sha256:"
         if not digest.startswith(prefix):
             continue
-        sha = digest[len(prefix):]
+        sha = digest[len(prefix) :]
         if _is_sha256_hex(sha):
             out[name] = sha.lower()
     return out if out else None
@@ -1038,8 +1130,7 @@ def _fill_missing_checksums_from_release_assets(
             indent="  ",
         )
         ux.subhead(
-            "Re-run with --allow-unverified to install these artifacts using "
-            "unsigned GitHub asset digests (UNSAFE).",
+            "Re-run with --allow-unverified to install these artifacts using unsigned GitHub asset digests (UNSAFE).",
             indent="    ",
         )
         return
@@ -1173,8 +1264,7 @@ def _verify_sha256(
     actual = h.hexdigest().lower()
     if actual != expected.lower():
         ux.err(
-            f"Checksum mismatch for {filename}: "
-            f"expected {expected}, got {actual}",
+            f"Checksum mismatch for {filename}: expected {expected}, got {actual}",
             indent="  ",
         )
         ux.err(
@@ -1206,9 +1296,7 @@ def _install_gateway(
     target = os.path.join(install_dir, _installed_gateway_filename(os_name))
 
     if backup_dir and os.path.isfile(target):
-        snapshot = os.path.join(
-            backup_dir, _installed_gateway_filename(os_name) + ".previous"
-        )
+        snapshot = os.path.join(backup_dir, _installed_gateway_filename(os_name) + ".previous")
         try:
             shutil.copy2(target, snapshot)
             if os_name != "windows":
@@ -1256,7 +1344,10 @@ def _verify_installed_gateway_version(binary_path: str, expected: str) -> None:
     try:
         result = subprocess.run(
             [binary_path, "--version"],
-            capture_output=True, text=True, timeout=10, check=False,
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
         )
     except (OSError, subprocess.SubprocessError) as exc:
         ux.warn(f"Could not invoke {binary_path} --version: {exc}", indent="  ")
@@ -1462,6 +1553,146 @@ with open(sys.argv[5], "w", encoding="utf-8") as fh:
             pass
 
 
+def _run_installed_local_observability_bundle_upgrade(
+    data_dir: str,
+    backup_dir: str,
+    target_version: str,
+    *,
+    os_name: str | None = None,
+) -> dict[str, object]:
+    """Run the target wheel's fail-closed bundle transaction when installed."""
+
+    destination = os.path.join(data_dir, "observability-stack")
+    if not os.path.lexists(destination):
+        return {"installed": False}
+    return _run_installed_local_observability_operation(
+        "refresh",
+        data_dir,
+        backup_dir,
+        target_version,
+        os_name=os_name,
+    )
+
+
+def _run_installed_local_observability_bundle_restart(
+    data_dir: str,
+    *,
+    health_timeout: int,
+    os_name: str | None = None,
+) -> dict[str, object]:
+    """Run target-wheel restart/readiness checks after a safe refresh."""
+
+    return _run_installed_local_observability_operation(
+        "restart",
+        data_dir,
+        "",
+        str(health_timeout),
+        os_name=os_name,
+    )
+
+
+def _run_installed_local_observability_operation(
+    operation: str,
+    data_dir: str,
+    backup_dir: str,
+    value: str,
+    *,
+    os_name: str | None,
+) -> dict[str, object]:
+    if os_name is None:
+        os_name = platform.system().lower()
+    venv = os.path.expanduser("~/.defenseclaw/.venv")
+    venv_python = _venv_python_path(venv, os_name)
+    if not os.path.isfile(venv_python):
+        raise _LocalBundleUpgradeInvocationError("target_cli_missing", "invoke")
+
+    child_timeout = 300
+    if operation == "restart":
+        try:
+            child_timeout = max(child_timeout, int(value) + 60)
+        except ValueError as exc:
+            raise _LocalBundleUpgradeInvocationError("invalid_timeout", "invoke") from exc
+
+    fd, result_path = tempfile.mkstemp(prefix="defenseclaw-local-bundle-", suffix=".json")
+    os.close(fd)
+    script = """
+import json
+import sys
+
+from defenseclaw.bundle_refresh import (
+    LocalObservabilityUpgradeError,
+    restart_upgraded_local_observability_stack,
+    upgrade_local_observability_stack,
+)
+
+try:
+    if sys.argv[1] == "refresh":
+        result = upgrade_local_observability_stack(
+            sys.argv[2],
+            sys.argv[3],
+            bundle_version=sys.argv[4],
+        )
+    elif sys.argv[1] == "restart":
+        result = restart_upgraded_local_observability_stack(
+            sys.argv[2],
+            timeout=int(sys.argv[4]),
+        )
+    else:
+        raise LocalObservabilityUpgradeError("invalid_operation", "invoke")
+    payload = {"ok": True, "result": result.to_dict()}
+except LocalObservabilityUpgradeError as exc:
+    payload = {"ok": False, "code": exc.code, "phase": exc.phase}
+except Exception:
+    payload = {"ok": False, "code": "unexpected_failure", "phase": "invoke"}
+
+with open(sys.argv[5], "w", encoding="utf-8") as handle:
+    json.dump(payload, handle, sort_keys=True)
+sys.exit(0 if payload["ok"] else 1)
+"""
+    try:
+        completed = subprocess.run(
+            [
+                venv_python,
+                "-c",
+                script,
+                operation,
+                data_dir,
+                backup_dir,
+                value,
+                result_path,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=child_timeout,
+            check=False,
+        )
+        try:
+            with open(result_path, encoding="utf-8") as handle:
+                payload = json.load(handle)
+        except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as exc:
+            raise _LocalBundleUpgradeInvocationError("result_unavailable", "invoke") from exc
+        if not isinstance(payload, dict):
+            raise _LocalBundleUpgradeInvocationError("result_invalid", "invoke")
+        if completed.returncode != 0 or payload.get("ok") is not True:
+            code = payload.get("code")
+            phase = payload.get("phase")
+            raise _LocalBundleUpgradeInvocationError(
+                code if isinstance(code, str) and re.fullmatch(r"[a-z0-9_]+", code) else "child_failed",
+                phase if isinstance(phase, str) and re.fullmatch(r"[a-z0-9_]+", phase) else "invoke",
+            )
+        result = payload.get("result")
+        if not isinstance(result, dict) or not isinstance(result.get("installed"), bool):
+            raise _LocalBundleUpgradeInvocationError("result_invalid", "invoke")
+        return result
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise _LocalBundleUpgradeInvocationError("child_failed", "invoke") from exc
+    finally:
+        try:
+            os.remove(result_path)
+        except OSError:
+            pass
+
+
 def _venv_python_path(venv: str, os_name: str) -> str:
     scripts_subdir = "Scripts" if os_name == "windows" else "bin"
     python_exe = "python.exe" if os_name == "windows" else "python"
@@ -1566,10 +1797,7 @@ def _poll_health(cfg, timeout_seconds: int = 60) -> None:
     # when the sidecar crashed mid-upgrade.
     last_state = ""
     last_err = ""
-    click.echo(
-        f"  {ux.dim('→')} Waiting for gateway to become healthy "
-        f"(timeout {timeout_seconds}s) ..."
-    )
+    click.echo(f"  {ux.dim('→')} Waiting for gateway to become healthy (timeout {timeout_seconds}s) ...")
 
     while time.monotonic() < deadline:
         try:
@@ -1578,9 +1806,7 @@ def _poll_health(cfg, timeout_seconds: int = 60) -> None:
                 last_err = ""
                 gw_state = snap.get("gateway", {}).get("state", "unknown")
                 if gw_state != last_state:
-                    click.echo(
-                        f"    {ux.dim('gateway:')} {gw_state}"
-                    )
+                    click.echo(f"    {ux.dim('gateway:')} {gw_state}")
                     last_state = gw_state
                 if gw_state == "running":
                     ux.ok("Gateway is healthy")
@@ -1590,9 +1816,7 @@ def _poll_health(cfg, timeout_seconds: int = 60) -> None:
                 # the operator still sees a progress line instead of silence.
                 err_label = "health endpoint returned no payload"
                 if err_label != last_err:
-                    click.echo(
-                        f"    {ux.dim('gateway:')} unreachable ({err_label})"
-                    )
+                    click.echo(f"    {ux.dim('gateway:')} unreachable ({err_label})")
                     last_err = err_label
                     last_state = ""
         except (OSError, ValueError) as exc:
@@ -1604,18 +1828,13 @@ def _poll_health(cfg, timeout_seconds: int = 60) -> None:
             if detail:
                 err_label = f"{err_label}: {detail}"
             if err_label != last_err:
-                click.echo(
-                    f"    {ux.dim('gateway:')} unreachable ({err_label})"
-                )
+                click.echo(f"    {ux.dim('gateway:')} unreachable ({err_label})")
                 last_err = err_label
                 last_state = ""
         time.sleep(2)
 
     ux.warn(f"Gateway did not become healthy within {timeout_seconds}s")
-    ux.subhead(
-        "Check logs: ~/.defenseclaw/gateway.log (pretty) / "
-        "~/.defenseclaw/gateway.jsonl (structured)"
-    )
+    ux.subhead("Check logs: ~/.defenseclaw/gateway.log (pretty) / ~/.defenseclaw/gateway.jsonl (structured)")
     ux.subhead("Run:  defenseclaw-gateway status")
 
 
@@ -1693,6 +1912,7 @@ def _download_file(url: str, dest: str) -> None:
 # ---------------------------------------------------------------------------
 # Shared helpers
 # ---------------------------------------------------------------------------
+
 
 def _create_backup(cfg) -> str:
     """Back up ~/.defenseclaw/ config files and ~/.openclaw/openclaw.json."""
