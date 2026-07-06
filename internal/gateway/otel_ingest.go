@@ -61,6 +61,7 @@ import (
 	"google.golang.org/protobuf/reflect/protoreflect"
 
 	"github.com/defenseclaw/defenseclaw/internal/audit"
+	"github.com/defenseclaw/defenseclaw/internal/observability"
 	"github.com/defenseclaw/defenseclaw/internal/redaction"
 )
 
@@ -174,10 +175,19 @@ func (a *APIServer) handleOTLPSignal(w http.ResponseWriter, r *http.Request, sig
 	if id := agentIdentityForOTLPSource(source); id != (AgentIdentity{}) {
 		ctx = ContextWithAgentIdentity(ctx, id)
 	}
+	ctx, ingestTrace := a.startOTLPIngestTraceV8(ctx, r, signal, source, started)
+	if ingestTrace != nil {
+		defer ingestTrace.abort()
+	}
 
 	contentType := r.Header.Get("Content-Type")
 	if !isOTLPContentType(contentType) {
 		a.emitOTLPBatchRejectedV8(ctx, signal, source, "unknown", "unsupported_content_type", 0, started)
+		ingestTrace.finishReceive(otlpIngestTraceResult{
+			outcome: observability.OutcomeRejected, statusCode: http.StatusUnsupportedMediaType,
+			payloadFormat: "unknown", reasonClass: "unsupported_content_type",
+			errorType: "unsupported_content_type",
+		})
 		// Be explicit about why we rejected so the exporter logs
 		// surface the right error.
 		w.Header().Set("Accept", "application/json, application/x-protobuf")
@@ -198,6 +208,11 @@ func (a *APIServer) handleOTLPSignal(w http.ResponseWriter, r *http.Request, sig
 			status = http.StatusRequestEntityTooLarge
 		}
 		a.emitOTLPBatchRejectedV8(ctx, signal, source, "unknown", reasonClass, 0, started)
+		ingestTrace.finishReceive(otlpIngestTraceResult{
+			outcome: observability.OutcomeRejected, statusCode: int64(status),
+			payloadFormat: "unknown", reasonClass: reasonClass, errorType: reasonClass,
+			technical: reasonClass == "body_read_failed",
+		})
 		// MaxBytesReader writes no response until its read error reaches the
 		// handler. Exporters must not treat an oversized batch as malformed
 		// syntax that could succeed unchanged on retry.
@@ -205,6 +220,7 @@ func (a *APIServer) handleOTLPSignal(w http.ResponseWriter, r *http.Request, sig
 		return
 	}
 	bodyBytes := int64(len(body))
+	ingestTrace.startNormalize(ctx, signal, source, time.Now().UTC())
 	normalize := normalizeOTLPIngestBodyLegacy
 	if a.hasOTLPObservabilityRuntime() {
 		normalize = normalizeOTLPIngestBody
@@ -213,6 +229,13 @@ func (a *APIServer) handleOTLPSignal(w http.ResponseWriter, r *http.Request, sig
 	if normalizeErr != nil {
 		a.emitOTLPBatchRejectedV8(ctx, signal, source, payloadFormat, "invalid_"+payloadFormat, bodyBytes, started)
 		if a.hasOTLPObservabilityRuntime() {
+			result := otlpIngestTraceResult{
+				outcome: observability.OutcomeRejected, statusCode: http.StatusOK,
+				payloadFormat: payloadFormat, reasonClass: "invalid_" + payloadFormat,
+				errorType: "invalid_" + payloadFormat, wireBytes: bodyBytes, hasWireBytes: true,
+			}
+			ingestTrace.finishNormalize(result)
+			ingestTrace.finishReceive(result)
 			writeOTLPSuccess(w)
 			return
 		}
@@ -238,6 +261,7 @@ func (a *APIServer) handleOTLPSignal(w http.ResponseWriter, r *http.Request, sig
 		// Do not emit another telemetry.ingest record here. The request is an
 		// export of a DefenseClaw record back to this receiver, and emitting a
 		// rejection would create the next loop iteration.
+		ingestTrace.abort()
 		writeOTLPSuccess(w)
 		return
 	}
@@ -254,11 +278,20 @@ func (a *APIServer) handleOTLPSignal(w http.ResponseWriter, r *http.Request, sig
 		ctx = PromoteSessionIfAuthenticated(ctx)
 		enrichHTTPSpanFromContext(ctx)
 		enrichOTLPIngestSpan(ctx, sessionID)
+		ingestTrace.refreshCorrelation(ctx, source)
 	}
 	summary, stats, parseErr := summarizeOTLPPayload(summaryBody, signal)
 	if parseErr != nil {
 		a.emitOTLPBatchRejectedV8(ctx, signal, source, payloadFormat, "invalid_envelope", bodyBytes, started)
 		if a.hasOTLPObservabilityRuntime() {
+			result := otlpIngestTraceResult{
+				outcome: observability.OutcomeRejected, statusCode: http.StatusOK,
+				payloadFormat: payloadFormat, reasonClass: "invalid_envelope",
+				errorType: "invalid_envelope", wireBytes: bodyBytes, normalizedBytes: int64(len(summaryBody)),
+				hasWireBytes: true, hasNormalized: true,
+			}
+			ingestTrace.finishNormalize(result)
+			ingestTrace.finishReceive(result)
 			writeOTLPSuccess(w)
 			return
 		}
@@ -283,13 +316,32 @@ func (a *APIServer) handleOTLPSignal(w http.ResponseWriter, r *http.Request, sig
 		return
 	}
 	if a.hasOTLPObservabilityRuntime() {
-		if _, emitErr := a.emitOTLPBatchAcceptedV8(
+		ingestTrace.finishNormalize(otlpIngestTraceResult{
+			outcome: observability.OutcomeCompleted, statusCode: http.StatusOK,
+			payloadFormat: payloadFormat, records: stats.Records, resources: stats.Resources,
+			wireBytes: bodyBytes, normalizedBytes: int64(len(summaryBody)),
+			hasWireBytes: true, hasNormalized: true, hasSummary: true,
+		})
+		_, emitErr := a.emitOTLPBatchAcceptedV8(
 			ctx, signal, source, payloadFormat, stats, bodyBytes, int64(len(summaryBody)), started,
-		); emitErr != nil {
+		)
+		if emitErr != nil {
 			fmt.Fprintln(otelIngestLogSink(), "[otel-ingest] canonical accepted-batch persistence failed")
 		}
 		a.recordOTLPBatchMetricsV8(ctx, signal, source, "ok", stats.Records, bodyBytes)
 		a.recordOTLPGenAIMetricsV8(ctx, summaryBody, signal, source, sessionID)
+		receiveResult := otlpIngestTraceResult{
+			outcome: observability.OutcomeCompleted, statusCode: http.StatusOK,
+			payloadFormat: payloadFormat, records: stats.Records, resources: stats.Resources,
+			wireBytes: bodyBytes, normalizedBytes: int64(len(summaryBody)),
+			hasWireBytes: true, hasNormalized: true, hasSummary: true,
+		}
+		if emitErr != nil {
+			receiveResult.outcome = observability.OutcomePartial
+			receiveResult.errorType = "accepted_record_emit_failed"
+			receiveResult.technical = true
+		}
+		ingestTrace.finishReceive(receiveResult)
 		// The v8 runtime owns collection, local persistence, redaction, and all
 		// optional export. Never dual-write through legacy audit/OTel sinks.
 		writeOTLPSuccess(w)

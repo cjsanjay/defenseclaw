@@ -459,6 +459,21 @@ func (owner *sidecarOwnedObservabilityV8Runtime) StartApprovalTrace(
 	return owner.runtime.StartApprovalTrace(ctx, input)
 }
 
+func (owner *sidecarOwnedObservabilityV8Runtime) StartTelemetryReceiveTrace(
+	ctx context.Context,
+	input observability.SpanTelemetryReceiveInput,
+) (context.Context, *observabilityruntime.TelemetryReceiveTrace, error) {
+	if owner == nil || owner.runtime == nil {
+		return ctx, nil, newSidecarObservabilityV8BootstrapError(sidecarObservabilityV8BootstrapClose, nil)
+	}
+	owner.lifecycleMu.RLock()
+	defer owner.lifecycleMu.RUnlock()
+	if owner.closed {
+		return ctx, nil, newSidecarObservabilityV8BootstrapError(sidecarObservabilityV8BootstrapClose, nil)
+	}
+	return owner.runtime.StartTelemetryReceiveTrace(ctx, input)
+}
+
 func (owner *sidecarOwnedObservabilityV8Runtime) reload(
 	ctx context.Context,
 	plan *config.ObservabilityV8Plan,

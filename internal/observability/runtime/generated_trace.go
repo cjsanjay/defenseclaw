@@ -98,6 +98,21 @@ type ApprovalTrace struct {
 	node    *generatedTraceNode
 }
 
+// TelemetryReceiveTrace is one request-bounded span.telemetry.receive root.
+// Its optional normalize child shares the exact runtime-graph lease so a
+// config reload cannot split the receive/normalize pair across generations.
+type TelemetryReceiveTrace struct {
+	session *generatedTraceSession
+	node    *generatedTraceNode
+}
+
+// TelemetryNormalizeTrace is one span.telemetry.normalize child under the
+// exact receive operation which decoded and classified the inbound batch.
+type TelemetryNormalizeTrace struct {
+	session *generatedTraceSession
+	node    *generatedTraceNode
+}
+
 type generatedTraceSession struct {
 	mu         sync.Mutex
 	lease      *runtimegraph.Lease
@@ -222,6 +237,27 @@ func (runtime *Runtime) StartApprovalTrace(
 	return startedContext, &ApprovalTrace{session: session, node: node}, nil
 }
 
+// StartTelemetryReceiveTrace starts the authenticated HTTP receive boundary.
+// The HTTP method is a required source fact and is sealed into both the
+// physical and canonical span name. Payload facts are supplied only at End,
+// after the receiver has actually observed them.
+func (runtime *Runtime) StartTelemetryReceiveTrace(
+	ctx context.Context,
+	input observability.SpanTelemetryReceiveInput,
+) (context.Context, *TelemetryReceiveTrace, error) {
+	if input.HTTPRequestMethod == "" {
+		return ctx, nil, generatedTraceError(GeneratedTraceInvalidInput)
+	}
+	startedContext, session, node, err := runtime.startGeneratedTrace(
+		ctx, observability.BucketTelemetryIngest, observability.TelemetryFamilyTelemetryReceive,
+		input.Kind, input.HTTPRequestMethod, input.StartTimeUnixNano,
+	)
+	if err != nil || node == nil {
+		return startedContext, nil, err
+	}
+	return startedContext, &TelemetryReceiveTrace{session: session, node: node}, nil
+}
+
 func (runtime *Runtime) startGeneratedTrace(
 	ctx context.Context,
 	bucket observability.Bucket,
@@ -262,12 +298,12 @@ func (runtime *Runtime) startGeneratedTrace(
 	if !valid {
 		return ctx, nil, nil, generatedTraceError(GeneratedTraceInvalidInput)
 	}
-	namePrefix := generatedTraceNamePrefix(family)
-	if namePrefix == "" {
+	name := generatedTraceName(family, nameKey)
+	if name == "" {
 		return ctx, nil, nil, generatedTraceError(GeneratedTraceInvalidInput)
 	}
 	startedContext, span := startGeneratedPhysicalSpan(
-		provider, ctx, bucket, family, namePrefix+nameKey, kind, start, generation,
+		provider, ctx, bucket, family, name, kind, start, generation,
 	)
 	started = span
 	spanContext := span.SpanContext()
@@ -421,6 +457,26 @@ func (span *ToolTrace) StartApproval(input observability.SpanApprovalResolveInpu
 	return &ApprovalTrace{session: span.session, node: node}, nil
 }
 
+// StartNormalize starts the decode/validate/normalize/classify child for this
+// exact receive operation. The signal is required and is the canonical name
+// substitution; the runtime never derives it from an endpoint or payload.
+func (span *TelemetryReceiveTrace) StartNormalize(
+	input observability.SpanTelemetryNormalizeInput,
+) (*TelemetryNormalizeTrace, error) {
+	if span == nil || span.session == nil || span.node == nil ||
+		input.DefenseClawTelemetrySignal == "" {
+		return nil, generatedTraceError(GeneratedTraceInvalidInput)
+	}
+	node, err := span.session.startChild(
+		span.node, observability.BucketTelemetryIngest, observability.TelemetryFamilyTelemetryNormalize,
+		input.Kind, input.DefenseClawTelemetrySignal, input.StartTimeUnixNano,
+	)
+	if err != nil || node == nil {
+		return nil, err
+	}
+	return &TelemetryNormalizeTrace{session: span.session, node: node}, nil
+}
+
 // Context returns the immutable OTel context for parenting work which has not
 // yet migrated. It returns nil after the handle is invalid; callers cannot use
 // it to mutate the generated span.
@@ -439,6 +495,12 @@ func (span *AgentTransitionTrace) Context() context.Context {
 func (span *ApprovalTrace) Context() context.Context {
 	return generatedNodeContext(span.session, span.node)
 }
+func (span *TelemetryReceiveTrace) Context() context.Context {
+	return generatedNodeContext(span.session, span.node)
+}
+func (span *TelemetryNormalizeTrace) Context() context.Context {
+	return generatedNodeContext(span.session, span.node)
+}
 
 func (span *AgentTrace) Generation() uint64 { return generatedNodeGeneration(span.session, span.node) }
 func (span *ModelTrace) Generation() uint64 { return generatedNodeGeneration(span.session, span.node) }
@@ -449,6 +511,12 @@ func (span *AgentTransitionTrace) Generation() uint64 {
 func (span *ApprovalTrace) Generation() uint64 {
 	return generatedNodeGeneration(span.session, span.node)
 }
+func (span *TelemetryReceiveTrace) Generation() uint64 {
+	return generatedNodeGeneration(span.session, span.node)
+}
+func (span *TelemetryNormalizeTrace) Generation() uint64 {
+	return generatedNodeGeneration(span.session, span.node)
+}
 
 func (span *AgentTrace) TraceID() string { return generatedNodeTraceID(span.session, span.node) }
 func (span *ModelTrace) TraceID() string { return generatedNodeTraceID(span.session, span.node) }
@@ -457,6 +525,12 @@ func (span *AgentTransitionTrace) TraceID() string {
 	return generatedNodeTraceID(span.session, span.node)
 }
 func (span *ApprovalTrace) TraceID() string { return generatedNodeTraceID(span.session, span.node) }
+func (span *TelemetryReceiveTrace) TraceID() string {
+	return generatedNodeTraceID(span.session, span.node)
+}
+func (span *TelemetryNormalizeTrace) TraceID() string {
+	return generatedNodeTraceID(span.session, span.node)
+}
 
 func (span *AgentTrace) SpanID() string { return generatedNodeSpanID(span.session, span.node) }
 func (span *ModelTrace) SpanID() string { return generatedNodeSpanID(span.session, span.node) }
@@ -465,6 +539,12 @@ func (span *AgentTransitionTrace) SpanID() string {
 	return generatedNodeSpanID(span.session, span.node)
 }
 func (span *ApprovalTrace) SpanID() string { return generatedNodeSpanID(span.session, span.node) }
+func (span *TelemetryReceiveTrace) SpanID() string {
+	return generatedNodeSpanID(span.session, span.node)
+}
+func (span *TelemetryNormalizeTrace) SpanID() string {
+	return generatedNodeSpanID(span.session, span.node)
+}
 
 // End builds and registers the exact generated agent record. Ending the root
 // releases the sole graph lease. Any rejection is terminal and aborts the
@@ -504,6 +584,20 @@ func (span *ApprovalTrace) End(input observability.SpanApprovalResolveInput) err
 	return span.session.endApproval(span.node, input)
 }
 
+func (span *TelemetryReceiveTrace) End(input observability.SpanTelemetryReceiveInput) error {
+	if span == nil || span.session == nil || span.node == nil {
+		return generatedTraceError(GeneratedTraceInvalidInput)
+	}
+	return span.session.endTelemetryReceive(span.node, input)
+}
+
+func (span *TelemetryNormalizeTrace) End(input observability.SpanTelemetryNormalizeInput) error {
+	if span == nil || span.session == nil || span.node == nil {
+		return generatedTraceError(GeneratedTraceInvalidInput)
+	}
+	return span.session.endTelemetryNormalize(span.node, input)
+}
+
 // Abort ends every still-recording physical span without canonical handoff and
 // releases the root lease. It is safe to call from every caller cleanup path;
 // a repeated call is a no-op.
@@ -532,6 +626,18 @@ func (span *AgentTransitionTrace) Abort() {
 }
 
 func (span *ApprovalTrace) Abort() {
+	if span != nil && span.session != nil {
+		span.session.abort()
+	}
+}
+
+func (span *TelemetryReceiveTrace) Abort() {
+	if span != nil && span.session != nil {
+		span.session.abort()
+	}
+}
+
+func (span *TelemetryNormalizeTrace) Abort() {
 	if span != nil && span.session != nil {
 		span.session.abort()
 	}
@@ -576,13 +682,13 @@ func (session *generatedTraceSession) startChild(
 		session.abortLocked()
 		return nil, generatedTraceError(GeneratedTraceInvalidInput)
 	}
-	namePrefix := generatedTraceNamePrefix(family)
-	if namePrefix == "" {
+	name := generatedTraceName(family, nameKey)
+	if name == "" {
 		session.abortLocked()
 		return nil, generatedTraceError(GeneratedTraceInvalidInput)
 	}
 	ctx, physical := startGeneratedPhysicalSpan(
-		session.provider, parent.ctx, bucket, family, namePrefix+nameKey, kind, start, session.generation,
+		session.provider, parent.ctx, bucket, family, name, kind, start, session.generation,
 	)
 	spanContext := physical.SpanContext()
 	if !physical.IsRecording() || !session.provider.TraceExportEligible(bucket, spanContext) {
@@ -711,6 +817,54 @@ func (session *generatedTraceSession) endApproval(
 	}
 	input = session.sealApprovalInput(input, node, end)
 	record, buildErr := session.builder.BuildSpanApprovalResolve(input)
+	if buildErr != nil {
+		session.abortLocked()
+		return generatedTraceError(GeneratedTraceBuildRejected)
+	}
+	return session.registerEndLocked(node, input.Status, record)
+}
+
+func (session *generatedTraceSession) endTelemetryReceive(
+	node *generatedTraceNode,
+	input observability.SpanTelemetryReceiveInput,
+) (err error) {
+	defer session.abortOnPanic()
+	session.mu.Lock()
+	defer session.mu.Unlock()
+	if err := session.preflightEndLocked(node); err != nil {
+		return err
+	}
+	end, ok := generatedTraceEndTime(input.EndTimeUnixNano, node.start)
+	if !ok {
+		session.abortLocked()
+		return generatedTraceError(GeneratedTraceInvalidInput)
+	}
+	input = session.sealTelemetryReceiveInput(input, node, end)
+	record, buildErr := session.builder.BuildSpanTelemetryReceive(input)
+	if buildErr != nil {
+		session.abortLocked()
+		return generatedTraceError(GeneratedTraceBuildRejected)
+	}
+	return session.registerEndLocked(node, input.Status, record)
+}
+
+func (session *generatedTraceSession) endTelemetryNormalize(
+	node *generatedTraceNode,
+	input observability.SpanTelemetryNormalizeInput,
+) (err error) {
+	defer session.abortOnPanic()
+	session.mu.Lock()
+	defer session.mu.Unlock()
+	if err := session.preflightEndLocked(node); err != nil {
+		return err
+	}
+	end, ok := generatedTraceEndTime(input.EndTimeUnixNano, node.start)
+	if !ok {
+		session.abortLocked()
+		return generatedTraceError(GeneratedTraceInvalidInput)
+	}
+	input = session.sealTelemetryNormalizeInput(input, node, end)
+	record, buildErr := session.builder.BuildSpanTelemetryNormalize(input)
 	if buildErr != nil {
 		session.abortLocked()
 		return generatedTraceError(GeneratedTraceBuildRejected)
@@ -878,6 +1032,52 @@ func (session *generatedTraceSession) sealApprovalInput(
 	return input
 }
 
+func (session *generatedTraceSession) sealTelemetryReceiveInput(
+	input observability.SpanTelemetryReceiveInput,
+	node *generatedTraceNode,
+	end time.Time,
+) observability.SpanTelemetryReceiveInput {
+	input.Envelope = session.sealEnvelope(input.Envelope, node)
+	input.Kind, input.StartTimeUnixNano, input.EndTimeUnixNano = node.kind, uint64(node.start.UnixNano()), uint64(end.UnixNano())
+	input.ParentSpanID, input.TraceState, input.Flags = generatedTraceParent(node), generatedTraceState(node.spanContext), generatedTraceFlags(node)
+	input.Resource, input.Scope = session.resource.Resource, observability.TraceScopeInput{}
+	input.ResourceServiceName = session.resource.ServiceName
+	input.ResourceServiceNamespace = session.resource.ServiceNamespace
+	input.ResourceServiceInstanceID = session.resource.ServiceInstanceID
+	input.ResourceDeploymentEnvironmentName = session.resource.DeploymentEnvironmentName
+	input.ResourceHostName, input.ResourceHostArch, input.ResourceOsType = session.resource.HostName, session.resource.HostArch, session.resource.OSType
+	input.ResourceTenantID, input.ResourceWorkspaceID = session.resource.TenantID, session.resource.WorkspaceID
+	input.ResourceDefenseClawDeploymentMode = session.resource.DefenseClawDeploymentMode
+	input.ResourceDefenseClawClawMode = session.resource.DefenseClawClawMode
+	input.ResourceDefenseClawInstanceID = session.resource.DefenseClawInstanceID
+	input.ResourceDefenseClawDevicePublicKeyFingerprint = session.resource.DefenseClawDevicePublicKeyFingerprint
+	input.HTTPRequestMethod = node.nameKey
+	return input
+}
+
+func (session *generatedTraceSession) sealTelemetryNormalizeInput(
+	input observability.SpanTelemetryNormalizeInput,
+	node *generatedTraceNode,
+	end time.Time,
+) observability.SpanTelemetryNormalizeInput {
+	input.Envelope = session.sealEnvelope(input.Envelope, node)
+	input.Kind, input.StartTimeUnixNano, input.EndTimeUnixNano = node.kind, uint64(node.start.UnixNano()), uint64(end.UnixNano())
+	input.ParentSpanID, input.TraceState, input.Flags = generatedTraceParent(node), generatedTraceState(node.spanContext), generatedTraceFlags(node)
+	input.Resource, input.Scope = session.resource.Resource, observability.TraceScopeInput{}
+	input.ResourceServiceName = session.resource.ServiceName
+	input.ResourceServiceNamespace = session.resource.ServiceNamespace
+	input.ResourceServiceInstanceID = session.resource.ServiceInstanceID
+	input.ResourceDeploymentEnvironmentName = session.resource.DeploymentEnvironmentName
+	input.ResourceHostName, input.ResourceHostArch, input.ResourceOsType = session.resource.HostName, session.resource.HostArch, session.resource.OSType
+	input.ResourceTenantID, input.ResourceWorkspaceID = session.resource.TenantID, session.resource.WorkspaceID
+	input.ResourceDefenseClawDeploymentMode = session.resource.DefenseClawDeploymentMode
+	input.ResourceDefenseClawClawMode = session.resource.DefenseClawClawMode
+	input.ResourceDefenseClawInstanceID = session.resource.DefenseClawInstanceID
+	input.ResourceDefenseClawDevicePublicKeyFingerprint = session.resource.DefenseClawDevicePublicKeyFingerprint
+	input.DefenseClawTelemetrySignal = node.nameKey
+	return input
+}
+
 func (session *generatedTraceSession) sealEnvelope(
 	envelope observability.FamilyEnvelopeInput,
 	node *generatedTraceNode,
@@ -990,23 +1190,34 @@ func generatedTraceFamilyKind(family, kind string) bool {
 		return kind == "CLIENT"
 	case observability.TelemetryFamilyAgentTransition, observability.TelemetryFamilyApprovalResolve:
 		return kind == "INTERNAL"
+	case observability.TelemetryFamilyTelemetryReceive:
+		return kind == "SERVER"
+	case observability.TelemetryFamilyTelemetryNormalize:
+		return kind == "INTERNAL"
 	default:
 		return false
 	}
 }
 
-func generatedTraceNamePrefix(family string) string {
+func generatedTraceName(family, key string) string {
+	if key == "" {
+		return ""
+	}
 	switch family {
 	case observability.TelemetryFamilyAgentInvoke:
-		return "invoke_agent "
+		return "invoke_agent " + key
 	case observability.TelemetryFamilyModelChat:
-		return "chat "
+		return "chat " + key
 	case observability.TelemetryFamilyToolExecute:
-		return "execute_tool "
+		return "execute_tool " + key
 	case observability.TelemetryFamilyAgentTransition:
-		return "agent.transition "
+		return "agent.transition " + key
 	case observability.TelemetryFamilyApprovalResolve:
-		return "exec."
+		return "exec." + key
+	case observability.TelemetryFamilyTelemetryReceive:
+		return key + " telemetry"
+	case observability.TelemetryFamilyTelemetryNormalize:
+		return "telemetry.normalize " + key
 	default:
 		return ""
 	}
