@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/fsnotify/fsnotify"
+	"github.com/google/uuid"
 
 	"github.com/defenseclaw/defenseclaw/internal/audit"
 	"github.com/defenseclaw/defenseclaw/internal/config"
@@ -837,12 +838,23 @@ func (w *InstallWatcher) recordQuarantineAudit(ctx context.Context, action audit
 	if w.otel != nil {
 		w.otel.RecordQuarantineAction(ctx, "move_in", "ok")
 	}
-	_ = w.logger.LogEvent(audit.Event{
+	event := audit.Event{
 		Action:   string(action),
 		Target:   srcPath,
 		Actor:    "defenseclaw",
 		Details:  fmt.Sprintf("dest=%s", destPath),
 		Severity: "INFO",
+	}
+	if action != audit.ActionQuarantine {
+		_ = w.logger.LogEventCtx(ctx, event)
+		return
+	}
+	_ = w.logger.LogEnforcementQuarantineApplied(ctx, event, audit.EnforcementQuarantineAppliedInput{
+		EnforcementID:   uuid.NewString(),
+		RequestedAction: "quarantine",
+		EffectiveAction: "quarantine",
+		Initiator:       "defenseclaw",
+		ResultingState:  "quarantined",
 	})
 }
 

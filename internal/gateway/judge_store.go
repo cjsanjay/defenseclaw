@@ -531,7 +531,22 @@ func (j *JudgeStore) fanoutAudit(jb judgePersistJob) {
 		),
 	}
 	audit.ApplyEnvelope(&evt, env)
-	_ = j.logger.LogEvent(evt)
+	switch strings.ToLower(strings.TrimSpace(jb.payload.Action)) {
+	case "allow", "block":
+		_ = j.logger.LogJudgeCompletion(jb.ctx, evt, audit.JudgeCompletionInput{
+			Kind:       jb.payload.Kind,
+			Action:     jb.payload.Action,
+			LatencyMS:  jb.payload.LatencyMs,
+			InputBytes: int64(jb.payload.InputBytes),
+			ParseError: jb.payload.ParseError,
+		})
+	default:
+		// guardrail.judge.completed currently has exact outcomes only for
+		// allow and block. Provider, empty-response, and parse failures use
+		// action=error in production; preserve their v7 audit row until the
+		// canonical family adds a failed outcome rather than inventing one.
+		_ = j.logger.LogEvent(evt)
+	}
 }
 
 // buildJudgeRow assembles the audit.JudgeResponse from the queued

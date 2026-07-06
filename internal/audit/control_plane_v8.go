@@ -29,33 +29,45 @@ import (
 	"github.com/defenseclaw/defenseclaw/internal/observability/router"
 )
 
-// ControlPlaneV8BuildContext is the exact graph generation pinned by the
+// RuntimeV8BuildContext is the exact graph generation pinned by the
 // unified runtime for one emission. The runtime adapter must populate it from
 // runtime.EmitContext; legacy version.ContentHash is not a graph digest.
-type ControlPlaneV8BuildContext struct {
+type RuntimeV8BuildContext struct {
 	ConfigGeneration uint64
 	ConfigDigest     string
 }
 
-// ControlPlaneV8Builder is lazy: collection is evaluated before the generated
+// RuntimeV8Builder is lazy: collection is evaluated before the generated
 // family builder runs. AdmissionFloor selects the authenticated minimal floor
 // record and never constructs the ordinary family body.
-type ControlPlaneV8Builder func(
-	ControlPlaneV8BuildContext,
+type RuntimeV8Builder func(
+	RuntimeV8BuildContext,
 	router.Admission,
 ) (observability.Record, error)
 
-// ControlPlaneV8Emitter is the audit-owned, cycle-free runtime seam. A runtime
+type RuntimeV8EmitOutcome struct {
+	Admission      router.Admission
+	LocalPersisted bool
+}
+
+// RuntimeV8Emitter is the audit-owned, cycle-free runtime seam. A runtime
 // adapter calls runtime.Emit with metadata and translates its pinned
-// EmitContext into ControlPlaneV8BuildContext. The returned bool is true only
-// when the canonical local SQLite projection committed successfully.
-type ControlPlaneV8Emitter interface {
-	EmitControlPlaneV8(
+// EmitContext into RuntimeV8BuildContext.
+type RuntimeV8Emitter interface {
+	EmitRuntimeV8(
 		context.Context,
 		router.Metadata,
-		ControlPlaneV8Builder,
-	) (localPersisted bool, err error)
+		RuntimeV8Builder,
+	) (RuntimeV8EmitOutcome, error)
 }
+
+type auditV8Disposition uint8
+
+const (
+	auditV8Unhandled auditV8Disposition = iota
+	auditV8Persisted
+	auditV8Dropped
+)
 
 type controlPlaneV8Family uint8
 
@@ -66,19 +78,20 @@ const (
 	controlPlaneV8FamilyConfigApplied
 	controlPlaneV8FamilyPolicyUpdated
 	controlPlaneV8FamilyAuthenticationFailed
+	controlPlaneV8FamilyApprovalResolved
 )
 
 // emitControlPlaneV8 sends one selected v7 Event through the canonical runtime.
-// A true handled result means the runtime owns SQLite persistence, so the
-// caller must not invoke Store.LogEvent for the same occurrence.
-func (l *Logger) emitControlPlaneV8(ctx context.Context, event Event) (handled bool, err error) {
+// Any handled disposition means the runtime exclusively owns persistence and
+// fanout, including an intentional non-mandatory collection drop.
+func (l *Logger) emitControlPlaneV8(ctx context.Context, event Event) (auditV8Disposition, error) {
 	family := controlPlaneV8FamilyForAction(event.Action)
 	if family == controlPlaneV8FamilyNone {
-		return false, nil
+		return auditV8Unhandled, nil
 	}
-	emitter := l.controlPlaneV8Snapshot()
+	emitter := l.runtimeV8Snapshot()
 	if emitter == nil {
-		return false, nil
+		return auditV8Unhandled, nil
 	}
 	if ctx == nil {
 		ctx = context.Background()
@@ -86,9 +99,9 @@ func (l *Logger) emitControlPlaneV8(ctx context.Context, event Event) (handled b
 
 	normalized := observability.NormalizeSeverity(event.Severity)
 	if !normalized.Valid || !normalized.Present {
-		return true, fmt.Errorf("audit: v8 control-plane severity %q is not canonical", event.Severity)
+		return auditV8Persisted, fmt.Errorf("audit: v8 control-plane severity %q is not canonical", event.Severity)
 	}
-	source := controlPlaneV8Source(event)
+	source := controlPlaneV8Source(event, family)
 	classification := controlPlaneV8Classification(family, event.Severity)
 	metadata, err := router.NewClassifiedLogMetadata(
 		observability.ProducerAuditAction,
@@ -99,22 +112,43 @@ func (l *Logger) emitControlPlaneV8(ctx context.Context, event Event) (handled b
 		observability.ProducerKey(event.Action),
 	)
 	if err != nil {
-		return true, fmt.Errorf("audit: classify v8 control-plane action %q: %w", event.Action, err)
+		return auditV8Persisted, fmt.Errorf("audit: classify v8 control-plane action %q: %w", event.Action, err)
 	}
 
-	build := func(snapshot ControlPlaneV8BuildContext, admission router.Admission) (observability.Record, error) {
+	build := func(snapshot RuntimeV8BuildContext, admission router.Admission) (observability.Record, error) {
 		return buildControlPlaneV8Record(event, family, source, classification, normalized, snapshot, admission)
 	}
-	localPersisted, err := emitter.EmitControlPlaneV8(
+	result, err := emitter.EmitRuntimeV8(
 		contextWithLegacyEventProjection(ctx, event), metadata, build,
 	)
 	if err != nil {
-		return true, fmt.Errorf("audit: emit v8 control-plane action %q: %w", event.Action, err)
+		return auditV8Persisted, fmt.Errorf("audit: emit v8 control-plane action %q: %w", event.Action, err)
 	}
-	if !localPersisted {
-		return true, fmt.Errorf("audit: v8 control-plane action %q was not persisted locally", event.Action)
+	disposition, outcomeErr := runtimeV8Disposition(result, true)
+	if outcomeErr != nil {
+		return auditV8Persisted, fmt.Errorf("audit: v8 control-plane action %q: %w", event.Action, outcomeErr)
 	}
-	return true, nil
+	return disposition, nil
+}
+
+func runtimeV8Disposition(outcome RuntimeV8EmitOutcome, mandatory bool) (auditV8Disposition, error) {
+	switch outcome.Admission {
+	case router.AdmissionDrop:
+		if outcome.LocalPersisted {
+			return auditV8Persisted, fmt.Errorf("drop admission reported local persistence")
+		}
+		if mandatory {
+			return auditV8Persisted, fmt.Errorf("mandatory occurrence received drop admission")
+		}
+		return auditV8Dropped, nil
+	case router.AdmissionOrdinary, router.AdmissionFloor:
+		if !outcome.LocalPersisted {
+			return auditV8Persisted, fmt.Errorf("admitted occurrence was not persisted locally")
+		}
+		return auditV8Persisted, nil
+	default:
+		return auditV8Persisted, fmt.Errorf("runtime returned an invalid admission")
+	}
 }
 
 func buildControlPlaneV8Record(
@@ -123,7 +157,7 @@ func buildControlPlaneV8Record(
 	source observability.Source,
 	classification observability.ClassificationContext,
 	normalized observability.SeverityNormalization,
-	snapshot ControlPlaneV8BuildContext,
+	snapshot RuntimeV8BuildContext,
 	admission router.Admission,
 ) (observability.Record, error) {
 	if event.ID == "" || event.Timestamp.IsZero() || event.BinaryVersion == "" ||
@@ -153,7 +187,7 @@ func buildControlPlaneV8Record(
 			Connector:             event.Connector,
 			Action:                event.Action,
 			Phase:                 controlPlaneV8Phase(family),
-			Outcome:               controlPlaneV8Outcome(family),
+			Outcome:               controlPlaneV8Outcome(family, event.Action),
 			Correlation:           correlation,
 			Provenance: observability.Provenance{
 				Producer:              provenance.Producer,
@@ -211,6 +245,17 @@ func buildControlPlaneV8Record(
 			DefenseClawAdminPrincipalRef: principal, ConditionAdminPrincipalKnown: principalKnown,
 			MandatoryProtectedBoundaryAuthFailure: true,
 		})
+	case controlPlaneV8FamilyApprovalResolved:
+		result, outcome, ok := controlPlaneV8ApprovalResolution(event.Action)
+		if !ok {
+			return observability.Record{}, fmt.Errorf("audit: approval action does not identify a resolution")
+		}
+		record, err = builder.BuildLogApprovalResolved(observability.LogApprovalResolvedInput{
+			Envelope: envelope, Severity: severity, LogLevel: logLevel, Outcome: outcome,
+			DefenseClawApprovalID: event.Target, DefenseClawApprovalResult: result,
+			DefenseClawPolicyID:         optionalControlPlaneV8Identifier(event.PolicyID),
+			MandatoryApprovalResolution: true,
+		})
 	default:
 		return observability.Record{}, fmt.Errorf("audit: unsupported v8 control-plane family")
 	}
@@ -232,6 +277,9 @@ func controlPlaneV8FamilyForAction(action string) controlPlaneV8Family {
 		return controlPlaneV8FamilyPolicyUpdated
 	case ActionAPIAuthFailure:
 		return controlPlaneV8FamilyAuthenticationFailed
+	case ActionApprovalGranted, ActionApprovalDenied,
+		ActionGatewayApprovalGranted, ActionGatewayApprovalDenied:
+		return controlPlaneV8FamilyApprovalResolved
 	default:
 		return controlPlaneV8FamilyNone
 	}
@@ -249,6 +297,9 @@ func controlPlaneV8Classification(family controlPlaneV8Family, severity string) 
 	case controlPlaneV8FamilyAuthenticationFailed:
 		context.EventName = observability.EventName(observability.TelemetryEventAuthenticationFailed)
 		context.MandatoryFacts.ProtectedBoundaryAuthFailure = true
+	case controlPlaneV8FamilyApprovalResolved:
+		context.EventName = observability.EventName(observability.TelemetryEventApprovalResolved)
+		context.MandatoryFacts.ApprovalResolution = true
 	}
 	return context
 }
@@ -257,17 +308,29 @@ func controlPlaneV8Phase(family controlPlaneV8Family) string {
 	if family == controlPlaneV8FamilyAuthenticationFailed {
 		return "authentication"
 	}
+	if family == controlPlaneV8FamilyApprovalResolved {
+		return "resolve"
+	}
 	return "apply"
 }
 
-func controlPlaneV8Outcome(family controlPlaneV8Family) observability.Outcome {
+func controlPlaneV8Outcome(family controlPlaneV8Family, action string) observability.Outcome {
 	if family == controlPlaneV8FamilyAuthenticationFailed {
 		return observability.OutcomeRejected
+	}
+	if family == controlPlaneV8FamilyApprovalResolved {
+		// Floor records intentionally omit the ordinary resolution body. The
+		// action still supplies the exact outcome without inspecting details.
+		_, outcome, _ := controlPlaneV8ApprovalResolution(action)
+		return outcome
 	}
 	return observability.OutcomeApplied
 }
 
-func controlPlaneV8Source(event Event) observability.Source {
+func controlPlaneV8Source(event Event, family controlPlaneV8Family) observability.Source {
+	if family == controlPlaneV8FamilyApprovalResolved {
+		return observability.SourceGateway
+	}
 	action := Action(event.Action)
 	if action == ActionAPIAuthFailure || action == ActionAPIConfigPatch {
 		return observability.SourceOperatorAPI
@@ -285,6 +348,26 @@ func controlPlaneV8Source(event Event) observability.Source {
 	default:
 		return observability.SourceSystem
 	}
+}
+
+func controlPlaneV8ApprovalResolution(action string) (string, observability.Outcome, bool) {
+	switch Action(action) {
+	case ActionApprovalGranted, ActionGatewayApprovalGranted:
+		return "approved", observability.OutcomeApproved, true
+	case ActionApprovalDenied, ActionGatewayApprovalDenied:
+		return "denied", observability.OutcomeDenied, true
+	default:
+		return "", "", false
+	}
+}
+
+func optionalControlPlaneV8Identifier(value string) observability.Optional[string] {
+	value = strings.TrimSpace(value)
+	if value == "" || len(value) > 256 || !utf8.ValidString(value) ||
+		!controlPlaneV8PrincipalPattern.MatchString(value) {
+		return observability.Absent[string]()
+	}
+	return observability.Present(value)
 }
 
 func controlPlaneV8Correlation(event Event) observability.Correlation {

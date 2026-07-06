@@ -20,6 +20,7 @@ import (
 
 	"github.com/defenseclaw/defenseclaw/internal/audit"
 	"github.com/defenseclaw/defenseclaw/internal/gatewaylog"
+	"github.com/defenseclaw/defenseclaw/internal/observability/router"
 	"github.com/defenseclaw/defenseclaw/internal/telemetry"
 )
 
@@ -53,6 +54,19 @@ type fakeBatch struct {
 
 var errFakeInsert = errors.New("fakeInserter: synthetic insert failure")
 var errFakeCommit = errors.New("fakeInserter: synthetic commit failure")
+
+type unexpectedJudgeRuntimeV8Emitter struct {
+	calls int
+}
+
+func (e *unexpectedJudgeRuntimeV8Emitter) EmitRuntimeV8(
+	context.Context,
+	router.Metadata,
+	audit.RuntimeV8Builder,
+) (audit.RuntimeV8EmitOutcome, error) {
+	e.calls++
+	return audit.RuntimeV8EmitOutcome{}, errors.New("unexpected canonical judge emission")
+}
 
 func (f *fakeInserter) InsertJudgeResponse(_ audit.JudgeResponse) error {
 	f.mu.Lock()
@@ -143,6 +157,56 @@ func makeJob(t *testing.T) (gatewaylog.JudgePayload, gatewaylog.Direction) {
 		Severity:    gatewaylog.SeverityInfo,
 		RawResponse: `{"verdict":"allow"}`,
 	}, gatewaylog.DirectionPrompt
+}
+
+// TestJudgeStore_ErrorActionPreservesLegacyAudit verifies the production
+// fan-out path for provider, empty-response, and parse failures. The canonical
+// guardrail.judge.completed family currently has no failed/error outcome, so
+// these events must remain on the v7 path even when the v8 runtime is bound.
+func TestJudgeStore_ErrorActionPreservesLegacyAudit(t *testing.T) {
+	auditStore, err := audit.NewStore(filepath.Join(t.TempDir(), "audit.db"))
+	if err != nil {
+		t.Fatalf("audit.NewStore: %v", err)
+	}
+	t.Cleanup(func() { _ = auditStore.Close() })
+	if err := auditStore.Init(); err != nil {
+		t.Fatalf("audit.Init: %v", err)
+	}
+	logger := audit.NewLogger(auditStore)
+	runtime := &unexpectedJudgeRuntimeV8Emitter{}
+	logger.SetRuntimeV8Emitter(runtime)
+
+	store := &JudgeStore{logger: logger}
+	store.fanoutAudit(judgePersistJob{
+		ctx: context.Background(),
+		dir: gatewaylog.DirectionPrompt,
+		payload: gatewaylog.JudgePayload{
+			Kind:       "injection",
+			Model:      "test-model",
+			Action:     "error",
+			Severity:   gatewaylog.SeverityMedium,
+			LatencyMs:  12,
+			InputBytes: 37,
+			ParseError: "provider unavailable",
+		},
+	})
+
+	if runtime.calls != 0 {
+		t.Fatalf("canonical runtime calls = %d, want 0 for unsupported error outcome", runtime.calls)
+	}
+	events, err := auditStore.ListEvents(10)
+	if err != nil {
+		t.Fatalf("ListEvents: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("audit rows = %d, want exactly 1 legacy row", len(events))
+	}
+	if events[0].Action != string(audit.ActionLLMJudgeResponse) ||
+		!strings.Contains(events[0].Details, "action=error") ||
+		!strings.Contains(events[0].Details, "parse_error=<redacted") ||
+		strings.Contains(events[0].Details, "provider unavailable") {
+		t.Fatalf("legacy judge audit row = %#v", events[0])
+	}
 }
 
 // TestJudgeStore_DropsOnFullQueue: when the worker is blocked and

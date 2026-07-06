@@ -153,10 +153,10 @@ type Logger struct {
 	sinks      *sinks.Manager
 	otel       *telemetry.Provider
 	structured StructuredEmitter
-	// controlPlaneV8 is an optional cycle-free adapter to the unified v8
+	// runtimeV8 is an optional cycle-free adapter to the unified v8
 	// runtime. The runtime package imports audit for event-history persistence,
 	// so audit owns this narrow interface rather than importing runtime back.
-	controlPlaneV8 ControlPlaneV8Emitter
+	runtimeV8 RuntimeV8Emitter
 	// gwWriter is optional: when set, scan completions emit EventScan /
 	// EventScanFinding rows through the gateway JSONL choke point.
 	gwWriter *gatewaylog.Writer
@@ -214,23 +214,23 @@ func (l *Logger) SetStructuredEmitter(e StructuredEmitter) {
 	l.mu.Unlock()
 }
 
-// SetControlPlaneV8Emitter binds the generated administrative producer path to
-// the unified v8 runtime. A nil emitter preserves the complete v7 path.
-func (l *Logger) SetControlPlaneV8Emitter(emitter ControlPlaneV8Emitter) {
+// SetRuntimeV8Emitter binds generated audit-action producers to the unified v8
+// runtime. A nil emitter preserves the complete v7 path.
+func (l *Logger) SetRuntimeV8Emitter(emitter RuntimeV8Emitter) {
 	if l == nil {
 		return
 	}
 	l.mu.Lock()
-	l.controlPlaneV8 = emitter
+	l.runtimeV8 = emitter
 	l.mu.Unlock()
 }
 
-func (l *Logger) controlPlaneV8Snapshot() ControlPlaneV8Emitter {
+func (l *Logger) runtimeV8Snapshot() RuntimeV8Emitter {
 	if l == nil {
 		return nil
 	}
 	l.mu.RLock()
-	emitter := l.controlPlaneV8
+	emitter := l.runtimeV8
 	l.mu.RUnlock()
 	return emitter
 }
@@ -699,14 +699,14 @@ func (l *Logger) logActionWithEnvelopeContext(
 	applyEnvelope(&event, env)
 	stampAuditEventEnvelope(&event)
 	event = sanitizeEvent(event)
-	handledV8, emitErr := l.emitControlPlaneV8(ctx, event)
+	disposition, emitErr := l.emitControlPlaneV8(ctx, event)
 	if emitErr != nil {
 		return emitErr
 	}
-	var storeErr error
-	if !handledV8 {
-		storeErr = l.store.LogEvent(event)
+	if disposition != auditV8Unhandled {
+		return nil
 	}
+	storeErr := l.store.LogEvent(event)
 	if storeErr != nil {
 		if otel != nil {
 			otel.RecordAuditDBError(context.Background(), "insert_event")
@@ -819,13 +819,19 @@ func (l *Logger) LogActionWithEnforcement(action, target, details string, enforc
 // the request) keep their pin.
 func (l *Logger) LogEventCtx(ctx context.Context, event Event) error {
 	applyEnvelope(&event, EnvelopeFromContext(ctx))
-	return l.LogEvent(event)
+	return l.logEventWithV8(ctx, event, l.emitControlPlaneV8)
 }
 
 // LogEvent persists a pre-built event through the full audit pipeline
 // (SQLite + audit sinks + OTel). Use this when the caller needs to
 // control severity or other fields that LogAction hardcodes.
 func (l *Logger) LogEvent(event Event) error {
+	return l.logEventWithV8(context.Background(), event, l.emitControlPlaneV8)
+}
+
+type auditV8EventEmitter func(context.Context, Event) (auditV8Disposition, error)
+
+func (l *Logger) logEventWithV8(ctx context.Context, event Event, emit auditV8EventEmitter) error {
 	sinksMgr, otel, structured := l.snapshot()
 	// v7 clean break: AgentInstanceID is per-SESSION. Callers that
 	// carry a session context (the router, proxy session resolver)
@@ -836,6 +842,17 @@ func (l *Logger) LogEvent(event Event) error {
 	// identity without burdening callers.
 	stampAuditEventEnvelope(&event)
 	event = sanitizeEvent(event)
+	disposition := auditV8Unhandled
+	if emit != nil {
+		var emitErr error
+		disposition, emitErr = emit(ctx, event)
+		if emitErr != nil {
+			return emitErr
+		}
+	}
+	if disposition != auditV8Unhandled {
+		return nil
+	}
 	if err := l.store.LogEvent(event); err != nil {
 		if otel != nil {
 			otel.RecordAuditDBError(context.Background(), "insert_event")

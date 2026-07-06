@@ -141,7 +141,7 @@ func (s *Sidecar) BootstrapObservabilityRuntime(
 		return false, newSidecarObservabilityV8BootstrapError(sidecarObservabilityV8BootstrapBinding, err)
 	}
 	if s.logger != nil {
-		s.logger.SetControlPlaneV8Emitter(owner)
+		s.logger.SetRuntimeV8Emitter(owner)
 	}
 	return true, nil
 }
@@ -339,29 +339,31 @@ func (owner *sidecarOwnedObservabilityV8Runtime) Emit(
 	return owner.runtime.Emit(ctx, metadata, builder)
 }
 
-// EmitControlPlaneV8 adapts the audit package's cycle-free producer seam to
+// EmitRuntimeV8 adapts the audit package's cycle-free producer seam to
 // the generation-pinned runtime builder contract. The adapter never derives
 // provenance from the legacy process-global version state: both generation
 // and digest come from the exact graph lease that admitted this emission.
-func (owner *sidecarOwnedObservabilityV8Runtime) EmitControlPlaneV8(
+func (owner *sidecarOwnedObservabilityV8Runtime) EmitRuntimeV8(
 	ctx context.Context,
 	metadata router.Metadata,
-	builder audit.ControlPlaneV8Builder,
-) (bool, error) {
+	builder audit.RuntimeV8Builder,
+) (audit.RuntimeV8EmitOutcome, error) {
 	if builder == nil {
-		return false, newSidecarObservabilityV8BootstrapError(sidecarObservabilityV8BootstrapInvalid, nil)
+		return audit.RuntimeV8EmitOutcome{}, newSidecarObservabilityV8BootstrapError(sidecarObservabilityV8BootstrapInvalid, nil)
 	}
 	outcome, err := owner.Emit(
 		ctx,
 		metadata,
 		func(snapshot observabilityruntime.EmitContext, admission router.Admission) (observability.Record, error) {
-			return builder(audit.ControlPlaneV8BuildContext{
+			return builder(audit.RuntimeV8BuildContext{
 				ConfigGeneration: snapshot.Generation(),
 				ConfigDigest:     snapshot.Digest(),
 			}, admission)
 		},
 	)
-	return outcome.LocalPersisted(), err
+	return audit.RuntimeV8EmitOutcome{
+		Admission: outcome.Admission(), LocalPersisted: outcome.LocalPersisted(),
+	}, err
 }
 
 func (owner *sidecarOwnedObservabilityV8Runtime) EmitTraceCanary(
@@ -468,7 +470,7 @@ func (s *Sidecar) closeOwnedObservabilityV8Runtime() error {
 	// the config/API/proxy producers, so no selected v8 action can legitimately
 	// fall back to the legacy path after this detach.
 	if s.logger != nil {
-		s.logger.SetControlPlaneV8Emitter(nil)
+		s.logger.SetRuntimeV8Emitter(nil)
 	}
 	if err := owner.closeWithTimeout(); err != nil {
 		return err
@@ -657,6 +659,6 @@ var (
 	_ sidecarRuntimeEmitter                = (*sidecarOwnedObservabilityV8Runtime)(nil)
 	_ sidecarRuntimeCanaryEmitter          = (*sidecarOwnedObservabilityV8Runtime)(nil)
 	_ proxyV8TraceRuntime                  = (*sidecarOwnedObservabilityV8Runtime)(nil)
-	_ audit.ControlPlaneV8Emitter          = (*sidecarOwnedObservabilityV8Runtime)(nil)
+	_ audit.RuntimeV8Emitter               = (*sidecarOwnedObservabilityV8Runtime)(nil)
 	_ config.ObservabilityV8SecretResolver = sidecarObservabilityV8SecretResolver{}
 )

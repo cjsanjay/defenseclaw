@@ -25,12 +25,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/defenseclaw/defenseclaw/internal/gatewaylog"
 	"github.com/defenseclaw/defenseclaw/internal/observability"
 	observabilityredaction "github.com/defenseclaw/defenseclaw/internal/observability/redaction"
 	"github.com/defenseclaw/defenseclaw/internal/observability/router"
 )
 
-type testControlPlaneV8Emitter struct {
+type testRuntimeV8Emitter struct {
 	writer    *EventHistoryWriter
 	admission router.Admission
 	profile   observabilityredaction.Profile
@@ -40,26 +41,52 @@ type testControlPlaneV8Emitter struct {
 	records  []observability.Record
 }
 
-type rejectingControlPlaneV8Emitter struct {
+type rejectingRuntimeV8Emitter struct {
 	localPersisted bool
 	err            error
 	calls          int
 }
 
-func (emitter *rejectingControlPlaneV8Emitter) EmitControlPlaneV8(
-	_ context.Context,
-	_ router.Metadata,
-	_ ControlPlaneV8Builder,
-) (bool, error) {
-	emitter.calls++
-	return emitter.localPersisted, emitter.err
+type countingRuntimeOwnedLegacyEmitter struct {
+	mu       sync.Mutex
+	audits   int
+	gateways int
 }
 
-func newTestControlPlaneV8Emitter(
+func (emitter *countingRuntimeOwnedLegacyEmitter) EmitAudit(Event) {
+	emitter.mu.Lock()
+	emitter.audits++
+	emitter.mu.Unlock()
+}
+
+func (emitter *countingRuntimeOwnedLegacyEmitter) EmitGatewayEvent(gatewaylog.Event) {
+	emitter.mu.Lock()
+	emitter.gateways++
+	emitter.mu.Unlock()
+}
+
+func (emitter *countingRuntimeOwnedLegacyEmitter) counts() (int, int) {
+	emitter.mu.Lock()
+	defer emitter.mu.Unlock()
+	return emitter.audits, emitter.gateways
+}
+
+func (emitter *rejectingRuntimeV8Emitter) EmitRuntimeV8(
+	_ context.Context,
+	_ router.Metadata,
+	_ RuntimeV8Builder,
+) (RuntimeV8EmitOutcome, error) {
+	emitter.calls++
+	return RuntimeV8EmitOutcome{
+		Admission: router.AdmissionOrdinary, LocalPersisted: emitter.localPersisted,
+	}, emitter.err
+}
+
+func newTestRuntimeV8Emitter(
 	t *testing.T,
 	store *Store,
 	admission router.Admission,
-) *testControlPlaneV8Emitter {
+) *testRuntimeV8Emitter {
 	t.Helper()
 	profile, ok := observabilityredaction.BuiltInProfile(observabilityredaction.ProfileNone)
 	if !ok {
@@ -76,39 +103,45 @@ func newTestControlPlaneV8Emitter(
 	if err != nil {
 		t.Fatalf("NewEventHistoryWriter: %v", err)
 	}
-	return &testControlPlaneV8Emitter{writer: writer, admission: admission, profile: profile}
+	return &testRuntimeV8Emitter{writer: writer, admission: admission, profile: profile}
 }
 
-func (emitter *testControlPlaneV8Emitter) EmitControlPlaneV8(
+func (emitter *testRuntimeV8Emitter) EmitRuntimeV8(
 	ctx context.Context,
 	metadata router.Metadata,
-	builder ControlPlaneV8Builder,
-) (bool, error) {
+	builder RuntimeV8Builder,
+) (RuntimeV8EmitOutcome, error) {
 	if emitter == nil || emitter.writer == nil || builder == nil {
-		return false, fmt.Errorf("test control-plane emitter is unavailable")
+		return RuntimeV8EmitOutcome{}, fmt.Errorf("test runtime emitter is unavailable")
 	}
-	record, err := builder(ControlPlaneV8BuildContext{
+	if emitter.admission == router.AdmissionDrop {
+		emitter.mu.Lock()
+		emitter.metadata = append(emitter.metadata, metadata)
+		emitter.mu.Unlock()
+		return RuntimeV8EmitOutcome{Admission: router.AdmissionDrop}, nil
+	}
+	record, err := builder(RuntimeV8BuildContext{
 		ConfigGeneration: 23,
 		ConfigDigest:     testEventHistoryGraphDigest,
 	}, emitter.admission)
 	if err != nil {
-		return false, err
+		return RuntimeV8EmitOutcome{}, err
 	}
 	projection, _, err := testEventHistoryProjectionEngine.Project(record, emitter.profile)
 	if err != nil {
-		return false, err
+		return RuntimeV8EmitOutcome{}, err
 	}
 	if err := emitter.writer.AppendContext(ctx, record, projection); err != nil {
-		return false, err
+		return RuntimeV8EmitOutcome{}, err
 	}
 	emitter.mu.Lock()
 	emitter.metadata = append(emitter.metadata, metadata)
 	emitter.records = append(emitter.records, record.Clone())
 	emitter.mu.Unlock()
-	return true, nil
+	return RuntimeV8EmitOutcome{Admission: emitter.admission, LocalPersisted: true}, nil
 }
 
-func (emitter *testControlPlaneV8Emitter) snapshot() ([]router.Metadata, []observability.Record) {
+func (emitter *testRuntimeV8Emitter) snapshot() ([]router.Metadata, []observability.Record) {
 	emitter.mu.Lock()
 	defer emitter.mu.Unlock()
 	metadata := append([]router.Metadata(nil), emitter.metadata...)
@@ -120,7 +153,6 @@ func (emitter *testControlPlaneV8Emitter) snapshot() ([]router.Metadata, []obser
 }
 
 func TestLogActionControlPlaneV8GeneratedFamiliesPersistOnceAndPreserveV7(t *testing.T) {
-	t.Parallel()
 	tests := []struct {
 		name      string
 		action    Action
@@ -137,12 +169,12 @@ func TestLogActionControlPlaneV8GeneratedFamiliesPersistOnceAndPreserveV7(t *tes
 	for _, test := range tests {
 		test := test
 		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
 			logger := newTestLogger(t)
-			runtime := newTestControlPlaneV8Emitter(t, logger.store, router.AdmissionOrdinary)
-			logger.SetControlPlaneV8Emitter(runtime)
+			runtime := newTestRuntimeV8Emitter(t, logger.store, router.AdmissionOrdinary)
+			logger.SetRuntimeV8Emitter(runtime)
 			structured := &captureEmitter{}
 			logger.SetStructuredEmitter(structured)
+			legacySink := installCaptureSink(t, logger)
 			env := CorrelationEnvelope{
 				RunID: "run-control-plane", TraceID: "trace-control-plane",
 				RequestID: "request-control-plane", SessionID: "session-control-plane",
@@ -163,8 +195,11 @@ func TestLogActionControlPlaneV8GeneratedFamiliesPersistOnceAndPreserveV7(t *tes
 			if len(rows) != 1 {
 				t.Fatalf("audit_events count = %d, want exactly 1", len(rows))
 			}
-			if got := len(structured.snapshot()); got != 1 {
-				t.Fatalf("legacy structured emissions = %d, want exactly 1", got)
+			if got := len(structured.snapshot()); got != 0 {
+				t.Fatalf("legacy structured emissions = %d, want 0 for runtime-owned event", got)
+			}
+			if got := len(legacySink.snapshot()); got != 0 {
+				t.Fatalf("legacy sink emissions = %d, want 0 for runtime-owned event", got)
 			}
 			metadata, records := runtime.snapshot()
 			if len(metadata) != 1 || len(records) != 1 {
@@ -234,10 +269,9 @@ func TestLogActionControlPlaneV8GeneratedFamiliesPersistOnceAndPreserveV7(t *tes
 }
 
 func TestLogActionControlPlaneV8MandatoryFloorPersistsExactlyOnce(t *testing.T) {
-	t.Parallel()
 	logger := newTestLogger(t)
-	runtime := newTestControlPlaneV8Emitter(t, logger.store, router.AdmissionFloor)
-	logger.SetControlPlaneV8Emitter(runtime)
+	runtime := newTestRuntimeV8Emitter(t, logger.store, router.AdmissionFloor)
+	logger.SetRuntimeV8Emitter(runtime)
 	const canary = "floor-secret-canary-7f421c"
 	event := Event{
 		ID: "floor-control-plane-record", Timestamp: time.Now().UTC(),
@@ -246,11 +280,11 @@ func TestLogActionControlPlaneV8MandatoryFloorPersistsExactlyOnce(t *testing.T) 
 		RunID: "run-floor", Structured: map[string]any{"secret": canary},
 	}
 	stampAuditEventEnvelope(&event)
-	handled, err := logger.emitControlPlaneV8(context.Background(), event)
+	disposition, err := logger.emitControlPlaneV8(context.Background(), event)
 	if err != nil {
 		t.Fatalf("emitControlPlaneV8: %v", err)
 	}
-	if !handled {
+	if disposition != auditV8Persisted {
 		t.Fatal("mandatory floor event was not handled by v8 runtime")
 	}
 	rows, err := logger.store.ListEvents(10)
@@ -270,10 +304,11 @@ func TestLogActionControlPlaneV8MandatoryFloorPersistsExactlyOnce(t *testing.T) 
 }
 
 func TestLogActivityControlPlaneV8PersistsOneActivityAndOneCanonicalAuditRow(t *testing.T) {
-	t.Parallel()
 	logger := newTestLogger(t)
-	runtime := newTestControlPlaneV8Emitter(t, logger.store, router.AdmissionOrdinary)
-	logger.SetControlPlaneV8Emitter(runtime)
+	runtime := newTestRuntimeV8Emitter(t, logger.store, router.AdmissionOrdinary)
+	logger.SetRuntimeV8Emitter(runtime)
+	legacy := &countingRuntimeOwnedLegacyEmitter{}
+	logger.SetStructuredEmitter(legacy)
 	if err := logger.LogActivity(ActivityInput{
 		Actor: "watcher", Action: ActionPolicyReload, TargetType: "policy", TargetID: "default",
 		Reason: "filesystem update", RunID: "run-activity", TraceID: "trace-activity",
@@ -281,8 +316,8 @@ func TestLogActivityControlPlaneV8PersistsOneActivityAndOneCanonicalAuditRow(t *
 		t.Fatalf("LogActivity: %v", err)
 	}
 	activities, err := logger.store.ListActivityEvents(10)
-	if err != nil || len(activities) != 1 {
-		t.Fatalf("activity_events count = %d err=%v, want exactly 1", len(activities), err)
+	if err != nil || len(activities) != 0 {
+		t.Fatalf("activity_events count = %d err=%v, want 0 for runtime-owned event", len(activities), err)
 	}
 	rows, err := logger.store.ListEvents(10)
 	if err != nil || len(rows) != 1 {
@@ -295,6 +330,10 @@ func TestLogActivityControlPlaneV8PersistsOneActivityAndOneCanonicalAuditRow(t *
 	if metadata[0].Source() != observability.SourceWatcher || rows[0].Actor != "watcher" || rows[0].Target != "policy:default" {
 		t.Fatalf("activity compatibility/source = source:%q row:%#v", metadata[0].Source(), rows[0])
 	}
+	audits, gateways := legacy.counts()
+	if audits != 0 || gateways != 0 {
+		t.Fatalf("runtime-owned activity legacy mirrors = audit:%d gateway:%d, want 0/0", audits, gateways)
+	}
 	body, ok := records[0].Body()
 	if !ok {
 		t.Fatal("activity canonical body is absent")
@@ -306,7 +345,6 @@ func TestLogActivityControlPlaneV8PersistsOneActivityAndOneCanonicalAuditRow(t *
 }
 
 func TestControlPlaneV8PrincipalIncludesOnlySchemaSafeKnownActor(t *testing.T) {
-	t.Parallel()
 	if principal, known := controlPlaneV8Principal("cli:alice"); !known {
 		t.Fatal("schema-safe actor was not marked known")
 	} else if value, present := principal.Get(); !present || value != "cli:alice" {
@@ -320,7 +358,6 @@ func TestControlPlaneV8PrincipalIncludesOnlySchemaSafeKnownActor(t *testing.T) {
 }
 
 func TestControlPlaneV8UnboundAndNonSelectedPathsRemainLegacyOnly(t *testing.T) {
-	t.Parallel()
 	t.Run("selected action without runtime", func(t *testing.T) {
 		logger := newTestLogger(t)
 		if err := logger.LogAction(string(ActionConfigUpdate), "config.yaml", "changed"); err != nil {
@@ -337,8 +374,8 @@ func TestControlPlaneV8UnboundAndNonSelectedPathsRemainLegacyOnly(t *testing.T) 
 	})
 	t.Run("non-selected action with runtime", func(t *testing.T) {
 		logger := newTestLogger(t)
-		runtime := newTestControlPlaneV8Emitter(t, logger.store, router.AdmissionOrdinary)
-		logger.SetControlPlaneV8Emitter(runtime)
+		runtime := newTestRuntimeV8Emitter(t, logger.store, router.AdmissionOrdinary)
+		logger.SetRuntimeV8Emitter(runtime)
 		if err := logger.LogAction(string(ActionSidecarStart), "sidecar", "started"); err != nil {
 			t.Fatal(err)
 		}
@@ -351,20 +388,19 @@ func TestControlPlaneV8UnboundAndNonSelectedPathsRemainLegacyOnly(t *testing.T) 
 }
 
 func TestControlPlaneV8FailureNeverFallsBackToDuplicateLegacyPersistence(t *testing.T) {
-	t.Parallel()
 	for _, test := range []struct {
 		name    string
-		emitter *rejectingControlPlaneV8Emitter
+		emitter *rejectingRuntimeV8Emitter
 	}{
-		{name: "runtime error", emitter: &rejectingControlPlaneV8Emitter{err: fmt.Errorf("runtime rejected")}},
-		{name: "local not persisted", emitter: &rejectingControlPlaneV8Emitter{}},
+		{name: "runtime error", emitter: &rejectingRuntimeV8Emitter{err: fmt.Errorf("runtime rejected")}},
+		{name: "local not persisted", emitter: &rejectingRuntimeV8Emitter{}},
 	} {
 		test := test
 		t.Run(test.name, func(t *testing.T) {
 			logger := newTestLogger(t)
 			structured := &captureEmitter{}
 			logger.SetStructuredEmitter(structured)
-			logger.SetControlPlaneV8Emitter(test.emitter)
+			logger.SetRuntimeV8Emitter(test.emitter)
 			if err := logger.LogAction(string(ActionConfigUpdate), "config.yaml", "changed"); err == nil {
 				t.Fatal("LogAction succeeded after canonical runtime failure")
 			}

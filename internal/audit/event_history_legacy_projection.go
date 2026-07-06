@@ -67,7 +67,10 @@ func legacyEventProjectionFromContext(
 	switch record.EventName() {
 	case observability.EventName(observability.TelemetryEventConfigChangeApplied),
 		observability.EventName(observability.TelemetryEventPolicyUpdated),
-		observability.EventName(observability.TelemetryEventAuthenticationFailed):
+		observability.EventName(observability.TelemetryEventAuthenticationFailed),
+		observability.EventName(observability.TelemetryEventApprovalResolved),
+		observability.EventName(observability.TelemetryEventGuardrailJudgeCompleted),
+		observability.EventName(observability.TelemetryEventEnforcementQuarantineApplied):
 	default:
 		return Event{}, false, fmt.Errorf("audit: legacy event projection is not allowed for canonical family")
 	}

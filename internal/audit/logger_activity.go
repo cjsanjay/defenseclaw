@@ -128,14 +128,6 @@ func (l *Logger) logActivityImpl(in ActivityInput) error {
 		row.RunID = currentRunID()
 	}
 
-	if err := l.store.InsertActivityEvent(row); err != nil {
-		_, otel, _ := l.snapshot()
-		if otel != nil {
-			otel.RecordAuditDBError(context.Background(), "insert_activity_event")
-		}
-		return fmt.Errorf("audit: activity row: %w", err)
-	}
-
 	summary := map[string]any{
 		"activity_id":  activityID,
 		"actor":        actor,
@@ -174,18 +166,30 @@ func (l *Logger) logActivityImpl(in ActivityInput) error {
 	}
 	stampAuditEventEnvelope(&auditEv)
 	auditEv = sanitizeEvent(auditEv)
-	handledV8, emitErr := l.emitControlPlaneV8(context.Background(), auditEv)
+	disposition, emitErr := l.emitControlPlaneV8(context.Background(), auditEv)
 	if emitErr != nil {
 		return emitErr
 	}
-	if !handledV8 {
-		if err := l.store.LogEvent(auditEv); err != nil {
-			_, otel, _ := l.snapshot()
-			if otel != nil {
-				otel.RecordAuditDBError(context.Background(), "insert_activity_audit")
-			}
-			return err
+	// Runtime-handled activity occurrences exclusively own canonical SQLite and
+	// optional destination fanout. Suppress the native activity_events row plus
+	// legacy audit sink, OTel, and gateway activity mirror so neither local SQL
+	// nor gateway.jsonl duplicates or resurrects the signal.
+	if disposition != auditV8Unhandled {
+		return nil
+	}
+	if err := l.store.InsertActivityEvent(row); err != nil {
+		_, otel, _ := l.snapshot()
+		if otel != nil {
+			otel.RecordAuditDBError(context.Background(), "insert_activity_event")
 		}
+		return fmt.Errorf("audit: activity row: %w", err)
+	}
+	if err := l.store.LogEvent(auditEv); err != nil {
+		_, otel, _ := l.snapshot()
+		if otel != nil {
+			otel.RecordAuditDBError(context.Background(), "insert_activity_audit")
+		}
+		return err
 	}
 
 	sinksMgr, otel, structured := l.snapshot()
