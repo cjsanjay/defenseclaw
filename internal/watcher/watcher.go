@@ -337,8 +337,10 @@ func (w *InstallWatcher) runAdmission(ctx context.Context, evt InstallEvent) (re
 		}
 	}()
 
-	_ = w.logger.LogAction(string(audit.ActionInstallDetected), evt.Path,
-		fmt.Sprintf("type=%s name=%s", targetType, evt.Name))
+	w.logAssetDiscovered(
+		ctx, evt,
+		fmt.Sprintf("type=%s name=%s", targetType, evt.Name), "detected",
+	)
 
 	// Avarice F-2867: an explicit operator allow that recorded a
 	// source_path MUST NOT auto-allow a different on-disk asset
@@ -696,6 +698,17 @@ func (w *InstallWatcher) applyPostScanEnforcement(ctx context.Context, pe *enfor
 		_ = w.logger.LogAction(string(audit.ActionInstallWarning), evt.Path,
 			fmt.Sprintf("type=%s severity=%s scanner=%s", targetType, result.MaxSeverity(), scannerName))
 	}
+}
+
+func (w *InstallWatcher) logAssetDiscovered(
+	ctx context.Context,
+	evt InstallEvent,
+	details, reason string,
+) {
+	_ = w.logger.LogAssetDiscoveredCtx(ctx, evt.Path, details, audit.AssetLifecycleInput{
+		AssetID: evt.Name, AssetType: string(evt.Type), TargetPath: evt.Path,
+		Reason: reason, Initiator: "watcher",
+	})
 }
 
 func coalesce(vals ...string) string {

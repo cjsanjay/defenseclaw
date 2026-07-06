@@ -279,10 +279,12 @@ func TestInferAssetTypeFromAction(t *testing.T) {
 		{"mcp in details", "block", "type=mcp reason=test", "mcp"},
 		{"skill action", "skill-install", "", "skill"},
 		{"skill in details", "install-clean", "type=skill scanner=x", "skill"},
-		{"default to skill", "block", "reason=test", "skill"},
+		{"plugin action", "api-plugin-disable", "", "plugin"},
+		{"plugin in details", "disable", "type=plugin", "plugin"},
+		{"unknown omitted", "block", "reason=test", ""},
 		{"watcher-block skill", "watcher-block", "type=skill reason=x", "skill"},
 		{"watcher-block mcp", "watcher-block", "type=mcp reason=x", "mcp"},
-		{"empty action", "", "", "skill"},
+		{"empty action", "", "", ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

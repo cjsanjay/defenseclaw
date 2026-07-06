@@ -28,12 +28,14 @@ import (
 // Keys mirror internal/audit Action* constants; telemetry cannot import audit
 // because audit.Logger already depends on telemetry.Provider.
 type actionMapping struct {
-	LifecycleAction string
-	Actor           string
+	LifecycleAction     string
+	Actor               string
+	CanonicalEvent      string
+	CanonicalTransition string
 }
 
 var actionMap = map[string]actionMapping{
-	"install-detected":             {LifecycleAction: "install", Actor: "watcher"},
+	"install-detected":             {LifecycleAction: "install", Actor: "watcher", CanonicalEvent: "asset.discovered", CanonicalTransition: "discover"},
 	"install-rejected":             {LifecycleAction: "block", Actor: "watcher"},
 	"install-allowed":              {LifecycleAction: "allow", Actor: "watcher"},
 	"install-allowed-skip-enforce": {LifecycleAction: "allow", Actor: "watcher"},
@@ -56,6 +58,27 @@ var actionMap = map[string]actionMapping{
 	"api-skill-enable":             {LifecycleAction: "enable", Actor: "user"},
 	"api-plugin-disable":           {LifecycleAction: "disable", Actor: "user"},
 	"api-plugin-enable":            {LifecycleAction: "enable", Actor: "user"},
+}
+
+// AssetLifecycleActionMapping is the closed translation contract shared by the
+// legacy v7 lifecycle logger and the generated v8 asset-family adapter. An empty
+// CanonicalEvent is intentional: the legacy action describes another domain
+// (for example watcher health, a scan result, or an admission rejection) and
+// must not be relabeled as an asset state transition.
+type AssetLifecycleActionMapping struct {
+	Transition     string
+	CanonicalEvent string
+}
+
+func AssetLifecycleAction(action string) (AssetLifecycleActionMapping, bool) {
+	mapping, ok := actionMap[action]
+	if !ok {
+		return AssetLifecycleActionMapping{}, false
+	}
+	return AssetLifecycleActionMapping{
+		Transition:     mapping.CanonicalTransition,
+		CanonicalEvent: mapping.CanonicalEvent,
+	}, true
 }
 
 // severityToOTel maps string severity to OTel severity number.
@@ -85,7 +108,10 @@ func (p *Provider) EmitLifecycleEvent(
 	}
 
 	sevText, sevNum := severityToOTel(severity)
-	body := fmt.Sprintf("%s %s %s: %s", assetType, target, mapping.LifecycleAction, reason)
+	body := fmt.Sprintf("%s %s: %s", target, mapping.LifecycleAction, reason)
+	if assetType != "" {
+		body = fmt.Sprintf("%s %s", assetType, body)
+	}
 
 	now := time.Now()
 	rec := log.Record{}
@@ -98,11 +124,13 @@ func (p *Provider) EmitLifecycleEvent(
 	attrs := []log.KeyValue{
 		log.String("event.name", mapping.LifecycleAction),
 		log.String("event.domain", "defenseclaw.asset"),
-		log.String("defenseclaw.asset.type", assetType),
 		log.String("defenseclaw.asset.name", target),
 		log.String("defenseclaw.lifecycle.action", mapping.LifecycleAction),
 		log.String("defenseclaw.lifecycle.reason", reason),
 		log.String("defenseclaw.lifecycle.actor", mapping.Actor),
+	}
+	if assetType != "" {
+		attrs = append(attrs, log.String("defenseclaw.asset.type", assetType))
 	}
 
 	if sourcePath, ok := enforcement["source_path"]; ok && sourcePath != "" {

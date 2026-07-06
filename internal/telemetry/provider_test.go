@@ -30,6 +30,7 @@ import (
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+	otellog "go.opentelemetry.io/otel/log"
 	"go.opentelemetry.io/otel/log/global"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
@@ -253,6 +254,30 @@ func TestNewProvider_NilSafe(t *testing.T) {
 func TestDisabledProvider_EmitLifecycleEvent_NoPanic(t *testing.T) {
 	p, _ := NewProvider(context.Background(), disabledCfg(), "test")
 	p.EmitLifecycleEvent("block", "test-skill", "skill", "test reason", "HIGH", nil)
+}
+
+func TestEmitLifecycleEventPreservesPluginAndOmitsUnknownAssetType(t *testing.T) {
+	p, exporter := newProviderWithLogCapture(t)
+	p.EmitLifecycleEvent("block", "known-plugin", "plugin", "test reason", "HIGH", nil)
+	p.EmitLifecycleEvent("block", "unknown-asset", "", "test reason", "HIGH", nil)
+
+	records := exporter.snapshot()
+	if len(records) != 2 {
+		t.Fatalf("records=%d, want 2", len(records))
+	}
+	if got := attrValue(records[0], "defenseclaw.asset.type"); got != "plugin" {
+		t.Fatalf("plugin asset type=%q, want plugin", got)
+	}
+	foundUnknownType := false
+	records[1].WalkAttributes(func(attribute otellog.KeyValue) bool {
+		if attribute.Key == "defenseclaw.asset.type" {
+			foundUnknownType = true
+		}
+		return true
+	})
+	if foundUnknownType {
+		t.Fatal("unknown asset emitted an empty defenseclaw.asset.type attribute")
+	}
 }
 
 func TestDisabledProvider_EmitScanResult_NoPanic(t *testing.T) {
@@ -926,29 +951,35 @@ func TestBuildSampler(t *testing.T) {
 
 func TestActionMapping(t *testing.T) {
 	tests := []struct {
-		action        string
-		wantLifecycle string
-		wantActor     string
+		action         string
+		wantLifecycle  string
+		wantActor      string
+		wantEvent      string
+		wantTransition string
 	}{
-		{"install-detected", "install", "watcher"},
-		{"install-rejected", "block", "watcher"},
-		{"install-allowed", "allow", "watcher"},
-		{"install-clean", "install", "watcher"},
-		{"install-warning", "install", "watcher"},
-		{"install-scan-error", "scan-error", "watcher"},
-		{"block", "block", "user"},
-		{"watcher-block", "block", "watcher"},
-		{"allow", "allow", "user"},
-		{"quarantine", "quarantine", "defenseclaw"},
-		{"restore", "restore", "user"},
-		{"deploy", "install", "user"},
-		{"stop", "uninstall", "user"},
-		{"disable", "disable", "defenseclaw"},
-		{"enable", "enable", "user"},
-		{"api-skill-disable", "disable", "user"},
-		{"api-skill-enable", "enable", "user"},
-		{"watch-start", "watch-start", "watcher"},
-		{"watch-stop", "watch-stop", "watcher"},
+		{"install-detected", "install", "watcher", "asset.discovered", "discover"},
+		{"install-rejected", "block", "watcher", "", ""},
+		{"install-allowed", "allow", "watcher", "", ""},
+		{"install-allowed-skip-enforce", "allow", "watcher", "", ""},
+		{"install-clean", "install", "watcher", "", ""},
+		{"install-warning", "install", "watcher", "", ""},
+		{"install-scan-error", "scan-error", "watcher", "", ""},
+		{"install-enforced", "block", "watcher", "", ""},
+		{"block", "block", "user", "", ""},
+		{"watcher-block", "block", "watcher", "", ""},
+		{"allow", "allow", "user", "", ""},
+		{"quarantine", "quarantine", "defenseclaw", "", ""},
+		{"restore", "restore", "user", "", ""},
+		{"deploy", "install", "user", "", ""},
+		{"stop", "uninstall", "user", "", ""},
+		{"disable", "disable", "defenseclaw", "", ""},
+		{"enable", "enable", "user", "", ""},
+		{"api-skill-disable", "disable", "user", "", ""},
+		{"api-skill-enable", "enable", "user", "", ""},
+		{"api-plugin-disable", "disable", "user", "", ""},
+		{"api-plugin-enable", "enable", "user", "", ""},
+		{"watch-start", "watch-start", "watcher", "", ""},
+		{"watch-stop", "watch-stop", "watcher", "", ""},
 	}
 
 	for _, tt := range tests {
@@ -963,7 +994,15 @@ func TestActionMapping(t *testing.T) {
 			if m.Actor != tt.wantActor {
 				t.Errorf("actor: got %s, want %s", m.Actor, tt.wantActor)
 			}
+			public, found := AssetLifecycleAction(tt.action)
+			if !found || public.CanonicalEvent != tt.wantEvent ||
+				public.Transition != tt.wantTransition {
+				t.Errorf("canonical mapping: got %+v found=%t", public, found)
+			}
 		})
+	}
+	if len(tests) != len(actionMap) {
+		t.Fatalf("mapping test cases=%d actionMap=%d; add an explicit disposition for every action", len(tests), len(actionMap))
 	}
 }
 

@@ -679,6 +679,15 @@ func (l *Logger) logActionWithEnvelopeContext(
 	env CorrelationEnvelope,
 	action, target, details, severity string,
 ) error {
+	return l.logActionWithEnvelopeContextAndAsset(ctx, env, action, target, details, severity, nil)
+}
+
+func (l *Logger) logActionWithEnvelopeContextAndAsset(
+	ctx context.Context,
+	env CorrelationEnvelope,
+	action, target, details, severity string,
+	assetInput *AssetLifecycleInput,
+) error {
 	if severity == "" {
 		severity = "INFO"
 	}
@@ -705,6 +714,26 @@ func (l *Logger) logActionWithEnvelopeContext(
 	}
 	if disposition != auditV8Unhandled {
 		return nil
+	}
+	runtimeV8 := l.runtimeV8Snapshot()
+	if mapping, mapped := telemetry.AssetLifecycleAction(action); runtimeV8 != nil && mapped && mapping.CanonicalEvent != "" {
+		input := AssetLifecycleInput{
+			AssetID: target, AssetType: inferAssetTypeFromAction(action, ""),
+			TargetRef: target,
+		}
+		if assetInput != nil {
+			input = *assetInput
+		}
+		disposition, emitErr = l.emitAssetLifecycleV8(ctx, event, input, mapping, runtimeV8)
+		if emitErr != nil {
+			return emitErr
+		}
+		if disposition != auditV8Unhandled {
+			if disposition == auditV8Persisted && otel != nil {
+				otel.RecordAuditEvent(context.Background(), event.Action, event.Severity, event.Connector)
+			}
+			return nil
+		}
 	}
 	storeErr := l.store.LogEvent(event)
 	if storeErr != nil {
@@ -1105,10 +1134,12 @@ func inferAssetTypeFromAction(action, details string) string {
 	switch {
 	case contains(action, "mcp") || contains(details, "type=mcp"):
 		return "mcp"
+	case contains(action, "plugin") || contains(details, "type=plugin"):
+		return "plugin"
 	case contains(action, "skill") || contains(details, "type=skill"):
 		return "skill"
 	default:
-		return "skill"
+		return ""
 	}
 }
 
