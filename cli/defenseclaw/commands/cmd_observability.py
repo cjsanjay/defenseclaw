@@ -26,6 +26,11 @@ import click
 
 from defenseclaw import config as config_module
 from defenseclaw.config_inspect import ConfigInspectError, inspect_v8_config
+from defenseclaw.observability.destination_test import (
+    DestinationTestError,
+    canonical_local_compliance_recorder,
+    run_destination_test,
+)
 
 _BUCKETS = (
     "compliance.activity",
@@ -59,6 +64,63 @@ class _PlanFilters:
 @click.group("observability")
 def observability_cmd() -> None:
     """Inspect canonical observability collection and routing policy."""
+
+
+@observability_cmd.group("destination")
+def observability_destination() -> None:
+    """Inspect or explicitly test one configured destination."""
+
+
+@observability_destination.command("test")
+@click.argument("name")
+@click.option(
+    "--write-probe",
+    is_flag=True,
+    help="Send one marked, content-free probe when the named adapter supports isolated writes.",
+)
+@click.option(
+    "--timeout",
+    type=click.FloatRange(min=0.1, max=60.0),
+    default=5.0,
+    show_default=True,
+    help="DNS, connection, TLS, and protocol timeout in seconds.",
+)
+def observability_destination_test(name: str, write_probe: bool, timeout: float) -> None:
+    """Test exactly NAME without ordinary collection, routing, or fan-out."""
+
+    try:
+        inspected = inspect_v8_config(
+            "effective",
+            config_path=str(config_module.config_path()),
+        )
+        result = run_destination_test(
+            inspected.effective or {},
+            name=name,
+            data_dir=inspected.data_dir,
+            timeout=timeout,
+            write_probe=write_probe,
+            compliance=canonical_local_compliance_recorder(),
+        )
+    except ConfigInspectError as exc:
+        raise click.ClickException(str(exc)) from exc
+    except DestinationTestError as exc:
+        raise click.ClickException(f"destination test failed ({exc.failure_class}): {exc.message}") from exc
+
+    click.echo(f"destination: {result.destination}")
+    click.echo(f"kind: {result.kind}")
+    click.echo(f"mode: {result.mode}")
+    click.echo(f"protocol: {result.protocol}")
+    click.echo(f"endpoints tested: {result.endpoint_count}")
+    click.echo(f"probe ID: {result.probe_id}")
+    if result.mode == "write_probe":
+        click.echo("write probe: accepted by the named destination")
+    if result.authentication_verified:
+        click.echo("authentication: configured credential accepted with the synthetic write probe")
+    elif result.mode == "write_probe":
+        click.echo("authentication: no credential configured")
+    else:
+        click.echo("authentication: resolved locally; not transmitted by the non-mutating handshake")
+    click.echo("compliance activity: attempt and outcome recorded locally")
 
 
 @observability_cmd.command("plan")
