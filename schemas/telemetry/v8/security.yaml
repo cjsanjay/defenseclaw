@@ -2292,6 +2292,8 @@ groups:
   attributes:
   - ref: gen_ai.request.model
     requirement_level: required
+  - ref: defenseclaw.judge.kind
+    requirement_level: required
   body_fields: []
   span:
     name_pattern: chat {gen_ai.request.model}

@@ -82,7 +82,7 @@ func validRecordInput() RecordInput {
 func validMetricRecordInput() RecordInput {
 	input := validRecordInput()
 	input.Identity = EventIdentity{
-		Bucket: BucketDiagnostic,
+		Bucket: BucketComplianceActivity,
 		Signal: SignalMetrics,
 		Name:   "defenseclaw.activity.total",
 	}
@@ -286,7 +286,7 @@ func TestRecordPayloadArmsBySignal(t *testing.T) {
 		{
 			name: "metric",
 			mutate: func(input *RecordInput) {
-				input.Identity = EventIdentity{Bucket: BucketDiagnostic, Signal: SignalMetrics, Name: "defenseclaw.activity.total"}
+				input.Identity = EventIdentity{Bucket: BucketComplianceActivity, Signal: SignalMetrics, Name: "defenseclaw.activity.total"}
 				input.InstrumentData = input.Body
 				input.Body = nil
 				input.Severity = nil
@@ -329,7 +329,7 @@ func TestRecordRejectsInvalidPayloadArmCombinations(t *testing.T) {
 		{name: "log has both arms", mutate: func(input *RecordInput) { input.InstrumentData = map[string]any{} }},
 		{name: "log span name", mutate: func(input *RecordInput) { input.SpanName = "wrong" }},
 		{name: "metric missing instrument", mutate: func(input *RecordInput) {
-			input.Identity = EventIdentity{Bucket: BucketDiagnostic, Signal: SignalMetrics, Name: "defenseclaw.activity.total"}
+			input.Identity = EventIdentity{Bucket: BucketComplianceActivity, Signal: SignalMetrics, Name: "defenseclaw.activity.total"}
 			input.Body = nil
 		}},
 		{name: "trace missing span name", mutate: func(input *RecordInput) {

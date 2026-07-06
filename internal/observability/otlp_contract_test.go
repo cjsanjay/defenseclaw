@@ -6,7 +6,11 @@ package observability
 import "testing"
 
 func TestTraceOTLPContractCoversRegisteredGeneratedFamilies(t *testing.T) {
-	for _, family := range spanFamilyEventNames {
+	for _, descriptor := range generatedFamilyIdentityDescriptors() {
+		if descriptor.Identity.Signal != SignalTraces {
+			continue
+		}
+		family := descriptor.Identity.Name
 		contract, ok := traceOTLPContract(family)
 		if !ok {
 			t.Fatalf("registered trace family %q has no OTLP contract", family)

@@ -440,8 +440,8 @@ func (identity EventIdentity) Validate() error {
 	if err := identity.Name.Validate(); err != nil {
 		return err
 	}
-	if !IsRegisteredEventNameForSignal(identity.Signal, identity.Name) {
-		return fmt.Errorf("event name is not registered for signal %q", identity.Signal)
+	if !IsRegisteredEventIdentity(identity) {
+		return fmt.Errorf("event identity is not registered for bucket %q and signal %q", identity.Bucket, identity.Signal)
 	}
 	return nil
 }

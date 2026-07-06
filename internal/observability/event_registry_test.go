@@ -87,29 +87,13 @@ func TestEventNamesAreSortedUniqueAndCopySafe(t *testing.T) {
 func TestEventNameSignalMembershipIsExhaustiveAndDisjoint(t *testing.T) {
 	t.Parallel()
 
-	tests := []struct {
-		signal Signal
-		names  []EventName
-	}{
-		{
-			signal: SignalLogs,
-			names: append(
-				append([]EventName(nil), documentedLogEventNames[:]...),
-				compatibilityEventNames[:]...,
-			),
-		},
-		{signal: SignalTraces, names: spanFamilyEventNames[:]},
-		{signal: SignalMetrics, names: metricInstrumentEventNames[:]},
-	}
-	for _, test := range tests {
-		for _, name := range test.names {
-			if !IsRegisteredEventNameForSignal(test.signal, name) {
-				t.Errorf("%q is not registered for %q", name, test.signal)
-			}
-			for _, other := range Signals() {
-				if other != test.signal && IsRegisteredEventNameForSignal(other, name) {
-					t.Errorf("%q is unexpectedly registered for both %q and %q", name, test.signal, other)
-				}
+	for _, family := range generatedFamilyIdentityDescriptors() {
+		if !IsRegisteredEventNameForSignal(family.Identity.Signal, family.Identity.Name) {
+			t.Errorf("%q is not registered for %q", family.Identity.Name, family.Identity.Signal)
+		}
+		for _, other := range Signals() {
+			if other != family.Identity.Signal && IsRegisteredEventNameForSignal(other, family.Identity.Name) {
+				t.Errorf("%q is unexpectedly registered for both %q and %q", family.Identity.Name, family.Identity.Signal, other)
 			}
 		}
 	}
@@ -151,6 +135,7 @@ func TestRegisteredIdentityRequiresCatalogBucketAndMatchingSignal(t *testing.T) 
 	invalid := []EventIdentity{
 		{Bucket: "not-a-bucket", Signal: SignalLogs, Name: "session_start"},
 		{Bucket: BucketAgentLifecycle, Signal: "profiles", Name: "session_start"},
+		{Bucket: BucketModelIO, Signal: SignalLogs, Name: "session_start"},
 		{Bucket: BucketAgentLifecycle, Signal: SignalLogs, Name: "span.agent.invoke"},
 		{Bucket: BucketAgentLifecycle, Signal: SignalTraces, Name: "session_start"},
 		{Bucket: BucketAgentLifecycle, Signal: SignalMetrics, Name: "plausible.metric"},
@@ -162,6 +147,87 @@ func TestRegisteredIdentityRequiresCatalogBucketAndMatchingSignal(t *testing.T) 
 		if err := identity.Validate(); err == nil {
 			t.Errorf("registered identity validation accepted %+v", identity)
 		}
+	}
+}
+
+func TestGeneratedFamilyIdentityAuthorityIsCompleteExactAndValid(t *testing.T) {
+	t.Parallel()
+
+	families := generatedFamilyIdentityDescriptors()
+	if got, want := len(families), 249; got != want {
+		t.Fatalf("generated family identity count=%d, want %d", got, want)
+	}
+	wantSignals := map[Signal]int{SignalLogs: 93, SignalTraces: 25, SignalMetrics: 131}
+	gotSignals := make(map[Signal]int, len(wantSignals))
+	familyIDs := make(map[string]struct{}, len(families))
+	identities := make(map[EventIdentity]struct{}, len(families))
+	for _, family := range families {
+		if family.FamilyID == "" || family.Descriptor == nil {
+			t.Fatalf("incomplete generated family row: %+v", family)
+		}
+		if _, duplicate := familyIDs[family.FamilyID]; duplicate {
+			t.Fatalf("duplicate generated family ID %q", family.FamilyID)
+		}
+		if _, duplicate := identities[family.Identity]; duplicate {
+			t.Fatalf("duplicate generated family identity %+v", family.Identity)
+		}
+		familyIDs[family.FamilyID] = struct{}{}
+		identities[family.Identity] = struct{}{}
+		gotSignals[family.Identity.Signal]++
+		if !IsRegisteredEventIdentity(family.Identity) {
+			t.Errorf("generated family identity is not registered: %+v", family.Identity)
+		}
+		contract := family.Descriptor.familyDescriptorContract()
+		if contract.id != family.FamilyID || contract.identity != family.Identity {
+			t.Errorf("generated row disagrees with descriptor: row=%+v contract=%+v", family, contract.identity)
+		}
+		if err := validateFamilyDescriptor(contract, familySignalForTest(t, family.Identity.Signal)); err != nil {
+			t.Errorf("generated descriptor %q is invalid: %v", family.FamilyID, err)
+		}
+	}
+	if !reflect.DeepEqual(gotSignals, wantSignals) {
+		t.Fatalf("generated family signal counts=%v, want %v", gotSignals, wantSignals)
+	}
+
+	wrongBucket := families[0].Descriptor.familyDescriptorContract()
+	if wrongBucket.identity.Bucket == BucketModelIO {
+		wrongBucket.identity.Bucket = BucketAgentLifecycle
+	} else {
+		wrongBucket.identity.Bucket = BucketModelIO
+	}
+	if err := validateFamilyDescriptor(wrongBucket, familySignalForTest(t, wrongBucket.identity.Signal)); !IsFamilyBuildError(err, FamilyBuildInvalidDescriptor) {
+		t.Fatalf("wrong valid bucket descriptor error=%v, want %q", err, FamilyBuildInvalidDescriptor)
+	}
+}
+
+func TestGeneratedProducerIdentitiesMatchFamilyAuthorityOrExplicitCompatibility(t *testing.T) {
+	t.Parallel()
+
+	families := make(map[string]EventIdentity, 249)
+	for _, family := range generatedFamilyIdentityDescriptors() {
+		families[family.FamilyID] = family.Identity
+	}
+	compatibilityCount := 0
+	for _, producer := range generatedProducerGroups {
+		for _, row := range producer.Identities {
+			identity := EventIdentity{Bucket: row.Bucket, Signal: SignalLogs, Name: row.EventName}
+			if row.CompatibilityOnly {
+				compatibilityCount++
+				if row.FamilyRefs.FamilyDescriptorID != "" || row.FamilyRefs.SelectedFamilyFloorID != "" {
+					t.Errorf("compatibility row %q references a canonical family", row.RowID)
+				}
+				if !IsRegisteredEventIdentity(identity) {
+					t.Errorf("compatibility row %q is not registered exactly: %+v", row.RowID, identity)
+				}
+				continue
+			}
+			if canonical, ok := families[row.FamilyRefs.FamilyDescriptorID]; !ok || canonical != identity {
+				t.Errorf("producer row %q identity=%+v, canonical=%+v present=%v", row.RowID, identity, canonical, ok)
+			}
+		}
+	}
+	if compatibilityCount == 0 {
+		t.Fatal("generated producer catalog has no compatibility-only identity coverage")
 	}
 }
 
@@ -199,7 +265,7 @@ func TestMetricInstrumentEventNamesMatchCanonicalSchema(t *testing.T) {
 			t.Errorf("canonical metric %q is not registered", metric.Name)
 		}
 	}
-	assertSameEventNameSet(t, metricInstrumentEventNames[:], fromSchema)
+	assertSameEventNameSet(t, generatedFamilyEventNames(SignalMetrics), fromSchema)
 }
 
 func TestSpanFamilyEventNamesMatchSpecCatalog(t *testing.T) {
@@ -234,7 +300,7 @@ func TestSpanFamilyEventNamesMatchSpecCatalog(t *testing.T) {
 			t.Errorf("declared span family %q is not registered", family)
 		}
 	}
-	assertSameEventNameSet(t, spanFamilyEventNames[:], fromSpec)
+	assertSameEventNameSet(t, generatedFamilyEventNames(SignalTraces), fromSpec)
 }
 
 func TestLifecycleCompatibilityNamesMatchCanonicalSchema(t *testing.T) {
@@ -247,16 +313,113 @@ func TestLifecycleCompatibilityNamesMatchCanonicalSchema(t *testing.T) {
 	}
 	readJSONFile(t, repositoryFile(t, "schemas/otel/agent-lifecycle-event.schema.json"), &schema)
 	fromSchema := schema.Properties["defenseclaw.agent.lifecycle.event"].Enum
-	want := make([]EventName, 0, len(compatibilityEventNames)-1)
-	for _, name := range compatibilityEventNames {
-		if name != "hook_decision" {
-			want = append(want, name)
+	want := make([]EventName, 0, len(fromSchema))
+	for _, family := range generatedFamilyIdentityDescriptors() {
+		if strings.HasPrefix(family.FamilyID, "log.compat.") && family.Identity.Name != "hook_decision" {
+			want = append(want, family.Identity.Name)
 		}
-		if !IsRegisteredEventName(name) {
-			t.Errorf("compatibility event name %q is not registered", name)
+		if strings.HasPrefix(family.FamilyID, "log.compat.") && !IsRegisteredEventName(family.Identity.Name) {
+			t.Errorf("compatibility event name %q is not registered", family.Identity.Name)
 		}
 	}
 	assertSameEventNameSet(t, want, fromSchema)
+}
+
+func TestPreviouslyMissingDiscoveryFamilyBuildersSucceed(t *testing.T) {
+	t.Parallel()
+
+	builder, _ := testFamilyBuilder(t)
+	tests := []struct {
+		name  string
+		want  EventIdentity
+		build func() (Record, error)
+	}{
+		{
+			name: "agent completed",
+			want: EventIdentity{Bucket: BucketAgentLifecycle, Signal: SignalLogs, Name: "agent.discovery.completed"},
+			build: func() (Record, error) {
+				return builder.BuildLogAgentDiscoveryCompleted(LogAgentDiscoveryCompletedInput{
+					Envelope: testFamilyEnvelope(), Outcome: OutcomeCompleted,
+					DefenseClawAgentDiscoverySource: "cli", DefenseClawAgentDiscoveryCacheHit: false,
+					DefenseClawAgentDiscoveryResult: "ok", DefenseClawAgentDiscoveryDurationMs: 1,
+					DefenseClawAgentDiscoveryAgentsTotal: 2, DefenseClawAgentDiscoveryInstalledTotal: 1,
+				})
+			},
+		},
+		{
+			name: "agent rejected",
+			want: EventIdentity{Bucket: BucketAgentLifecycle, Signal: SignalLogs, Name: "agent.discovery.rejected"},
+			build: func() (Record, error) {
+				return builder.BuildLogAgentDiscoveryRejected(LogAgentDiscoveryRejectedInput{
+					Envelope: testFamilyEnvelope(), Outcome: OutcomeRejected,
+					DefenseClawAgentDiscoverySource: "api", DefenseClawAgentDiscoveryResult: "malformed",
+				})
+			},
+		},
+		{
+			name: "agent signal",
+			want: EventIdentity{Bucket: BucketAgentLifecycle, Signal: SignalLogs, Name: "agent.discovery.signal"},
+			build: func() (Record, error) {
+				return builder.BuildLogAgentDiscoverySignal(LogAgentDiscoverySignalInput{
+					Envelope: testFamilyEnvelope(), DefenseClawAgentDiscoveryConnector: "codex",
+					DefenseClawAgentDiscoveryInstalled: true, DefenseClawAgentDiscoveryHasConfig: true,
+					DefenseClawAgentDiscoveryHasBinary: true, DefenseClawAgentDiscoveryProbeStatus: "ok",
+				})
+			},
+		},
+		{
+			name: "AI discovery completed",
+			want: EventIdentity{Bucket: BucketAIDiscovery, Signal: SignalLogs, Name: "ai.discovery.completed"},
+			build: func() (Record, error) {
+				return builder.BuildLogAIDiscoveryCompleted(LogAIDiscoveryCompletedInput{
+					Envelope: testFamilyEnvelope(), Outcome: OutcomeCompleted,
+					DefenseClawAIDiscoveryScanID: "scan-1", DefenseClawAIDiscoverySource: "sidecar",
+					DefenseClawAIDiscoveryPrivacyMode: "enhanced", DefenseClawAIDiscoveryResult: "ok",
+					DefenseClawAIDiscoveryDurationMs: 1, DefenseClawAIDiscoverySignalsTotal: 3,
+					DefenseClawAIDiscoveryActiveSignals: 2, DefenseClawAIDiscoveryNewSignals: 1,
+					DefenseClawAIDiscoveryChangedSignals: 0, DefenseClawAIDiscoveryGoneSignals: 0,
+					DefenseClawAIDiscoveryFilesScanned: 4, DefenseClawAIDiscoveryDedupeSuppressed: 0,
+					DefenseClawAIDiscoveryErrors: 0,
+				})
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			record, err := test.build()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if record.Identity() != test.want {
+				t.Fatalf("identity=%+v, want %+v", record.Identity(), test.want)
+			}
+		})
+	}
+}
+
+func generatedFamilyEventNames(signal Signal) []EventName {
+	names := make([]EventName, 0, len(generatedFamilyIdentityDescriptors()))
+	for _, family := range generatedFamilyIdentityDescriptors() {
+		if family.Identity.Signal == signal {
+			names = append(names, family.Identity.Name)
+		}
+	}
+	return names
+}
+
+func familySignalForTest(t *testing.T, signal Signal) familySignal {
+	t.Helper()
+	switch signal {
+	case SignalLogs:
+		return familySignalLog
+	case SignalTraces:
+		return familySignalTrace
+	case SignalMetrics:
+		return familySignalMetric
+	default:
+		t.Fatalf("unknown generated signal %q", signal)
+		return familySignalInvalid
+	}
 }
 
 func classificationDefaultEventNames() []EventName {

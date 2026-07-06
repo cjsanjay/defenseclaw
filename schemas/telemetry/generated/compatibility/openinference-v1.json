@@ -3,7 +3,7 @@
     "artifact": "compatibility/openinference-v1.json",
     "authority": "candidate-not-public-authority",
     "generator": "defenseclaw-telemetry-candidate-renderer-v1",
-    "materialized_view_sha256": "55e42da13a62e6a9a92756f2aeffa0be6251c75d08a66a88bca8cde6c88c403b",
+    "materialized_view_sha256": "f53cb20a665ef93a3d2e08f10f2107c9c1a3a93d420ccf5fd2d83af06daa26f1",
     "registry_version": 1
   },
   "availability": "pending",
@@ -95,7 +95,7 @@
     }
   ],
   "format": "defenseclaw-compatibility-profile-v1",
-  "materialized_view_sha256": "55e42da13a62e6a9a92756f2aeffa0be6251c75d08a66a88bca8cde6c88c403b",
+  "materialized_view_sha256": "f53cb20a665ef93a3d2e08f10f2107c9c1a3a93d420ccf5fd2d83af06daa26f1",
   "profile_id": "openinference-v1",
   "registry_version": 1,
   "runtime_projection": {

@@ -90,6 +90,12 @@ def test_real_candidate_renders_exact_complete_deterministic_outputs(
     assert catalog.count(b" familyDescriptorContract() familyDescriptorContract {") == 249
     assert catalog.count(b" familyTraceContract() familyTraceContract {") == 25
     assert catalog.count(b" familyMetricContract() familyMetricContract {") == 131
+    assert b"func generatedFamilyIdentityDescriptors() [249]generatedFamilyIdentityDescriptor" in catalog
+    identity_table = catalog.split(b"func generatedFamilyIdentityDescriptors()", maxsplit=1)[1]
+    assert identity_table.count(b"Descriptor: generated") == 249
+    assert identity_table.count(b"Signal: SignalLogs") == 93
+    assert identity_table.count(b"Signal: SignalTraces") == 25
+    assert identity_table.count(b"Signal: SignalMetrics") == 131
     producer = payloads[coordinator.EXACT_GO_OUTPUT_PATHS[2]]
     assert producer.count(b"generatedProducerIdentity{") >= 8077
     assert b"var generatedInboundMatches = []generatedInboundMatch{" in producer
@@ -105,13 +111,16 @@ def test_real_candidate_renders_exact_complete_deterministic_outputs(
     assert b"generatedInboundNativeMarkerRule" in producer
     assert b"generatedInboundStructuralMarkerRule" in producer
     assert b"generatedInboundNativeMalformedDisposition" in producer
-    assert b"TargetOverride: &generatedInboundTargetOverride{" in producer
-    assert b"FieldRefs: []string{" in producer
+    assert b"&generatedInboundTargetOverride{" in producer
+    assert b"FieldRefs:" in producer and b"[]string{" in producer
     domains = b"".join(payloads[path] for path in coordinator.EXACT_GO_OUTPUT_PATHS[3:6])
     assert domains.count(b"func (builder *FamilyBuilder) Build") == 249
     assert domains.count(b"func New") == 179
     assert domains.count(b"func ValidateTelemetryResourceAttributes") == 1
     assert domains.count(b"type ") >= 464
+    assert b"type SpanGuardrailJudgeInput struct" in domains
+    judge_input = domains.split(b"type SpanGuardrailJudgeInput struct", maxsplit=1)[1].split(b"}\n", maxsplit=1)[0]
+    assert [b"DefenseClawJudgeKind", b"string"] in [line.split() for line in judge_input.splitlines()]
     fixtures = payloads[coordinator.EXACT_GO_OUTPUT_PATHS[6]]
     assert fixtures.count(b"func TestGeneratedTelemetry") == 434
     assert b"const generatedFamilyBuilderMethodContractsJSON = " in fixtures
@@ -275,6 +284,26 @@ def test_relation_code_requires_bounded_signed_int64(candidate_index: Any) -> No
     )
     with pytest.raises(renderer.GoRenderError, match="signed 64-bit integer"):
         renderer._base_contract_literal(invalid_base, "test.base")
+
+
+def test_catalog_renderer_rejects_duplicate_family_identity(candidate_index: Any) -> None:
+    plan = candidate_index.go_api_plan
+    duplicate = dataclasses.replace(
+        plan.descriptors[1],
+        identity_bucket=plan.descriptors[0].identity_bucket,
+        signal=plan.descriptors[0].signal,
+        identity_name=plan.descriptors[0].identity_name,
+    )
+    forged = dataclasses.replace(plan, descriptors=(plan.descriptors[0], duplicate, *plan.descriptors[2:]))
+    with pytest.raises(renderer.GoRenderError, match="duplicate family identity"):
+        renderer._render_catalog_body(forged)
+
+
+def test_catalog_renderer_rejects_incomplete_family_inventory(candidate_index: Any) -> None:
+    plan = candidate_index.go_api_plan
+    forged = dataclasses.replace(plan, descriptors=plan.descriptors[:-1])
+    with pytest.raises(renderer.GoRenderError, match="expected exactly 249 family descriptors"):
+        renderer._render_catalog_body(forged)
 
 
 def test_renderer_uses_the_compiler_owned_cross_field_relation_bound() -> None:

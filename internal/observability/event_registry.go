@@ -18,319 +18,89 @@ package observability
 
 import "sort"
 
-// documentedLogEventNames is the closed log-event vocabulary declared by the
-// v8 taxonomy. Producer classification defaults are added separately below so
-// legacy audit identities remain routable during the compatibility window.
-var documentedLogEventNames = [...]EventName{
-	"ai_component.changed",
-	"ai_component.confidence.changed",
-	"ai_component.discovered",
-	"ai_component.removed",
-	"alert.acknowledgement.requested",
-	"alert.dismissal.requested",
-	"approval.resolved",
-	"asset.activated",
-	"asset.admitted",
-	"asset.disabled",
-	"asset.discovered",
-	"asset.quarantined",
-	"asset.registered",
-	"asset.released",
-	"asset.removed",
-	"asset.updated",
-	"authentication.failed",
-	"authorization.denied",
-	"config.change.applied",
-	"config.change.attempted",
-	"config.reload.rejected",
-	"destination.authentication.failed",
-	"destination.authorization.denied",
-	"destination.export_failed",
-	"destination.queue_full",
-	"destination.test.attempted",
-	"destination.test.completed",
-	"destination.updated",
-	"diagnostic.message",
-	"diagnostic.snapshot",
-	"egress.allowed",
-	"egress.blocked",
-	"egress.completed",
-	"egress.failed",
-	"egress.requested",
-	"enforcement.access.revoked",
-	"enforcement.block.applied",
-	"enforcement.block.failed",
-	"enforcement.block.requested",
-	"enforcement.quarantine.applied",
-	"enforcement.redaction.applied",
-	"enforcement.release.applied",
-	"finding.correlated",
-	"finding.observed",
-	"guardrail.evaluation.completed",
-	"guardrail.evaluation.failed",
-	"guardrail.evaluation.started",
-	"model.call.failed",
-	"model.request",
-	"model.response",
-	"model.stream.completed",
-	"observability.profile.changed",
-	"policy.updated",
-	"redaction.failed_closed",
-	"redaction.profile.updated",
-	"scan.cancelled",
-	"scan.completed",
-	"scan.failed",
-	"scan.phase.completed",
-	"scan.started",
-	"schema.validation_failed",
-	"sqlite.write_failed",
-	"subsystem.degraded",
-	"subsystem.ready",
-	"subsystem.restored",
-	"telemetry.authentication.failed",
-	"telemetry.authorization.denied",
-	"telemetry.batch.accepted",
-	"telemetry.batch.normalized",
-	"telemetry.batch.rejected",
-	"telemetry.records.dropped",
-	"tool.invocation.blocked",
-	"tool.invocation.completed",
-	"tool.invocation.failed",
-	"tool.invocation.requested",
-	"tool.invocation.started",
-}
-
-// compatibilityEventNames are the deliberately registered snake_case names.
-// Arbitrary names matching this lexical shape are not accepted by the registry.
-var compatibilityEventNames = [...]EventName{
-	"compact_end",
-	"compact_start",
-	"event",
-	"hook_decision",
-	"session_end",
-	"session_start",
-	"subagent_start",
-	"subagent_stop",
-	"tool_end",
-	"tool_start",
-	"turn_end",
-	"turn_start",
-}
-
-// spanFamilyEventNames mirrors the stable family IDs in spec 11 section 7.
-// Rendered, high-cardinality span names are intentionally absent.
-var spanFamilyEventNames = [...]EventName{
-	"span.admin.operation",
-	"span.agent.invoke",
-	"span.agent.transition",
-	"span.ai.discovery",
-	"span.ai.discovery.detector",
-	"span.approval.resolve",
-	"span.asset.scan",
-	"span.asset.scan.phase",
-	"span.asset.transition",
-	"span.config.reload",
-	"span.destination.export",
-	"span.diagnostic.canary",
-	"span.enforcement.apply",
-	"span.finding.enrich",
-	"span.guardrail.apply",
-	"span.guardrail.judge",
-	"span.guardrail.phase",
-	"span.model.chat",
-	"span.model.embeddings",
-	"span.network.request",
-	"span.retrieval.search",
-	"span.telemetry.normalize",
-	"span.telemetry.receive",
-	"span.tool.execute",
-	"span.workflow.run",
-}
-
-// metricInstrumentEventNames is generated from the exhaustive
-// x-emitted-metrics catalog in schemas/otel/metrics.schema.json. A drift test
-// requires an intentional registry update whenever that catalog changes.
-var metricInstrumentEventNames = [...]EventName{
-	"defenseclaw.activity.diff_entries",
-	"defenseclaw.activity.total",
-	"defenseclaw.admission.decisions",
-	"defenseclaw.agent.discovery.duration",
-	"defenseclaw.agent.discovery.errors",
-	"defenseclaw.agent.discovery.installed",
-	"defenseclaw.agent.discovery.runs",
-	"defenseclaw.agent.discovery.signals",
-	"defenseclaw.agent.last_seen",
-	"defenseclaw.agent.lifecycle.transitions",
-	"defenseclaw.agent.phase.current",
-	"defenseclaw.agent.phase.transitions",
-	"defenseclaw.agent.reported_cost",
-	"defenseclaw.agent.token.usage",
-	"defenseclaw.ai.components.installs",
-	"defenseclaw.ai.components.observations",
-	"defenseclaw.ai.components.workspaces",
-	"defenseclaw.ai.confidence.identity_score",
-	"defenseclaw.ai.confidence.presence_score",
-	"defenseclaw.ai.discovery.active_signals",
-	"defenseclaw.ai.discovery.dedupe_suppressed",
-	"defenseclaw.ai.discovery.duration",
-	"defenseclaw.ai.discovery.errors",
-	"defenseclaw.ai.discovery.files_scanned",
-	"defenseclaw.ai.discovery.gone_signals",
-	"defenseclaw.ai.discovery.new_signals",
-	"defenseclaw.ai.discovery.runs",
-	"defenseclaw.ai.discovery.signals",
-	"defenseclaw.alert.count",
-	"defenseclaw.approval.count",
-	"defenseclaw.audit.db.errors",
-	"defenseclaw.audit.events.total",
-	"defenseclaw.audit.sink.batches.delivered",
-	"defenseclaw.audit.sink.batches.dropped",
-	"defenseclaw.audit.sink.circuit.state",
-	"defenseclaw.audit.sink.delivery.latency",
-	"defenseclaw.audit.sink.failures",
-	"defenseclaw.audit.sink.queue.depth",
-	"defenseclaw.cisco.errors",
-	"defenseclaw.cisco_inspect.latency",
-	"defenseclaw.codex.notify",
-	"defenseclaw.codex.notify.malformed",
-	"defenseclaw.config.load.errors",
-	"defenseclaw.connector.hook.invocations",
-	"defenseclaw.connector.hook.latency",
-	"defenseclaw.connector.hook.outcome",
-	"defenseclaw.connector.hook.tokens",
-	"defenseclaw.connector.hook.unified_dispatch",
-	"defenseclaw.egress.events",
-	"defenseclaw.gateway.errors",
-	"defenseclaw.gateway.events.emitted",
-	"defenseclaw.gateway.forwarded_headers",
-	"defenseclaw.gateway.judge.errors",
-	"defenseclaw.gateway.judge.invocations",
-	"defenseclaw.gateway.judge.latency",
-	"defenseclaw.gateway.verdicts",
-	"defenseclaw.guardrail.cache.hits",
-	"defenseclaw.guardrail.cache.misses",
-	"defenseclaw.guardrail.evaluations",
-	"defenseclaw.guardrail.judge.latency",
-	"defenseclaw.guardrail.latency",
-	"defenseclaw.http.auth.failures",
-	"defenseclaw.http.rate_limit.breaches",
-	"defenseclaw.http.request.count",
-	"defenseclaw.http.request.duration",
-	"defenseclaw.inspect.evaluations",
-	"defenseclaw.inspect.latency",
-	"defenseclaw.judge.persist.batch_size",
-	"defenseclaw.judge.persist.drops",
-	"defenseclaw.judge.persist.queue_depth",
-	"defenseclaw.judge.semaphore.depth",
-	"defenseclaw.judge.semaphore.drops",
-	"defenseclaw.llm_bridge.latency",
-	"defenseclaw.openshell.exit",
-	"defenseclaw.otel.ingest.bytes",
-	"defenseclaw.otel.ingest.last_seen_ts",
-	"defenseclaw.otel.ingest.malformed",
-	"defenseclaw.otel.ingest.records",
-	"defenseclaw.otel.ingest.requests",
-	"defenseclaw.panics.total",
-	"defenseclaw.policy.evaluations",
-	"defenseclaw.policy.latency",
-	"defenseclaw.policy.reloads",
-	"defenseclaw.process.uptime_seconds",
-	"defenseclaw.provenance.bumps",
-	"defenseclaw.quarantine.actions",
-	"defenseclaw.queue.depth",
-	"defenseclaw.queue.drops",
-	"defenseclaw.redaction.applied",
-	"defenseclaw.runtime.fd.in_use",
-	"defenseclaw.runtime.gc.pause",
-	"defenseclaw.runtime.goroutines",
-	"defenseclaw.runtime.heap.alloc",
-	"defenseclaw.runtime.heap.objects",
-	"defenseclaw.scan.count",
-	"defenseclaw.scan.duration",
-	"defenseclaw.scan.errors",
-	"defenseclaw.scan.findings",
-	"defenseclaw.scan.findings.by_rule",
-	"defenseclaw.scan.findings.gauge",
-	"defenseclaw.scanner.queue.depth",
-	"defenseclaw.schema.violations",
-	"defenseclaw.slo.block.latency",
-	"defenseclaw.slo.tui.refresh",
-	"defenseclaw.sqlite.busy_retries",
-	"defenseclaw.sqlite.checkpoint.duration",
-	"defenseclaw.sqlite.db.bytes",
-	"defenseclaw.sqlite.freelist_count",
-	"defenseclaw.sqlite.page_count",
-	"defenseclaw.sqlite.wal.bytes",
-	"defenseclaw.stream.bytes_sent",
-	"defenseclaw.stream.duration_ms",
-	"defenseclaw.stream.lifecycle",
-	"defenseclaw.telemetry.destination.exports",
-	"defenseclaw.telemetry.destination.spans",
-	"defenseclaw.telemetry.exporter.errors",
-	"defenseclaw.telemetry.exporter.last_export_ts",
-	"defenseclaw.tool.calls",
-	"defenseclaw.tool.duration",
-	"defenseclaw.tool.errors",
-	"defenseclaw.tui.filter.applied",
-	"defenseclaw.watcher.errors",
-	"defenseclaw.watcher.events",
-	"defenseclaw.watcher.restarts",
-	"defenseclaw.webhook.circuit_breaker",
-	"defenseclaw.webhook.cooldown.suppressed",
-	"defenseclaw.webhook.dispatches",
-	"defenseclaw.webhook.failures",
-	"defenseclaw.webhook.latency",
-	"gen_ai.client.operation.duration",
-	"gen_ai.client.token.usage",
-}
-
 var registeredEventNameSet, registeredEventNameOrder, registeredLogEventNameSet,
-	registeredTraceEventNameSet, registeredMetricEventNameSet = buildEventNameRegistry(
-	gatewayEventClassifications,
-	auditActionClassifications,
-)
+	registeredTraceEventNameSet, registeredMetricEventNameSet, registeredEventIdentitySet = buildEventNameRegistry()
 
-func buildEventNameRegistry(
-	gateway map[ProducerKey]Classification,
-	audit map[ProducerKey]Classification,
-) (
+// buildEventNameRegistry derives the runtime routing vocabulary from the sole
+// generated family catalog. The generated producer catalog contributes only
+// explicitly compatibility-only log identities; it cannot redefine a family
+// identity or create a second canonical authority.
+func buildEventNameRegistry() (
 	map[EventName]struct{},
 	[]EventName,
 	map[EventName]struct{},
 	map[EventName]struct{},
 	map[EventName]struct{},
+	map[EventIdentity]struct{},
 ) {
-	registered := make(map[EventName]struct{},
-		len(documentedLogEventNames)+len(compatibilityEventNames)+
-			len(spanFamilyEventNames)+len(metricInstrumentEventNames)+len(gateway)+len(audit),
-	)
-	logs := make(map[EventName]struct{},
-		len(documentedLogEventNames)+len(compatibilityEventNames)+len(gateway)+len(audit),
-	)
-	traces := make(map[EventName]struct{}, len(spanFamilyEventNames))
-	metrics := make(map[EventName]struct{}, len(metricInstrumentEventNames))
-	add := func(target map[EventName]struct{}, name EventName) {
-		if err := name.Validate(); err != nil {
-			panic("invalid registered observability event name: " + err.Error())
+	families := generatedFamilyIdentityDescriptors()
+	registered := make(map[EventName]struct{}, len(families))
+	logs := make(map[EventName]struct{}, len(families))
+	traces := make(map[EventName]struct{}, len(families))
+	metrics := make(map[EventName]struct{}, len(families))
+	identities := make(map[EventIdentity]struct{}, len(families))
+	familyIdentities := make(map[string]EventIdentity, len(families))
+
+	signalNames := func(signal Signal) map[EventName]struct{} {
+		switch signal {
+		case SignalLogs:
+			return logs
+		case SignalTraces:
+			return traces
+		case SignalMetrics:
+			return metrics
+		default:
+			panic("generated observability family has an unknown signal")
 		}
-		registered[name] = struct{}{}
-		target[name] = struct{}{}
 	}
-	for _, names := range [][]EventName{documentedLogEventNames[:], compatibilityEventNames[:]} {
-		for _, name := range names {
-			add(logs, name)
+	addIdentity := func(identity EventIdentity) {
+		if !IsBucket(identity.Bucket) || !IsSignal(identity.Signal) {
+			panic("generated observability family has an unknown bucket or signal")
 		}
+		if err := identity.Name.Validate(); err != nil {
+			panic("invalid generated observability event name: " + err.Error())
+		}
+		registered[identity.Name] = struct{}{}
+		signalNames(identity.Signal)[identity.Name] = struct{}{}
+		identities[identity] = struct{}{}
 	}
-	for _, name := range spanFamilyEventNames {
-		add(traces, name)
+
+	for _, family := range families {
+		if family.FamilyID == "" || family.Descriptor == nil {
+			panic("generated observability family identity is incomplete")
+		}
+		if _, duplicate := familyIdentities[family.FamilyID]; duplicate {
+			panic("duplicate generated observability family ID")
+		}
+		if _, duplicate := identities[family.Identity]; duplicate {
+			panic("duplicate generated observability family identity")
+		}
+		contract := family.Descriptor.familyDescriptorContract()
+		if contract.id != family.FamilyID || contract.identity != family.Identity {
+			panic("generated observability family identity disagrees with its descriptor")
+		}
+		familyIdentities[family.FamilyID] = family.Identity
+		addIdentity(family.Identity)
 	}
-	for _, name := range metricInstrumentEventNames {
-		add(metrics, name)
-	}
-	for _, classifications := range []map[ProducerKey]Classification{gateway, audit} {
-		for _, classification := range classifications {
-			if classification.DefaultEventName != "" {
-				add(logs, classification.DefaultEventName)
+
+	for _, producer := range generatedProducerGroups {
+		for _, producerIdentity := range producer.Identities {
+			identity := EventIdentity{
+				Bucket: producerIdentity.Bucket,
+				Signal: SignalLogs,
+				Name:   producerIdentity.EventName,
+			}
+			familyID := producerIdentity.FamilyRefs.FamilyDescriptorID
+			if producerIdentity.CompatibilityOnly {
+				if familyID != "" || producerIdentity.FamilyRefs.SelectedFamilyFloorID != "" {
+					panic("compatibility-only generated producer identity references a canonical family")
+				}
+				addIdentity(identity)
+				continue
+			}
+			canonical, ok := familyIdentities[familyID]
+			if !ok || canonical != identity {
+				panic("generated producer identity disagrees with the canonical family catalog")
 			}
 		}
 	}
@@ -340,44 +110,43 @@ func buildEventNameRegistry(
 		ordered = append(ordered, name)
 	}
 	sort.Slice(ordered, func(left, right int) bool { return ordered[left] < ordered[right] })
-	return registered, ordered, logs, traces, metrics
+	return registered, ordered, logs, traces, metrics, identities
 }
 
-// IsRegisteredEventName reports whether name is a declared v8 routing identity.
-// Lexical validity alone is deliberately insufficient.
+// IsRegisteredEventName reports whether name is a declared v8 family or an
+// explicitly generated compatibility identity. Lexical validity alone is
+// deliberately insufficient.
 func IsRegisteredEventName(name EventName) bool {
 	_, ok := registeredEventNameSet[name]
 	return ok
 }
 
 // IsRegisteredEventNameForSignal reports whether name belongs to the closed
-// family vocabulary for signal. Bucket ownership remains generated-registry
-// data; P2 must not duplicate that future P5 source of truth.
+// generated vocabulary for signal.
 func IsRegisteredEventNameForSignal(signal Signal, name EventName) bool {
-	var registered map[EventName]struct{}
+	var names map[EventName]struct{}
 	switch signal {
 	case SignalLogs:
-		registered = registeredLogEventNameSet
+		names = registeredLogEventNameSet
 	case SignalTraces:
-		registered = registeredTraceEventNameSet
+		names = registeredTraceEventNameSet
 	case SignalMetrics:
-		registered = registeredMetricEventNameSet
+		names = registeredMetricEventNameSet
 	default:
 		return false
 	}
-	_, ok := registered[name]
+	_, ok := names[name]
 	return ok
 }
 
-// IsRegisteredEventIdentity is the predicate form of EventIdentity.Validate.
-// It validates the catalog bucket and exact signal-family membership. Exact
-// event-to-bucket ownership is intentionally deferred to the generated P5
-// telemetry registry rather than hand-authored here.
+// IsRegisteredEventIdentity reports whether the exact bucket, signal, and name
+// tuple is owned by a generated canonical family or compatibility identity.
 func IsRegisteredEventIdentity(identity EventIdentity) bool {
-	return IsBucket(identity.Bucket) &&
-		IsSignal(identity.Signal) &&
-		identity.Name.Validate() == nil &&
-		IsRegisteredEventNameForSignal(identity.Signal, identity.Name)
+	if !IsBucket(identity.Bucket) || !IsSignal(identity.Signal) || identity.Name.Validate() != nil {
+		return false
+	}
+	_, ok := registeredEventIdentitySet[identity]
+	return ok
 }
 
 // EventNames returns the complete registry in deterministic lexical order. The

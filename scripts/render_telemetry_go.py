@@ -88,6 +88,8 @@ _EXPECTED_HEADERS: Final = (
 _MAX_DECLARATIONS: Final = 10_000
 _MAX_PRIVATE_ROWS: Final = 100_000
 _MAX_GO_STRING_BYTES: Final = 1_048_576
+_EXPECTED_FAMILY_SIGNAL_COUNTS: Final = {"log": 93, "span": 25, "metric": 131}
+_FAMILY_SIGNAL_SYMBOLS: Final = {"log": "SignalLogs", "span": "SignalTraces", "metric": "SignalMetrics"}
 _SINGLE_LINE_IF: Final = re.compile(r"^(?P<indent>\t*)if (?P<condition>.+?) \{ (?P<body>.+) \}$")
 _KEYED_LITERAL_LINE: Final = re.compile(r"^(?P<indent>\t+)(?P<key>[A-Za-z][A-Za-z0-9]*): +(?P<value>\S.*),$")
 _STRUCT_FIELD_LINE: Final = re.compile(r"^(?P<indent>\t)(?P<name>[A-Za-z][A-Za-z0-9]*) (?P<type>.+)$")
@@ -579,6 +581,45 @@ def _span_name_literal(parts: Any, path: str) -> str:
 
 def _render_catalog_body(plan: Any) -> bytes:
     descriptors = _sequence(_read(plan, "descriptors", "GoAPIPlanIR"), "GoAPIPlanIR.descriptors", maximum=4096)
+    expected_total = sum(_EXPECTED_FAMILY_SIGNAL_COUNTS.values())
+    if len(descriptors) != expected_total:
+        raise GoRenderError(
+            f"GoAPIPlanIR.descriptors: expected exactly {expected_total} family descriptors, got {len(descriptors)}"
+        )
+    family_ids: set[str] = set()
+    identities: set[tuple[str, str, str]] = set()
+    signal_name_owners: dict[tuple[str, str], str] = {}
+    signal_counts = {signal: 0 for signal in _EXPECTED_FAMILY_SIGNAL_COUNTS}
+    identity_rows: list[tuple[str, str, str, str, str]] = []
+    for position, descriptor in enumerate(descriptors):
+        path = f"GoAPIPlanIR.descriptors[{position}]"
+        family_id = _string(_read(descriptor, "family_id", path), f"{path}.family_id")
+        signal = _string(_read(descriptor, "signal", path), f"{path}.signal")
+        bucket = _string(_read(descriptor, "identity_bucket", path), f"{path}.identity_bucket")
+        name = _string(_read(descriptor, "identity_name", path), f"{path}.identity_name")
+        catalog = _read(descriptor, "catalog_contract", path)
+        symbol = _identifier(_read(catalog, "descriptor_type_symbol", path), f"{path}.descriptor_type_symbol")
+        if signal not in signal_counts:
+            raise GoRenderError(f"{path}.signal: unknown family signal {signal!r}")
+        if family_id in family_ids:
+            raise GoRenderError(f"{path}.family_id: duplicate family ID {family_id!r}")
+        identity = (bucket, signal, name)
+        if identity in identities:
+            raise GoRenderError(f"{path}: duplicate family identity {identity!r}")
+        signal_name = (signal, name)
+        previous_bucket = signal_name_owners.get(signal_name)
+        if previous_bucket is not None and previous_bucket != bucket:
+            raise GoRenderError(f"{path}: family name {name!r} for signal {signal!r} has conflicting bucket owners")
+        family_ids.add(family_id)
+        identities.add(identity)
+        signal_name_owners[signal_name] = bucket
+        signal_counts[signal] += 1
+        identity_rows.append((family_id, bucket, signal, name, symbol))
+    if signal_counts != _EXPECTED_FAMILY_SIGNAL_COUNTS:
+        raise GoRenderError(
+            "GoAPIPlanIR.descriptors: family signal counts disagree with the closed 93/25/131 registry contract"
+        )
+
     lines = ["package observability", ""]
     for position, descriptor in enumerate(descriptors):
         path = f"GoAPIPlanIR.descriptors[{position}]"
@@ -674,6 +715,31 @@ def _render_catalog_body(plan: Any) -> bytes:
                     "",
                 )
             )
+    lines.extend(
+        (
+            "type generatedFamilyIdentityDescriptor struct {",
+            "\tFamilyID string",
+            "\tIdentity EventIdentity",
+            "\tDescriptor familyDescriptor",
+            "}",
+            "",
+            f"func generatedFamilyIdentityDescriptors() [{expected_total}]generatedFamilyIdentityDescriptor {{",
+            f"\treturn [{expected_total}]generatedFamilyIdentityDescriptor{{",
+        )
+    )
+    for family_id, bucket, signal, name, symbol in identity_rows:
+        lines.append(
+            "\t\t{"
+            f"FamilyID: {_go_string(family_id, 'family identity table')}, "
+            "Identity: EventIdentity{"
+            f"Bucket: Bucket({_go_string(bucket, 'family identity table')}), "
+            f"Signal: {_FAMILY_SIGNAL_SYMBOLS[signal]}, "
+            f"Name: EventName({_go_string(name, 'family identity table')})"
+            "}, "
+            f"Descriptor: {symbol}{{}}"
+            "},"
+        )
+    lines.extend(("\t}", "}", ""))
     return _go_source(lines)
 
 
@@ -3010,8 +3076,7 @@ def render_go_candidate(index: Any, plan: Any | None = None) -> GoRenderCandidat
             raise GoRenderError(f"{owner}: candidate-render-index digest disagrees")
 
     header = canonical_go_header(materialized, candidate, symbol_table)
-    rendered_outputs: list[RenderedGoOutput] = []
-    inventories: list[GoFileDeclarationInventory] = []
+    rendered_files: list[tuple[str, bytes, tuple[GoDeclarationKey, ...]]] = []
     expected_keys: list[GoDeclarationKey] = []
     for file_plan, path in zip(files, EXACT_GO_OUTPUT_PATHS):
         file_declarations = _sequence(
@@ -3032,9 +3097,17 @@ def render_go_candidate(index: Any, plan: Any | None = None) -> GoRenderCandidat
         else:
             raise AssertionError("validated exact output path was not rendered")
         keys = tuple(_declaration_key(item, position) for position, item in enumerate(file_declarations))
+        rendered_files.append((path, body, keys))
+        expected_keys.extend(keys)
+
+    # Construct no externally typed output object until every private renderer
+    # has succeeded. A malformed late producer/fixture opcode must not expose a
+    # partial candidate to the coordinator or a test double.
+    rendered_outputs: list[RenderedGoOutput] = []
+    inventories: list[GoFileDeclarationInventory] = []
+    for path, body, keys in rendered_files:
         rendered_outputs.append(RenderedGoOutput(path, header + body, OWNERSHIP_MARKER, OUTPUT_MODE))
         inventories.append(GoFileDeclarationInventory(path, keys))
-        expected_keys.extend(keys)
     return GoRenderCandidate(
         tuple(rendered_outputs),
         tuple(inventories),

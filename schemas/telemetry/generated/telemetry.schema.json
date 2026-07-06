@@ -3,7 +3,7 @@
     "artifact": "telemetry.schema.json",
     "authority": "candidate-not-public-authority",
     "generator": "defenseclaw-telemetry-candidate-renderer-v1",
-    "materialized_view_sha256": "55e42da13a62e6a9a92756f2aeffa0be6251c75d08a66a88bca8cde6c88c403b",
+    "materialized_view_sha256": "f53cb20a665ef93a3d2e08f10f2107c9c1a3a93d420ccf5fd2d83af06daa26f1",
     "registry_version": 1
   },
   "$defs": {
@@ -127604,6 +127604,33 @@
                           "x-defenseclaw-requirement-level": "recommended",
                           "x-defenseclaw-sensitivity": "safe"
                         },
+                        "defenseclaw.judge.kind": {
+                          "type": "string",
+                          "x-defenseclaw-field-class": "metadata",
+                          "x-defenseclaw-json-schema-item-bound-scope": "root-collection-safe-subset",
+                          "x-defenseclaw-max-item-utf8-bytes": 4096,
+                          "x-defenseclaw-max-item-utf8-bytes-enforcement": "builder-runtime-string-leaf-utf8-byte-gate",
+                          "x-defenseclaw-max-item-utf8-bytes-semantics": "every-string-element-or-structured-string-leaf",
+                          "x-defenseclaw-max-items": 256,
+                          "x-defenseclaw-max-items-enforcement": "builder-runtime-recursive-aggregate-gate",
+                          "x-defenseclaw-max-items-semantics": "recursive-aggregate-members",
+                          "x-defenseclaw-max-utf8-bytes": 4096,
+                          "x-defenseclaw-max-utf8-bytes-enforcement": "builder-runtime-shape-aware-utf8-byte-gate",
+                          "x-defenseclaw-max-utf8-bytes-semantics": "raw-scalar-string-utf8",
+                          "x-defenseclaw-normalization": {
+                            "effective_constraints": {
+                              "max_item_utf8_bytes": 4096,
+                              "max_items": 256,
+                              "max_utf8_bytes": 4096
+                            },
+                            "id": "bounded-v1",
+                            "notes": "registered judge kind",
+                            "overrides": {}
+                          },
+                          "x-defenseclaw-owner": "defenseclaw",
+                          "x-defenseclaw-requirement-level": "required",
+                          "x-defenseclaw-sensitivity": "safe"
+                        },
                         "defenseclaw.model.attempt": {
                           "maximum": 9223372036854775807,
                           "minimum": 0,
@@ -128774,6 +128801,7 @@
                         "defenseclaw.config.generation",
                         "defenseclaw.content.input.state",
                         "defenseclaw.content.output.state",
+                        "defenseclaw.judge.kind",
                         "defenseclaw.source",
                         "defenseclaw.span.family",
                         "defenseclaw.span.family_schema_version",
@@ -159832,7 +159860,7 @@
   ],
   "x-defenseclaw-versions": {
     "bucket_catalog_version": 1,
-    "materialized_view_sha256": "55e42da13a62e6a9a92756f2aeffa0be6251c75d08a66a88bca8cde6c88c403b",
+    "materialized_view_sha256": "f53cb20a665ef93a3d2e08f10f2107c9c1a3a93d420ccf5fd2d83af06daa26f1",
     "registry_version": 1,
     "schema_version": 1
   }

@@ -3,7 +3,7 @@
     "artifact": "otlp-fixtures/cases/invalid-lifecycle-phase-code-mismatch.json",
     "authority": "candidate-not-public-authority",
     "generator": "defenseclaw-telemetry-candidate-renderer-v1",
-    "materialized_view_sha256": "55e42da13a62e6a9a92756f2aeffa0be6251c75d08a66a88bca8cde6c88c403b",
+    "materialized_view_sha256": "f53cb20a665ef93a3d2e08f10f2107c9c1a3a93d420ccf5fd2d83af06daa26f1",
     "registry_version": 1
   },
   "canonical_record": {
@@ -153,6 +153,6 @@
   "family": "span.agent.transition",
   "fixture_format": "defenseclaw-otlp-fixture-v1",
   "id": "invalid-lifecycle-phase-code-mismatch",
-  "materialized_view_sha256": "55e42da13a62e6a9a92756f2aeffa0be6251c75d08a66a88bca8cde6c88c403b",
+  "materialized_view_sha256": "f53cb20a665ef93a3d2e08f10f2107c9c1a3a93d420ccf5fd2d83af06daa26f1",
   "signal": "traces"
 }

@@ -590,7 +590,7 @@ func newTestRecord(
 	}
 	if signal == observability.SignalMetrics {
 		input.Identity = observability.EventIdentity{
-			Bucket: observability.BucketDiagnostic,
+			Bucket: observability.BucketComplianceActivity,
 			Signal: signal,
 			Name:   "defenseclaw.activity.total",
 		}

@@ -707,7 +707,7 @@ _EXPECTED_LEGACY_FIXTURE_PARTITION: Final = {
 }
 _EXPECTED_CANONICAL_PUBLIC_VALUES: Final = {
     "log": 2164,
-    "span": 886,
+    "span": 887,
     "resource": 325,
     "metric": 346,
 }

@@ -716,7 +716,7 @@ func metricMetadata() Metadata {
 		observability.EventIdentity{
 			Bucket: observability.BucketPlatformHealth,
 			Signal: observability.SignalMetrics,
-			Name:   "defenseclaw.gateway.errors",
+			Name:   "defenseclaw.http.auth.failures",
 		},
 		nil,
 		observability.SourceGateway,

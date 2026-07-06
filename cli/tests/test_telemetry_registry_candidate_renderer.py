@@ -378,10 +378,10 @@ def test_candidate_enrichment_is_complete_typed_and_recursively_immutable(
     assert index.materialized_view_sha256 == index.digest == view.typed_canonical_json_sha256
     assert index.candidate_render_index_sha256 != index.materialized_view_sha256
     assert len(index.candidate_render_index_sha256) == 64
-    assert len(index.enriched_fields) == 3679
+    assert len(index.enriched_fields) == 3680
     assert Counter(item.context for item in index.enriched_fields.values()) == {
         "log": 2164,
-        "span": 1036,
+        "span": 1037,
         "metric": 346,
         "resource": 14,
         "scope": 2,

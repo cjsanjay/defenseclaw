@@ -4384,9 +4384,9 @@ def _enriched_field_descriptors(
                     origin=f"structured_types.{type_id}.canonical_json.{arm_id}",
                 )
                 order += 1
-    if len(descriptors) != 3679:
+    if len(descriptors) != 3680:
         raise CandidateRenderError(
-            f"enriched field descriptor inventory is incomplete: expected 3679, got {len(descriptors)}"
+            f"enriched field descriptor inventory is incomplete: expected 3680, got {len(descriptors)}"
         )
     return MappingProxyType({key: descriptors[key] for key in sorted(descriptors)})
 

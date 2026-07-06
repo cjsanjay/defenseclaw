@@ -305,11 +305,18 @@ func mandatoryFloorIntegrationCases() []mandatoryFloorIntegrationCase {
 			observability.BucketEnforcementAction, "quarantine", "enforcement.quarantine.applied",
 			observability.MandatoryFacts{EnforcementStateChange: true},
 		),
-		makeCase(
-			"schema validation failure", "SchemaValidationFailure",
-			observability.BucketTelemetryIngest, "otel.ingest.malformed", "schema.validation_failed",
-			observability.MandatoryFacts{SchemaValidationFailure: true},
-		),
+		{
+			name: "schema validation failure", factField: "SchemaValidationFailure",
+			log: classifiedLogCase{
+				bucket: observability.BucketPlatformHealth,
+				kind:   observability.ProducerGatewayEvent,
+				key:    "error",
+				context: observability.ClassificationContext{
+					Bucket: observability.BucketPlatformHealth, EventName: "schema.validation_failed", RawSeverity: "ERROR",
+					MandatoryFacts: observability.MandatoryFacts{SchemaValidationFailure: true},
+				},
+			},
+		},
 		makeCase(
 			"SQLite failure", "SQLiteFailure",
 			observability.BucketPlatformHealth, "sink-failure", "sqlite.write_failed",
