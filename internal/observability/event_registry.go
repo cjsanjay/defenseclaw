@@ -33,13 +33,20 @@ func buildEventNameRegistry() (
 	map[EventName]struct{},
 	map[EventIdentity]struct{},
 ) {
+	type signalNameKey struct {
+		signal Signal
+		name   EventName
+	}
 	families := generatedFamilyIdentityDescriptors()
 	registered := make(map[EventName]struct{}, len(families))
 	logs := make(map[EventName]struct{}, len(families))
 	traces := make(map[EventName]struct{}, len(families))
 	metrics := make(map[EventName]struct{}, len(families))
 	identities := make(map[EventIdentity]struct{}, len(families))
+	canonicalIdentities := make(map[EventIdentity]struct{}, len(families))
+	compatibilityIdentities := make(map[EventIdentity]struct{})
 	familyIdentities := make(map[string]EventIdentity, len(families))
+	signalNameOwners := make(map[signalNameKey]Bucket, len(families))
 
 	signalNames := func(signal Signal) map[EventName]struct{} {
 		switch signal {
@@ -79,7 +86,13 @@ func buildEventNameRegistry() (
 		if contract.id != family.FamilyID || contract.identity != family.Identity {
 			panic("generated observability family identity disagrees with its descriptor")
 		}
+		signalName := signalNameKey{signal: family.Identity.Signal, name: family.Identity.Name}
+		if owner, exists := signalNameOwners[signalName]; exists && owner != family.Identity.Bucket {
+			panic("generated observability family name has conflicting bucket owners")
+		}
 		familyIdentities[family.FamilyID] = family.Identity
+		canonicalIdentities[family.Identity] = struct{}{}
+		signalNameOwners[signalName] = family.Identity.Bucket
 		addIdentity(family.Identity)
 	}
 
@@ -95,6 +108,18 @@ func buildEventNameRegistry() (
 				if familyID != "" || producerIdentity.FamilyRefs.SelectedFamilyFloorID != "" {
 					panic("compatibility-only generated producer identity references a canonical family")
 				}
+				if _, canonical := canonicalIdentities[identity]; canonical {
+					panic("compatibility-only generated producer identity duplicates a canonical family")
+				}
+				signalName := signalNameKey{signal: identity.Signal, name: identity.Name}
+				if owner, exists := signalNameOwners[signalName]; exists && owner != identity.Bucket {
+					panic("compatibility-only generated producer identity conflicts with an existing bucket owner")
+				}
+				if _, duplicate := compatibilityIdentities[identity]; duplicate {
+					continue
+				}
+				compatibilityIdentities[identity] = struct{}{}
+				signalNameOwners[signalName] = identity.Bucket
 				addIdentity(identity)
 				continue
 			}
