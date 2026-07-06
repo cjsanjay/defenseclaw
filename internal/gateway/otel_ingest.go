@@ -37,6 +37,7 @@
 package gateway
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -221,11 +222,17 @@ func (a *APIServer) handleOTLPSignal(w http.ResponseWriter, r *http.Request, sig
 	}
 	bodyBytes := int64(len(body))
 	ingestTrace.startNormalize(ctx, signal, source, time.Now().UTC())
-	normalize := normalizeOTLPIngestBodyLegacy
+	var decoded decodedOTLPIngestBody
+	var summaryBody []byte
+	var payloadFormat string
+	var normalizeErr error
 	if a.hasOTLPObservabilityRuntime() {
-		normalize = normalizeOTLPIngestBody
+		decoded, normalizeErr = decodeOTLPIngestBody(body, signal, contentType)
+		summaryBody = decoded.normalized
+		payloadFormat = decoded.payloadFormat
+	} else {
+		summaryBody, payloadFormat, normalizeErr = normalizeOTLPIngestBodyLegacy(body, signal, contentType)
 	}
-	summaryBody, payloadFormat, normalizeErr := normalize(body, signal, contentType)
 	if normalizeErr != nil {
 		a.emitOTLPBatchRejectedV8(ctx, signal, source, payloadFormat, "invalid_"+payloadFormat, bodyBytes, started)
 		if a.hasOTLPObservabilityRuntime() {
@@ -280,7 +287,14 @@ func (a *APIServer) handleOTLPSignal(w http.ResponseWriter, r *http.Request, sig
 		enrichOTLPIngestSpan(ctx, sessionID)
 		ingestTrace.refreshCorrelation(ctx, source)
 	}
-	summary, stats, parseErr := summarizeOTLPPayload(summaryBody, signal)
+	var summary string
+	var stats otelIngestStats
+	var parseErr error
+	if a.hasOTLPObservabilityRuntime() {
+		stats, parseErr = decodedOTLPIngestStats(decoded.message, signal)
+	} else {
+		summary, stats, parseErr = summarizeOTLPPayload(summaryBody, signal)
+	}
 	if parseErr != nil {
 		a.emitOTLPBatchRejectedV8(ctx, signal, source, payloadFormat, "invalid_envelope", bodyBytes, started)
 		if a.hasOTLPObservabilityRuntime() {
@@ -441,6 +455,29 @@ func (a *APIServer) deltaOTLPCumulativeTokenUsage(usage otelTokenUsage) (otelTok
 }
 
 func normalizeOTLPIngestBody(body []byte, signal otelIngestSignal, contentType string) ([]byte, string, error) {
+	decoded, err := decodeOTLPIngestBody(body, signal, contentType)
+	if err != nil {
+		return nil, decoded.payloadFormat, err
+	}
+	return decoded.normalized, decoded.payloadFormat, nil
+}
+
+// decodedOTLPIngestBody retains the official OTLP protobuf model for v8 leaf
+// identification and mapping. The normalized JSON is temporary compatibility
+// input for the uncut v7 summary and v8 heuristic-derivation paths and is also
+// used to report its measured encoded size; canonical importers must read
+// message rather than round-trip through a generic map.
+type decodedOTLPIngestBody struct {
+	message       proto.Message
+	normalized    []byte
+	payloadFormat string
+}
+
+func decodeOTLPIngestBody(
+	body []byte,
+	signal otelIngestSignal,
+	contentType string,
+) (decodedOTLPIngestBody, error) {
 	var msg proto.Message
 	switch signal {
 	case otelSignalLogs:
@@ -450,20 +487,23 @@ func normalizeOTLPIngestBody(body []byte, signal otelIngestSignal, contentType s
 	case otelSignalTraces:
 		msg = &collectortracepb.ExportTraceServiceRequest{}
 	default:
-		return nil, "unknown", fmt.Errorf("unknown OTLP signal")
+		return decodedOTLPIngestBody{payloadFormat: "unknown"}, fmt.Errorf("unknown OTLP signal")
 	}
 	payloadFormat := "json"
 	if isOTLPProtobufContentType(contentType) {
 		payloadFormat = "protobuf"
 		if err := (proto.UnmarshalOptions{DiscardUnknown: false}).Unmarshal(body, msg); err != nil {
-			return nil, payloadFormat, err
+			return decodedOTLPIngestBody{payloadFormat: payloadFormat}, err
 		}
 		if messageContainsUnknownOTLPFields(msg.ProtoReflect()) {
-			return nil, payloadFormat, errors.New("OTLP protobuf contains unsupported fields")
+			return decodedOTLPIngestBody{payloadFormat: payloadFormat}, errors.New("OTLP protobuf contains unsupported fields")
 		}
 	} else {
+		if err := validateUniqueOTLPJSONMembers(body); err != nil {
+			return decodedOTLPIngestBody{payloadFormat: payloadFormat}, err
+		}
 		if err := (protojson.UnmarshalOptions{DiscardUnknown: false}).Unmarshal(body, msg); err != nil {
-			return nil, payloadFormat, err
+			return decodedOTLPIngestBody{payloadFormat: payloadFormat}, err
 		}
 	}
 	normalized, err := protojson.MarshalOptions{
@@ -471,9 +511,150 @@ func normalizeOTLPIngestBody(body []byte, signal otelIngestSignal, contentType s
 		UseProtoNames:   false,
 	}.Marshal(msg)
 	if err != nil {
-		return nil, payloadFormat, err
+		return decodedOTLPIngestBody{payloadFormat: payloadFormat}, err
 	}
-	return normalized, payloadFormat, nil
+	return decodedOTLPIngestBody{
+		message: msg, normalized: normalized, payloadFormat: payloadFormat,
+	}, nil
+}
+
+// decodedOTLPIngestStats counts protocol leaves from the typed request. A
+// metric leaf is one data point, not one instrument descriptor; this aligns
+// receiver accounting with the independently disposable unit used by inbound
+// binding, collection, and partial-batch dispositions.
+func decodedOTLPIngestStats(message proto.Message, signal otelIngestSignal) (otelIngestStats, error) {
+	stats := otelIngestStats{}
+	switch signal {
+	case otelSignalLogs:
+		request, ok := message.(*collectorlogspb.ExportLogsServiceRequest)
+		if !ok || request == nil {
+			return stats, errors.New("OTLP logs request type mismatch")
+		}
+		stats.Resources = int64(len(request.GetResourceLogs()))
+		for _, resource := range request.GetResourceLogs() {
+			for _, scope := range resource.GetScopeLogs() {
+				stats.Records += int64(len(scope.GetLogRecords()))
+			}
+		}
+	case otelSignalTraces:
+		request, ok := message.(*collectortracepb.ExportTraceServiceRequest)
+		if !ok || request == nil {
+			return stats, errors.New("OTLP traces request type mismatch")
+		}
+		stats.Resources = int64(len(request.GetResourceSpans()))
+		for _, resource := range request.GetResourceSpans() {
+			for _, scope := range resource.GetScopeSpans() {
+				stats.Records += int64(len(scope.GetSpans()))
+			}
+		}
+	case otelSignalMetrics:
+		request, ok := message.(*collectormetricspb.ExportMetricsServiceRequest)
+		if !ok || request == nil {
+			return stats, errors.New("OTLP metrics request type mismatch")
+		}
+		stats.Resources = int64(len(request.GetResourceMetrics()))
+		for _, resource := range request.GetResourceMetrics() {
+			for _, scope := range resource.GetScopeMetrics() {
+				for _, metric := range scope.GetMetrics() {
+					switch {
+					case metric.GetGauge() != nil:
+						stats.Records += int64(len(metric.GetGauge().GetDataPoints()))
+					case metric.GetSum() != nil:
+						stats.Records += int64(len(metric.GetSum().GetDataPoints()))
+					case metric.GetHistogram() != nil:
+						stats.Records += int64(len(metric.GetHistogram().GetDataPoints()))
+					case metric.GetExponentialHistogram() != nil:
+						stats.Records += int64(len(metric.GetExponentialHistogram().GetDataPoints()))
+					case metric.GetSummary() != nil:
+						stats.Records += int64(len(metric.GetSummary().GetDataPoints()))
+					}
+				}
+			}
+		}
+	default:
+		return stats, errors.New("unknown OTLP signal")
+	}
+	return stats, nil
+}
+
+// validateUniqueOTLPJSONMembers rejects duplicate object members before the
+// protobuf JSON decoder can normalize them. Accepting the last value would let
+// two lexical JSON requests select different generated discriminators while
+// appearing identical after normalization. The scanner validates structure but
+// never materializes sender-controlled objects or values.
+func validateUniqueOTLPJSONMembers(body []byte) error {
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	decoder.UseNumber()
+	if err := scanUniqueOTLPJSONValue(decoder, 0); err != nil {
+		return err
+	}
+	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return errors.New("OTLP JSON contains trailing values")
+		}
+		return err
+	}
+	return nil
+}
+
+const maxOTLPJSONNestingDepth = 64
+
+func scanUniqueOTLPJSONValue(decoder *json.Decoder, depth int) error {
+	if decoder == nil || depth > maxOTLPJSONNestingDepth {
+		return errors.New("OTLP JSON nesting exceeds limit")
+	}
+	token, err := decoder.Token()
+	if err != nil {
+		return err
+	}
+	delimiter, composite := token.(json.Delim)
+	if !composite {
+		return nil
+	}
+	switch delimiter {
+	case '{':
+		members := make(map[string]struct{})
+		for decoder.More() {
+			nameToken, nameErr := decoder.Token()
+			if nameErr != nil {
+				return nameErr
+			}
+			name, ok := nameToken.(string)
+			if !ok {
+				return errors.New("OTLP JSON object member is not a string")
+			}
+			if _, duplicate := members[name]; duplicate {
+				return errors.New("OTLP JSON contains duplicate object member")
+			}
+			members[name] = struct{}{}
+			if err := scanUniqueOTLPJSONValue(decoder, depth+1); err != nil {
+				return err
+			}
+		}
+		closing, closeErr := decoder.Token()
+		if closeErr != nil || closing != json.Delim('}') {
+			if closeErr != nil {
+				return closeErr
+			}
+			return errors.New("OTLP JSON object is not closed")
+		}
+	case '[':
+		for decoder.More() {
+			if err := scanUniqueOTLPJSONValue(decoder, depth+1); err != nil {
+				return err
+			}
+		}
+		closing, closeErr := decoder.Token()
+		if closeErr != nil || closing != json.Delim(']') {
+			if closeErr != nil {
+				return closeErr
+			}
+			return errors.New("OTLP JSON array is not closed")
+		}
+	default:
+		return errors.New("OTLP JSON contains invalid delimiter")
+	}
+	return nil
 }
 
 // normalizeOTLPIngestBodyLegacy preserves the v7 receiver contract until P4

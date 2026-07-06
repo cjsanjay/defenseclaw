@@ -821,6 +821,85 @@ func TestNormalizeOTLPIngestBodyRejectsUnknownJSONFields(t *testing.T) {
 	}
 }
 
+func TestNormalizeOTLPIngestBodyRejectsDuplicateJSONMembersAtEveryDepth(t *testing.T) {
+	tests := []string{
+		`{"resourceLogs":[],"resourceLogs":[]}`,
+		`{"resourceLogs":[{"scopeLogs":[],"scopeLogs":[]}]}`,
+		`{"resourceLogs":[{"scopeLogs":[{"logRecords":[{"body":{"stringValue":"first","stringValue":"second"}}]}]}]}`,
+	}
+	for _, body := range tests {
+		if _, _, err := normalizeOTLPIngestBody([]byte(body), otelSignalLogs, "application/json"); err == nil {
+			t.Fatalf("duplicate JSON member was silently normalized: %s", body)
+		}
+	}
+
+	// Repeated OTLP attribute keys are distinct list entries, not duplicate
+	// lexical JSON members. Decode preserves them so the generated binding can
+	// reject only targets for which the duplicate is ambiguous.
+	valid := []byte(`{"resourceLogs":[{"scopeLogs":[{"logRecords":[{"attributes":[` +
+		`{"key":"event.name","value":{"stringValue":"first"}},` +
+		`{"key":"event.name","value":{"stringValue":"second"}}]}]}]}]}`)
+	decoded, err := decodeOTLPIngestBody(valid, otelSignalLogs, "application/json")
+	if err != nil {
+		t.Fatalf("attribute-list duplicates must reach generated mapping: %v", err)
+	}
+	request, ok := decoded.message.(*collectorlogspb.ExportLogsServiceRequest)
+	if !ok || len(request.GetResourceLogs()) != 1 ||
+		len(request.GetResourceLogs()[0].GetScopeLogs()[0].GetLogRecords()[0].GetAttributes()) != 2 {
+		t.Fatalf("typed OTLP model did not retain repeated attribute entries: %#v", decoded.message)
+	}
+}
+
+func TestDecodedOTLPIngestStatsCountsLeafRecordsAndMetricDataPoints(t *testing.T) {
+	tests := []struct {
+		name      string
+		signal    otelIngestSignal
+		body      string
+		resources int64
+		records   int64
+	}{
+		{
+			name: "logs", signal: otelSignalLogs, resources: 1, records: 2,
+			body: `{"resourceLogs":[{"scopeLogs":[{"logRecords":[{},{}]}]}]}`,
+		},
+		{
+			name: "traces", signal: otelSignalTraces, resources: 1, records: 2,
+			body: `{"resourceSpans":[{"scopeSpans":[{"spans":[{},{}]}]}]}`,
+		},
+		{
+			name: "metric data points", signal: otelSignalMetrics, resources: 1, records: 4,
+			body: `{"resourceMetrics":[{"scopeMetrics":[{"metrics":[` +
+				`{"name":"gauge","gauge":{"dataPoints":[{"asInt":"1"},{"asDouble":2.5}]}},` +
+				`{"name":"sum","sum":{"aggregationTemporality":1,"isMonotonic":true,"dataPoints":[{"asInt":"3"}]}},` +
+				`{"name":"histogram","histogram":{"aggregationTemporality":1,"dataPoints":[{"count":"2","sum":4.0}]}}` +
+				`]}]}]}`,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			decoded, err := decodeOTLPIngestBody([]byte(test.body), test.signal, "application/json")
+			if err != nil {
+				t.Fatal(err)
+			}
+			stats, err := decodedOTLPIngestStats(decoded.message, test.signal)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if stats.Resources != test.resources || stats.Records != test.records {
+				t.Fatalf("stats=%+v want resources=%d records=%d", stats, test.resources, test.records)
+			}
+		})
+	}
+
+	decoded, err := decodeOTLPIngestBody([]byte(tests[0].body), otelSignalLogs, "application/json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := decodedOTLPIngestStats(decoded.message, otelSignalTraces); err == nil {
+		t.Fatal("signal/message type mismatch was silently accepted")
+	}
+}
+
 func TestOTLPIngestV8SelfExportMarkersStopRecursiveEmission(t *testing.T) {
 	fixture := newSidecarRuntimeFixture(t, true)
 	api := &APIServer{}
