@@ -18,11 +18,12 @@ def _completed(*, stdout: str = "", stderr: str = "", returncode: int = 0) -> su
 
 def test_effective_bridge_uses_versioned_go_helper_without_shell() -> None:
     payload = {
-        "wire_version": 1,
+        "wire_version": 2,
         "kind": "effective",
         "config_version": 8,
         "source": "/tmp/config.yaml",
         "data_dir": "/tmp/dc",
+        "gateway_api_port": 29071,
         "plan_digest": "abc123",
         "network_validation": "offline_syntax_and_literal_policy_only",
         "effective": {"buckets": [], "destinations": []},
@@ -38,6 +39,7 @@ def test_effective_bridge_uses_versioned_go_helper_without_shell() -> None:
         )
 
     assert result.effective == {"buckets": [], "destinations": []}
+    assert result.gateway_api_port == 29071
     run.assert_called_once_with(
         [
             "/opt/bin/defenseclaw-gateway",
@@ -66,7 +68,7 @@ def test_bridge_rejects_protocol_drift_and_never_echoes_helper_stdout() -> None:
     assert hidden not in str(caught.value)
 
     incompatible = {
-        "wire_version": 2,
+        "wire_version": 99,
         "kind": "validation",
         "config_version": 8,
     }

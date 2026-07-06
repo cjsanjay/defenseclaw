@@ -42,12 +42,12 @@ observability:
 	if err := os.WriteFile(path, []byte(raw), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	compiled, source, err := compileConfigV8File(path, "")
+	compiled, source, gatewayAPIPort, err := compileConfigV8File(path, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if source != path || compiled.DataDir != directory {
-		t.Fatalf("source/data dir = %q/%q", source, compiled.DataDir)
+	if source != path || compiled.DataDir != directory || gatewayAPIPort != config.DefaultGatewayAPIPort {
+		t.Fatalf("source/data dir/API port = %q/%q/%d", source, compiled.DataDir, gatewayAPIPort)
 	}
 	effective := string(compiled.Plan.EffectiveJSON())
 	for _, secret := range []string{"static-secret-value", "query-secret", "private-fragment"} {
@@ -84,7 +84,7 @@ observability:
 	if err := os.WriteFile(path, []byte(raw), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	compiled, _, err := compileConfigV8File(path, "")
+	compiled, _, _, err := compileConfigV8File(path, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -115,7 +115,7 @@ func TestConfigV8MachineCommandsBypassRuntimeInitialization(t *testing.T) {
 func TestConfigV8EffectiveWireEnvelopeIsVersioned(t *testing.T) {
 	directory := t.TempDir()
 	path := filepath.Join(directory, "config.yaml")
-	raw := "config_version: 8\ndata_dir: " + directory + "\nobservability: {}\n"
+	raw := "config_version: 8\ndata_dir: " + directory + "\ngateway:\n  api_port: 29071\nobservability: {}\n"
 	if err := os.WriteFile(path, []byte(raw), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -133,6 +133,9 @@ func TestConfigV8EffectiveWireEnvelopeIsVersioned(t *testing.T) {
 	}
 	if response.WireVersion != configV8WireVersion || response.Kind != "effective" || len(response.Effective) == 0 {
 		t.Fatalf("unexpected helper response: %+v", response)
+	}
+	if response.GatewayAPIPort != 29071 {
+		t.Fatalf("gateway API port = %d, want 29071", response.GatewayAPIPort)
 	}
 	if response.NetworkValidation != "offline_syntax_and_literal_policy_only" {
 		t.Fatalf("network validation marker = %q", response.NetworkValidation)

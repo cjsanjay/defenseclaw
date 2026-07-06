@@ -32,7 +32,7 @@ from typing import Any, Final
 
 from defenseclaw.gateway import resolve_gateway_binary
 
-CONFIG_V8_WIRE_VERSION: Final = 1
+CONFIG_V8_WIRE_VERSION: Final = 2
 CONFIG_V8_HELPER_TIMEOUT_SECONDS: Final = 15
 _OPERATIONS: Final = frozenset({"validate", "effective"})
 _REFERENCE_FORMATS: Final = frozenset({"yaml", "markdown"})
@@ -52,6 +52,7 @@ class ConfigV8WireResult:
     data_dir: str
     plan_digest: str
     network_validation: str
+    gateway_api_port: int = 18970
     valid: bool | None = None
     effective: dict[str, Any] | None = None
 
@@ -164,6 +165,9 @@ def _decode_wire(payload: dict[str, Any], operation: str) -> ConfigV8WireResult:
     for field in ("source", "data_dir", "plan_digest", "network_validation"):
         if not isinstance(payload.get(field), str):
             raise ConfigInspectError("configuration helper returned an incomplete response; run defenseclaw upgrade")
+    gateway_api_port = payload.get("gateway_api_port")
+    if isinstance(gateway_api_port, bool) or not isinstance(gateway_api_port, int) or not 1 <= gateway_api_port <= 65535:
+        raise ConfigInspectError("configuration helper returned an incomplete response; run defenseclaw upgrade")
     return ConfigV8WireResult(
         wire_version=CONFIG_V8_WIRE_VERSION,
         kind=expected_kind,
@@ -172,6 +176,7 @@ def _decode_wire(payload: dict[str, Any], operation: str) -> ConfigV8WireResult:
         data_dir=payload["data_dir"],
         plan_digest=payload["plan_digest"],
         network_validation=payload["network_validation"],
+        gateway_api_port=gateway_api_port,
         valid=valid if isinstance(valid, bool) else None,
         effective=effective,
     )

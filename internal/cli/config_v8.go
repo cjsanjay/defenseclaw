@@ -31,7 +31,7 @@ import (
 	publicschemas "github.com/defenseclaw/defenseclaw/schemas"
 )
 
-const configV8WireVersion = 1
+const configV8WireVersion = 2
 
 type configV8WireResponse struct {
 	WireVersion       int             `json:"wire_version"`
@@ -39,6 +39,7 @@ type configV8WireResponse struct {
 	ConfigVersion     int             `json:"config_version"`
 	Source            string          `json:"source"`
 	DataDir           string          `json:"data_dir"`
+	GatewayAPIPort    int             `json:"gateway_api_port"`
 	PlanDigest        string          `json:"plan_digest"`
 	NetworkValidation string          `json:"network_validation"`
 	Valid             *bool           `json:"valid,omitempty"`
@@ -64,7 +65,7 @@ var configV8ValidateCmd = &cobra.Command{
 	Short: "Validate configuration v8 and emit a machine-readable result",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
-		compiled, source, err := compileConfigV8File(configV8ConfigPath, configV8DataDir)
+		compiled, source, gatewayAPIPort, err := compileConfigV8File(configV8ConfigPath, configV8DataDir)
 		if err != nil {
 			return err
 		}
@@ -75,6 +76,7 @@ var configV8ValidateCmd = &cobra.Command{
 			ConfigVersion:     8,
 			Source:            source,
 			DataDir:           compiled.DataDir,
+			GatewayAPIPort:    gatewayAPIPort,
 			PlanDigest:        compiled.Plan.Digest(),
 			NetworkValidation: "offline_syntax_and_literal_policy_only",
 			Valid:             &valid,
@@ -90,7 +92,7 @@ var configV8EffectiveCmd = &cobra.Command{
 	Short: "Emit the secret-masked effective observability plan as JSON",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
-		compiled, source, err := compileConfigV8File(configV8ConfigPath, configV8DataDir)
+		compiled, source, gatewayAPIPort, err := compileConfigV8File(configV8ConfigPath, configV8DataDir)
 		if err != nil {
 			return err
 		}
@@ -100,6 +102,7 @@ var configV8EffectiveCmd = &cobra.Command{
 			ConfigVersion:     8,
 			Source:            source,
 			DataDir:           compiled.DataDir,
+			GatewayAPIPort:    gatewayAPIPort,
 			PlanDigest:        compiled.Plan.Digest(),
 			NetworkValidation: "offline_syntax_and_literal_policy_only",
 			Effective:         compiled.Plan.EffectiveJSON(),
@@ -187,18 +190,18 @@ func init() {
 	rootCmd.AddCommand(configV8Cmd)
 }
 
-func compileConfigV8File(path, defaultDataDir string) (*config.ObservabilityV8CompiledConfig, string, error) {
+func compileConfigV8File(path, defaultDataDir string) (*config.ObservabilityV8CompiledConfig, string, int, error) {
 	path = strings.TrimSpace(path)
 	if path == "" {
 		path = config.ConfigPath()
 	}
 	absPath, err := filepath.Abs(path)
 	if err != nil {
-		return nil, "", fmt.Errorf("resolve v8 config path: %w", err)
+		return nil, "", 0, fmt.Errorf("resolve v8 config path: %w", err)
 	}
 	raw, err := readConfigV8Source(absPath)
 	if err != nil {
-		return nil, "", err
+		return nil, "", 0, err
 	}
 
 	// Resolve the data directory from the already strict YAML projection before
@@ -207,7 +210,7 @@ func compileConfigV8File(path, defaultDataDir string) (*config.ObservabilityV8Co
 	// performs the authoritative parse/schema/semantic pass below.
 	document, err := config.ParseV8YAML(absPath, raw)
 	if err != nil {
-		return nil, "", err
+		return nil, "", 0, err
 	}
 	resolvedDataDir := strings.TrimSpace(defaultDataDir)
 	if sourceDataDir, ok := document.Plain["data_dir"].(string); ok && strings.TrimSpace(sourceDataDir) != "" {
@@ -224,9 +227,19 @@ func compileConfigV8File(path, defaultDataDir string) (*config.ObservabilityV8Co
 		config.ObservabilityV8CompileOptions{DefaultDataDir: resolvedDataDir},
 	)
 	if err != nil {
-		return nil, "", err
+		return nil, "", 0, err
 	}
-	return compiled, absPath, nil
+	gatewayAPIPort := config.DefaultGatewayAPIPort
+	if gateway, ok := document.Plain["gateway"].(map[string]any); ok {
+		if rawPort, exists := gateway["api_port"]; exists {
+			configured, typed := rawPort.(int)
+			if !typed || configured < 1 || configured > 65535 {
+				return nil, "", 0, fmt.Errorf("compiled v8 gateway.api_port is invalid")
+			}
+			gatewayAPIPort = configured
+		}
+	}
+	return compiled, absPath, gatewayAPIPort, nil
 }
 
 func readConfigV8Source(path string) ([]byte, error) {
