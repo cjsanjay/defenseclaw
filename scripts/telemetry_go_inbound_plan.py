@@ -15,6 +15,7 @@ from __future__ import annotations
 import dataclasses
 import hashlib
 import json
+import math
 import re
 from collections.abc import Mapping, Sequence
 from typing import Any, Final
@@ -54,6 +55,19 @@ class GoInboundTargetOverrideIR:
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
+class GoInboundUnitScaleIR:
+    source_unit: str
+    scale: float
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class GoInboundUnitRuleIR:
+    kind: str
+    target_unit: str
+    accepted: tuple[GoInboundUnitScaleIR, ...]
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
 class GoInboundMatchIR:
     id: str
     class_id: str
@@ -65,6 +79,7 @@ class GoInboundMatchIR:
     mapping_strategy: str
     alias_ids: tuple[str, ...]
     target_override: GoInboundTargetOverrideIR | None
+    source_unit_rule: GoInboundUnitRuleIR
     target_ids: tuple[str, ...]
     time_rule_json: str
     outcome_rule_json: str
@@ -85,6 +100,7 @@ class GoInboundTargetIR:
     family_schema_version: int
     instrument_name: str
     instrument_type: str
+    instrument_unit: str
     field_refs: tuple[str, ...]
     field_descriptor_ids: tuple[str, ...]
     descriptor_symbol: str
@@ -93,6 +109,7 @@ class GoInboundTargetIR:
     time_rule_json: str
     outcome_rule_json: str
     import_context_id: str
+    source_unit_rule: GoInboundUnitRuleIR
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -199,6 +216,27 @@ def _json(value: Any) -> str:
     return json.dumps(plain(value), ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
 
+def _unit_rule(value: Any, path: str) -> GoInboundUnitRuleIR:
+    item = _mapping(value, path)
+    if set(item) != {"kind", "target_unit", "accepted"}:
+        raise GoInboundPlanError(f"{path}: invalid source-unit rule shape")
+    accepted: list[GoInboundUnitScaleIR] = []
+    for position, raw in enumerate(_sequence(item["accepted"], f"{path}.accepted")):
+        entry = _mapping(raw, f"{path}.accepted[{position}]")
+        if set(entry) != {"source_unit", "scale"}:
+            raise GoInboundPlanError(f"{path}.accepted[{position}]: invalid source-unit scale shape")
+        source_unit = _string(entry["source_unit"], "source unit", empty=True)
+        scale = entry["scale"]
+        if type(scale) not in {int, float} or isinstance(scale, bool) or not math.isfinite(float(scale)) or scale <= 0:
+            raise GoInboundPlanError(f"{path}.accepted[{position}].scale: invalid source-unit scale")
+        accepted.append(GoInboundUnitScaleIR(source_unit, float(scale)))
+    return GoInboundUnitRuleIR(
+        _string(item["kind"], f"{path}.kind"),
+        _string(item["target_unit"], f"{path}.target_unit", empty=True),
+        tuple(accepted),
+    )
+
+
 def _digest_payload(value: Any) -> Any:
     if dataclasses.is_dataclass(value) and not isinstance(value, type):
         return {field.name: _digest_payload(getattr(value, field.name)) for field in dataclasses.fields(value)}
@@ -294,6 +332,7 @@ def compile_go_inbound_plan(index: Any) -> GoInboundPlanIR:
                 _string(mapping["strategy"], "mapping strategy"),
                 aliases_for_match,
                 target_override,
+                _unit_rule(mapping["source_unit_rule"], "match source-unit rule"),
                 tuple(_string(value, "target id") for value in _sequence(item["target_ids"], "target ids")),
                 _json(item["time_rule"]),
                 _json(item["outcome_rule"]),
@@ -324,6 +363,8 @@ def compile_go_inbound_plan(index: Any) -> GoInboundPlanIR:
             _read(catalog, "descriptor_type_symbol", "GoCatalogContractPlanIR"),
             "generated descriptor symbol",
         )
+        metric_catalog = _read(catalog, "metric", "GoCatalogContractPlanIR")
+        expected_unit = _read(metric_catalog, "unit", "GoMetricFamilyContractPlanIR") if signal == "metric" else ""
         if (
             signal is None
             or _read(descriptor, "signal", "GoDescriptorPlanIR") != signal
@@ -331,6 +372,7 @@ def compile_go_inbound_plan(index: Any) -> GoInboundPlanIR:
             or _read(descriptor, "identity_name", "GoDescriptorPlanIR") != item["event_name"]
             or (signal == "metric" and item["instrument_name"] != item["event_name"])
             or (signal != "metric" and item["instrument_name"] is not None)
+            or (item["instrument_unit"] or "") != expected_unit
             or _read(descriptor, "family_schema_version", "GoDescriptorPlanIR") != version
             or tuple(_read(descriptor, "enriched_field_descriptor_ids", "GoDescriptorPlanIR")) != field_descriptor_ids
         ):
@@ -349,6 +391,7 @@ def compile_go_inbound_plan(index: Any) -> GoInboundPlanIR:
                 version,
                 _string(item["instrument_name"] or "", "target instrument", empty=True),
                 _string(item["instrument_type"] or "", "target instrument type", empty=True),
+                _string(item["instrument_unit"] or "", "target instrument unit", empty=True),
                 field_refs,
                 field_descriptor_ids,
                 descriptor_symbol,
@@ -357,6 +400,7 @@ def compile_go_inbound_plan(index: Any) -> GoInboundPlanIR:
                 _json(item["time_rule"]),
                 _json(item["outcome_rule"]),
                 _string(item["import_context_id"] or "", "import context id", empty=True),
+                _unit_rule(item["source_unit_rule"], "target source-unit rule"),
             )
         )
 

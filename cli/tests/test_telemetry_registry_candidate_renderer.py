@@ -857,6 +857,7 @@ def test_inbound_otlp_catalog_is_closed_two_level_and_shape_safe(
         "import_contexts": 93,
         "fixture_descriptors": 237,
         "fixture_cases": 711,
+        "unit_fixture_cases": 393,
         "signals": ["logs", "traces", "metrics"],
         "encodings": ["json", "protobuf"],
     }
@@ -929,6 +930,59 @@ def test_inbound_otlp_exact_genai_codex_claude_and_fixture_matrix(
         assert fixture["cases"][0]["expected_match_id"] == fixture["match_id"]
         assert fixture["cases"][1]["expected_match_id"] is None
         assert fixture["cases"][2]["expected_match_id"] is None
+        rule = fixture["source_unit_rule"]
+        unit_cases = fixture["unit_cases"]
+        if rule["kind"] == "none":
+            assert unit_cases == []
+        else:
+            positives = [case for case in unit_cases if case["fixture_class"] == "positive"]
+            assert [(case["source_unit"], case["expected_scale"]) for case in positives] == [
+                (entry["source_unit"], entry["scale"]) for entry in rule["accepted"]
+            ]
+            assert [case["fixture_class"] for case in unit_cases[-2:]] == ["negative", "single_fault"]
+            assert all(case["expected_scale"] is None for case in unit_cases[-2:])
+
+    duration = matches["otlp.genai.duration.metric.v1.gen-ai-client"]["mapping"]["source_unit_rule"]
+    assert duration == {
+        "kind": "scale-table-v1",
+        "target_unit": "s",
+        "accepted": [
+            {"source_unit": unit, "scale": scale}
+            for unit, scale in (
+                ("", 1.0),
+                ("s", 1.0),
+                ("second", 1.0),
+                ("seconds", 1.0),
+                ("ms", 0.001),
+                ("millisecond", 0.001),
+                ("milliseconds", 0.001),
+                ("us", 0.000001),
+                ("microsecond", 0.000001),
+                ("microseconds", 0.000001),
+                ("ns", 0.000000001),
+                ("nanosecond", 0.000000001),
+                ("nanoseconds", 0.000000001),
+            )
+        ],
+    }
+    token = matches["otlp.claudecode.token_usage.v1.metric.gen_ai.client.token.usage"]["mapping"]["source_unit_rule"]
+    assert token == {
+        "kind": "scale-table-v1",
+        "target_unit": "{token}",
+        "accepted": [
+            {"source_unit": "", "scale": 1.0},
+            {"source_unit": "{token}", "scale": 1.0},
+            {"source_unit": "token", "scale": 1.0},
+            {"source_unit": "tokens", "scale": 1.0},
+        ],
+    }
+    native = next(match for match in matches.values() if match["class_id"] == "otlp.native.metric.v8")
+    native_target = next(target for target in document["target_descriptors"] if target["match_id"] == native["id"])
+    assert native["mapping"]["source_unit_rule"] == {
+        "kind": "target-unit-equality-v1",
+        "target_unit": native_target["instrument_unit"],
+        "accepted": [{"source_unit": native_target["instrument_unit"], "scale": 1.0}],
+    }
 
 
 def test_candidate_renderer_rejects_rehashed_v7_selector_drift(

@@ -322,6 +322,15 @@ func TestInboundCatalogViewsAreCopyIsolated(t *testing.T) {
 	if got := match.Targets()[0].Fields()[0].FieldRef(); got != wantField {
 		t.Fatalf("target fields mutated shared catalog: got %q, want %q", got, wantField)
 	}
+	unitMatch, ok := catalog.Match("otlp.genai.duration.metric.v1.gen-ai-client")
+	if !ok {
+		t.Fatal("duration match missing")
+	}
+	unitEntries := unitMatch.SourceUnitRule().Accepted()
+	unitEntries[0].sourceUnit = "mutated"
+	if got := unitMatch.SourceUnitRule().Accepted()[0].SourceUnit(); got != "" {
+		t.Fatalf("source-unit entries mutated shared catalog: got %q", got)
+	}
 
 	markers := catalog.NativeMarkers(SignalTraces)
 	var markerWithValue InboundNativeMarker
@@ -338,6 +347,106 @@ func TestInboundCatalogViewsAreCopyIsolated(t *testing.T) {
 	markerValues[0].stringValue = "mutated"
 	if reflect.DeepEqual(markerValues, markerWithValue.Values()) {
 		t.Fatal("marker values were not detached")
+	}
+}
+
+func TestInboundCatalogGeneratedSourceUnitAuthorityIsExact(t *testing.T) {
+	catalog := mustInboundCatalog(t)
+	durationWant := []InboundSourceUnitScale{
+		{sourceUnit: "", scale: 1},
+		{sourceUnit: "s", scale: 1},
+		{sourceUnit: "second", scale: 1},
+		{sourceUnit: "seconds", scale: 1},
+		{sourceUnit: "ms", scale: 0.001},
+		{sourceUnit: "millisecond", scale: 0.001},
+		{sourceUnit: "milliseconds", scale: 0.001},
+		{sourceUnit: "us", scale: 0.000001},
+		{sourceUnit: "microsecond", scale: 0.000001},
+		{sourceUnit: "microseconds", scale: 0.000001},
+		{sourceUnit: "ns", scale: 0.000000001},
+		{sourceUnit: "nanosecond", scale: 0.000000001},
+		{sourceUnit: "nanoseconds", scale: 0.000000001},
+	}
+	for _, suffix := range []string{"gen-ai-client", "gen-ai", "llm", "claude-code", "codex"} {
+		match, ok := catalog.Match("otlp.genai.duration.metric.v1." + suffix)
+		if !ok {
+			t.Fatalf("duration match %q missing", suffix)
+		}
+		rule := match.SourceUnitRule()
+		if rule.Kind() != InboundSourceUnitScaleTable || rule.TargetUnit() != "s" ||
+			!reflect.DeepEqual(rule.Accepted(), durationWant) {
+			t.Fatalf("duration rule %q = %#v", suffix, rule)
+		}
+		for _, expected := range durationWant {
+			if scale, found := rule.ScaleFor(expected.SourceUnit()); !found || scale != expected.Scale() {
+				t.Fatalf("duration rule %q unit %q = %v/%v", suffix, expected.SourceUnit(), scale, found)
+			}
+		}
+		for _, rejected := range []string{"MS", " ms", "ms ", "minute", "sec"} {
+			if _, found := rule.ScaleFor(rejected); found {
+				t.Fatalf("duration rule %q accepted unsupported unit %q", suffix, rejected)
+			}
+		}
+		targets := match.Targets()
+		if len(targets) != 1 || targets[0].InstrumentUnit() != "s" ||
+			!reflect.DeepEqual(targets[0].SourceUnitRule().Accepted(), durationWant) {
+			t.Fatalf("duration target %q lost sealed unit authority", suffix)
+		}
+	}
+
+	token, ok := catalog.Match("otlp.claudecode.token_usage.v1.metric.gen_ai.client.token.usage")
+	if !ok {
+		t.Fatal("Claude token match missing")
+	}
+	tokenWant := []InboundSourceUnitScale{
+		{sourceUnit: "", scale: 1},
+		{sourceUnit: "{token}", scale: 1},
+		{sourceUnit: "token", scale: 1},
+		{sourceUnit: "tokens", scale: 1},
+	}
+	if rule := token.SourceUnitRule(); rule.Kind() != InboundSourceUnitScaleTable ||
+		rule.TargetUnit() != "{token}" || !reflect.DeepEqual(rule.Accepted(), tokenWant) {
+		t.Fatalf("Claude token rule = %#v", rule)
+	}
+	for _, rejected := range []string{"Token", " tokens", "tokens ", "{tokens}"} {
+		if _, found := token.SourceUnitRule().ScaleFor(rejected); found {
+			t.Fatalf("Claude token rule accepted unsupported unit %q", rejected)
+		}
+	}
+
+	nativeCount := 0
+	unitFixtureCases := 0
+	for _, match := range catalog.snapshot.matches {
+		if match.sourceUnitRule.kind != InboundSourceUnitNone {
+			unitFixtureCases += len(match.sourceUnitRule.accepted) + 2
+		}
+		if match.classID != "otlp.native.metric.v8" {
+			continue
+		}
+		nativeCount++
+		view := InboundMatch{snapshot: catalog.snapshot, index: catalog.snapshot.matchByID[match.id]}
+		targets := view.Targets()
+		if len(targets) != 1 {
+			t.Fatalf("native metric %q targets=%d", match.id, len(targets))
+		}
+		target := targets[0]
+		rule := view.SourceUnitRule()
+		if rule.Kind() != InboundSourceUnitTargetEquality || rule.TargetUnit() != target.InstrumentUnit() ||
+			!reflect.DeepEqual(rule.Accepted(), []InboundSourceUnitScale{{sourceUnit: target.InstrumentUnit(), scale: 1}}) {
+			t.Fatalf("native metric %q unit=%q rule=%#v", match.id, target.InstrumentUnit(), rule)
+		}
+	}
+	if nativeCount != 104 {
+		t.Fatalf("native metric unit authority matches=%d, want 104", nativeCount)
+	}
+	if unitFixtureCases != 393 {
+		t.Fatalf("materialized source-unit fixture cases=%d, want 393", unitFixtureCases)
+	}
+
+	logMatch, ok := catalog.Match("otlp.codex.user_prompt.v1.log.model.request")
+	if !ok || logMatch.SourceUnitRule().Kind() != InboundSourceUnitNone ||
+		logMatch.SourceUnitRule().TargetUnit() != "" || len(logMatch.SourceUnitRule().Accepted()) != 0 {
+		t.Fatalf("non-metric match acquired source-unit authority: %#v", logMatch.SourceUnitRule())
 	}
 }
 
@@ -419,6 +528,34 @@ func TestInboundCatalogRejectsMalformedOrDuplicateGeneratedData(t *testing.T) {
 			},
 		},
 		{
+			name: "target instrument unit drift",
+			mutate: func(source *generatedInboundCatalogSource) {
+				source.targets[0].InstrumentUnit = "unsupported"
+			},
+		},
+		{
+			name: "target source unit scale drift",
+			mutate: func(source *generatedInboundCatalogSource) {
+				for index := range source.targets {
+					if source.targets[index].SourceUnitRule.Kind == string(InboundSourceUnitScaleTable) {
+						source.targets[index].SourceUnitRule.Accepted[0].Scale = 2
+						return
+					}
+				}
+			},
+		},
+		{
+			name: "match target source unit mismatch",
+			mutate: func(source *generatedInboundCatalogSource) {
+				for index := range source.matches {
+					if source.matches[index].SourceUnitRule.Kind == string(InboundSourceUnitScaleTable) {
+						source.matches[index].SourceUnitRule.Accepted[0].Scale = 2
+						return
+					}
+				}
+			},
+		},
+		{
 			name: "duplicate native marker",
 			mutate: func(source *generatedInboundCatalogSource) {
 				source.markers[1].ID = source.markers[0].ID
@@ -486,11 +623,17 @@ func cloneGeneratedInboundCatalogSource(input generatedInboundCatalogSource) gen
 			value := *input.matches[index].TargetOverride
 			output.matches[index].TargetOverride = &value
 		}
+		output.matches[index].SourceUnitRule.Accepted = append(
+			[]generatedInboundUnitScale(nil), input.matches[index].SourceUnitRule.Accepted...,
+		)
 	}
 	output.targets = append([]generatedInboundTarget(nil), input.targets...)
 	for index := range output.targets {
 		output.targets[index].FieldRefs = append([]string(nil), input.targets[index].FieldRefs...)
 		output.targets[index].FieldDescriptorIDs = append([]string(nil), input.targets[index].FieldDescriptorIDs...)
+		output.targets[index].SourceUnitRule.Accepted = append(
+			[]generatedInboundUnitScale(nil), input.targets[index].SourceUnitRule.Accepted...,
+		)
 	}
 	output.markers = append([]generatedInboundNativeMarker(nil), input.markers...)
 	output.echoes = append([]generatedInboundEchoRecognizer(nil), input.echoes...)

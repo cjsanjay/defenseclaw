@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"reflect"
 	"sort"
 	"strings"
@@ -243,6 +244,15 @@ func buildInboundTargets(snapshot *inboundCatalogSnapshot, targets []generatedIn
 		if err != nil {
 			return err
 		}
+		unitRule, err := parseInboundSourceUnitRule(
+			input.SourceUnitRule,
+			strategy,
+			Signal(input.Signal),
+			input.InstrumentUnit,
+		)
+		if err != nil {
+			return err
+		}
 		if prior, exists := familyTypes[input.Family]; exists && prior != descriptorType {
 			return invalidInboundCatalog("target concrete descriptor mismatch")
 		}
@@ -289,6 +299,7 @@ func buildInboundTargets(snapshot *inboundCatalogSnapshot, targets []generatedIn
 			role: role, targetKind: kind, family: input.Family, bucket: Bucket(input.Bucket),
 			eventName: EventName(input.EventName), familySchemaVersion: uint32(input.FamilySchemaVersion),
 			instrumentName: input.InstrumentName, instrumentType: input.InstrumentType,
+			instrumentUnit: input.InstrumentUnit, sourceUnitRule: unitRule,
 			fields: fields, descriptor: input.Descriptor, descriptorType: descriptorType.String(),
 			mappingStrategy: strategy, derivationStrategy: derivation,
 			timeRule: timeRule, outcomeRule: outcomeRule, importContextIndex: contextIndex,
@@ -306,12 +317,12 @@ func validateInboundTargetDescriptor(input generatedInboundTarget, contract fami
 	}
 	switch signal {
 	case SignalLogs:
-		if input.InstrumentName != "" || input.InstrumentType != "" || validateInboundBaseDescriptor(contract, familySignalLog) != nil {
+		if input.InstrumentName != "" || input.InstrumentType != "" || input.InstrumentUnit != "" || validateInboundBaseDescriptor(contract, familySignalLog) != nil {
 			return invalidInboundCatalog("invalid generated log target descriptor")
 		}
 	case SignalTraces:
 		descriptor, ok := input.Descriptor.(generatedTraceFamilyContract)
-		if !ok || input.InstrumentName != "" || input.InstrumentType != "" {
+		if !ok || input.InstrumentName != "" || input.InstrumentType != "" || input.InstrumentUnit != "" {
 			return invalidInboundCatalog("invalid generated trace target descriptor")
 		}
 		traceContract := cloneFamilyTraceContract(descriptor.familyTraceContract())
@@ -326,7 +337,8 @@ func validateInboundTargetDescriptor(input generatedInboundTarget, contract fami
 		metricContract := cloneFamilyMetricContract(descriptor.familyMetricContract())
 		if !reflect.DeepEqual(metricContract.familyDescriptorContract, contract) ||
 			validateFamilyMetricContract(metricContract) != nil ||
-			metricContract.instrumentName != input.InstrumentName || metricContract.instrumentType != input.InstrumentType {
+			metricContract.instrumentName != input.InstrumentName || metricContract.instrumentType != input.InstrumentType ||
+			metricContract.unit != input.InstrumentUnit {
 			return invalidInboundCatalog("invalid generated metric target contract")
 		}
 	default:
@@ -408,6 +420,7 @@ func buildInboundMatches(snapshot *inboundCatalogSnapshot, matches []generatedIn
 		}
 		targetIndexes := make([]int, len(input.TargetIDs))
 		primaryCount := 0
+		primaryTargetIndex := -1
 		seenTargets := make(map[string]struct{}, len(input.TargetIDs))
 		for index, targetID := range input.TargetIDs {
 			resolved, ok := snapshot.targetByID[targetID]
@@ -424,6 +437,7 @@ func buildInboundMatches(snapshot *inboundCatalogSnapshot, matches []generatedIn
 			}
 			if target.targetKind == InboundTargetPrimary {
 				primaryCount++
+				primaryTargetIndex = resolved
 				if target.signal != Signal(input.Signal) {
 					return invalidInboundCatalog(fmt.Sprintf("primary target changes signal for %s -> %s", input.ID, targetID))
 				}
@@ -432,6 +446,16 @@ func buildInboundMatches(snapshot *inboundCatalogSnapshot, matches []generatedIn
 		}
 		if primaryCount != 1 {
 			return invalidInboundCatalog("match does not own exactly one primary target")
+		}
+		primaryTarget := snapshot.targets[primaryTargetIndex]
+		unitRule, err := parseInboundSourceUnitRule(
+			input.SourceUnitRule,
+			InboundMappingStrategy(input.MappingStrategy),
+			Signal(input.Signal),
+			primaryTarget.instrumentUnit,
+		)
+		if err != nil || !reflect.DeepEqual(unitRule, primaryTarget.sourceUnitRule) {
+			return invalidInboundCatalog("match and primary target source-unit rules disagree")
 		}
 		timeRule, err := parseInboundTimeRule(input.TimeRuleJSON)
 		if err != nil {
@@ -462,7 +486,7 @@ func buildInboundMatches(snapshot *inboundCatalogSnapshot, matches []generatedIn
 			sources: append([]string(nil), input.Sources...), shape: InboundShape(input.Shape),
 			discriminatorKind: InboundDiscriminatorKind(input.DiscriminatorKind),
 			predicates:        predicates, mappingStrategy: InboundMappingStrategy(input.MappingStrategy),
-			aliasIndexes: aliasIndexes, targetOverride: override, targetIndexes: targetIndexes,
+			aliasIndexes: aliasIndexes, targetOverride: override, sourceUnitRule: unitRule, targetIndexes: targetIndexes,
 			timeRule: timeRule, outcomeRule: outcomeRule, nativeRoundTrip: input.NativeRoundTrip,
 		})
 		for _, targetIndex := range targetIndexes {
@@ -671,6 +695,52 @@ func parseInboundPredicate(input generatedInboundPredicate) (InboundPredicate, e
 		return InboundPredicate{}, err
 	}
 	return InboundPredicate{location: location, key: input.Key, operator: operator, valueType: valueType, values: values}, nil
+}
+
+func parseInboundSourceUnitRule(
+	input generatedInboundUnitRule,
+	strategy InboundMappingStrategy,
+	signal Signal,
+	instrumentUnit string,
+) (inboundSourceUnitRuleEntry, error) {
+	kind := InboundSourceUnitRuleKind(input.Kind)
+	accepted := make([]InboundSourceUnitScale, len(input.Accepted))
+	seen := make(map[string]struct{}, len(input.Accepted))
+	for index, item := range input.Accepted {
+		if !utf8.ValidString(item.SourceUnit) || len(item.SourceUnit) > 64 ||
+			math.IsNaN(item.Scale) || math.IsInf(item.Scale, 0) || item.Scale <= 0 {
+			return inboundSourceUnitRuleEntry{}, invalidInboundCatalog("malformed source-unit scale")
+		}
+		if _, duplicate := seen[item.SourceUnit]; duplicate {
+			return inboundSourceUnitRuleEntry{}, invalidInboundCatalog("duplicate source-unit spelling")
+		}
+		seen[item.SourceUnit] = struct{}{}
+		accepted[index] = InboundSourceUnitScale{sourceUnit: item.SourceUnit, scale: item.Scale}
+	}
+	rule := inboundSourceUnitRuleEntry{kind: kind, targetUnit: input.TargetUnit, accepted: accepted}
+	switch strategy {
+	case InboundMappingReverseMetric:
+		if signal != SignalMetrics || kind != InboundSourceUnitTargetEquality ||
+			input.TargetUnit != instrumentUnit || len(accepted) != 1 ||
+			accepted[0].sourceUnit != instrumentUnit || accepted[0].scale != 1 {
+			return inboundSourceUnitRuleEntry{}, invalidInboundCatalog("native metric source unit differs from sealed target unit")
+		}
+	case InboundMappingDurationMetric:
+		if signal != SignalMetrics || kind != InboundSourceUnitScaleTable || input.TargetUnit != "s" || instrumentUnit != "s" ||
+			len(accepted) == 0 {
+			return inboundSourceUnitRuleEntry{}, invalidInboundCatalog("duration source-unit table drift")
+		}
+	case InboundMappingClaudeTokenUsage:
+		if signal != SignalMetrics || kind != InboundSourceUnitScaleTable || input.TargetUnit != "{token}" || instrumentUnit != "{token}" ||
+			len(accepted) == 0 {
+			return inboundSourceUnitRuleEntry{}, invalidInboundCatalog("token source-unit table drift")
+		}
+	default:
+		if kind != InboundSourceUnitNone || input.TargetUnit != "" || len(accepted) != 0 {
+			return inboundSourceUnitRuleEntry{}, invalidInboundCatalog("unexpected source-unit rule")
+		}
+	}
+	return rule, nil
 }
 
 func parseInboundValues(raw string, valueType InboundValueType) ([]InboundPredicateValue, error) {

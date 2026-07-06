@@ -316,6 +316,9 @@ func (builder *FamilyBuilder) buildGeneratedTrace(
 		return Record{}, err
 	}
 	recordInput := familyRecordInput(input.envelope, base.identity)
+	if input.importProvenance != nil {
+		recordInput.Provenance.Import = cloneImportProvenance(input.importProvenance)
+	}
 	recordInput.SpanName = spanName
 	if outcome, present := input.outcome.Get(); present {
 		recordInput.Outcome = outcome
@@ -325,7 +328,7 @@ func (builder *FamilyBuilder) buildGeneratedTrace(
 	if err := preflightGeneratedRecord(recordInput); err != nil {
 		return Record{}, err
 	}
-	recordInput, err = builder.recordInput(recordInput)
+	recordInput, err = builder.recordInputAt(recordInput, input.timestamp)
 	if err != nil {
 		return Record{}, err
 	}
@@ -448,12 +451,15 @@ func (builder *FamilyBuilder) buildGeneratedMetric(
 		return Record{}, err
 	}
 	recordInput := familyRecordInput(input.envelope, base.identity)
+	if input.importProvenance != nil {
+		recordInput.Provenance.Import = cloneImportProvenance(input.importProvenance)
+	}
 	recordInput.InstrumentData = instrumentData
 	recordInput.FieldClasses = classes
 	if err := preflightGeneratedRecord(recordInput); err != nil {
 		return Record{}, err
 	}
-	recordInput, err = builder.recordInput(recordInput)
+	recordInput, err = builder.recordInputAt(recordInput, input.timestamp)
 	if err != nil {
 		return Record{}, err
 	}

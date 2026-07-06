@@ -5280,6 +5280,24 @@ _INBOUND_CLASS_IDS: Final = (
     "otlp.claudecode.token_usage.v1",
     "otlp.genai.duration.metric.v1",
 )
+_INBOUND_SOURCE_UNIT_TABLES: Final = {
+    "duration-metric-v1": (
+        ("", 1.0),
+        ("s", 1.0),
+        ("second", 1.0),
+        ("seconds", 1.0),
+        ("ms", 0.001),
+        ("millisecond", 0.001),
+        ("milliseconds", 0.001),
+        ("us", 0.000001),
+        ("microsecond", 0.000001),
+        ("microseconds", 0.000001),
+        ("ns", 0.000000001),
+        ("nanosecond", 0.000000001),
+        ("nanoseconds", 0.000000001),
+    ),
+    "claude-token-usage-v1": (("", 1.0), ("{token}", 1.0), ("token", 1.0), ("tokens", 1.0)),
+}
 _INBOUND_IR_FIELDS: Final = frozenset(
     {
         "version",
@@ -5307,10 +5325,64 @@ _INBOUND_IR_FIELDS: Final = frozenset(
 )
 
 
+def _candidate_inbound_source_unit_rule(
+    raw: Any,
+    *,
+    strategy: str,
+    family_unit: str | None,
+) -> Mapping[str, FrozenJSON]:
+    if not isinstance(raw, Mapping) or set(raw) != {"kind", "target_unit", "accepted"}:
+        raise CandidateRenderError("materialized inbound source-unit rule is invalid")
+    kind = _string(raw["kind"], "inbound source-unit rule kind")
+    target_unit = raw["target_unit"]
+    accepted = raw["accepted"]
+    if not isinstance(target_unit, str) or not isinstance(accepted, (list, tuple)):
+        raise CandidateRenderError("materialized inbound source-unit rule shape is invalid")
+    observed: list[tuple[str, float]] = []
+    for entry in accepted:
+        if not isinstance(entry, Mapping) or set(entry) != {"source_unit", "scale"}:
+            raise CandidateRenderError("materialized inbound source-unit scale is invalid")
+        source_unit, scale = entry["source_unit"], entry["scale"]
+        if (
+            not isinstance(source_unit, str)
+            or type(scale) not in {int, float}
+            or isinstance(scale, bool)
+            or not math.isfinite(float(scale))
+            or scale <= 0
+        ):
+            raise CandidateRenderError("materialized inbound source-unit scale value is invalid")
+        observed.append((source_unit, float(scale)))
+    if kind == "none":
+        if strategy in {"generated-reverse-metric-v1", *tuple(_INBOUND_SOURCE_UNIT_TABLES)} or target_unit or observed:
+            raise CandidateRenderError("materialized inbound source-unit rule is missing")
+    elif kind == "target-unit-equality-v1":
+        if (
+            strategy != "generated-reverse-metric-v1"
+            or family_unit is None
+            or target_unit != family_unit
+            or observed != [(family_unit, 1.0)]
+        ):
+            raise CandidateRenderError("materialized native metric unit equality drifted")
+    elif kind == "scale-table-v1":
+        expected = _INBOUND_SOURCE_UNIT_TABLES.get(strategy)
+        expected_target = {"duration-metric-v1": "s", "claude-token-usage-v1": "{token}"}.get(strategy)
+        if (
+            expected is None
+            or family_unit != expected_target
+            or target_unit != expected_target
+            or tuple(observed) != expected
+        ):
+            raise CandidateRenderError("materialized inbound source-unit scale table drifted")
+    else:
+        raise CandidateRenderError("materialized inbound source-unit rule kind is unknown")
+    return _freeze(_plain(raw))
+
+
 def _candidate_inbound_otlp(
     raw: FrozenJSON,
     *,
     attributes: Mapping[str, CandidateAttribute],
+    groups: Mapping[str, Mapping[str, FrozenJSON]],
     families: Mapping[str, EnrichedFamilyDescriptor],
     enriched_fields: Mapping[str, EnrichedFieldDescriptor],
 ) -> CandidateInboundOTLP:
@@ -5443,12 +5515,14 @@ def _candidate_inbound_otlp(
             "family_schema_version",
             "instrument_name",
             "instrument_type",
+            "instrument_unit",
             "field_refs",
             "mapping_strategy",
             "derivation_strategy",
             "time_rule",
             "outcome_rule",
             "import_context_id",
+            "source_unit_rule",
         }:
             raise CandidateRenderError("materialized inbound target descriptor is invalid")
         target = dict(_plain(raw_target))
@@ -5456,8 +5530,10 @@ def _candidate_inbound_otlp(
         match_id = _string(target["match_id"], "inbound target match ID")
         family_id = _string(target["family"], "inbound target family ID")
         family = families.get(family_id)
-        if match_id not in matches_by_id or family is None or target_id in target_ids:
+        family_group = groups.get(family_id)
+        if match_id not in matches_by_id or family is None or family_group is None or target_id in target_ids:
             raise CandidateRenderError("materialized inbound target identity is unknown or duplicated")
+        family_unit = family_group["metric_unit"] if family.signal == "metrics" else None
         if (
             target_id != f"{match_id}.{family_id}"
             or target["signal"] != family.signal
@@ -5466,8 +5542,14 @@ def _candidate_inbound_otlp(
             or target["target_kind"] not in {"primary", "derived"}
             or target["role"] not in {"import", "derive"}
             or (target["target_kind"] == "derived" and target["role"] != "derive")
+            or target["instrument_unit"] != family_unit
         ):
             raise CandidateRenderError("materialized inbound target disagrees with its generated family")
+        target["source_unit_rule"] = _candidate_inbound_source_unit_rule(
+            target["source_unit_rule"],
+            strategy=_string(target["mapping_strategy"], "inbound target mapping strategy"),
+            family_unit=family_unit,
+        )
         if target["target_kind"] == "primary":
             primary_counts[match_id] += 1
         raw_field_refs = target["field_refs"]
@@ -5491,6 +5573,24 @@ def _candidate_inbound_otlp(
     for match_id, match in matches_by_id.items():
         if tuple(match["target_ids"]) != tuple(sorted(targets_by_match[match_id], key=str.encode)):
             raise CandidateRenderError("materialized inbound match target references disagree")
+        mapping = match["mapping"]
+        if not isinstance(mapping, Mapping) or set(mapping) != {
+            "strategy",
+            "alias_sets",
+            "target_override",
+            "source_unit_rule",
+        }:
+            raise CandidateRenderError("materialized inbound match mapping is invalid")
+        primary = next(
+            target for target in targets if target["match_id"] == match_id and target["target_kind"] == "primary"
+        )
+        match_rule = _candidate_inbound_source_unit_rule(
+            mapping["source_unit_rule"],
+            strategy=_string(mapping["strategy"], "inbound match mapping strategy"),
+            family_unit=primary["instrument_unit"],
+        )
+        if _plain(match_rule) != _plain(primary["source_unit_rule"]):
+            raise CandidateRenderError("materialized inbound match/target source-unit rules disagree")
 
     raw_markers = source["native_markers"]
     if not isinstance(raw_markers, tuple):
@@ -6370,6 +6470,7 @@ def build_candidate_render_index(view: object) -> CandidateRenderIndex:
     inbound_otlp = _candidate_inbound_otlp(
         fields["inbound_bindings"],
         attributes=attributes,
+        groups=groups,
         families=enriched_families,
         enriched_fields=enriched_fields,
     )
@@ -7797,6 +7898,34 @@ def _inbound_fixture_descriptors(model: CandidateRenderIndex) -> list[JSONObject
                 "expected_match_id": None,
             },
         ]
+        unit_rule = _plain(match["mapping"]["source_unit_rule"])
+        unit_cases: list[JSONObject] = []
+        for entry in unit_rule["accepted"]:
+            unit_cases.append(
+                {
+                    "fixture_class": "positive",
+                    "source_unit": entry["source_unit"],
+                    "expected_scale": entry["scale"],
+                    "expected_target_unit": unit_rule["target_unit"],
+                }
+            )
+        if unit_rule["kind"] != "none":
+            unit_cases.extend(
+                (
+                    {
+                        "fixture_class": "negative",
+                        "source_unit": "__unsupported__",
+                        "expected_scale": None,
+                        "expected_target_unit": unit_rule["target_unit"],
+                    },
+                    {
+                        "fixture_class": "single_fault",
+                        "source_unit": unit_rule["target_unit"] + " ",
+                        "expected_scale": None,
+                        "expected_target_unit": unit_rule["target_unit"],
+                    },
+                )
+            )
         fixtures.append(
             {
                 "id": match["id"],
@@ -7807,6 +7936,8 @@ def _inbound_fixture_descriptors(model: CandidateRenderIndex) -> list[JSONObject
                 "authenticated_source": _plain(match["sources"])[0],
                 "source_match_descriptor": match["id"],
                 "cases": cases,
+                "source_unit_rule": unit_rule,
+                "unit_cases": unit_cases,
             }
         )
     return fixtures
@@ -7852,6 +7983,7 @@ def _inbound_otlp_document(model: CandidateRenderIndex, marker: JSONObject) -> J
             "import_contexts": len(inbound.import_contexts),
             "fixture_descriptors": len(fixtures),
             "fixture_cases": sum(len(item["cases"]) for item in fixtures),
+            "unit_fixture_cases": sum(len(item["unit_cases"]) for item in fixtures),
             "signals": ["logs", "traces", "metrics"],
             "encodings": ["json", "protobuf"],
         },

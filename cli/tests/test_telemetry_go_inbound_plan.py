@@ -121,6 +121,57 @@ def test_go_inbound_plan_preserves_match_target_separation(candidate: Any) -> No
             for item in source["discriminator"]["predicates"]
         ]
 
+    duration_rule = plan.GoInboundUnitRuleIR(
+        "scale-table-v1",
+        "s",
+        tuple(
+            plan.GoInboundUnitScaleIR(unit, scale)
+            for unit, scale in (
+                ("", 1.0),
+                ("s", 1.0),
+                ("second", 1.0),
+                ("seconds", 1.0),
+                ("ms", 0.001),
+                ("millisecond", 0.001),
+                ("milliseconds", 0.001),
+                ("us", 0.000001),
+                ("microsecond", 0.000001),
+                ("microseconds", 0.000001),
+                ("ns", 0.000000001),
+                ("nanosecond", 0.000000001),
+                ("nanoseconds", 0.000000001),
+            )
+        ),
+    )
+    duration_matches = [match for match in compiled.matches if match.class_id == "otlp.genai.duration.metric.v1"]
+    assert len(duration_matches) == 5
+    assert all(match.source_unit_rule == duration_rule for match in duration_matches)
+    assert all(
+        targets[match.target_ids[0]].instrument_unit == "s"
+        and targets[match.target_ids[0]].source_unit_rule == duration_rule
+        for match in duration_matches
+    )
+
+    token_rule = plan.GoInboundUnitRuleIR(
+        "scale-table-v1",
+        "{token}",
+        tuple(plan.GoInboundUnitScaleIR(unit, 1.0) for unit in ("", "{token}", "token", "tokens")),
+    )
+    token_match = next(match for match in compiled.matches if match.class_id == "otlp.claudecode.token_usage.v1")
+    assert token_match.source_unit_rule == token_rule
+    assert targets[token_match.target_ids[0]].instrument_unit == "{token}"
+    assert targets[token_match.target_ids[0]].source_unit_rule == token_rule
+
+    for native in (match for match in compiled.matches if match.class_id == "otlp.native.metric.v8"):
+        target = targets[native.target_ids[0]]
+        equality_rule = plan.GoInboundUnitRuleIR(
+            "target-unit-equality-v1",
+            target.instrument_unit,
+            (plan.GoInboundUnitScaleIR(target.instrument_unit, 1.0),),
+        )
+        assert native.source_unit_rule == equality_rule
+        assert target.source_unit_rule == equality_rule
+
 
 def test_go_inbound_plan_rejects_untyped_or_mutable_input(candidate: Any) -> None:
     with pytest.raises(plan.GoInboundPlanError, match="compiler-owned candidate"):

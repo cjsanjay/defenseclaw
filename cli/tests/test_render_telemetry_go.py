@@ -112,6 +112,12 @@ def test_real_candidate_renders_exact_complete_deterministic_outputs(
     assert b"generatedInboundStructuralMarkerRule" in producer
     assert b"generatedInboundNativeMalformedDisposition" in producer
     assert b"&generatedInboundTargetOverride{" in producer
+    assert b"type generatedInboundUnitScale struct" in producer
+    assert b"type generatedInboundUnitRule struct" in producer
+    assert b"SourceUnitRule:  generatedInboundUnitRule{" in producer
+    assert b"InstrumentUnit:" in producer
+    assert b'SourceUnit: "milliseconds", Scale: 0.001' in producer
+    assert b'SourceUnit: "tokens", Scale: 1.0' in producer
     assert b"FieldRefs:" in producer and b"[]string{" in producer
     domains = b"".join(payloads[path] for path in coordinator.EXACT_GO_OUTPUT_PATHS[3:6])
     assert domains.count(b"func (builder *FamilyBuilder) Build") == 249

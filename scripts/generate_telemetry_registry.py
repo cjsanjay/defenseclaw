@@ -10239,6 +10239,27 @@ _INBOUND_CLASS_IDS: Final = (
 )
 _INBOUND_SIGNALS: Final = frozenset({"logs", "traces", "metrics"})
 _INBOUND_MODES: Final = frozenset({"import", "derive", "import_and_derive"})
+_INBOUND_DURATION_UNIT_SCALES: Final = (
+    ("", 1.0),
+    ("s", 1.0),
+    ("second", 1.0),
+    ("seconds", 1.0),
+    ("ms", 0.001),
+    ("millisecond", 0.001),
+    ("milliseconds", 0.001),
+    ("us", 0.000001),
+    ("microsecond", 0.000001),
+    ("microseconds", 0.000001),
+    ("ns", 0.000000001),
+    ("nanosecond", 0.000000001),
+    ("nanoseconds", 0.000000001),
+)
+_INBOUND_TOKEN_UNIT_SCALES: Final = (
+    ("", 1.0),
+    ("{token}", 1.0),
+    ("token", 1.0),
+    ("tokens", 1.0),
+)
 
 
 def _inbound_mapping(value: Any, path: str) -> dict[str, Any]:
@@ -10251,6 +10272,59 @@ def _inbound_sequence(value: Any, path: str, *, allow_empty: bool = False) -> li
     if not isinstance(value, list) or (not allow_empty and not value):
         raise RegistryError(f"{path}: expected {'possibly empty ' if allow_empty else 'nonempty '}sequence")
     return value
+
+
+def _inbound_unit_rule(value: Any, *, strategy: str, path: str) -> dict[str, Any]:
+    if strategy == "generated-reverse-metric-v1":
+        rule = _inbound_mapping(value, path)
+        _exact_keys(rule, {"kind"}, set(), path)
+        if rule["kind"] != "target-unit-equality-v1":
+            raise RegistryError(f"{path}.kind: reverse metrics require target-unit-equality-v1")
+        return {"kind": "target-unit-equality-v1", "accepted": []}
+    expected = {
+        "duration-metric-v1": _INBOUND_DURATION_UNIT_SCALES,
+        "claude-token-usage-v1": _INBOUND_TOKEN_UNIT_SCALES,
+    }.get(strategy)
+    if expected is None:
+        raise RegistryError(f"{path}: unit rule is forbidden for mapping strategy {strategy}")
+    rule = _inbound_mapping(value, path)
+    _exact_keys(rule, {"kind", "accepted"}, set(), path)
+    if rule["kind"] != "scale-table-v1":
+        raise RegistryError(f"{path}.kind: scale-table-v1 required")
+    accepted: list[dict[str, Any]] = []
+    for index, raw_entry in enumerate(_inbound_sequence(rule["accepted"], f"{path}.accepted")):
+        entry_path = f"{path}.accepted[{index}]"
+        entry = _inbound_mapping(raw_entry, entry_path)
+        _exact_keys(entry, {"source_unit", "scale"}, set(), entry_path)
+        source_unit = entry["source_unit"]
+        if not isinstance(source_unit, str) or len(source_unit.encode("utf-8")) > 64:
+            raise RegistryError(f"{entry_path}.source_unit: expected bounded UTF-8 string")
+        scale = entry["scale"]
+        if type(scale) not in {int, float} or isinstance(scale, bool) or not math.isfinite(float(scale)) or scale <= 0:
+            raise RegistryError(f"{entry_path}.scale: expected finite positive number")
+        accepted.append({"source_unit": source_unit, "scale": float(scale)})
+    observed = tuple((entry["source_unit"], entry["scale"]) for entry in accepted)
+    if observed != expected:
+        raise RegistryError(f"{path}.accepted: canonical source-unit table/order mismatch")
+    return {"kind": "scale-table-v1", "accepted": accepted}
+
+
+def _resolved_inbound_unit_rule(rule: Mapping[str, Any] | None, *, target: GroupIR, path: str) -> dict[str, Any]:
+    if rule is None:
+        return {"kind": "none", "target_unit": "", "accepted": []}
+    if target.type != "metric" or target.metric_unit is None:
+        raise RegistryError(f"{path}: source-unit rule requires a metric target")
+    kind = rule["kind"]
+    if kind == "target-unit-equality-v1":
+        return {
+            "kind": kind,
+            "target_unit": target.metric_unit,
+            "accepted": [{"source_unit": target.metric_unit, "scale": 1.0}],
+        }
+    expected_target = {"duration-metric-v1": "s", "claude-token-usage-v1": "{token}"}
+    if kind != "scale-table-v1" or target.metric_unit != expected_target.get(path):
+        raise RegistryError(f"registry.inbound_bindings: {path} target unit disagrees with its sealed metric family")
+    return {"kind": kind, "target_unit": target.metric_unit, "accepted": list(rule["accepted"])}
 
 
 def _inbound_predicates(
@@ -10462,7 +10536,22 @@ def _parse_inbound_otlp(
         if signal not in _INBOUND_SIGNALS or mode not in _INBOUND_MODES:
             raise RegistryError(f"{class_path}: invalid signal or mode")
         mapping = _inbound_mapping(item["mapping"], f"{class_path}.mapping")
-        _exact_keys(mapping, {"strategy", "alias_sets"}, set(), f"{class_path}.mapping")
+        _exact_keys(mapping, {"strategy", "alias_sets"}, {"unit_rule"}, f"{class_path}.mapping")
+        mapping_strategy = _string(mapping["strategy"], f"{class_path}.mapping.strategy", pattern=_ID)
+        raw_unit_rule = mapping.get("unit_rule")
+        unit_rule = None
+        if raw_unit_rule is not None:
+            unit_rule = _inbound_unit_rule(
+                raw_unit_rule,
+                strategy=mapping_strategy,
+                path=f"{class_path}.mapping.unit_rule",
+            )
+        elif mapping_strategy in {
+            "generated-reverse-metric-v1",
+            "duration-metric-v1",
+            "claude-token-usage-v1",
+        }:
+            raise RegistryError(f"{class_path}.mapping.unit_rule: required for {mapping_strategy}")
         alias_ids = _string_list(mapping["alias_sets"], f"{class_path}.mapping.alias_sets")
         if any(alias_id not in aliases_by_id for alias_id in alias_ids):
             raise RegistryError(f"{class_path}.mapping.alias_sets: unknown alias set")
@@ -10485,8 +10574,9 @@ def _parse_inbound_otlp(
                 "expansion": item["expansion"],
                 "discriminator": discriminator,
                 "mapping": {
-                    "strategy": _string(mapping["strategy"], f"{class_path}.mapping.strategy", pattern=_ID),
+                    "strategy": mapping_strategy,
                     "alias_sets": list(alias_ids),
+                    "unit_rule": unit_rule,
                 },
                 "derived_targets": derived_targets,
                 "time_rule": item["time_rule"],
@@ -10566,6 +10656,11 @@ def _parse_inbound_otlp(
         expanded_cases.sort(key=lambda pair: pair[2].encode("ascii"))
         for target, case, variant_id in expanded_cases:
             match_id = f"{item['id']}.{variant_id}"
+            source_unit_rule = _resolved_inbound_unit_rule(
+                item["mapping"]["unit_rule"],
+                target=target,
+                path=item["mapping"]["strategy"],
+            )
             predicates = _inbound_predicates(
                 item["discriminator"]["predicates"],
                 path=f"{class_path}.discriminator.predicates",
@@ -10596,6 +10691,7 @@ def _parse_inbound_otlp(
                         "strategy": item["mapping"]["strategy"],
                         "alias_sets": [aliases_by_id[alias_id] for alias_id in item["mapping"]["alias_sets"]],
                         "target_override": target_override,
+                        "source_unit_rule": source_unit_rule,
                     },
                     "derived_targets": item["derived_targets"],
                     "time_rule": item["time_rule"],
@@ -10623,12 +10719,14 @@ def _parse_inbound_otlp(
                 "family_schema_version": target.family_schema_version,
                 "instrument_name": target.instrument_name,
                 "instrument_type": target.instrument_type,
+                "instrument_unit": target.metric_unit,
                 "field_refs": sorted(use.ref for use in target.resolved_uses),
                 "mapping_strategy": item["mapping"]["strategy"],
                 "derivation_strategy": item["mapping"]["strategy"] if role == "derive" else None,
                 "time_rule": item["time_rule"],
                 "outcome_rule": item["outcome_rule"],
                 "import_context_id": f"otlp.import.{target.id}" if target.type == "log" and role == "import" else None,
+                "source_unit_rule": source_unit_rule,
             }
             targets_by_match[match_id] = [primary_target]
             for raw_derived in item["derived_targets"]:
@@ -10648,12 +10746,14 @@ def _parse_inbound_otlp(
                         "family_schema_version": family.family_schema_version,
                         "instrument_name": family.instrument_name,
                         "instrument_type": family.instrument_type,
+                        "instrument_unit": family.metric_unit,
                         "field_refs": sorted(use.ref for use in family.resolved_uses),
                         "mapping_strategy": item["mapping"]["strategy"],
                         "derivation_strategy": derived["strategy"],
                         "time_rule": item["time_rule"],
                         "outcome_rule": "forbidden",
                         "import_context_id": None,
+                        "source_unit_rule": {"kind": "none", "target_unit": "", "accepted": []},
                     }
                 )
     matches.sort(key=lambda item: item["id"].encode("ascii"))
@@ -10704,12 +10804,14 @@ def _parse_inbound_otlp(
                 "family_schema_version": attachment_family.family_schema_version,
                 "instrument_name": attachment_family.instrument_name,
                 "instrument_type": attachment_family.instrument_type,
+                "instrument_unit": attachment_family.metric_unit,
                 "field_refs": sorted(use.ref for use in attachment_family.resolved_uses),
                 "mapping_strategy": match["mapping"]["strategy"],
                 "derivation_strategy": attachment["strategy"],
                 "time_rule": "span-elapsed-v1",
                 "outcome_rule": "forbidden",
                 "import_context_id": None,
+                "source_unit_rule": {"kind": "none", "target_unit": "", "accepted": []},
             }
         )
     target_descriptors: list[dict[str, Any]] = []

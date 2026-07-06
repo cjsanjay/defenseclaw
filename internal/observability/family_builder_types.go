@@ -426,6 +426,11 @@ type familyTraceBuildInput struct {
 	links                  []TraceLinkInput
 	droppedLinksCount      Optional[uint32]
 	droppedAttributesCount Optional[uint32]
+	// timestamp and importProvenance are package-private accepted-record facts.
+	// Generated producer wrappers leave both unset, so ordinary production keeps
+	// using the builder clock and cannot attach inbound provenance accidentally.
+	timestamp        Optional[time.Time]
+	importProvenance *ImportProvenance
 }
 
 type familyMetricBuildInput struct {
@@ -433,4 +438,8 @@ type familyMetricBuildInput struct {
 	value      familyMetricNumber
 	labels     familyFieldValues
 	conditions familyConditionFacts
+	// See familyTraceBuildInput. The inbound constructor is the only caller that
+	// may select a source/fallback point timestamp and attach import provenance.
+	timestamp        Optional[time.Time]
+	importProvenance *ImportProvenance
 }

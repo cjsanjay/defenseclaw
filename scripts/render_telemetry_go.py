@@ -1825,6 +1825,27 @@ def _inbound_string_slice(values: Any, path: str) -> str:
     return "[]string{" + ", ".join(_go_string(item, path) for item in _sequence(values, path, maximum=4096)) + "}"
 
 
+def _inbound_unit_rule_literal(value: Any, path: str) -> str:
+    accepted = _sequence(_read(value, "accepted", path), f"{path}.accepted", maximum=64)
+    entries = ", ".join(
+        "{SourceUnit: "
+        + _go_string(_read(item, "source_unit", f"{path}.accepted"), f"{path}.accepted")
+        + ", Scale: "
+        + _number(_read(item, "scale", f"{path}.accepted"), f"{path}.accepted")
+        + "}"
+        for item in accepted
+    )
+    return (
+        "generatedInboundUnitRule{Kind: "
+        + _go_string(_read(value, "kind", path), path)
+        + ", TargetUnit: "
+        + _go_string(_read(value, "target_unit", path), path)
+        + ", Accepted: []generatedInboundUnitScale{"
+        + entries
+        + "}}"
+    )
+
+
 def _render_inbound_descriptors(lines: list[str], inbound: Any) -> None:
     if _read(inbound, "version", "GoInboundPlanIR") != 1:
         raise GoRenderError("GoInboundPlanIR.version: only version 1 is supported")
@@ -1869,6 +1890,17 @@ def _render_inbound_descriptors(lines: list[str], inbound: Any) -> None:
             "\tNormalization string",
             "}",
             "",
+            "type generatedInboundUnitScale struct {",
+            "\tSourceUnit string",
+            "\tScale float64",
+            "}",
+            "",
+            "type generatedInboundUnitRule struct {",
+            "\tKind string",
+            "\tTargetUnit string",
+            "\tAccepted []generatedInboundUnitScale",
+            "}",
+            "",
             "type generatedInboundMatch struct {",
             "\tID string",
             "\tClassID string",
@@ -1880,6 +1912,7 @@ def _render_inbound_descriptors(lines: list[str], inbound: Any) -> None:
             "\tMappingStrategy string",
             "\tAliasIDs []string",
             "\tTargetOverride *generatedInboundTargetOverride",
+            "\tSourceUnitRule generatedInboundUnitRule",
             "\tTargetIDs []string",
             "\tTimeRuleJSON string",
             "\tOutcomeRuleJSON string",
@@ -1899,6 +1932,7 @@ def _render_inbound_descriptors(lines: list[str], inbound: Any) -> None:
             "\tFamilySchemaVersion int",
             "\tInstrumentName string",
             "\tInstrumentType string",
+            "\tInstrumentUnit string",
             "\tFieldRefs []string",
             "\tFieldDescriptorIDs []string",
             "\tDescriptor familyDescriptor",
@@ -1907,6 +1941,7 @@ def _render_inbound_descriptors(lines: list[str], inbound: Any) -> None:
             "\tTimeRuleJSON string",
             "\tOutcomeRuleJSON string",
             "\tImportContextID string",
+            "\tSourceUnitRule generatedInboundUnitRule",
             "}",
             "",
             "type generatedInboundNativeMarker struct {",
@@ -2062,6 +2097,11 @@ def _render_inbound_descriptors(lines: list[str], inbound: Any) -> None:
                 )
                 + "},"
             )
+        lines.append(
+            "\t\tSourceUnitRule: "
+            + _inbound_unit_rule_literal(_read(match, "source_unit_rule", "match"), "match source-unit rule")
+            + ","
+        )
         lines.append(f"\t\tTargetIDs: {_inbound_string_slice(_read(match, 'target_ids', 'match'), 'match targets')},")
         lines.append(f"\t\tNativeRoundTrip: {_bool(_read(match, 'native_round_trip', 'match'), 'match native')},")
         lines.append("\t},")
@@ -2083,6 +2123,7 @@ def _render_inbound_descriptors(lines: list[str], inbound: Any) -> None:
             ("event_name", "EventName"),
             ("instrument_name", "InstrumentName"),
             ("instrument_type", "InstrumentType"),
+            ("instrument_unit", "InstrumentUnit"),
             ("mapping_strategy", "MappingStrategy"),
             ("derivation_strategy", "DerivationStrategy"),
             ("time_rule_json", "TimeRuleJSON"),
@@ -2096,6 +2137,11 @@ def _render_inbound_descriptors(lines: list[str], inbound: Any) -> None:
         )
         lines.append(
             f"\t\tFieldDescriptorIDs: {_inbound_string_slice(_read(target, 'field_descriptor_ids', 'target'), 'target fields')},"
+        )
+        lines.append(
+            "\t\tSourceUnitRule: "
+            + _inbound_unit_rule_literal(_read(target, "source_unit_rule", "target"), "target source-unit rule")
+            + ","
         )
         descriptor_symbol = _identifier(_read(target, "descriptor_symbol", "target"), "target descriptor symbol")
         lines.append(f"\t\tDescriptor: {descriptor_symbol}{{}},")

@@ -407,6 +407,9 @@ func (target InboundTarget) MappedValueKind(field InboundTargetField) (InboundMa
 	if !ok || nilInterface(entry.descriptor) || field.fieldRef == "" {
 		return InboundMappedValueInvalid, false
 	}
+	if field.scope != inboundTargetFieldScopeFamily {
+		return target.inboundComponentMappedValueKind(field)
+	}
 	bound := false
 	for _, candidate := range entry.fields {
 		if candidate.descriptorID == field.descriptorID && candidate.fieldRef == field.fieldRef {

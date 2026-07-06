@@ -143,6 +143,16 @@ const (
 	V8CanonicalSpanHandoffNotConsumed  V8CanonicalSpanRegistrationCode = "handoff_not_consumed"
 )
 
+// V8ImportedSpanResult contains only bounded destination accounting for one
+// already-ended imported canonical span. Imported spans never enter the local
+// SDK processor or SQLite log pipeline.
+type V8ImportedSpanResult struct {
+	Matched   int
+	Delivered int
+	Dropped   int
+	Failed    int
+}
+
 type v8SpanHandoffKey struct {
 	traceID trace.TraceID
 	spanID  trace.SpanID
@@ -370,6 +380,30 @@ func (p *Provider) EndV8CanonicalSpan(span trace.Span, record observability.Reco
 	}
 }
 
+// ImportV8CanonicalSpan validates and directly fans out one already-ended
+// imported span. The caller must hold the exact runtime-generation lease from
+// collection admission through this call. There is deliberately no legacy SDK
+// fallback because an SDK processor cannot preserve sender-owned trace/span IDs.
+func (p *Provider) ImportV8CanonicalSpan(record observability.Record) (V8ImportedSpanResult, error) {
+	if p == nil || p.v8 == nil || p.v8.spanProcessor == nil ||
+		!p.v8.active.Load() || p.shutdown.Load() {
+		return V8ImportedSpanResult{}, errors.New("telemetry: imported canonical span provider is unavailable")
+	}
+	canonical, ok := newV8CanonicalEndedSpanForImport(record)
+	if !ok {
+		return V8ImportedSpanResult{}, errors.New("telemetry: imported canonical span record is invalid")
+	}
+	if !p.TraceBucketEnabled(record.Bucket()) {
+		return V8ImportedSpanResult{}, errors.New("telemetry: imported canonical span is not collected")
+	}
+	if digest := record.Provenance().ConfigDigest; digest == "" || digest != p.v8.planDigest ||
+		record.Provenance().ConfigGeneration < 0 ||
+		uint64(record.Provenance().ConfigGeneration) != p.v8.generation {
+		return V8ImportedSpanResult{}, errors.New("telemetry: imported canonical span generation mismatch")
+	}
+	return p.v8.spanProcessor.importCanonical(canonical), nil
+}
+
 func nilV8TraceSpan(span trace.Span) bool {
 	if span == nil {
 		return true
@@ -473,6 +507,34 @@ func (processor *v8CompositeSpanProcessor) OnEnd(span sdktrace.ReadOnlySpan) {
 			v8CallLegacyOnEnd(pipeline.Legacy, span)
 		}
 	}
+}
+
+func (processor *v8CompositeSpanProcessor) importCanonical(
+	span V8CanonicalEndedSpan,
+) V8ImportedSpanResult {
+	if !processor.beginCallback() {
+		return V8ImportedSpanResult{Failed: 1}
+	}
+	defer processor.endCallback()
+	result := V8ImportedSpanResult{}
+	for index := range processor.pipelines {
+		consumer := processor.pipelines[index].Canonical
+		if consumer == nil {
+			continue
+		}
+		result.Matched++
+		switch v8TryCanonicalEnqueue(consumer, span) {
+		case V8CanonicalSpanEnqueueAccepted:
+			result.Delivered++
+		case V8CanonicalSpanEnqueueDropped:
+			result.Dropped++
+		case V8CanonicalSpanEnqueueClosed, V8CanonicalSpanEnqueueFailed:
+			result.Failed++
+		default:
+			result.Failed++
+		}
+	}
+	return result
 }
 
 func (processor *v8CompositeSpanProcessor) ForceFlush(ctx context.Context) error {
@@ -634,6 +696,18 @@ func v8CallCanonicalEnqueue(consumer V8CanonicalSpanConsumer, span V8CanonicalEn
 	}
 }
 
+func v8TryCanonicalEnqueue(
+	consumer V8CanonicalSpanConsumer,
+	span V8CanonicalEndedSpan,
+) (result V8CanonicalSpanEnqueueResult) {
+	defer func() {
+		if recover() != nil {
+			result = V8CanonicalSpanEnqueueFailed
+		}
+	}()
+	return consumer.TryEnqueue(span)
+}
+
 func v8CallConsumerContext(call func(context.Context) error, ctx context.Context) (err error) {
 	defer func() {
 		if recover() != nil {
@@ -653,6 +727,17 @@ func v8CallProcessorContext(call func(context.Context) error, ctx context.Contex
 }
 
 func newV8CanonicalEndedSpan(record observability.Record) (V8CanonicalEndedSpan, bool) {
+	return newV8CanonicalEndedSpanWithFlags(record, false)
+}
+
+func newV8CanonicalEndedSpanForImport(record observability.Record) (V8CanonicalEndedSpan, bool) {
+	return newV8CanonicalEndedSpanWithFlags(record, true)
+}
+
+func newV8CanonicalEndedSpanWithFlags(
+	record observability.Record,
+	allowReservedOTLPFlags bool,
+) (V8CanonicalEndedSpan, bool) {
 	if record.Signal() != observability.SignalTraces || !record.SchemaDerivedFieldClasses() {
 		return V8CanonicalEndedSpan{}, false
 	}
@@ -707,7 +792,7 @@ func newV8CanonicalEndedSpan(record observability.Record) (V8CanonicalEndedSpan,
 	// requires runtime-sourced producers to clear them. Keep the registry's
 	// general uint32 contract lossless while rejecting impossible runtime
 	// parity before registration.
-	if !ok || otlpFlags&^v8RuntimeOTLPFlagsMask != 0 {
+	if !ok || !allowReservedOTLPFlags && otlpFlags&^v8RuntimeOTLPFlagsMask != 0 {
 		return V8CanonicalEndedSpan{}, false
 	}
 	controls, ok := v8CanonicalControlAttributes(record, object)

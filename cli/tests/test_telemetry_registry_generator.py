@@ -871,7 +871,12 @@ def _fixture_inbound_bindings() -> dict[str, Any]:
         aliases: list[str] | None = None,
         derived_targets: list[dict[str, str]] | None = None,
         native: bool = False,
+        strategy: str = "fixture-mapping-v1",
+        unit_rule: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        mapping: dict[str, Any] = {"strategy": strategy, "alias_sets": aliases or []}
+        if unit_rule is not None:
+            mapping["unit_rule"] = unit_rule
         return {
             "id": binding_id,
             "signal": signal,
@@ -879,7 +884,7 @@ def _fixture_inbound_bindings() -> dict[str, Any]:
             "mode": mode,
             "expansion": expansion,
             "discriminator": {"kind": f"fixture-{signal}-v1", "predicates": predicates},
-            "mapping": {"strategy": "fixture-mapping-v1", "alias_sets": aliases or []},
+            "mapping": mapping,
             "derived_targets": derived_targets or [],
             "time_rule": "fixture-time-v1",
             "outcome_rule": "forbidden",
@@ -959,6 +964,8 @@ def _fixture_inbound_bindings() -> dict[str, Any]:
                 predicate("metric_point", "$point_shape", "reversible_target_shape"),
             ],
             native=True,
+            strategy="generated-reverse-metric-v1",
+            unit_rule={"kind": "target-unit-equality-v1"},
         ),
         binding(
             "otlp.genai.span.operation.v1",
@@ -1040,6 +1047,16 @@ def _fixture_inbound_bindings() -> dict[str, Any]:
                 )
             ],
             aliases=["conversation-id-v1"],
+            strategy="claude-token-usage-v1",
+            unit_rule={
+                "kind": "scale-table-v1",
+                "accepted": [
+                    {"source_unit": "", "scale": 1},
+                    {"source_unit": "{token}", "scale": 1},
+                    {"source_unit": "token", "scale": 1},
+                    {"source_unit": "tokens", "scale": 1},
+                ],
+            },
         ),
         binding(
             "otlp.genai.duration.metric.v1",
@@ -1062,6 +1079,28 @@ def _fixture_inbound_bindings() -> dict[str, Any]:
             },
             [predicate("instrument_name", "$instrument_name", "equals_expansion_instrument")],
             aliases=["provider-v1", "request-model-v1"],
+            strategy="duration-metric-v1",
+            unit_rule={
+                "kind": "scale-table-v1",
+                "accepted": [
+                    {"source_unit": unit, "scale": scale}
+                    for unit, scale in (
+                        ("", 1),
+                        ("s", 1),
+                        ("second", 1),
+                        ("seconds", 1),
+                        ("ms", 0.001),
+                        ("millisecond", 0.001),
+                        ("milliseconds", 0.001),
+                        ("us", 0.000001),
+                        ("microsecond", 0.000001),
+                        ("microseconds", 0.000001),
+                        ("ns", 0.000000001),
+                        ("nanosecond", 0.000000001),
+                        ("nanoseconds", 0.000000001),
+                    )
+                ],
+            },
         ),
     ]
     assert [item["id"] for item in aliases] == [item[0] for item in alias_specs]
@@ -9951,6 +9990,13 @@ def test_inbound_otlp_ir_expands_closed_match_target_and_echo_inventories(
         group.id for domain in ir.domains for group in domain.groups if group.type in {"log", "span", "metric"}
     }
     assert all("mandatory" not in item and "floor" not in item for item in inbound.import_contexts)
+    unit_fixture_cases = sum(
+        0
+        if item["mapping"]["source_unit_rule"]["kind"] == "none"
+        else len(item["mapping"]["source_unit_rule"]["accepted"]) + 2
+        for item in inbound.match_descriptors
+    )
+    assert unit_fixture_cases == 393
 
 
 def test_inbound_otlp_duration_aliases_have_unique_matches_and_one_target_rows(
@@ -9983,6 +10029,95 @@ def test_inbound_otlp_duration_aliases_have_unique_matches_and_one_target_rows(
         "claude_code.operation.duration",
         "codex.operation.duration",
     }
+    duration_rule = {
+        "kind": "scale-table-v1",
+        "target_unit": "s",
+        "accepted": tuple(
+            {"source_unit": unit, "scale": scale}
+            for unit, scale in (
+                ("", 1.0),
+                ("s", 1.0),
+                ("second", 1.0),
+                ("seconds", 1.0),
+                ("ms", 0.001),
+                ("millisecond", 0.001),
+                ("milliseconds", 0.001),
+                ("us", 0.000001),
+                ("microsecond", 0.000001),
+                ("microseconds", 0.000001),
+                ("ns", 0.000000001),
+                ("nanosecond", 0.000000001),
+                ("nanoseconds", 0.000000001),
+            )
+        ),
+    }
+    assert all(item["mapping"]["source_unit_rule"] == duration_rule for item in matches.values())
+    targets = {item["id"]: item for item in inbound.target_descriptors}
+    assert all(
+        targets[item["target_ids"][0]]["instrument_unit"] == "s"
+        and targets[item["target_ids"][0]]["source_unit_rule"] == duration_rule
+        for item in matches.values()
+    )
+
+    token = next(item for item in inbound.match_descriptors if item["class_id"] == "otlp.claudecode.token_usage.v1")
+    assert token["mapping"]["source_unit_rule"] == {
+        "kind": "scale-table-v1",
+        "target_unit": "{token}",
+        "accepted": (
+            {"source_unit": "", "scale": 1.0},
+            {"source_unit": "{token}", "scale": 1.0},
+            {"source_unit": "token", "scale": 1.0},
+            {"source_unit": "tokens", "scale": 1.0},
+        ),
+    }
+    for native in (item for item in inbound.match_descriptors if item["class_id"] == "otlp.native.metric.v8"):
+        target = targets[native["target_ids"][0]]
+        assert native["mapping"]["source_unit_rule"] == {
+            "kind": "target-unit-equality-v1",
+            "target_unit": target["instrument_unit"],
+            "accepted": ({"source_unit": target["instrument_unit"], "scale": 1.0},),
+        }
+    assert sum(item["class_id"] == "otlp.native.metric.v8" for item in inbound.match_descriptors) == 104
+
+
+@pytest.mark.parametrize(
+    ("class_id", "mutate", "message"),
+    [
+        (
+            "otlp.genai.duration.metric.v1",
+            lambda mapping: mapping["unit_rule"]["accepted"].append({"source_unit": "minute", "scale": 60}),
+            "canonical source-unit table/order mismatch",
+        ),
+        (
+            "otlp.genai.duration.metric.v1",
+            lambda mapping: mapping["unit_rule"]["accepted"][4].__setitem__("scale", 1),
+            "canonical source-unit table/order mismatch",
+        ),
+        (
+            "otlp.claudecode.token_usage.v1",
+            lambda mapping: mapping["unit_rule"]["accepted"][2].__setitem__("source_unit", "Token"),
+            "canonical source-unit table/order mismatch",
+        ),
+        (
+            "otlp.native.metric.v8",
+            lambda mapping: mapping["unit_rule"].__setitem__("kind", "scale-table-v1"),
+            "reverse metrics require target-unit-equality-v1",
+        ),
+    ],
+)
+def test_inbound_source_unit_grammar_rejects_any_table_drift(
+    canonical_go_symbol_compilation: tuple[Any, Any],
+    class_id: str,
+    mutate: Any,
+    message: str,
+) -> None:
+    module, ir = canonical_go_symbol_compilation
+    registry = yaml.safe_load((ROOT / "schemas/telemetry/v8/registry.yaml").read_text(encoding="utf-8"))
+    binding = next(item for item in registry["inbound_bindings"]["binding_classes"] if item["id"] == class_id)
+    mutate(binding["mapping"])
+    groups = {group.id: group for domain in ir.domains for group in domain.groups}
+    with pytest.raises(module.RegistryError, match=message):
+        module._parse_inbound_otlp(registry["inbound_bindings"], groups=groups)
 
 
 def test_go_symbol_policy_tokenization_is_exact_and_strict() -> None:

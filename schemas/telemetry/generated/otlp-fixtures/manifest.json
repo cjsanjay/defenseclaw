@@ -3,7 +3,7 @@
     "artifact": "otlp-fixtures/manifest.json",
     "authority": "candidate-not-public-authority",
     "generator": "defenseclaw-telemetry-candidate-renderer-v1",
-    "materialized_view_sha256": "c6a5683883ef0ac2628eecc9f003abb189615dec164271a1ea634427bd6b88eb",
+    "materialized_view_sha256": "31071ab791d29577646cbafa728c7fb69ffcbd2ea181e8f3dc7891ae3356c7f4",
     "registry_version": 1
   },
   "canonical_to_otlp": {
@@ -246,5 +246,5 @@
     "scope": "canonical-schema-comparison-only"
   },
   "format": "defenseclaw-otlp-fixture-manifest-v1",
-  "materialized_view_sha256": "c6a5683883ef0ac2628eecc9f003abb189615dec164271a1ea634427bd6b88eb"
+  "materialized_view_sha256": "31071ab791d29577646cbafa728c7fb69ffcbd2ea181e8f3dc7891ae3356c7f4"
 }

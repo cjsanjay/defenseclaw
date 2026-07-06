@@ -129,7 +129,10 @@ inbound_bindings:
           - {location: scope_schema_url, key: $scope_schema_url, operator: equals_contract, value_type: string}
           - {location: instrument_name, key: $instrument_name, operator: equals_target_instrument, value_type: string}
           - {location: metric_point, key: $point_shape, operator: reversible_target_shape, value_type: string}
-      mapping: {strategy: generated-reverse-metric-v1, alias_sets: []}
+      mapping:
+        strategy: generated-reverse-metric-v1
+        alias_sets: []
+        unit_rule: {kind: target-unit-equality-v1}
       derived_targets: []
       time_rule: metric-point-receipt-v1
       outcome_rule: forbidden
@@ -219,7 +222,16 @@ inbound_bindings:
           - {location: instrument_name, key: $instrument_name, operator: equals, values: [claude_code.token.usage], value_type: string}
           - {location: metric_point_attribute, key: type, operator: one_of, values: [input, output, cacheRead, cacheCreation], value_type: string}
           - {location: metric_point, key: $point_shape, operator: one_of, values: [sum, gauge], value_type: string}
-      mapping: {strategy: claude-token-usage-v1, alias_sets: [conversation-id-v1, provider-v1, request-model-v1]}
+      mapping:
+        strategy: claude-token-usage-v1
+        alias_sets: [conversation-id-v1, provider-v1, request-model-v1]
+        unit_rule:
+          kind: scale-table-v1
+          accepted:
+            - {source_unit: '', scale: 1}
+            - {source_unit: '{token}', scale: 1}
+            - {source_unit: token, scale: 1}
+            - {source_unit: tokens, scale: 1}
       derived_targets: []
       time_rule: metric-point-receipt-v1
       outcome_rule: forbidden
@@ -243,7 +255,25 @@ inbound_bindings:
           - {location: resource_attribute, key: defenseclaw.telemetry.forward.instance_id, operator: absent, value_type: string}
           - {location: instrument_name, key: $instrument_name, operator: equals_expansion_instrument, value_type: string}
           - {location: metric_point, key: $point_shape, operator: one_of, values: [gauge, sum, histogram], value_type: string}
-      mapping: {strategy: duration-metric-v1, alias_sets: [conversation-id-v1, provider-v1, request-model-v1]}
+      mapping:
+        strategy: duration-metric-v1
+        alias_sets: [conversation-id-v1, provider-v1, request-model-v1]
+        unit_rule:
+          kind: scale-table-v1
+          accepted:
+            - {source_unit: '', scale: 1}
+            - {source_unit: s, scale: 1}
+            - {source_unit: second, scale: 1}
+            - {source_unit: seconds, scale: 1}
+            - {source_unit: ms, scale: 0.001}
+            - {source_unit: millisecond, scale: 0.001}
+            - {source_unit: milliseconds, scale: 0.001}
+            - {source_unit: us, scale: 0.000001}
+            - {source_unit: microsecond, scale: 0.000001}
+            - {source_unit: microseconds, scale: 0.000001}
+            - {source_unit: ns, scale: 0.000000001}
+            - {source_unit: nanosecond, scale: 0.000000001}
+            - {source_unit: nanoseconds, scale: 0.000000001}
       derived_targets: []
       time_rule: metric-point-receipt-v1
       outcome_rule: forbidden

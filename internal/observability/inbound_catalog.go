@@ -216,6 +216,50 @@ func (override InboundTargetOverride) Source() string        { return override.s
 func (override InboundTargetOverride) Target() string        { return override.target }
 func (override InboundTargetOverride) Normalization() string { return override.normalization }
 
+type InboundSourceUnitRuleKind string
+
+const (
+	InboundSourceUnitNone           InboundSourceUnitRuleKind = "none"
+	InboundSourceUnitTargetEquality InboundSourceUnitRuleKind = "target-unit-equality-v1"
+	InboundSourceUnitScaleTable     InboundSourceUnitRuleKind = "scale-table-v1"
+)
+
+// InboundSourceUnitScale is one exact source-unit spelling and its multiplier
+// into the sealed target family unit. Source units are compared byte-for-byte;
+// callers cannot request trimming, case folding, or any other free-form
+// normalization.
+type InboundSourceUnitScale struct {
+	sourceUnit string
+	scale      float64
+}
+
+func (entry InboundSourceUnitScale) SourceUnit() string { return entry.sourceUnit }
+func (entry InboundSourceUnitScale) Scale() float64     { return entry.scale }
+
+type inboundSourceUnitRuleEntry struct {
+	kind       InboundSourceUnitRuleKind
+	targetUnit string
+	accepted   []InboundSourceUnitScale
+}
+
+// InboundSourceUnitRule is an immutable view of compiler-generated source-unit
+// authority for one exact match/target. ScaleFor performs exact lookup only.
+type InboundSourceUnitRule struct{ entry inboundSourceUnitRuleEntry }
+
+func (rule InboundSourceUnitRule) Kind() InboundSourceUnitRuleKind { return rule.entry.kind }
+func (rule InboundSourceUnitRule) TargetUnit() string              { return rule.entry.targetUnit }
+func (rule InboundSourceUnitRule) Accepted() []InboundSourceUnitScale {
+	return append([]InboundSourceUnitScale(nil), rule.entry.accepted...)
+}
+func (rule InboundSourceUnitRule) ScaleFor(sourceUnit string) (float64, bool) {
+	for _, entry := range rule.entry.accepted {
+		if entry.sourceUnit == sourceUnit {
+			return entry.scale, true
+		}
+	}
+	return 0, false
+}
+
 type inboundCatalogSnapshot struct {
 	aliases         []inboundAliasEntry
 	matches         []inboundMatchEntry
@@ -258,6 +302,7 @@ type inboundMatchEntry struct {
 	mappingStrategy   InboundMappingStrategy
 	aliasIndexes      []int
 	targetOverride    Optional[InboundTargetOverride]
+	sourceUnitRule    inboundSourceUnitRuleEntry
 	targetIndexes     []int
 	timeRule          InboundTimeRule
 	outcomeRule       InboundOutcomeRule
@@ -277,6 +322,8 @@ type inboundTargetEntry struct {
 	familySchemaVersion uint32
 	instrumentName      string
 	instrumentType      string
+	instrumentUnit      string
+	sourceUnitRule      inboundSourceUnitRuleEntry
 	fields              []InboundTargetField
 	descriptor          familyDescriptor
 	descriptorType      string
@@ -601,6 +648,10 @@ func (match InboundMatch) TargetOverride() (InboundTargetOverride, bool) {
 	entry, _ := match.entry()
 	return entry.targetOverride.Get()
 }
+func (match InboundMatch) SourceUnitRule() InboundSourceUnitRule {
+	entry, _ := match.entry()
+	return InboundSourceUnitRule{entry: cloneInboundSourceUnitRule(entry.sourceUnitRule)}
+}
 func (match InboundMatch) Targets() []InboundTarget {
 	entry, ok := match.entry()
 	if !ok {
@@ -628,10 +679,20 @@ func (match InboundMatch) NativeRoundTrip() bool {
 type InboundTargetField struct {
 	fieldRef     string
 	descriptorID string
+	scope        inboundTargetFieldScope
+	componentID  string
 }
 
 func (field InboundTargetField) FieldRef() string     { return field.fieldRef }
 func (field InboundTargetField) DescriptorID() string { return field.descriptorID }
+
+type inboundTargetFieldScope uint8
+
+const (
+	inboundTargetFieldScopeFamily inboundTargetFieldScope = iota
+	inboundTargetFieldScopeResource
+	inboundTargetFieldScopeEvent
+)
 
 // InboundTarget is both a read-only view and an opaque capability. Callers may
 // pass it back to observability construction code, but cannot access or create
@@ -677,6 +738,14 @@ func (target InboundTarget) InstrumentName() string {
 func (target InboundTarget) InstrumentType() string {
 	entry, _ := target.entry()
 	return entry.instrumentType
+}
+func (target InboundTarget) InstrumentUnit() string {
+	entry, _ := target.entry()
+	return entry.instrumentUnit
+}
+func (target InboundTarget) SourceUnitRule() InboundSourceUnitRule {
+	entry, _ := target.entry()
+	return InboundSourceUnitRule{entry: cloneInboundSourceUnitRule(entry.sourceUnitRule)}
 }
 func (target InboundTarget) Fields() []InboundTargetField {
 	entry, _ := target.entry()
@@ -862,4 +931,9 @@ func cloneInboundPredicates(input []InboundPredicate) []InboundPredicate {
 		output[index].values = append([]InboundPredicateValue(nil), input[index].values...)
 	}
 	return output
+}
+
+func cloneInboundSourceUnitRule(input inboundSourceUnitRuleEntry) inboundSourceUnitRuleEntry {
+	input.accepted = append([]InboundSourceUnitScale(nil), input.accepted...)
+	return input
 }

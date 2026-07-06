@@ -25,10 +25,12 @@ import (
 type InboundImportErrorCode string
 
 const (
-	InboundImportInvalidInput  InboundImportErrorCode = "invalid_input"
-	InboundImportUnavailable   InboundImportErrorCode = "unavailable"
-	InboundImportClosed        InboundImportErrorCode = "closed"
-	InboundImportFloorRejected InboundImportErrorCode = "floor_rejected"
+	InboundImportInvalidInput   InboundImportErrorCode = "invalid_input"
+	InboundImportUnavailable    InboundImportErrorCode = "unavailable"
+	InboundImportClosed         InboundImportErrorCode = "closed"
+	InboundImportFloorRejected  InboundImportErrorCode = "floor_rejected"
+	InboundImportBuildRejected  InboundImportErrorCode = "build_rejected"
+	InboundImportDeliveryFailed InboundImportErrorCode = "delivery_failed"
 )
 
 // InboundImportError never includes decoded OTLP values, attribute names,

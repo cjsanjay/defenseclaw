@@ -59,6 +59,7 @@ Every binding has the following closed properties:
 | `discriminator` | Exact resource/scope/schema URL/instrument/event/attribute predicates; no substring, suffix, case-folded guess, or first-match order |
 | `target_families` | One or more registered canonical families materialized as separate one-target descriptors; an `import` match has exactly one primary target while `derive`/`import_and_derive` may have explicit augmentation targets |
 | `field_bindings` | Exact typed source-to-target mappings, normalization, absence behavior, and source precedence |
+| `source_unit_rule` | Compiler-resolved exact source-unit spellings, sealed target unit, and scale for a metric mapping; `none` for mappings that do not consume a metric unit |
 | `time_rule` | Exact source timestamp and fallback rule |
 | `outcome_rule` | Exact fixed or status-derived canonical outcome, when the target family requires one |
 | `unknown_fields` | Always `drop_and_count` for v8 |
@@ -69,6 +70,12 @@ one exact discriminator and is identified by `class_id + variant_id`. One or mor
 generated **target descriptors** reference that match and each owns exactly one
 canonical target; a target ID is `match_id + target_family_id`. Ambiguity is
 evaluated among match descriptors, never among the explicit targets of one match.
+The materialized-view digest, compatibility-catalog digest, generated Go inbound
+plan digest, and generated output manifest MUST cover the sealed target instrument
+unit and the complete ordered `source_unit_rule`. A changed spelling, order, scale,
+target unit, or rule kind is semantic drift and MUST fail the corresponding
+generation/drift check; it cannot be repaired by a runtime fallback table.
+
 The compiler MUST prove that match discriminators are mutually exclusive for the
 same signal and authenticated source. Zero matches is `unsupported_identity`;
 more than one match is `ambiguous_identity`. Neither case may fall back to a
@@ -135,13 +142,13 @@ code heuristic.
 |---|---|---|
 | `otlp.native.log.v8` | Log body is a JSON string containing one exact v8 projected record; resource has the original nonempty semantic `defenseclaw.instance.id`; leaf has exact nonempty `defenseclaw.record.id`, `defenseclaw.bucket`, `defenseclaw.signal=logs`, registered `defenseclaw.event.name`, and valid forward instance/destination/hop transport keys; envelope/provenance registry versions, projection metadata, bucket, and event agree with the local registry | Compiler expands one binding per registered log family. Import an other-instance leaf through the import-only family context; suppress only when the forward instance is local |
 | `otlp.native.span.v8` | Scope `schema_url=https://defenseclaw.io/schemas/telemetry/v8`, scope name `defenseclaw.telemetry`, resource `schema_url=https://opentelemetry.io/schemas/1.42.0`, original nonempty semantic resource instance ID, valid forward instance/destination/hop transport keys, valid trace/span IDs, and exact registered bucket/family/family-schema markers | Compiler expands one binding per registered span. Import when its generated reverse mapping validates every required field, kind, name, timing, status, event, link, and dropped count; suppress only when the forward instance is local |
-| `otlp.native.metric.v8` | Scope name `defenseclaw.telemetry`, scope `schema_url=https://defenseclaw.io/schemas/telemetry/v8`, resource `schema_url=https://opentelemetry.io/schemas/1.42.0`, original nonempty semantic resource instance marker, exact forward instance/destination/hop transport keys on the hop-tier resource, and exact registered instrument name | Compiler expands one binding per reversible registered instrument. Import only a gauge point for a gauge family or a delta-sum point for a counter/up-down-counter family. The v8 exporter MUST add both schema URLs and the separate forward keys; current metric output without them is not native shape. An already aggregated histogram is not a raw observation and is not native-importable in v8 |
+| `otlp.native.metric.v8` | Scope name `defenseclaw.telemetry`, scope `schema_url=https://defenseclaw.io/schemas/telemetry/v8`, resource `schema_url=https://opentelemetry.io/schemas/1.42.0`, original nonempty semantic resource instance marker, exact forward instance/destination/hop transport keys on the hop-tier resource, exact registered instrument name, and source unit byte-equal to the sealed target instrument unit | Compiler expands one binding per reversible registered instrument. Import only a gauge point for a gauge family or a delta-sum point for a counter/up-down-counter family. The v8 exporter MUST add both schema URLs and the separate forward keys; current metric output without them is not native shape. An already aggregated histogram is not a raw observation and is not native-importable in v8 |
 | `otlp.genai.span.operation.v1` | Authenticated source; exact pinned `gen_ai.operation.name`; valid ended span and IDs | Compiler expands one binding per operation/target: `invoke_agent` with required `defenseclaw.agent.type` to `span.agent.invoke`; `chat` with required `gen_ai.request.model` to `span.model.chat`; `embeddings` with required request model to `span.model.embeddings`; `execute_tool` with required `gen_ai.tool.name` to `span.tool.execute`; `retrieval` with required `defenseclaw.retrieval.source.id` to `span.retrieval.search`; `invoke_workflow` with exact `gen_ai.workflow.name` normalized into required `defenseclaw.workflow.name` to `span.workflow.run` |
 | `otlp.codex.user_prompt.v1` | Authenticated source `codex`; exact `event.name=codex.user_prompt` | Import `log.model.request`, fixed outcome `attempted`; map only the exact content and correlation aliases in section 2.3 |
 | `otlp.claudecode.user_prompt.v1` | Authenticated source `claudecode`; exact `event.name=claude_code.user_prompt` | Import `log.model.request`, fixed outcome `attempted`; map only the exact content and correlation aliases in section 2.3 |
 | `otlp.codex.response_completed.v1` | Authenticated source `codex`; exact `event.name=codex.sse_event` and exact `event.kind=response.completed` | One match imports `log.model.response`, fixed outcome `completed`, and owns explicit token/duration augmentation targets from the same leaf |
-| `otlp.claudecode.token_usage.v1` | Authenticated source `claudecode`; exact instrument `claude_code.token.usage`; Sum or Gauge point; exact supported `type` | Derive `metric.gen_ai.client.token.usage`. The source metric is not imported as though it were already that canonical histogram |
-| `otlp.genai.duration.metric.v1` | Exact instrument name in `{gen_ai.client.operation.duration, gen_ai.operation.duration, llm.operation.duration, claude_code.operation.duration, codex.operation.duration}` | Derive `metric.gen_ai.client.operation.duration`; no substring fallback. Gauge/Sum values normalize by exact unit. A histogram point derives one explicitly mean-valued observation from `sum/count`; the source aggregate is not imported or described as lossless |
+| `otlp.claudecode.token_usage.v1` | Authenticated source `claudecode`; exact instrument `claude_code.token.usage`; Sum or Gauge point; exact supported `type`; exact source unit in `{"", "{token}", "token", "tokens"}` | Derive `metric.gen_ai.client.token.usage` at scale 1. The source metric is not imported as though it were already that canonical histogram |
+| `otlp.genai.duration.metric.v1` | Exact instrument name in `{gen_ai.client.operation.duration, gen_ai.operation.duration, llm.operation.duration, claude_code.operation.duration, codex.operation.duration}` and one exact source-unit spelling from section 4.4 | Derive `metric.gen_ai.client.operation.duration`; no substring fallback. Gauge/Sum values normalize to seconds by the generated exact scale. A histogram point derives one explicitly mean-valued observation from `sum/count`; the source aggregate is not imported or described as lossless |
 | `otlp.genai.duration.span.v1` | Target augmentation on a match accepted by `otlp.genai.span.operation.v1`; it is not an independent discriminator match | In addition to the imported span, derive one `metric.gen_ai.client.operation.duration` observation from `end-start` |
 
 The standard GenAI span binding MUST NOT infer PR #403 lifecycle, execution,
@@ -311,6 +318,28 @@ delta by state keyed by authenticated source, bounded service and instance IDs,
 instrument, model, token type, conversation, and start time. An exact repeat or an
 older value is ignored; a greater value emits the positive difference; a changed
 start time starts a new series. This is the only v8 receiver deduplication rule.
+
+The OTLP metric `unit` is interpreted as an exact, case-sensitive UTF-8 token. An
+absent OTLP unit is represented by the exact empty string `""`. The receiver MUST
+NOT trim whitespace, case-fold, apply Unicode normalization, singularize,
+pluralize, parse a unit path, or infer a unit from the instrument name, source path,
+authenticated path token, attributes, or metric value. The generated source-unit
+rules are exactly:
+
+| Mapping strategy | Accepted source unit -> scale into sealed target unit |
+|---|---|
+| `duration-metric-v1` -> `s` | `""`, `s`, `second`, `seconds` -> `1`; `ms`, `millisecond`, `milliseconds` -> `0.001`; `us`, `microsecond`, `microseconds` -> `0.000001`; `ns`, `nanosecond`, `nanoseconds` -> `0.000000001` |
+| `claude-token-usage-v1` -> `{token}` | `""`, `{token}`, `token`, `tokens` -> `1` |
+| `generated-reverse-metric-v1` | The source unit MUST be byte-equal to that target family's sealed instrument unit, including equality of two empty strings; scale is `1` |
+
+Every other mapping has `source_unit_rule.kind=none` and MUST NOT consult a source
+metric unit. The compiler materializes each rule on both the match and its metric
+target; catalog loading fails if the two differ. Runtime code obtains the target
+instrument unit and exact scale only through the immutable generated catalog
+accessors. It MUST NOT maintain a second list, perform free-form normalization, or
+accept a unit merely because its dimension appears compatible. In particular,
+`{token}` in this table is the literal OTel unit token and has no relationship to
+the receiver's bearer/path authentication token.
 
 An inbound histogram has already lost its individual observations. Except for the
 explicit PR #412 mean derivation in section 2.2, it is unsupported. DefenseClaw
@@ -584,11 +613,11 @@ removing locally generated record/observed timestamps.
 | `OTLP-A02` | `TestOTLPInboundJSONProtobufParity` | All three signals normalize identically; unknown JSON/protobuf fields and duplicate keys fail before leaf mapping |
 | `OTLP-A03` | `TestOTLPInboundNativeLogRoundTripOtherInstance` | Every registered log-family fixture imports through its builder with a new local ID and upstream provenance; no raw body survives |
 | `OTLP-A04` | `TestOTLPInboundNativeSpanRoundTripOtherInstance` | Every reversible span fixture preserves topology, exact registered fields/events/links/status/counts, and gets a new local record ID |
-| `OTLP-A05` | `TestOTLPInboundNativeMetricReversibleShapesOnly` | Gauge and delta-sum supported shapes import; cumulative/aggregate/type/temporality mismatches and histograms do not masquerade as raw observations |
+| `OTLP-A05` | `TestOTLPInboundNativeMetricReversibleShapesOnly` | Gauge and delta-sum supported shapes import only when the source unit is byte-equal to the sealed target unit; cumulative/aggregate/type/temporality/unit mismatches and histograms do not masquerade as raw observations |
 | `OTLP-A06` | `TestOTLPInboundGenAISpanFamilyMatrix` | Six exact operation mappings select the stated family/bucket/name/kind; missing required discriminator facts and heuristic names are unsupported |
 | `OTLP-A07` | `TestOTLPInboundConnectorLogMatrix` | Codex/Claude prompt and Codex completed-response bindings map exact content/correlation flags/outcomes; wrong source/event/kind and alias conflicts do not import |
-| `OTLP-A08` | `TestOTLPInboundPR412DerivedMetricMatrix` | Exact token/duration identities produce only the two canonical metrics, exact labels and four token types; broad substring names are rejected |
-| `OTLP-A09` | `TestOTLPInboundHistogramMeanIsExplicitDerivation` | One aggregate point derives one mean observation with derivation provenance; source buckets/count are not claimed as losslessly imported |
+| `OTLP-A08` | `TestOTLPInboundPR412DerivedMetricMatrix` | Exact token/duration identities and every section 4.4 accepted source-unit spelling produce only the two canonical metrics at the exact generated scale, exact labels, and four token types; case/whitespace/unknown-unit and broad-substring variants are rejected |
+| `OTLP-A09` | `TestOTLPInboundHistogramMeanIsExplicitDerivation` | One aggregate point derives one mean observation using the same exact generated source-unit scale with derivation provenance; source buckets/count are not claimed as losslessly imported |
 | `OTLP-A10` | `TestOTLPInboundUnknownFieldsDropAndCount` | Unknown attrs/body/event/link members never reach canonical/projected output; registered duplicate/ambiguous keys reject the affected target |
 | `OTLP-A11` | `TestOTLPInboundFieldClassAndDynamicMemberConformance` | Every surviving leaf uses local exact classes; dynamic keys are values; spoofed classes/sensitivity and redaction-shaped strings grant no trust |
 | `OTLP-A12` | `TestOTLPInboundIdentityTimeAndProvenance` | New record IDs, original semantic `upstream_instance_id`, distinct immediate `last_hop_instance_id`, valid upstream IDs, timestamp precedence/future bound, local observed time/source/build/config provenance, re-export preservation, and absence behavior are exact |
