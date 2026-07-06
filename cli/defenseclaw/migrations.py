@@ -42,9 +42,11 @@ import os
 import re
 import secrets
 import shutil
+import stat
 import subprocess
 import sys
-from collections.abc import Callable
+import tempfile
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 
 import click
@@ -52,6 +54,53 @@ import yaml
 
 from defenseclaw import ux
 from defenseclaw.config import locked_file_update
+
+
+# These target-wheel dependencies are resolved lazily. Older upgrade clients
+# can import the newly installed migrations module into a process that still
+# has pre-v8 ``defenseclaw.config`` modules cached; importing the v8 activation
+# graph at module load would fail before the installed migration runner can
+# enter its clean target interpreter.
+def convert_v7_observability_to_v8(*args, **kwargs):
+    from defenseclaw.observability.v8_migration import convert_v7_observability_to_v8 as convert
+
+    return convert(*args, **kwargs)
+
+
+def activate_v8_migration(*args, **kwargs):
+    from defenseclaw.observability.v8_activation import activate_v8_migration as activate
+
+    return activate(*args, **kwargs)
+
+
+def inspect_v8_config(*args, **kwargs):
+    from defenseclaw.config_inspect import inspect_v8_config as inspect
+
+    return inspect(*args, **kwargs)
+
+
+def read_pid_file(path: str):
+    from defenseclaw.process_liveness import read_pid_file as read
+
+    return read(path)
+
+
+def pid_alive(pid: int) -> bool:
+    from defenseclaw.process_liveness import pid_alive as alive
+
+    return alive(pid)
+
+
+def process_argv0_basename(pid: int) -> str | None:
+    from defenseclaw.process_liveness import process_argv0_basename as basename
+
+    return basename(pid)
+
+
+def gateway_process_names() -> tuple[str, ...]:
+    from defenseclaw.process_liveness import GATEWAY_PROCESS_NAMES
+
+    return GATEWAY_PROCESS_NAMES
 
 
 def _ver_tuple(v: str) -> tuple[int, ...]:
@@ -147,6 +196,222 @@ class MigrationContext:
         if override:
             return override
         return os.path.join(self.data_dir, "config.yaml")
+
+
+class ObservabilityV8UpgradeMigrationError(RuntimeError):
+    """Bounded, value-safe failure at the upgrade orchestration boundary."""
+
+    def __init__(self, code: str) -> None:
+        self.code = code
+        super().__init__(f"observability v8 upgrade migration failed ({code})")
+
+
+def _migrate_observability_v8(ctx: MigrationContext) -> None:
+    """Convert, target-validate, and transactionally activate config v8.
+
+    ``defenseclaw upgrade`` invokes the installed migration registry only
+    after stopping the gateway and installing the target wheel and binary.
+    This callable preserves that ordering and independently rejects a live
+    gateway identified by the active data directory's PID file. The PID check
+    is the enforceable precondition available to the current architecture;
+    the activation transaction's locks and CAS checks protect participating
+    writers after that point.
+
+    The release registry entry is intentionally added only when the shipping
+    version is selected. Reusing an already-published version would cause
+    existing cursors to skip this breaking schema migration.
+    """
+
+    data_dir = os.path.abspath(os.path.expanduser(ctx.data_dir))
+    config_path = os.path.abspath(os.path.expanduser(ctx.active_config_path()))
+    environment_path = os.path.join(data_dir, ".env")
+    _assert_observability_v8_upgrade_quiesced(data_dir)
+
+    try:
+        with open(config_path, "rb") as source_file:
+            source = source_file.read()
+    except OSError:
+        raise ObservabilityV8UpgradeMigrationError("source_read_failed") from None
+
+    environment = _observability_v8_upgrade_environment(environment_path)
+    migration = convert_v7_observability_to_v8(
+        source,
+        environment,
+        source_name=config_path,
+        effective_data_dir=data_dir,
+    )
+
+    def validate_candidate(candidate: bytes, protected_overrides: Mapping[str, str]) -> None:
+        validation_environment = dict(environment)
+        validation_environment.update(protected_overrides)
+        _validate_observability_v8_candidate(
+            candidate,
+            validation_environment,
+            data_dir=data_dir,
+        )
+
+    activation = activate_v8_migration(
+        migration,
+        validator=validate_candidate,
+        data_dir=data_dir,
+        config_path=config_path,
+        environment_path=environment_path,
+        environment=environment,
+    )
+    if activation.activated:
+        ctx.changes.append("activated observability configuration schema v8")
+
+
+def _assert_observability_v8_upgrade_quiesced(data_dir: str) -> None:
+    """Allow only absent/dead or positively identified foreign PID state."""
+
+    pid_path = os.path.join(data_dir, "gateway.pid")
+    if not os.path.lexists(pid_path):
+        return
+    try:
+        pid_metadata = os.lstat(pid_path)
+    except OSError:
+        raise ObservabilityV8UpgradeMigrationError("gateway_quiescence_unknown") from None
+    if stat.S_ISLNK(pid_metadata.st_mode) or not stat.S_ISREG(pid_metadata.st_mode):
+        raise ObservabilityV8UpgradeMigrationError("gateway_quiescence_unknown")
+    try:
+        pid = read_pid_file(pid_path)
+    except OSError:
+        raise ObservabilityV8UpgradeMigrationError("gateway_quiescence_unknown") from None
+    if pid is None:
+        raise ObservabilityV8UpgradeMigrationError("gateway_quiescence_unknown")
+    try:
+        alive = pid_alive(pid)
+    except OSError:
+        raise ObservabilityV8UpgradeMigrationError("gateway_quiescence_unknown") from None
+    if not alive:
+        return
+    try:
+        basename = process_argv0_basename(pid)
+    except OSError:
+        raise ObservabilityV8UpgradeMigrationError("gateway_quiescence_unknown") from None
+    if not basename:
+        raise ObservabilityV8UpgradeMigrationError("gateway_quiescence_unknown")
+    if basename in gateway_process_names():
+        raise ObservabilityV8UpgradeMigrationError("gateway_not_quiesced")
+
+
+def _observability_v8_upgrade_environment(environment_path: str) -> dict[str, str]:
+    """Return the active dotenv plus ambient overrides without mutation."""
+
+    snapshot = _read_observability_v8_upgrade_dotenv(environment_path)
+    snapshot.update(os.environ)
+    return snapshot
+
+
+def _read_observability_v8_upgrade_dotenv(environment_path: str) -> dict[str, str]:
+    """Read the exact active dotenv without the legacy parser's silent loss."""
+
+    if not os.path.lexists(environment_path):
+        return {}
+    flags = os.O_RDONLY
+    if hasattr(os, "O_CLOEXEC"):
+        flags |= os.O_CLOEXEC
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    descriptor = -1
+    try:
+        metadata = os.lstat(environment_path)
+        if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
+            raise ObservabilityV8UpgradeMigrationError("environment_read_failed")
+        descriptor = os.open(environment_path, flags)
+        opened_metadata = os.fstat(descriptor)
+        if not stat.S_ISREG(opened_metadata.st_mode):
+            raise ObservabilityV8UpgradeMigrationError("environment_read_failed")
+        if (metadata.st_dev, metadata.st_ino) != (opened_metadata.st_dev, opened_metadata.st_ino):
+            raise ObservabilityV8UpgradeMigrationError("environment_read_failed")
+        with os.fdopen(descriptor, "rb") as environment_file:
+            descriptor = -1
+            payload = environment_file.read(4 * 1024 * 1024 + 1)
+        if len(payload) > 4 * 1024 * 1024:
+            raise ObservabilityV8UpgradeMigrationError("environment_read_failed")
+        lines = payload.decode("utf-8").splitlines(keepends=True)
+    except ObservabilityV8UpgradeMigrationError:
+        raise
+    except (OSError, UnicodeError):
+        raise ObservabilityV8UpgradeMigrationError("environment_read_failed") from None
+    finally:
+        if descriptor >= 0:
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+
+    snapshot: dict[str, str] = {}
+    for raw in lines:
+        line = raw.rstrip("\n").rstrip("\r")
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        match = _DOTENV_LINE.match(stripped)
+        if match is None:
+            raise ObservabilityV8UpgradeMigrationError("environment_read_failed")
+        key = match.group("key")
+        value = match.group("value")
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
+            value = value[1:-1]
+        snapshot[key] = value
+    return snapshot
+
+
+def _validate_observability_v8_candidate(
+    candidate: bytes,
+    protected_environment: dict[str, str],
+    *,
+    data_dir: str,
+) -> None:
+    """Compile exact candidate bytes with the installed target Go binary.
+
+    Candidate content is held in an owner-only file under the active data
+    directory. Only the path is placed on argv; protected values are supplied
+    through ``inspect_v8_config``'s validated child environment. The file is
+    removed on every success and failure path.
+    """
+
+    descriptor = -1
+    candidate_path = ""
+    close_failed = False
+    try:
+        descriptor, candidate_path = tempfile.mkstemp(
+            prefix=".observability-v8-candidate-",
+            suffix=".yaml",
+            dir=data_dir,
+        )
+        if os.name != "nt":
+            os.fchmod(descriptor, 0o600)
+        with os.fdopen(descriptor, "wb", closefd=True) as candidate_file:
+            descriptor = -1
+            candidate_file.write(candidate)
+            candidate_file.flush()
+            os.fsync(candidate_file.fileno())
+        inspected = inspect_v8_config(
+            "validate",
+            config_path=candidate_path,
+            data_dir=data_dir,
+            environment_overrides=protected_environment,
+        )
+        if inspected.valid is not True or inspected.config_version != 8:
+            raise ObservabilityV8UpgradeMigrationError("target_validation_invalid")
+    finally:
+        if descriptor >= 0:
+            try:
+                os.close(descriptor)
+            except OSError:
+                close_failed = True
+        if candidate_path:
+            try:
+                os.remove(candidate_path)
+            except FileNotFoundError:
+                pass
+            except OSError:
+                raise ObservabilityV8UpgradeMigrationError("candidate_cleanup_failed") from None
+        if close_failed:
+            raise ObservabilityV8UpgradeMigrationError("candidate_cleanup_failed")
 
 
 # ---------------------------------------------------------------------------
