@@ -25,8 +25,10 @@ secret values on argv and never falls back to an independent Python compiler.
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Final
 
@@ -37,6 +39,7 @@ CONFIG_V8_HELPER_TIMEOUT_SECONDS: Final = 15
 _OPERATIONS: Final = frozenset({"validate", "effective"})
 _REFERENCE_FORMATS: Final = frozenset({"yaml", "markdown"})
 _CONTROL_CHARACTERS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+_ENVIRONMENT_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
 class ConfigInspectError(RuntimeError):
@@ -62,13 +65,14 @@ def inspect_v8_config(
     *,
     config_path: str,
     data_dir: str | None = None,
+    environment_overrides: Mapping[str, str] | None = None,
 ) -> ConfigV8WireResult:
     """Run one versioned Go helper operation and validate its JSON wire."""
 
     if operation not in _OPERATIONS:
         raise ValueError(f"unsupported config-v8 operation {operation!r}")
     argv = _helper_argv(operation, config_path=config_path, data_dir=data_dir)
-    completed = _run(argv)
+    completed = _run(argv, environment_overrides=environment_overrides)
     if completed.returncode != 0:
         raise ConfigInspectError(_helper_failure(completed.stderr, operation))
     try:
@@ -133,19 +137,60 @@ def _helper_argv(
     return argv
 
 
-def _run(argv: list[str]) -> subprocess.CompletedProcess[str]:
+def _run(
+    argv: list[str],
+    *,
+    environment_overrides: Mapping[str, str] | None = None,
+) -> subprocess.CompletedProcess[str]:
+    environment = None
+    if environment_overrides is not None:
+        environment = _validation_environment(environment_overrides)
     try:
+        if environment is None:
+            return subprocess.run(
+                argv,
+                capture_output=True,
+                text=True,
+                timeout=CONFIG_V8_HELPER_TIMEOUT_SECONDS,
+                check=False,
+            )
         return subprocess.run(
             argv,
             capture_output=True,
             text=True,
             timeout=CONFIG_V8_HELPER_TIMEOUT_SECONDS,
             check=False,
+            env=environment,
         )
     except subprocess.TimeoutExpired as exc:
         raise ConfigInspectError("configuration helper timed out without producing a result") from exc
     except OSError as exc:
         raise ConfigInspectError("configuration helper could not be started; run defenseclaw upgrade") from exc
+
+
+def _validation_environment(overrides: Mapping[str, str]) -> dict[str, str]:
+    """Merge protected validator values without placing them on argv.
+
+    The observability-v8 activation transaction supplies only secret values
+    promoted from legacy inline/header configuration. Names are validated and
+    values containing NUL are rejected before ``subprocess`` sees them. Error
+    text never contains a name or value.
+    """
+
+    if len(overrides) > 4_096:
+        raise ConfigInspectError("configuration helper environment overrides are invalid")
+    result = os.environ.copy()
+    for name in overrides:
+        value = overrides[name]
+        if (
+            not isinstance(name, str)
+            or _ENVIRONMENT_NAME.fullmatch(name) is None
+            or not isinstance(value, str)
+            or "\x00" in value
+        ):
+            raise ConfigInspectError("configuration helper environment overrides are invalid")
+        result[name] = value
+    return result
 
 
 def _decode_wire(payload: dict[str, Any], operation: str) -> ConfigV8WireResult:
@@ -166,7 +211,11 @@ def _decode_wire(payload: dict[str, Any], operation: str) -> ConfigV8WireResult:
         if not isinstance(payload.get(field), str):
             raise ConfigInspectError("configuration helper returned an incomplete response; run defenseclaw upgrade")
     gateway_api_port = payload.get("gateway_api_port")
-    if isinstance(gateway_api_port, bool) or not isinstance(gateway_api_port, int) or not 1 <= gateway_api_port <= 65535:
+    if (
+        isinstance(gateway_api_port, bool)
+        or not isinstance(gateway_api_port, int)
+        or not 1 <= gateway_api_port <= 65535
+    ):
         raise ConfigInspectError("configuration helper returned an incomplete response; run defenseclaw upgrade")
     return ConfigV8WireResult(
         wire_version=CONFIG_V8_WIRE_VERSION,

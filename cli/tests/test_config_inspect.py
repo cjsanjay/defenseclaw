@@ -99,6 +99,67 @@ def test_bridge_missing_binary_and_timeout_are_actionable() -> None:
         config_inspect.inspect_v8_config("validate", config_path="config.yaml")
 
 
+def test_validation_environment_overrides_are_process_only_and_value_safe() -> None:
+    payload = {
+        "wire_version": 2,
+        "kind": "validation",
+        "config_version": 8,
+        "source": "/tmp/config.yaml",
+        "data_dir": "/tmp/dc",
+        "gateway_api_port": 18970,
+        "plan_digest": "abc123",
+        "network_validation": "offline_syntax_and_literal_policy_only",
+        "valid": True,
+    }
+    secret = "must-never-enter-argv"
+    with (
+        patch.object(config_inspect, "resolve_gateway_binary", return_value="gateway"),
+        patch.dict(config_inspect.os.environ, {"PRESERVED": "ambient"}, clear=True),
+        patch.object(
+            config_inspect.subprocess,
+            "run",
+            return_value=_completed(stdout=json.dumps(payload)),
+        ) as run,
+    ):
+        result = config_inspect.inspect_v8_config(
+            "validate",
+            config_path="/tmp/config.yaml",
+            environment_overrides={"PROMOTED_SECRET": secret},
+        )
+
+    assert result.valid is True
+    argv = run.call_args.args[0]
+    assert secret not in argv
+    assert run.call_args.kwargs["env"] == {
+        "PRESERVED": "ambient",
+        "PROMOTED_SECRET": secret,
+    }
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"INVALID-NAME": "hidden"},
+        {"VALID_NAME": "hidden\x00tail"},
+    ],
+)
+def test_invalid_validation_environment_never_starts_helper_or_echoes_value(
+    overrides: dict[str, str],
+) -> None:
+    with (
+        patch.object(config_inspect, "resolve_gateway_binary", return_value="gateway"),
+        patch.object(config_inspect.subprocess, "run") as run,
+        pytest.raises(config_inspect.ConfigInspectError) as caught,
+    ):
+        config_inspect.inspect_v8_config(
+            "validate",
+            config_path="config.yaml",
+            environment_overrides=overrides,
+        )
+    run.assert_not_called()
+    assert "hidden" not in str(caught.value)
+
+
 def test_reference_and_schema_use_embedded_go_artifacts() -> None:
     schema = {"$schema": "https://json-schema.org/draft/2020-12/schema", "$defs": {"observability": {}}}
     with (
