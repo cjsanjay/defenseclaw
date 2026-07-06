@@ -72,7 +72,7 @@ func TestV8MetricCatalogExactlyPreservesThe131InstrumentSchema(t *testing.T) {
 	}
 }
 
-func TestV8MetricAttributePolicyExactlyCoversLegacyEmitterKeys(t *testing.T) {
+func TestV8MetricAttributePolicyIsGeneratedAndCoversLegacyEmitterKeys(t *testing.T) {
 	_, current, _, ok := runtime.Caller(0)
 	if !ok {
 		t.Fatal("resolve test path")
@@ -96,8 +96,35 @@ func TestV8MetricAttributePolicyExactlyCoversLegacyEmitterKeys(t *testing.T) {
 		got = append(got, string(key))
 	}
 	sort.Strings(got)
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("metric attribute vocabulary drift: got=%v want=%v", got, want)
+	gotSet := make(map[string]struct{}, len(got))
+	for _, key := range got {
+		gotSet[key] = struct{}{}
+	}
+	for _, key := range want {
+		if _, covered := gotSet[key]; !covered {
+			t.Fatalf("generated metric attribute vocabulary omitted legacy key %q", key)
+		}
+	}
+	descriptors, err := V8MetricDescriptorCatalog()
+	if err != nil {
+		t.Fatal(err)
+	}
+	expectedSet := make(map[string]struct{})
+	for _, descriptor := range descriptors {
+		for _, key := range descriptor.AllowedLabels {
+			expectedSet[key] = struct{}{}
+		}
+		for _, mapping := range descriptor.LocalLabelMapping {
+			expectedSet[mapping.Local] = struct{}{}
+		}
+	}
+	expected := make([]string, 0, len(expectedSet))
+	for key := range expectedSet {
+		expected = append(expected, key)
+	}
+	sort.Strings(expected)
+	if !reflect.DeepEqual(got, expected) {
+		t.Fatalf("metric attribute vocabulary is not generated: got=%v want=%v", got, expected)
 	}
 }
 

@@ -84,6 +84,9 @@ type V8MetricReaderFactory func(generation uint64, spec V8MetricReaderSpec) (sdk
 type V8GenerationPipelines struct {
 	SpanPipelines []V8GenerationSpanPipeline
 	MetricReaders []sdkmetric.Reader
+	// MetricPipelines is separate from MetricReaders because one SDK
+	// MeterProvider cannot project different label names per reader.
+	MetricPipelines []V8GenerationMetricPipeline
 	// CanaryAcknowledged queries only the exact candidate generation's
 	// destination acknowledgement registry. It must be nonblocking, panic-safe
 	// at the provider boundary, and return false after its processors retire.
@@ -296,18 +299,19 @@ func v8ContextCause(err error) error {
 }
 
 type v8ProviderState struct {
-	active        atomic.Bool
-	generation    uint64
-	planDigest    string
-	collect       map[observability.Bucket]bool
-	metrics       map[observability.Bucket]bool
-	metricSpec    V8MetricReaderSpec
-	limits        config.ObservabilityV8TraceLimitsSource
-	debug         *v8SamplingDebug
-	canaryAck     func(destination, traceID string) bool
-	handoff       *v8SpanHandoff
-	spanProcessor *v8CompositeSpanProcessor
-	resource      V8ResourceContext
+	active         atomic.Bool
+	generation     uint64
+	planDigest     string
+	collect        map[observability.Bucket]bool
+	metrics        map[observability.Bucket]bool
+	metricSpec     V8MetricReaderSpec
+	limits         config.ObservabilityV8TraceLimitsSource
+	debug          *v8SamplingDebug
+	canaryAck      func(destination, traceID string) bool
+	handoff        *v8SpanHandoff
+	spanProcessor  *v8CompositeSpanProcessor
+	metricRecorder *v8MetricRecorder
+	resource       V8ResourceContext
 }
 
 // MetricBucketEnabled is the collection-before-construction predicate for
@@ -339,6 +343,25 @@ func (p *Provider) V8MetricPolicy() (V8MetricReaderSpec, bool) {
 		return V8MetricReaderSpec{}, false
 	}
 	return p.v8.metricSpec, true
+}
+
+// MetricFamilyEnabled is the collection-before-construction predicate for a
+// generated metric family in this exact graph generation.
+func (p *Provider) MetricFamilyEnabled(name observability.EventName) bool {
+	return p != nil && p.Enabled() && p.v8 != nil && p.v8.metricRecorder != nil &&
+		p.v8.metricRecorder.familyEnabled(name)
+}
+
+// RecordGeneratedMetric validates and projects one generated canonical metric
+// to each selected destination owned by this graph generation.
+func (p *Provider) RecordGeneratedMetric(
+	ctx context.Context,
+	record observability.Record,
+) (V8MetricRecordResult, error) {
+	if p == nil || p.v8 == nil || p.v8.metricRecorder == nil {
+		return V8MetricRecordResult{}, errors.New("telemetry: generated metric recorder is unavailable")
+	}
+	return p.v8.metricRecorder.record(ctx, record)
 }
 
 // TraceLimits returns the effective complete v8 limits. The OTel SDK enforces
@@ -506,6 +529,7 @@ func newProviderV8Inactive(
 	preparedReaders := make([]sdkmetric.Reader, 0, len(options.MetricReaderFactories))
 	pipelines := V8GenerationPipelines{}
 	cleanupPrepared := func() {
+		cleanupV8MetricPipelines(pipelines.MetricPipelines, options.PrepareCleanupTimeout)
 		v8BoundedPrepareCleanup(options.PrepareCleanupTimeout, func(cleanupContext context.Context) {
 			for index := len(preparedReaders) - 1; index >= 0; index-- {
 				if preparedReaders[index] != nil {
@@ -533,6 +557,15 @@ func newProviderV8Inactive(
 			return nil, newV8ProviderError(V8ProviderErrorPipelineInitialization, pipelineErr)
 		}
 		if err := ctx.Err(); err != nil {
+			cleanupV8SpanPipelines(pipelines.SpanPipelines, options.PrepareCleanupTimeout)
+			cleanupPrepared()
+			return nil, newV8ProviderError(V8ProviderErrorPipelineInitialization, err)
+		}
+	}
+	var metricRecorder *v8MetricRecorder
+	if len(metricCollect) > 0 {
+		metricRecorder, err = newV8MetricRecorder(generation, plan.Digest(), metricCollect, pipelines.MetricPipelines)
+		if err != nil {
 			cleanupV8SpanPipelines(pipelines.SpanPipelines, options.PrepareCleanupTimeout)
 			cleanupPrepared()
 			return nil, newV8ProviderError(V8ProviderErrorPipelineInitialization, err)
@@ -615,6 +648,7 @@ func newProviderV8Inactive(
 		for _, readerFactory := range options.MetricReaderFactories {
 			if readerFactory == nil {
 				cleanupReaders()
+				cleanupV8MetricPipelines(pipelines.MetricPipelines, options.PrepareCleanupTimeout)
 				v8BoundedPrepareCleanup(options.PrepareCleanupTimeout, func(cleanupContext context.Context) {
 					_ = tracerProvider.Shutdown(cleanupContext)
 				})
@@ -623,6 +657,7 @@ func newProviderV8Inactive(
 			reader, readerErr := callV8MetricReaderFactory(readerFactory, generation, metricSpec)
 			if readerErr != nil || reader == nil {
 				cleanupReaders()
+				cleanupV8MetricPipelines(pipelines.MetricPipelines, options.PrepareCleanupTimeout)
 				v8BoundedPrepareCleanup(options.PrepareCleanupTimeout, func(cleanupContext context.Context) {
 					_ = tracerProvider.Shutdown(cleanupContext)
 				})
@@ -637,6 +672,7 @@ func newProviderV8Inactive(
 		var metricsErr error
 		metrics, metricsErr = newMetricsSet(boundedMeter)
 		if metricsErr != nil {
+			cleanupV8MetricPipelines(pipelines.MetricPipelines, options.PrepareCleanupTimeout)
 			v8BoundedPrepareCleanup(options.PrepareCleanupTimeout, func(cleanupContext context.Context) {
 				_ = meterProvider.Shutdown(cleanupContext)
 			})
@@ -659,8 +695,9 @@ func newProviderV8Inactive(
 				}
 				return composite.handoff
 			}(),
-			spanProcessor: composite,
-			resource:      resourceContext,
+			spanProcessor:  composite,
+			metricRecorder: metricRecorder,
+			resource:       resourceContext,
 		},
 	}, nil
 }
@@ -722,6 +759,9 @@ func validV8GenerationPipelines(
 	if !metricsCollected && len(pipelines.MetricReaders) != 0 {
 		return false
 	}
+	if !metricsCollected && len(pipelines.MetricPipelines) != 0 {
+		return false
+	}
 	if !validV8SpanPipelines(pipelines.SpanPipelines) && len(pipelines.SpanPipelines) != 0 {
 		return false
 	}
@@ -730,7 +770,32 @@ func validV8GenerationPipelines(
 			return false
 		}
 	}
+	if _, err := newV8MetricRecorder(1, "1", map[observability.Bucket]bool{}, pipelines.MetricPipelines); err != nil {
+		return false
+	}
 	return true
+}
+
+func cleanupV8MetricPipelines(pipelines []V8GenerationMetricPipeline, timeout time.Duration) {
+	if len(pipelines) == 0 {
+		return
+	}
+	v8BoundedPrepareCleanup(timeout, func(ctx context.Context) {
+		seen := make(map[uintptr]struct{}, len(pipelines))
+		for index := len(pipelines) - 1; index >= 0; index-- {
+			sink := pipelines[index].Sink
+			if nilV8MetricSink(sink) {
+				continue
+			}
+			if identity := metricSinkIdentity(sink); identity != 0 {
+				if _, duplicate := seen[identity]; duplicate {
+					continue
+				}
+				seen[identity] = struct{}{}
+			}
+			_ = safeMetricSinkLifecycle(ctx, sink.Shutdown)
+		}
+	})
 }
 
 const v8DefaultPrepareCleanupTimeout = 5 * time.Second
@@ -1042,6 +1107,7 @@ func (component *V8ProviderComponent) Activate() {
 	}
 	component.provider.v8.active.Store(true)
 	component.provider.v8.handoff.setActive(true)
+	component.provider.v8.metricRecorder.setActive(true)
 }
 
 func (component *V8ProviderComponent) Provider() (*Provider, bool) {
@@ -1055,6 +1121,7 @@ func (component *V8ProviderComponent) StopIntake(context.Context) error {
 	if component != nil && component.provider != nil && component.provider.v8 != nil {
 		component.provider.v8.active.Store(false)
 		component.provider.v8.handoff.setActive(false)
+		component.provider.v8.metricRecorder.setActive(false)
 	}
 	return nil
 }
@@ -1070,6 +1137,11 @@ func (component *V8ProviderComponent) Drain(ctx context.Context) error {
 	}
 	if component.provider.meterProvider != nil {
 		if err := component.provider.meterProvider.ForceFlush(ctx); err != nil {
+			return newV8ProviderError(V8ProviderErrorFlush, err)
+		}
+	}
+	if component.provider.v8 != nil && component.provider.v8.metricRecorder != nil {
+		if err := component.provider.v8.metricRecorder.forceFlush(ctx); err != nil {
 			return newV8ProviderError(V8ProviderErrorFlush, err)
 		}
 	}

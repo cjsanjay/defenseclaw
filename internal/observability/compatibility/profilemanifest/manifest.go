@@ -124,6 +124,12 @@ type catalogFamily struct {
 	Signal                observability.Signal    `json:"signal"`
 	Bucket                observability.Bucket    `json:"bucket"`
 	CompatibilityProfiles []catalogFamilyProfile  `json:"compatibility_profiles"`
+	Fields                []catalogFamilyField    `json:"fields"`
+}
+
+type catalogFamilyField struct {
+	Ref  string `json:"ref"`
+	Role string `json:"role"`
 }
 
 type catalogMembership struct {
@@ -144,6 +150,7 @@ type loadedProfile struct {
 	raw      []byte
 	manifest Manifest
 	eligible map[string]struct{}
+	fields   map[string][]string
 }
 
 var cache struct {
@@ -225,11 +232,42 @@ func FamilyProjection(
 		result.AllowedOperations = append([]string(nil), result.AllowedOperations...)
 		result.AllowedSpanKinds = append([]string(nil), result.AllowedSpanKinds...)
 		result.RequiredAttributes = append([]string(nil), result.RequiredAttributes...)
-		result.Boundaries = append([]float64(nil), result.Boundaries...)
+		result.Boundaries = cloneFloat64s(result.Boundaries)
 		result.LabelProjection.Mappings = cloneStringPairs(result.LabelProjection.Mappings)
 		return result, true
 	}
 	return Projection{}, false
+}
+
+// FamilyAttributeKeys returns the exact generated canonical attribute
+// vocabulary for one eligible family. It is intentionally separate from a
+// profile's destination aliases: generic OTLP retains these keys while a
+// compatibility projector may rename or narrow them.
+func FamilyAttributeKeys(
+	profileID string,
+	signal observability.Signal,
+	eventName observability.EventName,
+) ([]string, bool) {
+	profiles, err := load()
+	if err != nil {
+		return nil, false
+	}
+	profile, ok := profiles[profileID]
+	if !ok || profile.manifest.Availability != "available" || profile.manifest.RuntimeProjection.Status != "available" {
+		return nil, false
+	}
+	fields, ok := profile.fields[eligibilityKey(signal, eventName)]
+	return append([]string(nil), fields...), ok
+}
+
+// cloneFloat64s deliberately preserves nil versus an authored empty array.
+// Metric histogram boundaries use that distinction: null means no authored
+// boundary policy, while [] is an explicitly authored empty policy.
+func cloneFloat64s(source []float64) []float64 {
+	if source == nil {
+		return nil
+	}
+	return append(make([]float64, 0, len(source)), source...)
 }
 
 func load() (map[string]loadedProfile, error) {
@@ -252,6 +290,7 @@ func loadProfiles() (map[string]loadedProfile, error) {
 		return nil, fmt.Errorf("generated compatibility manifest inventory is incomplete")
 	}
 	expectedMembership := make(map[string]map[string]catalogMembership)
+	expectedFields := make(map[string]map[string][]string)
 	for _, family := range catalog.Families {
 		for _, profile := range family.CompatibilityProfiles {
 			if expectedMembership[profile.ID] == nil {
@@ -264,6 +303,17 @@ func loadProfiles() (map[string]loadedProfile, error) {
 			expectedMembership[profile.ID][key] = catalogMembership{
 				Profile: profile, FamilyID: family.ID, Bucket: family.Bucket,
 			}
+			if expectedFields[profile.ID] == nil {
+				expectedFields[profile.ID] = make(map[string][]string)
+			}
+			fields := make([]string, 0, len(family.Fields))
+			for _, field := range family.Fields {
+				if field.Role == "attributes" {
+					fields = append(fields, field.Ref)
+				}
+			}
+			sort.Strings(fields)
+			expectedFields[profile.ID][key] = fields
 		}
 	}
 	profiles := make(map[string]loadedProfile, 3)
@@ -292,7 +342,10 @@ func loadProfiles() (map[string]loadedProfile, error) {
 		for _, family := range manifest.Families {
 			eligible[eligibilityKey(family.Signal, family.EventName)] = struct{}{}
 		}
-		profiles[expected.ID] = loadedProfile{raw: append([]byte(nil), raw...), manifest: manifest, eligible: eligible}
+		profiles[expected.ID] = loadedProfile{
+			raw: append([]byte(nil), raw...), manifest: manifest, eligible: eligible,
+			fields: expectedFields[expected.ID],
+		}
 	}
 	return profiles, nil
 }

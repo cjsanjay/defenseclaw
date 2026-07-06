@@ -15,6 +15,7 @@ import (
 	"errors"
 	"sort"
 	"strings"
+	"sync"
 	"unicode/utf8"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -23,6 +24,7 @@ import (
 	metricNoop "go.opentelemetry.io/otel/metric/noop"
 
 	"github.com/defenseclaw/defenseclaw/internal/observability"
+	"github.com/defenseclaw/defenseclaw/internal/observability/compatibility/profilemanifest"
 )
 
 const (
@@ -34,191 +36,218 @@ const (
 	v8MetricInvalidUnicodeLabel = "invalid"
 )
 
-// V8MetricDefinition binds each compatibility instrument to exactly one
-// primary-domain bucket. Instrument name, unit, kind, description, and explicit
-// histogram boundaries remain owned by newMetricsSet and the checked-in OTel
-// metrics schema; this catalog supplies the v8 collection boundary only.
+// V8MetricDefinition is the compatibility view used by route compilation.
+// Its inventory is derived from the generated local-observability profile.
 type V8MetricDefinition struct {
 	Name   string
 	Bucket observability.Bucket
 }
 
-// V8MetricCatalog returns the deterministic 131-instrument compatibility
-// inventory. The returned slice is detached from runtime state.
-func V8MetricCatalog() []V8MetricDefinition {
-	result := make([]V8MetricDefinition, 0, len(v8MetricBucketByName))
-	for name, bucket := range v8MetricBucketByName {
-		result = append(result, V8MetricDefinition{Name: name, Bucket: bucket})
+// V8MetricLabelMapping is one generated canonical-to-local label projection.
+type V8MetricLabelMapping struct {
+	Canonical string
+	Local     string
+}
+
+// V8MetricDescriptor is the complete generated contract for one canonical
+// metric family. BoundariesNull distinguishes authored null from an authored
+// empty boundary array; Boundaries is always detached from cached authority.
+type V8MetricDescriptor struct {
+	FamilyID          string
+	Name              string
+	Bucket            observability.Bucket
+	InstrumentType    string
+	ValueType         string
+	Unit              string
+	Temporality       string
+	Boundaries        []float64
+	BoundariesNull    bool
+	CardinalityLimit  int
+	AllowedLabels     []string
+	LocalLabelMapping []V8MetricLabelMapping
+}
+
+var v8GeneratedMetricCatalog struct {
+	once        sync.Once
+	descriptors []V8MetricDescriptor
+	byName      map[string]V8MetricDescriptor
+	err         error
+}
+
+// V8MetricDescriptorCatalog returns a detached deterministic snapshot of all
+// 131 metric families from the generated local-observability-v1 manifest.
+func V8MetricDescriptorCatalog() ([]V8MetricDescriptor, error) {
+	v8GeneratedMetricCatalog.once.Do(loadV8GeneratedMetricCatalog)
+	if v8GeneratedMetricCatalog.err != nil {
+		return nil, v8GeneratedMetricCatalog.err
 	}
-	sort.Slice(result, func(left, right int) bool { return result[left].Name < result[right].Name })
+	result := make([]V8MetricDescriptor, len(v8GeneratedMetricCatalog.descriptors))
+	for index, descriptor := range v8GeneratedMetricCatalog.descriptors {
+		result[index] = cloneV8MetricDescriptor(descriptor)
+	}
+	return result, nil
+}
+
+// V8MetricCatalog returns the compatibility routing view. Invalid generated
+// authority fails closed as an empty catalog; provider construction uses the
+// error-returning descriptor API and rejects the generation.
+func V8MetricCatalog() []V8MetricDefinition {
+	descriptors, err := V8MetricDescriptorCatalog()
+	if err != nil {
+		return nil
+	}
+	result := make([]V8MetricDefinition, len(descriptors))
+	for index, descriptor := range descriptors {
+		result[index] = V8MetricDefinition{Name: descriptor.Name, Bucket: descriptor.Bucket}
+	}
 	return result
 }
 
-var v8MetricBucketByName = map[string]observability.Bucket{
-	"defenseclaw.activity.diff_entries":             observability.BucketComplianceActivity,
-	"defenseclaw.activity.total":                    observability.BucketComplianceActivity,
-	"defenseclaw.admission.decisions":               observability.BucketGuardrailEvaluation,
-	"defenseclaw.agent.discovery.duration":          observability.BucketAgentLifecycle,
-	"defenseclaw.agent.discovery.errors":            observability.BucketAgentLifecycle,
-	"defenseclaw.agent.discovery.installed":         observability.BucketAgentLifecycle,
-	"defenseclaw.agent.discovery.runs":              observability.BucketAgentLifecycle,
-	"defenseclaw.agent.discovery.signals":           observability.BucketAgentLifecycle,
-	"defenseclaw.agent.last_seen":                   observability.BucketAgentLifecycle,
-	"defenseclaw.agent.lifecycle.transitions":       observability.BucketAgentLifecycle,
-	"defenseclaw.agent.phase.current":               observability.BucketAgentLifecycle,
-	"defenseclaw.agent.phase.transitions":           observability.BucketAgentLifecycle,
-	"defenseclaw.agent.reported_cost":               observability.BucketAgentLifecycle,
-	"defenseclaw.agent.token.usage":                 observability.BucketAgentLifecycle,
-	"defenseclaw.ai.components.installs":            observability.BucketAIDiscovery,
-	"defenseclaw.ai.components.observations":        observability.BucketAIDiscovery,
-	"defenseclaw.ai.components.workspaces":          observability.BucketAIDiscovery,
-	"defenseclaw.ai.confidence.identity_score":      observability.BucketAIDiscovery,
-	"defenseclaw.ai.confidence.presence_score":      observability.BucketAIDiscovery,
-	"defenseclaw.ai.discovery.active_signals":       observability.BucketAIDiscovery,
-	"defenseclaw.ai.discovery.dedupe_suppressed":    observability.BucketAIDiscovery,
-	"defenseclaw.ai.discovery.duration":             observability.BucketAIDiscovery,
-	"defenseclaw.ai.discovery.errors":               observability.BucketAIDiscovery,
-	"defenseclaw.ai.discovery.files_scanned":        observability.BucketAIDiscovery,
-	"defenseclaw.ai.discovery.gone_signals":         observability.BucketAIDiscovery,
-	"defenseclaw.ai.discovery.new_signals":          observability.BucketAIDiscovery,
-	"defenseclaw.ai.discovery.runs":                 observability.BucketAIDiscovery,
-	"defenseclaw.ai.discovery.signals":              observability.BucketAIDiscovery,
-	"defenseclaw.alert.count":                       observability.BucketSecurityFinding,
-	"defenseclaw.approval.count":                    observability.BucketEnforcementAction,
-	"defenseclaw.audit.db.errors":                   observability.BucketPlatformHealth,
-	"defenseclaw.audit.events.total":                observability.BucketComplianceActivity,
-	"defenseclaw.audit.sink.batches.delivered":      observability.BucketPlatformHealth,
-	"defenseclaw.audit.sink.batches.dropped":        observability.BucketPlatformHealth,
-	"defenseclaw.audit.sink.circuit.state":          observability.BucketPlatformHealth,
-	"defenseclaw.audit.sink.delivery.latency":       observability.BucketPlatformHealth,
-	"defenseclaw.audit.sink.failures":               observability.BucketPlatformHealth,
-	"defenseclaw.audit.sink.queue.depth":            observability.BucketPlatformHealth,
-	"defenseclaw.cisco.errors":                      observability.BucketGuardrailEvaluation,
-	"defenseclaw.cisco_inspect.latency":             observability.BucketGuardrailEvaluation,
-	"defenseclaw.codex.notify":                      observability.BucketAgentLifecycle,
-	"defenseclaw.codex.notify.malformed":            observability.BucketAgentLifecycle,
-	"defenseclaw.config.load.errors":                observability.BucketComplianceActivity,
-	"defenseclaw.connector.hook.invocations":        observability.BucketAgentLifecycle,
-	"defenseclaw.connector.hook.latency":            observability.BucketAgentLifecycle,
-	"defenseclaw.connector.hook.outcome":            observability.BucketAgentLifecycle,
-	"defenseclaw.connector.hook.tokens":             observability.BucketAgentLifecycle,
-	"defenseclaw.connector.hook.unified_dispatch":   observability.BucketAgentLifecycle,
-	"defenseclaw.egress.events":                     observability.BucketNetworkEgress,
-	"defenseclaw.gateway.errors":                    observability.BucketDiagnostic,
-	"defenseclaw.gateway.events.emitted":            observability.BucketDiagnostic,
-	"defenseclaw.gateway.forwarded_headers":         observability.BucketToolActivity,
-	"defenseclaw.gateway.judge.errors":              observability.BucketGuardrailEvaluation,
-	"defenseclaw.gateway.judge.invocations":         observability.BucketGuardrailEvaluation,
-	"defenseclaw.gateway.judge.latency":             observability.BucketGuardrailEvaluation,
-	"defenseclaw.gateway.verdicts":                  observability.BucketEnforcementAction,
-	"defenseclaw.guardrail.cache.hits":              observability.BucketGuardrailEvaluation,
-	"defenseclaw.guardrail.cache.misses":            observability.BucketGuardrailEvaluation,
-	"defenseclaw.guardrail.evaluations":             observability.BucketGuardrailEvaluation,
-	"defenseclaw.guardrail.judge.latency":           observability.BucketGuardrailEvaluation,
-	"defenseclaw.guardrail.latency":                 observability.BucketGuardrailEvaluation,
-	"defenseclaw.http.auth.failures":                observability.BucketPlatformHealth,
-	"defenseclaw.http.rate_limit.breaches":          observability.BucketPlatformHealth,
-	"defenseclaw.http.request.count":                observability.BucketPlatformHealth,
-	"defenseclaw.http.request.duration":             observability.BucketPlatformHealth,
-	"defenseclaw.inspect.evaluations":               observability.BucketGuardrailEvaluation,
-	"defenseclaw.inspect.latency":                   observability.BucketGuardrailEvaluation,
-	"defenseclaw.judge.persist.batch_size":          observability.BucketPlatformHealth,
-	"defenseclaw.judge.persist.drops":               observability.BucketPlatformHealth,
-	"defenseclaw.judge.persist.queue_depth":         observability.BucketPlatformHealth,
-	"defenseclaw.judge.semaphore.depth":             observability.BucketPlatformHealth,
-	"defenseclaw.judge.semaphore.drops":             observability.BucketPlatformHealth,
-	"defenseclaw.llm_bridge.latency":                observability.BucketModelIO,
-	"defenseclaw.openshell.exit":                    observability.BucketToolActivity,
-	"defenseclaw.otel.ingest.bytes":                 observability.BucketTelemetryIngest,
-	"defenseclaw.otel.ingest.last_seen_ts":          observability.BucketTelemetryIngest,
-	"defenseclaw.otel.ingest.malformed":             observability.BucketTelemetryIngest,
-	"defenseclaw.otel.ingest.records":               observability.BucketTelemetryIngest,
-	"defenseclaw.otel.ingest.requests":              observability.BucketTelemetryIngest,
-	"defenseclaw.panics.total":                      observability.BucketPlatformHealth,
-	"defenseclaw.policy.evaluations":                observability.BucketGuardrailEvaluation,
-	"defenseclaw.policy.latency":                    observability.BucketGuardrailEvaluation,
-	"defenseclaw.policy.reloads":                    observability.BucketComplianceActivity,
-	"defenseclaw.process.uptime_seconds":            observability.BucketPlatformHealth,
-	"defenseclaw.provenance.bumps":                  observability.BucketDiagnostic,
-	"defenseclaw.quarantine.actions":                observability.BucketEnforcementAction,
-	"defenseclaw.queue.depth":                       observability.BucketPlatformHealth,
-	"defenseclaw.queue.drops":                       observability.BucketPlatformHealth,
-	"defenseclaw.redaction.applied":                 observability.BucketDiagnostic,
-	"defenseclaw.runtime.fd.in_use":                 observability.BucketPlatformHealth,
-	"defenseclaw.runtime.gc.pause":                  observability.BucketPlatformHealth,
-	"defenseclaw.runtime.goroutines":                observability.BucketPlatformHealth,
-	"defenseclaw.runtime.heap.alloc":                observability.BucketPlatformHealth,
-	"defenseclaw.runtime.heap.objects":              observability.BucketPlatformHealth,
-	"defenseclaw.scan.count":                        observability.BucketAssetScan,
-	"defenseclaw.scan.duration":                     observability.BucketAssetScan,
-	"defenseclaw.scan.errors":                       observability.BucketAssetScan,
-	"defenseclaw.scan.findings":                     observability.BucketSecurityFinding,
-	"defenseclaw.scan.findings.by_rule":             observability.BucketSecurityFinding,
-	"defenseclaw.scan.findings.gauge":               observability.BucketSecurityFinding,
-	"defenseclaw.scanner.queue.depth":               observability.BucketAssetScan,
-	"defenseclaw.schema.violations":                 observability.BucketDiagnostic,
-	"defenseclaw.slo.block.latency":                 observability.BucketPlatformHealth,
-	"defenseclaw.slo.tui.refresh":                   observability.BucketDiagnostic,
-	"defenseclaw.sqlite.busy_retries":               observability.BucketPlatformHealth,
-	"defenseclaw.sqlite.checkpoint.duration":        observability.BucketPlatformHealth,
-	"defenseclaw.sqlite.db.bytes":                   observability.BucketPlatformHealth,
-	"defenseclaw.sqlite.freelist_count":             observability.BucketPlatformHealth,
-	"defenseclaw.sqlite.page_count":                 observability.BucketPlatformHealth,
-	"defenseclaw.sqlite.wal.bytes":                  observability.BucketPlatformHealth,
-	"defenseclaw.stream.bytes_sent":                 observability.BucketModelIO,
-	"defenseclaw.stream.duration_ms":                observability.BucketModelIO,
-	"defenseclaw.stream.lifecycle":                  observability.BucketModelIO,
-	"defenseclaw.telemetry.destination.spans":       observability.BucketPlatformHealth,
-	"defenseclaw.telemetry.destination.exports":     observability.BucketPlatformHealth,
-	"defenseclaw.telemetry.exporter.errors":         observability.BucketPlatformHealth,
-	"defenseclaw.telemetry.exporter.last_export_ts": observability.BucketPlatformHealth,
-	"defenseclaw.tool.calls":                        observability.BucketToolActivity,
-	"defenseclaw.tool.duration":                     observability.BucketToolActivity,
-	"defenseclaw.tool.errors":                       observability.BucketToolActivity,
-	"defenseclaw.tui.filter.applied":                observability.BucketDiagnostic,
-	"defenseclaw.watcher.errors":                    observability.BucketAssetLifecycle,
-	"defenseclaw.watcher.events":                    observability.BucketAssetLifecycle,
-	"defenseclaw.watcher.restarts":                  observability.BucketAssetLifecycle,
-	"defenseclaw.webhook.circuit_breaker":           observability.BucketNetworkEgress,
-	"defenseclaw.webhook.cooldown.suppressed":       observability.BucketNetworkEgress,
-	"defenseclaw.webhook.dispatches":                observability.BucketNetworkEgress,
-	"defenseclaw.webhook.failures":                  observability.BucketNetworkEgress,
-	"defenseclaw.webhook.latency":                   observability.BucketNetworkEgress,
-	"gen_ai.client.operation.duration":              observability.BucketModelIO,
-	"gen_ai.client.token.usage":                     observability.BucketModelIO,
+func loadV8GeneratedMetricCatalog() {
+	manifest, err := profilemanifest.Get(observability.RuntimeLocalObservabilityProfile)
+	if err != nil {
+		v8GeneratedMetricCatalog.err = errors.New("telemetry: generated metric authority unavailable")
+		return
+	}
+	descriptors := make([]V8MetricDescriptor, 0, 131)
+	byName := make(map[string]V8MetricDescriptor, 131)
+	for _, family := range manifest.Families {
+		if family.Signal != observability.SignalMetrics {
+			continue
+		}
+		projection := family.Projection
+		descriptor := V8MetricDescriptor{
+			FamilyID: family.FamilyID, Name: string(family.EventName), Bucket: family.Bucket,
+			InstrumentType: projection.InstrumentType, ValueType: projection.ValueType,
+			Unit: projection.Unit, Temporality: projection.Temporality,
+			Boundaries: cloneFloat64Slice(projection.Boundaries), BoundariesNull: projection.Boundaries == nil,
+			CardinalityLimit: projection.CardinalityLimit,
+		}
+		allowed, ok := profilemanifest.FamilyAttributeKeys(
+			observability.RuntimeLocalObservabilityProfile, family.Signal, family.EventName,
+		)
+		if !ok {
+			v8GeneratedMetricCatalog.err = errors.New("telemetry: generated metric labels unavailable")
+			return
+		}
+		descriptor.AllowedLabels = allowed
+		for _, mapping := range projection.LabelProjection.Mappings {
+			if len(mapping) != 2 {
+				v8GeneratedMetricCatalog.err = errors.New("telemetry: invalid generated metric label projection")
+				return
+			}
+			descriptor.LocalLabelMapping = append(descriptor.LocalLabelMapping, V8MetricLabelMapping{
+				Canonical: mapping[0], Local: mapping[1],
+			})
+		}
+		sort.Strings(descriptor.AllowedLabels)
+		if err := validateV8MetricDescriptor(descriptor, projection.Mode, projection.LabelProjection.Profile); err != nil {
+			v8GeneratedMetricCatalog.err = err
+			return
+		}
+		if _, duplicate := byName[descriptor.Name]; duplicate {
+			v8GeneratedMetricCatalog.err = errors.New("telemetry: duplicate generated metric family")
+			return
+		}
+		byName[descriptor.Name] = descriptor
+		descriptors = append(descriptors, descriptor)
+	}
+	sort.Slice(descriptors, func(left, right int) bool { return descriptors[left].Name < descriptors[right].Name })
+	if len(descriptors) != 131 {
+		v8GeneratedMetricCatalog.err = errors.New("telemetry: generated metric inventory is incomplete")
+		return
+	}
+	v8GeneratedMetricCatalog.descriptors = descriptors
+	v8GeneratedMetricCatalog.byName = byName
 }
 
-// v8MetricAllowedAttributeKeys is the closed compatibility label vocabulary.
-// It is intentionally global because many aliases share dimensions; per-family
-// registration remains the source contract and unknown keys fail closed here.
-var v8MetricAllowedAttributeKeys = map[attribute.Key]struct{}{
-	"action": {}, "actor": {}, "ai.product": {}, "ai.vendor": {},
-	"alert.severity": {}, "alert.source": {}, "alert.type": {}, "auto": {},
-	"branch": {}, "cache": {}, "cache_hit": {}, "capacity": {}, "client.kind": {},
-	"code": {}, "command": {}, "confidence": {}, "connector": {}, "dangerous": {},
-	"decision": {}, "defenseclaw.agent.depth": {}, "defenseclaw.agent.execution.id": {},
-	"defenseclaw.agent.lifecycle.event": {}, "defenseclaw.agent.lifecycle.id": {},
-	"defenseclaw.agent.lifecycle.state": {}, "defenseclaw.agent.parent.id": {},
-	"defenseclaw.agent.phase.from": {}, "defenseclaw.agent.phase.to": {},
-	"defenseclaw.agent.root.id": {}, "defenseclaw.session.root.id": {},
-	"destination": {}, "detector": {}, "ecosystem": {}, "error_type": {},
-	"event_type": {}, "exit_code": {}, "exporter": {}, "field": {}, "filter_type": {},
-	"framework": {}, "gen_ai.agent.id": {}, "gen_ai.agent.name": {},
-	"gen_ai.agent.type": {}, "gen_ai.conversation.id": {}, "gen_ai.operation.name": {},
-	"gen_ai.provider.name": {}, "gen_ai.request.model": {}, "gen_ai.token.type": {},
-	"gen_ai.tool.name": {}, "guardrail.action_taken": {}, "guardrail.connector": {},
-	"guardrail.scanner": {}, "has_binary": {}, "has_config": {}, "http.method": {},
-	"http.route": {}, "http.status_code": {}, "identity_band": {}, "installed": {},
-	"judge.kind": {}, "kind": {}, "model": {}, "name": {}, "operation": {},
-	"outcome": {}, "panel": {}, "path": {}, "policy.domain": {}, "policy.status": {},
-	"policy.verdict": {}, "presence_band": {}, "privacy_mode": {}, "probe_status": {},
-	"quarantine.op": {}, "quarantine.result": {}, "queue": {}, "reason": {},
-	"result": {}, "retry_count": {}, "rule_id": {}, "scanner": {}, "severity": {},
-	"signal": {}, "signal.category": {}, "sink": {}, "sink.kind": {}, "sink.name": {},
-	"sink.reason": {}, "source": {}, "state": {}, "status": {}, "status_code": {},
-	"subsystem": {}, "target_type": {}, "tool": {}, "tool.provider": {},
-	"transition": {}, "ttl_bucket": {}, "type": {}, "verdict": {}, "webhook.kind": {},
-	"webhook.target_hash": {}, "would_block": {},
+func validateV8MetricDescriptor(descriptor V8MetricDescriptor, mode, profile string) error {
+	if descriptor.FamilyID == "" || descriptor.Name == "" || !observability.IsBucket(descriptor.Bucket) ||
+		mode != "otel_sdk_metric_v1" || profile != observability.RuntimeLocalObservabilityProfile ||
+		descriptor.CardinalityLimit != v8MetricCardinalityLimit {
+		return errors.New("telemetry: invalid generated metric descriptor")
+	}
+	validKind := descriptor.InstrumentType == "counter" || descriptor.InstrumentType == "updowncounter" ||
+		descriptor.InstrumentType == "histogram" || descriptor.InstrumentType == "gauge"
+	validValue := descriptor.ValueType == "int64" || descriptor.ValueType == "double"
+	validTemporality := descriptor.Temporality == "delta" || descriptor.Temporality == "unspecified"
+	if !validKind || !validValue || !validTemporality || descriptor.Unit == "" ||
+		(descriptor.InstrumentType == "histogram") == descriptor.BoundariesNull {
+		return errors.New("telemetry: invalid generated metric instrument contract")
+	}
+	canonical, local := make(map[string]struct{}), make(map[string]struct{})
+	allowed := make(map[string]struct{}, len(descriptor.AllowedLabels))
+	for _, label := range descriptor.AllowedLabels {
+		if label == "" {
+			return errors.New("telemetry: invalid generated canonical metric label")
+		}
+		if _, duplicate := allowed[label]; duplicate {
+			return errors.New("telemetry: duplicate generated canonical metric label")
+		}
+		allowed[label] = struct{}{}
+	}
+	for _, mapping := range descriptor.LocalLabelMapping {
+		if mapping.Canonical == "" || mapping.Local == "" {
+			return errors.New("telemetry: invalid generated metric label projection")
+		}
+		if _, duplicate := canonical[mapping.Canonical]; duplicate {
+			return errors.New("telemetry: duplicate generated canonical metric label")
+		}
+		if _, duplicate := local[mapping.Local]; duplicate {
+			return errors.New("telemetry: duplicate generated local metric label")
+		}
+		if _, valid := allowed[mapping.Canonical]; !valid {
+			return errors.New("telemetry: generated metric alias references an unknown canonical label")
+		}
+		canonical[mapping.Canonical], local[mapping.Local] = struct{}{}, struct{}{}
+	}
+	return nil
+}
+
+func cloneV8MetricDescriptor(source V8MetricDescriptor) V8MetricDescriptor {
+	result := source
+	result.Boundaries = cloneFloat64Slice(source.Boundaries)
+	result.AllowedLabels = append([]string(nil), source.AllowedLabels...)
+	result.LocalLabelMapping = append([]V8MetricLabelMapping(nil), source.LocalLabelMapping...)
+	return result
+}
+
+func cloneFloat64Slice(source []float64) []float64 {
+	if source == nil {
+		return nil
+	}
+	return append(make([]float64, 0, len(source)), source...)
+}
+
+func v8MetricDescriptorByName(name string) (V8MetricDescriptor, bool) {
+	v8GeneratedMetricCatalog.once.Do(loadV8GeneratedMetricCatalog)
+	if v8GeneratedMetricCatalog.err != nil {
+		return V8MetricDescriptor{}, false
+	}
+	descriptor, ok := v8GeneratedMetricCatalog.byName[name]
+	return cloneV8MetricDescriptor(descriptor), ok
+}
+
+// The legacy SDK path is retained until producer cutover, but its global
+// compatibility vocabulary is derived from the generated canonical and local
+// projections instead of another handwritten label list.
+var v8MetricAllowedAttributeKeys = generatedV8MetricAttributeKeys()
+
+func generatedV8MetricAttributeKeys() map[attribute.Key]struct{} {
+	result := make(map[attribute.Key]struct{})
+	descriptors, err := V8MetricDescriptorCatalog()
+	if err != nil {
+		return result
+	}
+	for _, descriptor := range descriptors {
+		for _, label := range descriptor.AllowedLabels {
+			result[attribute.Key(label)] = struct{}{}
+		}
+		for _, mapping := range descriptor.LocalLabelMapping {
+			result[attribute.Key(mapping.Local)] = struct{}{}
+		}
+	}
+	return result
 }
 
 // V8MetricAllowedAttributeKeys returns the deterministic compatibility label
@@ -234,10 +263,11 @@ func V8MetricAllowedAttributeKeys() []string {
 	return result
 }
 
-// v8MetricMeter lets the existing metricsSet constructor remain the single
-// source of names, units, descriptions, and histogram boundaries. Enabled
-// bucket instruments reach the graph-owned SDK Meter; disabled bucket fields
-// receive no-op handles and never register an SDK instrument.
+// v8MetricMeter is the temporary SDK compatibility adapter used while legacy
+// producer methods are cut over. The generated descriptor catalog above owns
+// the contract; parity tests require metricsSet registration to match it.
+// Enabled bucket instruments reach the graph-owned SDK Meter; disabled bucket
+// fields receive no-op handles and never register an SDK instrument.
 type v8MetricMeter struct {
 	metricEmbedded.Meter
 	real           metric.Meter
@@ -259,10 +289,11 @@ func (meter *v8MetricMeter) forBucket(bucket observability.Bucket) *v8MetricMete
 }
 
 func (meter *v8MetricMeter) selected(name string) (bool, error) {
-	bucket, ok := v8MetricBucketByName[name]
+	descriptor, ok := v8MetricDescriptorByName(name)
 	if !ok {
 		return false, errors.New("telemetry: metric is absent from the v8 catalog")
 	}
+	bucket := descriptor.Bucket
 	if meter.selectedBucket != "" && bucket != meter.selectedBucket {
 		return false, errors.New("telemetry: metric belongs to a different v8 bucket")
 	}

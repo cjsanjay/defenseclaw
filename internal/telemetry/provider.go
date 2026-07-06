@@ -465,6 +465,9 @@ func (p *Provider) runV8Shutdown() {
 	if p.meterProvider != nil {
 		record(p.meterProvider.Shutdown(ctx))
 	}
+	if p.v8 != nil && p.v8.metricRecorder != nil {
+		record(p.v8.metricRecorder.close(ctx))
+	}
 
 	p.v8ShutdownMu.Lock()
 	if failed {

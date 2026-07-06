@@ -155,6 +155,20 @@ func metricSend(name, endpoint string, buckets []observability.Bucket) config.Ob
 	}
 }
 
+func TestMetricsOnlyLocalOTLPDestinationRetainsLocalIdentity(t *testing.T) {
+	destination := metricSend(
+		localobservability.DestinationName, "https://local-collector.example.test",
+		[]observability.Bucket{observability.BucketAgentLifecycle},
+	)
+	plan := compileGenerationRuntimePlan(t, t.TempDir(), destination)
+	compiled, ok := plan.RuntimeDestination(localobservability.DestinationName)
+	if !ok || !effectiveDestinationSelectsSignal(compiled, observability.SignalMetrics) ||
+		effectiveDestinationSelectsSignal(compiled, observability.SignalTraces) ||
+		!isLocalObservabilityOTLP(compiled) {
+		t.Fatalf("metrics-only local destination lost identity: %+v", compiled)
+	}
+}
+
 func TestOTLPGenerationAssemblerUsesUnmaskedRuntimeTransportAndDefaultAllSignals(t *testing.T) {
 	capture := &otlpGenerationCapture{}
 	server := httptest.NewTLSServer(http.HandlerFunc(capture.handler))

@@ -104,13 +104,17 @@ func (factory *Factory) PrepareOTLPGenerationPipelines(
 		if !validOTLPAssemblyDestination(destination, signals) {
 			return telemetry.V8GenerationPipelines{}, newError(ErrorInvalidDestination)
 		}
-		candidate := otlpGenerationCandidate{destination: destination, signals: signals}
+		candidate := otlpGenerationCandidate{
+			destination: destination, signals: signals,
+			// Destination identity is signal-independent. In particular, a
+			// metrics-only local destination still needs the generated local
+			// metric projection once canonical metric sinks are activated.
+			local: isLocalObservabilityOTLP(destination),
+		}
 		if containsSignal(signals, observability.SignalTraces) {
 			if destination.Preset == "galileo" && destination.PresetProfile == compatibility.ProfileID {
 				candidate.galileo = true
-			} else if destination.Name == localobservability.DestinationName {
-				candidate.local = true
-			} else {
+			} else if !candidate.local {
 				candidate.canonical = true
 			}
 			traceCandidates++
@@ -125,14 +129,16 @@ func (factory *Factory) PrepareOTLPGenerationPipelines(
 		candidates = append(candidates, candidate)
 	}
 	for _, candidate := range candidates {
-		if (candidate.galileo || candidate.local || candidate.canonical) &&
+		if containsSignal(candidate.signals, observability.SignalTraces) &&
+			(candidate.galileo || candidate.local || candidate.canonical) &&
 			(factory.redaction == nil || nilInterface(factory.redaction) || nilInterface(factory.deliveryObserver)) {
 			return telemetry.V8GenerationPipelines{}, newError(ErrorInvalidDependencies)
 		}
 		if candidate.galileo && nilInterface(factory.galileoObserver) {
 			return telemetry.V8GenerationPipelines{}, newError(ErrorInvalidDependencies)
 		}
-		if candidate.local && nilInterface(factory.localObserver) {
+		if containsSignal(candidate.signals, observability.SignalTraces) &&
+			candidate.local && nilInterface(factory.localObserver) {
 			return telemetry.V8GenerationPipelines{}, newError(ErrorInvalidDependencies)
 		}
 		if candidate.canonical && nilInterface(factory.otlpObserver) {
@@ -172,7 +178,7 @@ func (factory *Factory) PrepareOTLPGenerationPipelines(
 		if err != nil {
 			return fail(err)
 		}
-		if candidate.galileo {
+		if containsSignal(candidate.signals, observability.SignalTraces) && candidate.galileo {
 			if traceProjection == nil {
 				evaluator, evaluatorErr := router.New(plan)
 				if evaluatorErr != nil {
@@ -214,7 +220,7 @@ func (factory *Factory) PrepareOTLPGenerationPipelines(
 				Destination: candidate.destination.Name, Canonical: registered,
 			})
 			canonicalConsumers = append(canonicalConsumers, consumer)
-		} else if candidate.local {
+		} else if containsSignal(candidate.signals, observability.SignalTraces) && candidate.local {
 			if traceProjection == nil {
 				evaluator, evaluatorErr := router.New(plan)
 				if evaluatorErr != nil {
@@ -254,7 +260,7 @@ func (factory *Factory) PrepareOTLPGenerationPipelines(
 				Destination: candidate.destination.Name, Canonical: registered,
 			})
 			localConsumers = append(localConsumers, consumer)
-		} else if candidate.canonical {
+		} else if containsSignal(candidate.signals, observability.SignalTraces) && candidate.canonical {
 			if traceProjection == nil {
 				evaluator, evaluatorErr := router.New(plan)
 				if evaluatorErr != nil {
@@ -334,6 +340,11 @@ func (factory *Factory) PrepareOTLPGenerationPipelines(
 		consumer.Activate()
 	}
 	return pipelines, nil
+}
+
+func isLocalObservabilityOTLP(destination config.ObservabilityV8EffectiveDestination) bool {
+	return destination.Kind == config.ObservabilityV8DestinationOTLP &&
+		destination.Name == localobservability.DestinationName
 }
 
 func sameOTLPPlanIdentity(displayed, runtime config.ObservabilityV8EffectiveDestination) bool {

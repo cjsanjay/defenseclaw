@@ -5,6 +5,7 @@ package profilemanifest
 
 import (
 	"reflect"
+	"sort"
 	"testing"
 
 	"github.com/defenseclaw/defenseclaw/internal/observability"
@@ -98,6 +99,34 @@ func TestFamilyProjectionIsDetached(t *testing.T) {
 		fresh.AllowedOperations[0] != "invoke_agent" || fresh.AllowedSpanKinds[0] != "CLIENT" ||
 		fresh.RequiredAttributes[0] != "gen_ai.agent.name" {
 		t.Fatalf("caller mutated cached family projection: %+v", fresh)
+	}
+}
+
+func TestMetricProjectionPreservesBoundaryNullAndCanonicalFieldsAreDetached(t *testing.T) {
+	counter, ok := FamilyProjection(
+		"local-observability-v1", observability.SignalMetrics, "defenseclaw.activity.total",
+	)
+	if !ok || counter.Boundaries != nil {
+		t.Fatalf("counter boundaries=%v ok=%v", counter.Boundaries, ok)
+	}
+	histogram, ok := FamilyProjection(
+		"local-observability-v1", observability.SignalMetrics, "defenseclaw.activity.diff_entries",
+	)
+	if !ok || histogram.Boundaries == nil || len(histogram.Boundaries) != 0 {
+		t.Fatalf("histogram authored empty boundaries=%v ok=%v", histogram.Boundaries, ok)
+	}
+	fields, ok := FamilyAttributeKeys(
+		"local-observability-v1", observability.SignalMetrics, "defenseclaw.agent.lifecycle.transitions",
+	)
+	if !ok || len(fields) == 0 || !sort.StringsAreSorted(fields) {
+		t.Fatalf("canonical fields=%v ok=%v", fields, ok)
+	}
+	fields[0] = "mutated"
+	fresh, ok := FamilyAttributeKeys(
+		"local-observability-v1", observability.SignalMetrics, "defenseclaw.agent.lifecycle.transitions",
+	)
+	if !ok || len(fresh) == 0 || fresh[0] == "mutated" {
+		t.Fatal("canonical field snapshot aliases cached authority")
 	}
 }
 
