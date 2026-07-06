@@ -169,6 +169,18 @@ func (a *APIServer) bindLocalOnlyObservabilityRuntime(emitter sidecarRuntimeLoca
 	a.observabilityV8LocalOnly = emitter
 }
 
+func (s *Sidecar) bindAPIServerObservabilityV8(api *APIServer) {
+	if s == nil || api == nil {
+		return
+	}
+	emitter := s.observabilityV8Emitter()
+	canary, _ := emitter.(sidecarRuntimeCanaryEmitter)
+	localOnly, _ := emitter.(sidecarRuntimeLocalOnlyEmitter)
+	api.bindTelemetryCanaryRuntime(canary)
+	api.bindLocalOnlyObservabilityRuntime(localOnly)
+	api.bindOTLPObservabilityRuntime(emitter)
+}
+
 func (s *Sidecar) recordSidecarLifecycle(ctx context.Context, action audit.Action) error {
 	emitter := s.observabilityV8Emitter()
 	if emitter == nil {

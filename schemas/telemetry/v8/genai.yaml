@@ -4977,4 +4977,6 @@ attribute_extensions:
       enum:
       - input
       - output
-    notes: registered token type
+      - cacheRead
+      - cacheCreation
+    notes: registered token type; cacheRead and cacheCreation preserve the existing Claude Code and local-observability label contract without relabelling cache tokens as input

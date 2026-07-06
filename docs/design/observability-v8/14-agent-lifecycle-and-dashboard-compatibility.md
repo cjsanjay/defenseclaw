@@ -401,6 +401,11 @@ compatibility exception:
   `gen_ai.conversation.id`, `gen_ai.operation.name`, `gen_ai.provider.name`,
   `gen_ai.request.model`, and `gen_ai.token.type`.
 
+`gen_ai.token.type` has the exact bounded values `input`, `output`, `cacheRead`,
+and `cacheCreation`. The camel-case cache values preserve the PR #412 query and
+Claude Code source contract; adapters must not fold either cache category into
+`input`.
+
 The separate derived `spanmetrics/agent360` pipeline uses the Collector's
 10,000-entry dimension cache, 1,000-entry resource-metrics cache, and 24-hour
 series expiration. No other native or derived metric family inherits either

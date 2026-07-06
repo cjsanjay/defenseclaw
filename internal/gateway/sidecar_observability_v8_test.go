@@ -235,6 +235,27 @@ func TestSidecarBindsCanonicalTraceRuntimeToProxyInEitherConstructionOrder(t *te
 	}
 }
 
+func TestSidecarBindsProcessOwnedRuntimeToEveryAPIV8Seam(t *testing.T) {
+	fixture := newSidecarRuntimeFixture(t, true)
+	sidecar := &Sidecar{}
+	if err := sidecar.BindObservabilityRuntime(fixture.runtime); err != nil {
+		t.Fatal(err)
+	}
+	api := &APIServer{}
+	sidecar.bindAPIServerObservabilityV8(api)
+	if api.observabilityV8 != fixture.runtime ||
+		api.observabilityV8Canary != fixture.runtime ||
+		api.observabilityV8LocalOnly != fixture.runtime {
+		t.Fatalf(
+			"api bindings ordinary=%T canary=%T local=%T",
+			api.observabilityV8, api.observabilityV8Canary, api.observabilityV8LocalOnly,
+		)
+	}
+	if _, metricCapable := api.observabilityV8.(otlpGeneratedMetricRuntime); !metricCapable {
+		t.Fatal("production API v8 binding lost generated metric capability")
+	}
+}
+
 type fakeSidecarEmitter struct {
 	emit func(context.Context, router.Metadata, observabilityruntime.EmitBuilder) (pipeline.LocalLogOutcome, error)
 }

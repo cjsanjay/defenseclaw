@@ -323,6 +323,8 @@ type sidecarOwnedObservabilityV8Runtime struct {
 	closed            bool
 }
 
+var _ otlpGeneratedMetricRuntime = (*sidecarOwnedObservabilityV8Runtime)(nil)
+
 func (owner *sidecarOwnedObservabilityV8Runtime) Emit(
 	ctx context.Context,
 	metadata router.Metadata,
@@ -379,6 +381,22 @@ func (owner *sidecarOwnedObservabilityV8Runtime) EmitTraceCanary(
 		return observabilityruntime.TraceCanaryResult{}, newSidecarObservabilityV8BootstrapError(sidecarObservabilityV8BootstrapClose, nil)
 	}
 	return owner.runtime.EmitTraceCanary(ctx, destination)
+}
+
+func (owner *sidecarOwnedObservabilityV8Runtime) RecordGeneratedMetric(
+	ctx context.Context,
+	family observability.EventName,
+	builder observabilityruntime.GeneratedMetricBuilder,
+) (telemetry.V8MetricRecordResult, error) {
+	if owner == nil || owner.runtime == nil {
+		return telemetry.V8MetricRecordResult{}, newSidecarObservabilityV8BootstrapError(sidecarObservabilityV8BootstrapClose, nil)
+	}
+	owner.lifecycleMu.RLock()
+	defer owner.lifecycleMu.RUnlock()
+	if owner.closed {
+		return telemetry.V8MetricRecordResult{}, newSidecarObservabilityV8BootstrapError(sidecarObservabilityV8BootstrapClose, nil)
+	}
+	return owner.runtime.RecordGeneratedMetric(ctx, family, builder)
 }
 
 func (owner *sidecarOwnedObservabilityV8Runtime) StartAgentTrace(

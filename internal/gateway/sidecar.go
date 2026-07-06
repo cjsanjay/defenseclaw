@@ -3721,8 +3721,7 @@ func (s *Sidecar) runAPI(ctx context.Context) error {
 	// The v8 canary uses the process-owned Runtime rather than the mutable
 	// legacy provider snapshot, so one graph lease covers construction, flush,
 	// acknowledgement, and reload-safe release.
-	api.bindTelemetryCanaryRuntime(s.observabilityV8CanaryEmitter())
-	api.bindLocalOnlyObservabilityRuntime(s.observabilityV8LocalOnlyEmitter())
+	s.bindAPIServerObservabilityV8(api)
 	if s.configMgr != nil {
 		api.SetConfigRuntime(s.configMgr.Reload, s.currentConfig)
 	}

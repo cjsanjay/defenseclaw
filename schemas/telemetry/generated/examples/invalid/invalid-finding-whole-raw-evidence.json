@@ -3,7 +3,7 @@
     "artifact": "examples/invalid/invalid-finding-whole-raw-evidence.json",
     "authority": "candidate-not-public-authority",
     "generator": "defenseclaw-telemetry-candidate-renderer-v1",
-    "materialized_view_sha256": "0c48952e5e1d8fd6e7d04bfef5fec09556a1173d7abad10dc8b0a6d5f9637040",
+    "materialized_view_sha256": "821c97be7e55456b01d7c2cdc67db0af2822fce6da08c35b1db6b79a8d6bae79",
     "registry_version": 1
   },
   "base_example": "valid-security-finding-with-derived-evidence",
@@ -48,7 +48,7 @@
   "family": "log.finding.observed",
   "field_classes": {},
   "id": "invalid-finding-whole-raw-evidence",
-  "materialized_view_sha256": "0c48952e5e1d8fd6e7d04bfef5fec09556a1173d7abad10dc8b0a6d5f9637040",
+  "materialized_view_sha256": "821c97be7e55456b01d7c2cdc67db0af2822fce6da08c35b1db6b79a8d6bae79",
   "mutation": {
     "changes": [
       {

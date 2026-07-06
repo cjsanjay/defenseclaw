@@ -3,7 +3,7 @@
     "artifact": "catalog.json",
     "authority": "candidate-not-public-authority",
     "generator": "defenseclaw-telemetry-candidate-renderer-v1",
-    "materialized_view_sha256": "0c48952e5e1d8fd6e7d04bfef5fec09556a1173d7abad10dc8b0a6d5f9637040",
+    "materialized_view_sha256": "821c97be7e55456b01d7c2cdc67db0af2822fce6da08c35b1db6b79a8d6bae79",
     "registry_version": 1
   },
   "attributes": [
@@ -11707,16 +11707,20 @@
         "effective_constraints": {
           "enum": [
             "input",
-            "output"
+            "output",
+            "cacheRead",
+            "cacheCreation"
           ],
           "max_utf8_bytes": 256
         },
         "id": "enum-v1",
-        "notes": "registered token type",
+        "notes": "registered token type; cacheRead and cacheCreation preserve the existing Claude Code and local-observability label contract without relabelling cache tokens as input",
         "overrides": {
           "enum": [
             "input",
-            "output"
+            "output",
+            "cacheRead",
+            "cacheCreation"
           ]
         }
       },
@@ -13143,21 +13147,21 @@
       "id": "galileo-rich-v2",
       "path": "compatibility/galileo-rich-v2.json",
       "runtime_projection": "available",
-      "sha256": "c5ba05d141fe899f1cbecde492982a9cb01d9308a350cdd849a60dec94cff4f2"
+      "sha256": "cacbcbcd29235d9eaf974f6b3fa53339254b915ce66f2550d1a204cb45750f5d"
     },
     {
       "availability": "available",
       "id": "local-observability-v1",
       "path": "compatibility/local-observability-v1.json",
       "runtime_projection": "available",
-      "sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba"
+      "sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894"
     },
     {
       "availability": "pending",
       "id": "openinference-v1",
       "path": "compatibility/openinference-v1.json",
       "runtime_projection": "unsupported",
-      "sha256": "f135f636081d4769f9b81d0a9d16466afe54c759443b2075c85e1d5ec353479d"
+      "sha256": "a512c6c6d99532dac1daa7931496b54a5c9538d097d38c2ebe46b487000ba87f"
     }
   ],
   "conditions": [
@@ -13300,7 +13304,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -13426,7 +13430,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -13553,7 +13557,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -13663,7 +13667,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -13888,7 +13892,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -14181,7 +14185,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -14474,7 +14478,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -14767,7 +14771,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -15060,7 +15064,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -15290,7 +15294,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -15520,7 +15524,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -16072,7 +16076,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -16397,7 +16401,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -16722,7 +16726,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -17047,7 +17051,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -17370,7 +17374,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -17695,7 +17699,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -18020,7 +18024,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -18345,7 +18349,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -18670,7 +18674,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -18995,7 +18999,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -19223,7 +19227,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -19451,7 +19455,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -20115,7 +20119,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -20775,7 +20779,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -21433,7 +21437,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -22140,7 +22144,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -22803,7 +22807,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -23463,7 +23467,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -24123,7 +24127,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -24786,7 +24790,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -25481,7 +25485,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -26168,7 +26172,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -26831,7 +26835,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -27491,7 +27495,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -27719,7 +27723,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -27947,7 +27951,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -28176,7 +28180,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -28263,7 +28267,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -28350,7 +28354,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -28442,7 +28446,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -28529,7 +28533,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -28827,7 +28831,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -29126,7 +29130,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -29355,7 +29359,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -29424,7 +29428,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -29493,7 +29497,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -29830,7 +29834,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -30169,7 +30173,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -30506,7 +30510,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -30845,7 +30849,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -31182,7 +31186,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -31409,7 +31413,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -31636,7 +31640,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -31866,7 +31870,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -32093,7 +32097,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -32320,7 +32324,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -32547,7 +32551,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -32774,7 +32778,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -33179,7 +33183,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -33584,7 +33588,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -34361,7 +34365,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -35135,7 +35139,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -35907,7 +35911,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -36429,7 +36433,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -37385,7 +37389,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -38338,7 +38342,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -39291,7 +39295,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -40244,7 +40248,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -40473,7 +40477,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -40702,7 +40706,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -40789,7 +40793,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -41018,7 +41022,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -41369,7 +41373,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -41722,7 +41726,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -42074,7 +42078,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -42427,7 +42431,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -42778,7 +42782,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -42865,7 +42869,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -42953,7 +42957,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -43041,7 +43045,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -43128,7 +43132,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -43215,7 +43219,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -43400,7 +43404,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -43585,7 +43589,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -43768,7 +43772,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -43953,7 +43957,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -44138,7 +44142,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -44323,7 +44327,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -45010,7 +45014,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -45697,7 +45701,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -46387,7 +46391,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -47074,7 +47078,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -47761,7 +47765,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -47848,7 +47852,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -47935,7 +47939,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -48022,7 +48026,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -48109,7 +48113,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -48182,7 +48186,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -48241,7 +48245,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -48328,7 +48332,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -48443,7 +48447,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -48614,7 +48618,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -48855,7 +48859,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -48984,7 +48988,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -49127,7 +49131,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -49284,7 +49288,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -49455,7 +49459,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -49528,7 +49532,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -49629,7 +49633,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -49702,7 +49706,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -49789,7 +49793,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -49876,7 +49880,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -49949,7 +49953,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -50036,7 +50040,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -50123,7 +50127,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -50196,7 +50200,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -50283,7 +50287,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -50454,7 +50458,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -50625,7 +50629,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -50712,7 +50716,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -50841,7 +50845,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -50942,7 +50946,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -51029,7 +51033,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -51088,7 +51092,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -51175,7 +51179,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -51276,7 +51280,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -51377,7 +51381,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -51450,7 +51454,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -51551,7 +51555,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -51638,7 +51642,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -51711,7 +51715,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -51770,7 +51774,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -51829,7 +51833,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -51916,7 +51920,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -51975,7 +51979,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -52034,7 +52038,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -52135,7 +52139,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -52250,7 +52254,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -52365,7 +52369,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -52452,7 +52456,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -52511,7 +52515,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -52598,7 +52602,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -52671,7 +52675,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -52744,7 +52748,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -52817,7 +52821,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -52890,7 +52894,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -52977,7 +52981,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -53036,7 +53040,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -53151,7 +53155,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -53252,7 +53256,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -53353,7 +53357,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -53440,7 +53444,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -53513,7 +53517,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -53586,7 +53590,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -53659,7 +53663,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -53732,7 +53736,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -53819,7 +53823,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -53906,7 +53910,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -54007,7 +54011,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -54080,7 +54084,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -54133,7 +54137,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -54192,7 +54196,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -54235,7 +54239,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -54278,7 +54282,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -54321,7 +54325,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -54394,7 +54398,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -54467,7 +54471,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -54554,7 +54558,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -54641,7 +54645,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -54728,7 +54732,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -54815,7 +54819,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -54916,7 +54920,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -54975,7 +54979,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -55048,7 +55052,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -55107,7 +55111,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -55166,7 +55170,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -55209,7 +55213,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -55268,7 +55272,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -55341,7 +55345,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -55414,7 +55418,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -55487,7 +55491,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -55560,7 +55564,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -55603,7 +55607,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -55646,7 +55650,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -55689,7 +55693,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -55732,7 +55736,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -55775,7 +55779,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -55862,7 +55866,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -55935,7 +55939,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -56022,7 +56026,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -56123,7 +56127,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -56224,7 +56228,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -56297,7 +56301,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -56356,7 +56360,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -56429,7 +56433,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -56488,7 +56492,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -56547,7 +56551,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -56606,7 +56610,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -56649,7 +56653,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -56692,7 +56696,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -56735,7 +56739,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -56778,7 +56782,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -56821,7 +56825,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -56894,7 +56898,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -56967,7 +56971,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -57054,7 +57058,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -57141,7 +57145,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -57228,7 +57232,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -57315,7 +57319,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -57388,7 +57392,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -57475,7 +57479,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -57548,7 +57552,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -57621,7 +57625,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -57694,7 +57698,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -57737,7 +57741,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -57824,7 +57828,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -57867,7 +57871,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -57940,7 +57944,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -57999,7 +58003,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -58072,7 +58076,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -58145,7 +58149,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -58232,7 +58236,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -58362,7 +58366,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -58527,7 +58531,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -58923,21 +58927,21 @@
           "availability": "available",
           "id": "galileo-rich-v2",
           "manifest": "compatibility/galileo-rich-v2.json",
-          "manifest_sha256": "c5ba05d141fe899f1cbecde492982a9cb01d9308a350cdd849a60dec94cff4f2",
+          "manifest_sha256": "cacbcbcd29235d9eaf974f6b3fa53339254b915ce66f2550d1a204cb45750f5d",
           "runtime_projection": "available"
         },
         {
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         },
         {
           "availability": "pending",
           "id": "openinference-v1",
           "manifest": "compatibility/openinference-v1.json",
-          "manifest_sha256": "f135f636081d4769f9b81d0a9d16466afe54c759443b2075c85e1d5ec353479d",
+          "manifest_sha256": "a512c6c6d99532dac1daa7931496b54a5c9538d097d38c2ebe46b487000ba87f",
           "runtime_projection": "unsupported"
         }
       ],
@@ -59956,7 +59960,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -60743,7 +60747,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -61125,7 +61129,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -61399,7 +61403,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -62105,7 +62109,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -62615,7 +62619,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -63126,7 +63130,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -63612,7 +63616,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -63816,7 +63820,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -64088,7 +64092,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -64362,7 +64366,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -64755,7 +64759,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -65327,7 +65331,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -66293,21 +66297,21 @@
           "availability": "available",
           "id": "galileo-rich-v2",
           "manifest": "compatibility/galileo-rich-v2.json",
-          "manifest_sha256": "c5ba05d141fe899f1cbecde492982a9cb01d9308a350cdd849a60dec94cff4f2",
+          "manifest_sha256": "cacbcbcd29235d9eaf974f6b3fa53339254b915ce66f2550d1a204cb45750f5d",
           "runtime_projection": "available"
         },
         {
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         },
         {
           "availability": "pending",
           "id": "openinference-v1",
           "manifest": "compatibility/openinference-v1.json",
-          "manifest_sha256": "f135f636081d4769f9b81d0a9d16466afe54c759443b2075c85e1d5ec353479d",
+          "manifest_sha256": "a512c6c6d99532dac1daa7931496b54a5c9538d097d38c2ebe46b487000ba87f",
           "runtime_projection": "unsupported"
         }
       ],
@@ -67728,7 +67732,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -68374,21 +68378,21 @@
           "availability": "available",
           "id": "galileo-rich-v2",
           "manifest": "compatibility/galileo-rich-v2.json",
-          "manifest_sha256": "c5ba05d141fe899f1cbecde492982a9cb01d9308a350cdd849a60dec94cff4f2",
+          "manifest_sha256": "cacbcbcd29235d9eaf974f6b3fa53339254b915ce66f2550d1a204cb45750f5d",
           "runtime_projection": "available"
         },
         {
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         },
         {
           "availability": "pending",
           "id": "openinference-v1",
           "manifest": "compatibility/openinference-v1.json",
-          "manifest_sha256": "f135f636081d4769f9b81d0a9d16466afe54c759443b2075c85e1d5ec353479d",
+          "manifest_sha256": "a512c6c6d99532dac1daa7931496b54a5c9538d097d38c2ebe46b487000ba87f",
           "runtime_projection": "unsupported"
         }
       ],
@@ -69547,14 +69551,14 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         },
         {
           "availability": "pending",
           "id": "openinference-v1",
           "manifest": "compatibility/openinference-v1.json",
-          "manifest_sha256": "f135f636081d4769f9b81d0a9d16466afe54c759443b2075c85e1d5ec353479d",
+          "manifest_sha256": "a512c6c6d99532dac1daa7931496b54a5c9538d097d38c2ebe46b487000ba87f",
           "runtime_projection": "unsupported"
         }
       ],
@@ -70570,7 +70574,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -71140,21 +71144,21 @@
           "availability": "available",
           "id": "galileo-rich-v2",
           "manifest": "compatibility/galileo-rich-v2.json",
-          "manifest_sha256": "c5ba05d141fe899f1cbecde492982a9cb01d9308a350cdd849a60dec94cff4f2",
+          "manifest_sha256": "cacbcbcd29235d9eaf974f6b3fa53339254b915ce66f2550d1a204cb45750f5d",
           "runtime_projection": "available"
         },
         {
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         },
         {
           "availability": "pending",
           "id": "openinference-v1",
           "manifest": "compatibility/openinference-v1.json",
-          "manifest_sha256": "f135f636081d4769f9b81d0a9d16466afe54c759443b2075c85e1d5ec353479d",
+          "manifest_sha256": "a512c6c6d99532dac1daa7931496b54a5c9538d097d38c2ebe46b487000ba87f",
           "runtime_projection": "unsupported"
         }
       ],
@@ -71961,7 +71965,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -72304,7 +72308,7 @@
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         }
       ],
@@ -72765,21 +72769,21 @@
           "availability": "available",
           "id": "galileo-rich-v2",
           "manifest": "compatibility/galileo-rich-v2.json",
-          "manifest_sha256": "c5ba05d141fe899f1cbecde492982a9cb01d9308a350cdd849a60dec94cff4f2",
+          "manifest_sha256": "cacbcbcd29235d9eaf974f6b3fa53339254b915ce66f2550d1a204cb45750f5d",
           "runtime_projection": "available"
         },
         {
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         },
         {
           "availability": "pending",
           "id": "openinference-v1",
           "manifest": "compatibility/openinference-v1.json",
-          "manifest_sha256": "f135f636081d4769f9b81d0a9d16466afe54c759443b2075c85e1d5ec353479d",
+          "manifest_sha256": "a512c6c6d99532dac1daa7931496b54a5c9538d097d38c2ebe46b487000ba87f",
           "runtime_projection": "unsupported"
         }
       ],
@@ -73770,21 +73774,21 @@
           "availability": "available",
           "id": "galileo-rich-v2",
           "manifest": "compatibility/galileo-rich-v2.json",
-          "manifest_sha256": "c5ba05d141fe899f1cbecde492982a9cb01d9308a350cdd849a60dec94cff4f2",
+          "manifest_sha256": "cacbcbcd29235d9eaf974f6b3fa53339254b915ce66f2550d1a204cb45750f5d",
           "runtime_projection": "available"
         },
         {
           "availability": "available",
           "id": "local-observability-v1",
           "manifest": "compatibility/local-observability-v1.json",
-          "manifest_sha256": "55a1c2954333ce0365d530f7335a9e7348df02015c0f53652ce180fb33f597ba",
+          "manifest_sha256": "62215e95c2d9983eda0918a93e3c4cac52210ce4c71327edcebb1a873ea93894",
           "runtime_projection": "available"
         },
         {
           "availability": "pending",
           "id": "openinference-v1",
           "manifest": "compatibility/openinference-v1.json",
-          "manifest_sha256": "f135f636081d4769f9b81d0a9d16466afe54c759443b2075c85e1d5ec353479d",
+          "manifest_sha256": "a512c6c6d99532dac1daa7931496b54a5c9538d097d38c2ebe46b487000ba87f",
           "runtime_projection": "unsupported"
         }
       ],
@@ -74846,7 +74850,7 @@
     ],
     "version": 1
   },
-  "materialized_view_sha256": "0c48952e5e1d8fd6e7d04bfef5fec09556a1173d7abad10dc8b0a6d5f9637040",
+  "materialized_view_sha256": "821c97be7e55456b01d7c2cdc67db0af2822fce6da08c35b1db6b79a8d6bae79",
   "registry_version": 1,
   "resource_attributes": {
     "compatibility_aliases": [

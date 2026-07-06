@@ -187,14 +187,23 @@ func (a *APIServer) handleOTLPSignal(w http.ResponseWriter, r *http.Request, sig
 		return
 	}
 
+	defer r.Body.Close()
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
-		a.emitOTLPBatchRejectedV8(ctx, signal, source, "unknown", "body_read_failed", 0, started)
-		http.Error(w, "read body", http.StatusBadRequest)
+		reasonClass := "body_read_failed"
+		status := http.StatusBadRequest
+		var maxBytesError *http.MaxBytesError
+		if errors.As(err, &maxBytesError) {
+			reasonClass = "body_too_large"
+			status = http.StatusRequestEntityTooLarge
+		}
+		a.emitOTLPBatchRejectedV8(ctx, signal, source, "unknown", reasonClass, 0, started)
+		// MaxBytesReader writes no response until its read error reaches the
+		// handler. Exporters must not treat an oversized batch as malformed
+		// syntax that could succeed unchanged on retry.
+		http.Error(w, "read body", status)
 		return
 	}
-	defer r.Body.Close()
-
 	bodyBytes := int64(len(body))
 	normalize := normalizeOTLPIngestBodyLegacy
 	if a.hasOTLPObservabilityRuntime() {
@@ -279,6 +288,8 @@ func (a *APIServer) handleOTLPSignal(w http.ResponseWriter, r *http.Request, sig
 		); emitErr != nil {
 			fmt.Fprintln(otelIngestLogSink(), "[otel-ingest] canonical accepted-batch persistence failed")
 		}
+		a.recordOTLPBatchMetricsV8(ctx, signal, source, "ok", stats.Records, bodyBytes)
+		a.recordOTLPGenAIMetricsV8(ctx, summaryBody, signal, source, sessionID)
 		// The v8 runtime owns collection, local persistence, redaction, and all
 		// optional export. Never dual-write through legacy audit/OTel sinks.
 		writeOTLPSuccess(w)

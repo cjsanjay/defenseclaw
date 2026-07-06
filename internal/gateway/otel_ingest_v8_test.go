@@ -5,24 +5,213 @@ package gateway
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"reflect"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/defenseclaw/defenseclaw/internal/audit"
 	"github.com/defenseclaw/defenseclaw/internal/config"
 	"github.com/defenseclaw/defenseclaw/internal/observability"
+	observabilityredaction "github.com/defenseclaw/defenseclaw/internal/observability/redaction"
+	observabilityruntime "github.com/defenseclaw/defenseclaw/internal/observability/runtime"
 	"github.com/defenseclaw/defenseclaw/internal/observability/runtimegraph"
 	legacyredaction "github.com/defenseclaw/defenseclaw/internal/redaction"
+	"github.com/defenseclaw/defenseclaw/internal/telemetry"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 	collectorlogspb "go.opentelemetry.io/proto/otlp/collector/logs/v1"
 	commonpb "go.opentelemetry.io/proto/otlp/common/v1"
 	logspb "go.opentelemetry.io/proto/otlp/logs/v1"
 	"google.golang.org/protobuf/encoding/protowire"
 	"google.golang.org/protobuf/proto"
 )
+
+var otlpV8MetricFamilies = []observability.EventName{
+	observability.EventName(observability.TelemetryInstrumentDefenseClawOTelIngestBytes),
+	observability.EventName(observability.TelemetryInstrumentDefenseClawOTelIngestLastSeenTs),
+	observability.EventName(observability.TelemetryInstrumentDefenseClawOTelIngestMalformed),
+	observability.EventName(observability.TelemetryInstrumentDefenseClawOTelIngestRecords),
+	observability.EventName(observability.TelemetryInstrumentDefenseClawOTelIngestRequests),
+	observability.EventName(observability.TelemetryInstrumentGenAIClientOperationDuration),
+	observability.EventName(observability.TelemetryInstrumentGenAIClientTokenUsage),
+}
+
+type otlpV8MetricCaptureSink struct {
+	mu       sync.Mutex
+	records  []telemetry.V8ProjectedMetric
+	shutdown atomic.Int32
+}
+
+func (sink *otlpV8MetricCaptureSink) RecordMetric(_ context.Context, metric telemetry.V8ProjectedMetric) error {
+	sink.mu.Lock()
+	defer sink.mu.Unlock()
+	sink.records = append(sink.records, metric)
+	return nil
+}
+
+func (*otlpV8MetricCaptureSink) ForceFlush(context.Context) error { return nil }
+func (sink *otlpV8MetricCaptureSink) Shutdown(context.Context) error {
+	sink.shutdown.Add(1)
+	return nil
+}
+
+func (sink *otlpV8MetricCaptureSink) snapshot() []telemetry.V8ProjectedMetric {
+	sink.mu.Lock()
+	defer sink.mu.Unlock()
+	return append([]telemetry.V8ProjectedMetric(nil), sink.records...)
+}
+
+type otlpV8MetricGenerationSinks struct {
+	canonical *otlpV8MetricCaptureSink
+	local     *otlpV8MetricCaptureSink
+}
+
+type otlpV8MetricPipelines struct {
+	mu          sync.Mutex
+	generations map[uint64]otlpV8MetricGenerationSinks
+}
+
+func (pipelines *otlpV8MetricPipelines) build(
+	_ context.Context,
+	plan *config.ObservabilityV8Plan,
+	generation uint64,
+	_ telemetry.V8MetricReaderSpec,
+) (telemetry.V8GenerationPipelines, error) {
+	collected := false
+	for _, bucket := range plan.Snapshot().Buckets {
+		collected = collected || bucket.Collect.Metrics
+	}
+	if !collected {
+		return telemetry.V8GenerationPipelines{}, nil
+	}
+	sinks := otlpV8MetricGenerationSinks{
+		canonical: &otlpV8MetricCaptureSink{}, local: &otlpV8MetricCaptureSink{},
+	}
+	pipelines.mu.Lock()
+	pipelines.generations[generation] = sinks
+	pipelines.mu.Unlock()
+	return telemetry.V8GenerationPipelines{MetricPipelines: []telemetry.V8GenerationMetricPipeline{
+		{
+			Destination: "canonical", Projection: telemetry.V8MetricProjectionCanonical,
+			SelectedFamilies: append([]observability.EventName(nil), otlpV8MetricFamilies...), Sink: sinks.canonical,
+		},
+		{
+			Destination: "local", Projection: telemetry.V8MetricProjectionLocal,
+			SelectedFamilies: append([]observability.EventName(nil), otlpV8MetricFamilies...), Sink: sinks.local,
+		},
+	}}, nil
+}
+
+func (pipelines *otlpV8MetricPipelines) sinks(t *testing.T, generation uint64) otlpV8MetricGenerationSinks {
+	t.Helper()
+	pipelines.mu.Lock()
+	defer pipelines.mu.Unlock()
+	sinks, ok := pipelines.generations[generation]
+	if !ok {
+		t.Fatalf("metric sinks for generation %d missing", generation)
+	}
+	return sinks
+}
+
+type otlpV8MetricFixture struct {
+	runtime   *observabilityruntime.Runtime
+	store     *audit.Store
+	path      string
+	judgePath string
+	pipelines *otlpV8MetricPipelines
+}
+
+func compileOTLPV8MetricPlan(t *testing.T, path, judgePath string, collectLogs, collectMetrics bool) *config.ObservabilityV8Plan {
+	t.Helper()
+	retentionDays := 0
+	source := &config.ObservabilityV8Source{
+		Local: config.ObservabilityV8LocalSource{
+			Path: path, JudgeBodiesPath: judgePath, RetentionDays: &retentionDays,
+		},
+		Defaults: config.ObservabilityV8BucketPolicySource{Collect: config.ObservabilityV8CollectSource{
+			Logs: &collectLogs, Metrics: &collectMetrics,
+		}},
+	}
+	plan, err := config.CompileObservabilityV8(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return plan
+}
+
+func newOTLPV8MetricFixture(t *testing.T) otlpV8MetricFixture {
+	t.Helper()
+	directory := t.TempDir()
+	path := filepath.Join(directory, "audit.db")
+	judgePath := filepath.Join(directory, "judge-bodies.db")
+	store, err := audit.NewStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	if err := store.Init(); err != nil {
+		t.Fatal(err)
+	}
+	engine, err := observabilityredaction.NewEngine(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ids atomic.Uint64
+	failureBuilder, err := observability.NewRecordBuilder(
+		observability.ClockFunc(func() time.Time { return time.Now().UTC() }),
+		observability.OccurrenceIDGeneratorFunc(func() (string, error) {
+			return fmt.Sprintf("otlp-v8-failure-%d", ids.Add(1)), nil
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reaper, err := audit.NewRetentionReaper(store, nil, 0, audit.RetentionOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	retention, err := observabilityruntime.NewRetentionController(
+		reaper, observabilityruntime.RetentionControllerOptions{},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pipelines := &otlpV8MetricPipelines{generations: make(map[uint64]otlpV8MetricGenerationSinks)}
+	providerFactory := telemetry.NewV8ProviderFactory(telemetry.V8ProviderOptions{
+		Version: "8.0.0", Environment: "test", ServiceInstanceID: "otlp-ingest-v8-test",
+		DefenseClawInstanceID: "otlp-ingest-v8-test", GenerationPipelines: pipelines.build,
+	})
+	plan := compileOTLPV8MetricPlan(t, path, judgePath, true, true)
+	runtime, err := observabilityruntime.New(
+		t.Context(), runtimegraph.ConfigFromPlan(plan, false), observabilityruntime.Options{
+			Store: store, Engine: engine, RecordBuilder: failureBuilder,
+			Reporter: &discardSidecarGraphReporter{}, RetentionController: retention,
+			TelemetryProviderFactory: providerFactory,
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := runtime.Close(ctx); err != nil {
+			t.Errorf("close runtime: %v", err)
+		}
+	})
+	return otlpV8MetricFixture{
+		runtime: runtime, store: store, path: path, judgePath: judgePath, pipelines: pipelines,
+	}
+}
 
 type storedOTLPV8Event struct {
 	action    string
@@ -121,7 +310,11 @@ func TestOTLPIngestV8AcceptedBatchUsesCanonicalRouterWithoutRawBody(t *testing.T
 	if strings.Contains(event.payload, "secret prompt") || strings.Contains(event.payload, "_splunk_hec_events") {
 		t.Fatalf("canonical ingest metadata retained opaque body: %s", event.payload)
 	}
-	for _, want := range []string{`"record_count":1`, `"signal":"logs"`, `"normalization_result":"normalized"`} {
+	for _, want := range []string{
+		`"defenseclaw.telemetry.record_count":1`,
+		`"defenseclaw.telemetry.signal":"logs"`,
+		`"defenseclaw.telemetry.payload_format":"json"`,
+	} {
 		if !strings.Contains(event.payload, want) {
 			t.Errorf("payload missing %s: %s", want, event.payload)
 		}
@@ -197,6 +390,219 @@ func TestOTLPIngestV8CollectionDropConstructsNoAcceptedRecord(t *testing.T) {
 	}
 }
 
+func TestOTLPIngestV8DerivesDashboardMetricsToEverySelectedDestinationExactlyOnce(t *testing.T) {
+	fixture := newOTLPV8MetricFixture(t)
+	api := &APIServer{}
+	api.bindOTLPObservabilityRuntime(fixture.runtime)
+	body := `{"resourceLogs":[{"resource":{"attributes":[
+		{"key":"service.name","value":{"stringValue":"codex"}}
+	]},"scopeLogs":[{"logRecords":[{"attributes":[
+		{"key":"event.name","value":{"stringValue":"codex.sse_event"}},
+		{"key":"event.kind","value":{"stringValue":"response.completed"}},
+		{"key":"gen_ai.conversation.id","value":{"stringValue":"session-1"}},
+		{"key":"gen_ai.operation.name","value":{"stringValue":"chat"}},
+		{"key":"gen_ai.provider.name","value":{"stringValue":"openai"}},
+		{"key":"gen_ai.request.model","value":{"stringValue":"gpt-5"}},
+		{"key":"input_tokens","value":{"intValue":"17"}},
+		{"key":"output_tokens","value":{"intValue":"23"}},
+		{"key":"duration_ms","value":{"doubleValue":250}}
+	]}]}]}]}`
+	normalized, _, normalizeErr := normalizeOTLPIngestBody([]byte(body), otelSignalLogs, "application/json")
+	if normalizeErr != nil {
+		t.Fatal(normalizeErr)
+	}
+	if usages, durations := extractOTLPTokenUsage(normalized, otelSignalLogs, "codex"), extractOTLPOperationDurations(normalized, otelSignalLogs, "codex"); len(usages) != 2 || len(durations) != 1 {
+		t.Fatalf("normalized derived facts usages=%#v durations=%#v body=%s", usages, durations, normalized)
+	}
+	request := httptest.NewRequest(http.MethodPost, "/v1/logs", strings.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set(otelSourceHeader, "codex")
+	response := httptest.NewRecorder()
+
+	api.handleOTLPLogs(response, request)
+
+	if response.Code != http.StatusOK || response.Body.String() != "{}" {
+		t.Fatalf("response=%d %q", response.Code, response.Body.String())
+	}
+	if events := readStoredOTLPV8Events(t, fixture.path); len(events) != 1 {
+		t.Fatalf("local canonical events=%d want 1: %#v", len(events), events)
+	}
+	sinks := fixture.pipelines.sinks(t, 1)
+	canonical := sinks.canonical.snapshot()
+	local := sinks.local.snapshot()
+	if len(canonical) != 7 || len(local) != 7 {
+		t.Fatalf("metric deliveries canonical=%d local=%d want 7 each", len(canonical), len(local))
+	}
+	wantNames := map[string]int{
+		"defenseclaw.otel.ingest.requests":     1,
+		"defenseclaw.otel.ingest.records":      1,
+		"defenseclaw.otel.ingest.bytes":        1,
+		"defenseclaw.otel.ingest.last_seen_ts": 1,
+		"gen_ai.client.token.usage":            2,
+		"gen_ai.client.operation.duration":     1,
+	}
+	gotNames := make(map[string]int)
+	for _, metric := range canonical {
+		gotNames[metric.Descriptor().Name]++
+		if metric.Generation() != 1 || metric.ConfigDigest() == "" || metric.Destination() != "canonical" {
+			t.Fatalf("canonical metric lost generation ownership: generation=%d digest=%q destination=%q",
+				metric.Generation(), metric.ConfigDigest(), metric.Destination())
+		}
+	}
+	if !reflect.DeepEqual(gotNames, wantNames) {
+		t.Fatalf("canonical metric names=%v want %v", gotNames, wantNames)
+	}
+	for _, metric := range local {
+		if metric.Descriptor().Name != "defenseclaw.otel.ingest.requests" {
+			continue
+		}
+		attributes := metric.Attributes()
+		if attributes["connector"] != "codex" || attributes["source"] != "codex" ||
+			attributes["signal"] != "logs" || attributes["result"] != "ok" ||
+			metric.Profile() != observability.RuntimeLocalObservabilityProfile {
+			t.Fatalf("local PR412 request projection=%v profile=%q", attributes, metric.Profile())
+		}
+	}
+}
+
+func TestOTLPIngestV8DoesNotDualWriteLegacyProvider(t *testing.T) {
+	fixture := newOTLPV8MetricFixture(t)
+	reader := sdkmetric.NewManualReader()
+	legacy, err := telemetry.NewProviderForTest(reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = legacy.Shutdown(context.Background()) })
+	api := &APIServer{}
+	api.SetOTelProvider(legacy)
+	api.bindOTLPObservabilityRuntime(fixture.runtime)
+	request := httptest.NewRequest(http.MethodPost, "/v1/logs", strings.NewReader(
+		`{"resourceLogs":[{"scopeLogs":[{"logRecords":[{}]}]}]}`,
+	))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set(otelSourceHeader, "codex")
+	response := httptest.NewRecorder()
+
+	api.handleOTLPLogs(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%q", response.Code, response.Body.String())
+	}
+	var metrics metricdata.ResourceMetrics
+	if err := reader.Collect(t.Context(), &metrics); err != nil {
+		t.Fatal(err)
+	}
+	for _, scope := range metrics.ScopeMetrics {
+		for _, metric := range scope.Metrics {
+			if strings.HasPrefix(metric.Name, "defenseclaw.otel.ingest.") ||
+				strings.HasPrefix(metric.Name, "gen_ai.client.") {
+				t.Fatalf("v8 receiver dual-wrote legacy metric %q", metric.Name)
+			}
+		}
+	}
+	sinks := fixture.pipelines.sinks(t, 1)
+	if len(sinks.local.snapshot()) != 4 || len(sinks.canonical.snapshot()) != 4 {
+		t.Fatalf("canonical destinations local=%d canonical=%d want four ingest metrics each",
+			len(sinks.local.snapshot()), len(sinks.canonical.snapshot()))
+	}
+}
+
+func TestOTLPIngestV8MetricCollectionDisabledBuildsNothing(t *testing.T) {
+	fixture := newOTLPV8MetricFixture(t)
+	disabled := compileOTLPV8MetricPlan(t, fixture.path, fixture.judgePath, false, false)
+	result, reloadErr := fixture.runtime.Reload(t.Context(), runtimegraph.ConfigFromPlan(disabled, false))
+	if reloadErr != nil || result.Status() != runtimegraph.ReloadApplied {
+		t.Fatalf("disable reload=%s err=%v", result.Status(), reloadErr)
+	}
+	api := &APIServer{}
+	api.bindOTLPObservabilityRuntime(fixture.runtime)
+	request := httptest.NewRequest(http.MethodPost, "/v1/metrics", strings.NewReader(`{"resourceMetrics":[]}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set(otelSourceHeader, "claudecode")
+	response := httptest.NewRecorder()
+
+	api.handleOTLPMetrics(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%q", response.Code, response.Body.String())
+	}
+	if events := readStoredOTLPV8Events(t, fixture.path); len(events) != 0 {
+		t.Fatalf("disabled log collection persisted: %#v", events)
+	}
+	first := fixture.pipelines.sinks(t, 1)
+	if len(first.canonical.snapshot()) != 0 || len(first.local.snapshot()) != 0 {
+		t.Fatal("disabled generation received metrics")
+	}
+	fixture.pipelines.mu.Lock()
+	_, builtDisabledMetricPipelines := fixture.pipelines.generations[2]
+	fixture.pipelines.mu.Unlock()
+	if builtDisabledMetricPipelines {
+		t.Fatal("metric-disabled reload constructed destination metric pipelines")
+	}
+}
+
+func TestOTLPIngestV8ReloadPinsDerivedMetricsToPublishedGeneration(t *testing.T) {
+	fixture := newOTLPV8MetricFixture(t)
+	api := &APIServer{}
+	api.bindOTLPObservabilityRuntime(fixture.runtime)
+	emit := func() {
+		request := httptest.NewRequest(http.MethodPost, "/v1/traces", strings.NewReader(`{"resourceSpans":[]}`))
+		request.Header.Set("Content-Type", "application/json")
+		request.Header.Set(otelSourceHeader, "codex")
+		response := httptest.NewRecorder()
+		api.handleOTLPTraces(response, request)
+		if response.Code != http.StatusOK {
+			t.Fatalf("status=%d body=%q", response.Code, response.Body.String())
+		}
+	}
+	emit()
+	first := fixture.pipelines.sinks(t, 1)
+	if len(first.canonical.snapshot()) != 3 || len(first.local.snapshot()) != 3 {
+		t.Fatalf("generation one deliveries canonical=%d local=%d want requests+bytes+last_seen",
+			len(first.canonical.snapshot()), len(first.local.snapshot()))
+	}
+	enabled := compileOTLPV8MetricPlan(t, fixture.path, fixture.judgePath, true, true)
+	result, reloadErr := fixture.runtime.Reload(t.Context(), runtimegraph.ConfigFromPlan(enabled, false))
+	if reloadErr != nil || result.Status() != runtimegraph.ReloadApplied {
+		t.Fatalf("reload=%s err=%v", result.Status(), reloadErr)
+	}
+	emit()
+	second := fixture.pipelines.sinks(t, 2)
+	if len(first.canonical.snapshot()) != 3 || len(first.local.snapshot()) != 3 ||
+		len(second.canonical.snapshot()) != 3 || len(second.local.snapshot()) != 3 {
+		t.Fatalf("cross-generation delivery first=%d/%d second=%d/%d",
+			len(first.canonical.snapshot()), len(first.local.snapshot()),
+			len(second.canonical.snapshot()), len(second.local.snapshot()))
+	}
+	for _, metric := range second.canonical.snapshot() {
+		if metric.Generation() != 2 {
+			t.Fatalf("new metric retained stale generation %d", metric.Generation())
+		}
+	}
+}
+
+func TestOTLPIngestV8PreservesRegisteredClaudeCacheKindsWithoutRelabelling(t *testing.T) {
+	fixture := newOTLPV8MetricFixture(t)
+	api := &APIServer{}
+	api.bindOTLPObservabilityRuntime(fixture.runtime)
+	summary := api.recordOTLPTokenMetricV8(t.Context(), "claudecode", otelTokenUsage{
+		operationName: "chat", providerName: "anthropic", model: "claude-opus",
+		agentName: "claudecode", tokenType: "cacheRead", tokens: 41,
+	}, "claudecode", "agent-1", "session-1")
+	if summary != (otlpIngestV8MetricSummary{recorded: 1}) {
+		t.Fatalf("cache kind summary=%+v", summary)
+	}
+	sinks := fixture.pipelines.sinks(t, 1)
+	canonical, local := sinks.canonical.snapshot(), sinks.local.snapshot()
+	if len(canonical) != 1 || len(local) != 1 {
+		t.Fatalf("cache kind deliveries canonical=%d local=%d", len(canonical), len(local))
+	}
+	if canonical[0].Attributes()["gen_ai.token.type"] != "cacheRead" ||
+		local[0].Attributes()["gen_ai.token.type"] != "cacheRead" {
+		t.Fatalf("cache kind relabelled canonical=%v local=%v", canonical[0].Attributes(), local[0].Attributes())
+	}
+}
+
 func TestOTLPIngestV8MalformedBatchPersistsMandatoryFloorWhenCollectionDisabled(t *testing.T) {
 	fixture := newSidecarRuntimeFixture(t, true)
 	disableOTLPV8Collection(t, fixture)
@@ -221,6 +627,147 @@ func TestOTLPIngestV8MalformedBatchPersistsMandatoryFloorWhenCollectionDisabled(
 	}
 	if strings.Contains(events[0].payload, "opaque") || strings.Contains(events[0].payload, "raw") {
 		t.Fatalf("mandatory floor retained malformed body: %s", events[0].payload)
+	}
+	if strings.Contains(events[0].payload, "resource_count") || strings.Contains(events[0].payload, "normalized_bytes") {
+		t.Fatalf("mandatory floor fabricated unavailable normalization facts: %s", events[0].payload)
+	}
+}
+
+func TestOTLPIngestV8MalformedFloorAndDashboardMetricsRemainIndependent(t *testing.T) {
+	fixture := newOTLPV8MetricFixture(t)
+	plan := compileOTLPV8MetricPlan(t, fixture.path, fixture.judgePath, false, true)
+	result, reloadErr := fixture.runtime.Reload(t.Context(), runtimegraph.ConfigFromPlan(plan, false))
+	if reloadErr != nil || result.Status() != runtimegraph.ReloadApplied {
+		t.Fatalf("reload=%s err=%v", result.Status(), reloadErr)
+	}
+	api := &APIServer{}
+	api.bindOTLPObservabilityRuntime(fixture.runtime)
+	request := httptest.NewRequest(http.MethodPost, "/v1/metrics", strings.NewReader(
+		`{"resourceMetrics":[],"opaque":"must-not-persist"}`,
+	))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set(otelSourceHeader, "claudecode")
+	response := httptest.NewRecorder()
+
+	api.handleOTLPMetrics(response, request)
+
+	if response.Code != http.StatusOK || response.Body.String() != "{}" {
+		t.Fatalf("response=%d %q", response.Code, response.Body.String())
+	}
+	events := readStoredOTLPV8Events(t, fixture.path)
+	if len(events) != 1 || events[0].eventName != "telemetry.batch.rejected" || events[0].mandatory != 1 ||
+		strings.Contains(events[0].payload, "opaque") || strings.Contains(events[0].payload, "must-not-persist") {
+		t.Fatalf("mandatory floor=%#v", events)
+	}
+	sinks := fixture.pipelines.sinks(t, 2)
+	for name, metrics := range map[string][]telemetry.V8ProjectedMetric{
+		"canonical": sinks.canonical.snapshot(), "local": sinks.local.snapshot(),
+	} {
+		if len(metrics) != 4 {
+			t.Fatalf("%s malformed metrics=%d want requests+malformed+bytes+last_seen", name, len(metrics))
+		}
+		counts := make(map[string]int)
+		for _, metric := range metrics {
+			counts[metric.Descriptor().Name]++
+		}
+		if counts["defenseclaw.otel.ingest.requests"] != 1 ||
+			counts["defenseclaw.otel.ingest.malformed"] != 1 ||
+			counts["defenseclaw.otel.ingest.bytes"] != 1 ||
+			counts["defenseclaw.otel.ingest.last_seen_ts"] != 1 {
+			t.Fatalf("%s malformed metric families=%v", name, counts)
+		}
+	}
+}
+
+func TestOTLPIngestV8MalformedOrdinaryRecordUsesGeneratedOptionalFacts(t *testing.T) {
+	fixture := newOTLPV8MetricFixture(t)
+	api := &APIServer{}
+	api.bindOTLPObservabilityRuntime(fixture.runtime)
+	request := httptest.NewRequest(http.MethodPost, "/v1/traces", strings.NewReader(
+		`{"resourceSpans":[],"unregistered":"raw-value"}`,
+	))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set(otelSourceHeader, "codex")
+	response := httptest.NewRecorder()
+
+	api.handleOTLPTraces(response, request)
+
+	if response.Code != http.StatusOK || response.Body.String() != "{}" {
+		t.Fatalf("response=%d %q", response.Code, response.Body.String())
+	}
+	events := readStoredOTLPV8Events(t, fixture.path)
+	if len(events) != 1 || events[0].eventName != "telemetry.batch.rejected" || events[0].mandatory != 1 {
+		t.Fatalf("rejected event=%#v", events)
+	}
+	for _, want := range []string{
+		`"defenseclaw.telemetry.signal":"traces"`,
+		`"defenseclaw.telemetry.payload_format":"json"`,
+		`"defenseclaw.telemetry.rejection_reason_class":"invalid_json"`,
+	} {
+		if !strings.Contains(events[0].payload, want) {
+			t.Errorf("payload missing %s: %s", want, events[0].payload)
+		}
+	}
+	for _, forbidden := range []string{"unregistered", "raw-value", "resource_count", "normalized_bytes"} {
+		if strings.Contains(events[0].payload, forbidden) {
+			t.Fatalf("rejected record retained/fabricated %q: %s", forbidden, events[0].payload)
+		}
+	}
+}
+
+func TestOTLPIngestV8OversizeReturns413AndPersistsContentFreeFloor(t *testing.T) {
+	fixture := newSidecarRuntimeFixture(t, true)
+	api := &APIServer{}
+	api.bindOTLPObservabilityRuntime(fixture.runtime)
+	request := httptest.NewRequest(http.MethodPost, "/v1/logs", strings.NewReader(
+		`{"resourceLogs":[],"secret":"oversize-content"}`,
+	))
+	request.Body = http.MaxBytesReader(httptest.NewRecorder(), request.Body, 8)
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set(otelSourceHeader, "codex")
+	response := httptest.NewRecorder()
+
+	api.handleOTLPLogs(response, request)
+
+	if response.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status=%d body=%q", response.Code, response.Body.String())
+	}
+	events := readStoredOTLPV8Events(t, fixture.path)
+	if len(events) != 1 || events[0].eventName != "telemetry.batch.rejected" || events[0].mandatory != 1 ||
+		!strings.Contains(events[0].payload, `"defenseclaw.telemetry.rejection_reason_class":"body_too_large"`) ||
+		strings.Contains(events[0].payload, "oversize-content") {
+		t.Fatalf("oversize floor=%#v", events)
+	}
+}
+
+func TestOTLPIngestV8WholeBatchSuccessNeverClaimsPartialSuccess(t *testing.T) {
+	fixture := newOTLPV8MetricFixture(t)
+	api := &APIServer{}
+	api.bindOTLPObservabilityRuntime(fixture.runtime)
+	body := `{"resourceLogs":[{"scopeLogs":[{"logRecords":[{},{}]}]}]}`
+	request := httptest.NewRequest(http.MethodPost, "/v1/logs", strings.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set(otelSourceHeader, "codex")
+	response := httptest.NewRecorder()
+
+	api.handleOTLPLogs(response, request)
+
+	if response.Code != http.StatusOK || response.Body.String() != "{}" || strings.Contains(response.Body.String(), "partialSuccess") {
+		t.Fatalf("response=%d %q", response.Code, response.Body.String())
+	}
+	events := readStoredOTLPV8Events(t, fixture.path)
+	if len(events) != 1 || !strings.Contains(events[0].payload, `"defenseclaw.telemetry.record_count":2`) {
+		t.Fatalf("whole-batch event=%#v", events)
+	}
+	local := fixture.pipelines.sinks(t, 1).local.snapshot()
+	var recordMetric telemetry.V8ProjectedMetric
+	for _, metric := range local {
+		if metric.Descriptor().Name == "defenseclaw.otel.ingest.records" {
+			recordMetric = metric
+		}
+	}
+	if value, ok := recordMetric.Value().Int64(); !ok || value != 2 {
+		t.Fatalf("record metric value=%d ok=%t", value, ok)
 	}
 }
 
@@ -278,7 +825,9 @@ func TestOTLPIngestV8SelfExportMarkersStopRecursiveEmission(t *testing.T) {
 	fixture := newSidecarRuntimeFixture(t, true)
 	api := &APIServer{}
 	api.bindOTLPObservabilityRuntime(fixture.runtime)
-	body := `{"resourceLogs":[{"scopeLogs":[{"logRecords":[{"body":{"stringValue":"{}"},"attributes":[
+	body := `{"resourceLogs":[{"resource":{"attributes":[
+		{"key":"defenseclaw.instance.id","value":{"stringValue":"sidecar-1"}}
+	]},"scopeLogs":[{"logRecords":[{"body":{"stringValue":"{}"},"attributes":[
 		{"key":"defenseclaw.record.id","value":{"stringValue":"record-1"}},
 		{"key":"defenseclaw.bucket","value":{"stringValue":"telemetry.ingest"}},
 		{"key":"defenseclaw.signal","value":{"stringValue":"logs"}},
@@ -322,7 +871,7 @@ func TestOTLPIngestV8MixedSelfExportBatchIsNotSilentlyDropped(t *testing.T) {
 	}
 	events := readStoredOTLPV8Events(t, fixture.path)
 	if len(events) != 1 || events[0].eventName != "telemetry.batch.accepted" ||
-		!strings.Contains(events[0].payload, `"record_count":2`) {
+		!strings.Contains(events[0].payload, `"defenseclaw.telemetry.record_count":2`) {
 		t.Fatalf("mixed batch was dropped or misclassified: %#v", events)
 	}
 }
@@ -332,6 +881,7 @@ func TestDefenseClawSelfExportRequiresEveryTraceOrMetricItem(t *testing.T) {
 		{"key":"defenseclaw.instance.id","value":{"stringValue":"sidecar-1"}}
 	]},"scopeSpans":[{"spans":[{"attributes":[
 		{"key":"defenseclaw.bucket","value":{"stringValue":"agent.lifecycle"}},
+		{"key":"defenseclaw.span.family","value":{"stringValue":"span.agent.invoke"}},
 		{"key":"defenseclaw.config.generation","value":{"intValue":"1"}}
 	]}]}]}]}`
 	traceMixed := strings.Replace(traceOwned, `]}]}]}]}`, `]},{"name":"external"}]}]}]}`, 1)
@@ -355,6 +905,28 @@ func TestDefenseClawSelfExportRequiresEveryTraceOrMetricItem(t *testing.T) {
 				t.Fatalf("isDefenseClawSelfExport()=%t want %t body=%s", got, test.want, test.body)
 			}
 		})
+	}
+}
+
+func TestDefenseClawSelfExportRejectsSpoofedOrIncompleteOwnershipMarkers(t *testing.T) {
+	logWithoutOwnedResource := `{"resourceLogs":[{"scopeLogs":[{"logRecords":[{"attributes":[
+		{"key":"defenseclaw.record.id","value":{"stringValue":"record-1"}},
+		{"key":"defenseclaw.bucket","value":{"stringValue":"telemetry.ingest"}},
+		{"key":"defenseclaw.signal","value":{"stringValue":"logs"}},
+		{"key":"defenseclaw.event.name","value":{"stringValue":"telemetry.batch.accepted"}}
+	]}]}]}]}`
+	traceWithUnknownFamily := `{"resourceSpans":[{"resource":{"attributes":[
+		{"key":"defenseclaw.instance.id","value":{"stringValue":"sidecar-1"}}
+	]},"scopeSpans":[{"spans":[{"attributes":[
+		{"key":"defenseclaw.bucket","value":{"stringValue":"agent.lifecycle"}},
+		{"key":"defenseclaw.span.family","value":{"stringValue":"span.attacker.fabricated"}},
+		{"key":"defenseclaw.config.generation","value":{"intValue":"1"}}
+	]}]}]}]}`
+	if isDefenseClawSelfExport([]byte(logWithoutOwnedResource), otelSignalLogs) {
+		t.Fatal("external log markers without an owned resource suppressed the batch")
+	}
+	if isDefenseClawSelfExport([]byte(traceWithUnknownFamily), otelSignalTraces) {
+		t.Fatal("unregistered trace family suppressed the batch")
 	}
 }
 
