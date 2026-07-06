@@ -346,6 +346,134 @@ attributes:
     id: bounded-v1
     notes: registered state
   introduced_in: telemetry-registry-v1
+- id: defenseclaw.asset.target_ref
+  type: string
+  brief: Stable reference to the lifecycle target
+  examples:
+  - asset:skill/example
+  stability: stable
+  owner: defenseclaw
+  field_class: identifier
+  sensitivity: internal
+  cardinality: high
+  normalization:
+    id: identifier-v1
+    overrides:
+      max_utf8_bytes: 512
+    notes: Stable bounded reference only; never copy manifest, file, or credential content
+  introduced_in: telemetry-registry-v1
+- id: defenseclaw.asset.target_path
+  type: string
+  brief: Local path of the lifecycle target when the producer truthfully has one
+  examples:
+  - /workspace/.defenseclaw/skills/example
+  stability: stable
+  owner: defenseclaw
+  field_class: path
+  sensitivity: sensitive
+  cardinality: high
+  normalization:
+    id: path-v1
+    overrides:
+      max_utf8_bytes: 8192
+    notes: Centrally normalized and redacted local path; never use as a metric label or span name
+  introduced_in: telemetry-registry-v1
+- id: defenseclaw.asset.transition_reason
+  type: string
+  brief: Bounded reason code for the asset transition
+  examples:
+  - policy_quarantine
+  stability: stable
+  owner: defenseclaw
+  field_class: metadata
+  sensitivity: internal
+  cardinality: bounded
+  normalization:
+    id: bounded-v1
+    overrides:
+      max_utf8_bytes: 256
+    notes: Registered reason code only; never raw scanner, policy, or exception text
+  introduced_in: telemetry-registry-v1
+- id: defenseclaw.asset.transition_code
+  type: string
+  brief: Machine-stable asset transition code
+  examples:
+  - quarantine_applied
+  stability: stable
+  owner: defenseclaw
+  field_class: metadata
+  sensitivity: safe
+  cardinality: bounded
+  normalization:
+    id: bounded-v1
+    overrides:
+      max_utf8_bytes: 128
+    notes: Registered transition result code
+  introduced_in: telemetry-registry-v1
+- id: defenseclaw.asset.transition_initiator
+  type: string
+  brief: Bounded actor or subsystem reference that initiated the transition
+  examples:
+  - subsystem:watcher
+  stability: stable
+  owner: defenseclaw
+  field_class: identifier
+  sensitivity: sensitive
+  cardinality: high
+  normalization:
+    id: identifier-v1
+    overrides:
+      max_utf8_bytes: 512
+    notes: Reference only; never an authorization header, token, or unbounded subject claim
+  introduced_in: telemetry-registry-v1
+- id: defenseclaw.asset.install_action
+  type: string
+  brief: Installation enforcement action associated with the lifecycle transition
+  examples:
+  - block
+  stability: stable
+  owner: defenseclaw
+  field_class: metadata
+  sensitivity: safe
+  cardinality: low
+  normalization:
+    id: bounded-v1
+    overrides:
+      max_utf8_bytes: 64
+    notes: Canonical policy action when present; omit when the producer did not evaluate installation
+  introduced_in: telemetry-registry-v1
+- id: defenseclaw.asset.file_action
+  type: string
+  brief: File enforcement action associated with the lifecycle transition
+  examples:
+  - quarantine
+  stability: stable
+  owner: defenseclaw
+  field_class: metadata
+  sensitivity: safe
+  cardinality: low
+  normalization:
+    id: bounded-v1
+    overrides:
+      max_utf8_bytes: 64
+    notes: Canonical policy action when present; omit when the producer did not evaluate a file action
+  introduced_in: telemetry-registry-v1
+- id: defenseclaw.asset.runtime_action
+  type: string
+  brief: Runtime enforcement action associated with the lifecycle transition
+  examples:
+  - disable
+  stability: stable
+  owner: defenseclaw
+  field_class: metadata
+  sensitivity: safe
+  cardinality: low
+  normalization:
+    id: bounded-v1
+    overrides:
+      max_utf8_bytes: 64
+    notes: Canonical policy action when present; omit when the producer did not evaluate runtime state
+  introduced_in: telemetry-registry-v1
 - id: defenseclaw.ai.component.id
   type: string
   brief: Discovered AI component identity
@@ -419,6 +547,503 @@ attributes:
       max: 1.0
     notes: 0..1
   introduced_in: telemetry-registry-v1
+- id: defenseclaw.ai.discovery.scan_id
+  type: string
+  brief: Continuous AI discovery scan identity
+  examples:
+  - scan-01
+  stability: stable
+  owner: defenseclaw
+  field_class: identifier
+  sensitivity: internal
+  cardinality: high
+  normalization:
+    id: identifier-v1
+    overrides:
+      max_utf8_bytes: 256
+    notes: Nonempty bounded scan identity
+  introduced_in: telemetry-registry-v1
+- id: defenseclaw.ai.discovery.source
+  type: string
+  brief: Trusted source of an AI discovery report
+  examples:
+  - sidecar
+  stability: stable
+  owner: defenseclaw
+  field_class: metadata
+  sensitivity: safe
+  cardinality: low
+  normalization:
+    id: bounded-v1
+    overrides:
+      max_utf8_bytes: 64
+    notes: Producer-normalized source such as sidecar or external
+  introduced_in: telemetry-registry-v1
+- id: defenseclaw.ai.discovery.privacy_mode
+  type: string
+  brief: Effective privacy mode used by the discovery scan
+  examples:
+  - enhanced
+  stability: stable
+  owner: defenseclaw
+  field_class: metadata
+  sensitivity: safe
+  cardinality: low
+  normalization:
+    id: bounded-v1
+    overrides:
+      max_utf8_bytes: 64
+    notes: Producer-normalized effective mode; bounded to preserve forward-compatible and externally reported modes
+  introduced_in: telemetry-registry-v1
+- id: defenseclaw.ai.discovery.result
+  type: string
+  brief: Result reported by the continuous discovery scan
+  examples:
+  - ok
+  stability: stable
+  owner: defenseclaw
+  field_class: metadata
+  sensitivity: safe
+  cardinality: low
+  normalization:
+    id: bounded-v1
+    overrides:
+      max_utf8_bytes: 64
+    notes: Producer-normalized bounded result; the canonical envelope outcome remains authoritative
+  introduced_in: telemetry-registry-v1
+- id: defenseclaw.ai.discovery.duration_ms
+  type: int64
+  brief: Wall-clock duration of an AI discovery scan or detector
+  examples:
+  - 37
+  stability: stable
+  owner: defenseclaw
+  field_class: metadata
+  sensitivity: safe
+  cardinality: bounded
+  normalization:
+    id: numeric-range-v1
+    overrides:
+      min: 0
+      max: 9223372036854775807
+    notes: Nonnegative milliseconds
+  introduced_in: telemetry-registry-v1
+- id: defenseclaw.ai.discovery.signals_total
+  type: int64
+  brief: Total discovery signals in the scan or detector result
+  examples:
+  - 12
+  stability: stable
+  owner: defenseclaw
+  field_class: metadata
+  sensitivity: safe
+  cardinality: bounded
+  normalization:
+    id: numeric-range-v1
+    overrides: {min: 0, max: 9223372036854775807}
+    notes: Nonnegative bounded count
+  introduced_in: telemetry-registry-v1
+- id: defenseclaw.ai.discovery.active_signals
+  type: int64
+  brief: Active discovery signals in the scan result
+  examples: [10]
+  stability: stable
+  owner: defenseclaw
+  field_class: metadata
+  sensitivity: safe
+  cardinality: bounded
+  normalization:
+    id: numeric-range-v1
+    overrides: {min: 0, max: 9223372036854775807}
+    notes: Nonnegative bounded count
+  introduced_in: telemetry-registry-v1
+- id: defenseclaw.ai.discovery.new_signals
+  type: int64
+  brief: Newly observed discovery signals
+  examples: [2]
+  stability: stable
+  owner: defenseclaw
+  field_class: metadata
+  sensitivity: safe
+  cardinality: bounded
+  normalization:
+    id: numeric-range-v1
+    overrides: {min: 0, max: 9223372036854775807}
+    notes: Nonnegative bounded count
+  introduced_in: telemetry-registry-v1
+- id: defenseclaw.ai.discovery.changed_signals
+  type: int64
+  brief: Discovery signals whose bounded evidence changed
+  examples: [1]
+  stability: stable
+  owner: defenseclaw
+  field_class: metadata
+  sensitivity: safe
+  cardinality: bounded
+  normalization:
+    id: numeric-range-v1
+    overrides: {min: 0, max: 9223372036854775807}
+    notes: Nonnegative bounded count
+  introduced_in: telemetry-registry-v1
+- id: defenseclaw.ai.discovery.gone_signals
+  type: int64
+  brief: Discovery signals no longer observed
+  examples: [1]
+  stability: stable
+  owner: defenseclaw
+  field_class: metadata
+  sensitivity: safe
+  cardinality: bounded
+  normalization:
+    id: numeric-range-v1
+    overrides: {min: 0, max: 9223372036854775807}
+    notes: Nonnegative bounded count
+  introduced_in: telemetry-registry-v1
+- id: defenseclaw.ai.discovery.files_scanned
+  type: int64
+  brief: Files inspected without exposing their local paths
+  examples: [42]
+  stability: stable
+  owner: defenseclaw
+  field_class: metadata
+  sensitivity: safe
+  cardinality: bounded
+  normalization:
+    id: numeric-range-v1
+    overrides: {min: 0, max: 9223372036854775807}
+    notes: Nonnegative bounded count; no filenames or paths
+  introduced_in: telemetry-registry-v1
+- id: defenseclaw.ai.discovery.dedupe_suppressed
+  type: int64
+  brief: Duplicate discovery signals suppressed during the scan
+  examples: [3]
+  stability: stable
+  owner: defenseclaw
+  field_class: metadata
+  sensitivity: safe
+  cardinality: bounded
+  normalization:
+    id: numeric-range-v1
+    overrides: {min: 0, max: 9223372036854775807}
+    notes: Nonnegative bounded count
+  introduced_in: telemetry-registry-v1
+- id: defenseclaw.ai.discovery.errors
+  type: int64
+  brief: Bounded detector error count for the scan
+  examples: [1]
+  stability: stable
+  owner: defenseclaw
+  field_class: metadata
+  sensitivity: safe
+  cardinality: bounded
+  normalization:
+    id: numeric-range-v1
+    overrides: {min: 0, max: 9223372036854775807}
+    notes: Nonnegative count only; never raw error text
+  introduced_in: telemetry-registry-v1
+- id: defenseclaw.ai.discovery.signal_id
+  type: string
+  brief: Stable identity of one sanitized discovery signal
+  examples: [signal-01]
+  stability: stable
+  owner: defenseclaw
+  field_class: identifier
+  sensitivity: internal
+  cardinality: high
+  normalization:
+    id: identifier-v1
+    overrides: {max_utf8_bytes: 256}
+    notes: Stable signal identity; never raw evidence
+  introduced_in: telemetry-registry-v1
+- id: defenseclaw.ai.component.vendor
+  type: string
+  brief: Bounded vendor label for a discovered AI component
+  examples: [OpenAI]
+  stability: stable
+  owner: defenseclaw
+  field_class: metadata
+  sensitivity: internal
+  cardinality: bounded
+  normalization:
+    id: bounded-v1
+    overrides: {max_utf8_bytes: 256}
+    notes: Catalog or detector-produced vendor label
+  introduced_in: telemetry-registry-v1
+- id: defenseclaw.ai.component.product
+  type: string
+  brief: Bounded product label for a discovered AI component
+  examples: [openai]
+  stability: stable
+  owner: defenseclaw
+  field_class: metadata
+  sensitivity: internal
+  cardinality: bounded
+  normalization:
+    id: bounded-v1
+    overrides: {max_utf8_bytes: 256}
+    notes: Catalog or detector-produced product label
+  introduced_in: telemetry-registry-v1
+- id: defenseclaw.ai.component.identity_score
+  type: double
+  brief: Confidence that the discovered component is correctly identified
+  examples: [0.91]
+  stability: stable
+  owner: defenseclaw
+  field_class: metadata
+  sensitivity: internal
+  cardinality: bounded
+  normalization:
+    id: numeric-range-v1
+    overrides: {min: 0.0, max: 1.0}
+    notes: Closed unit interval
+  introduced_in: telemetry-registry-v1
+- id: defenseclaw.ai.component.identity_band
+  type: string
+  brief: Operator-facing identity-confidence band
+  examples: [very_high]
+  stability: stable
+  owner: defenseclaw
+  field_class: metadata
+  sensitivity: internal
+  cardinality: low
+  normalization:
+    id: enum-v1
+    overrides:
+      enum: [very_low, low, medium, high, very_high]
+    notes: very_low|low|medium|high|very_high
+  introduced_in: telemetry-registry-v1
+- id: defenseclaw.ai.component.presence_score
+  type: double
+  brief: Confidence that the discovered component is currently present or usable
+  examples: [0.78]
+  stability: stable
+  owner: defenseclaw
+  field_class: metadata
+  sensitivity: internal
+  cardinality: bounded
+  normalization:
+    id: numeric-range-v1
+    overrides: {min: 0.0, max: 1.0}
+    notes: Closed unit interval
+  introduced_in: telemetry-registry-v1
+- id: defenseclaw.ai.component.presence_band
+  type: string
+  brief: Operator-facing presence-confidence band
+  examples: [high]
+  stability: stable
+  owner: defenseclaw
+  field_class: metadata
+  sensitivity: internal
+  cardinality: low
+  normalization:
+    id: enum-v1
+    overrides:
+      enum: [very_low, low, medium, high, very_high]
+    notes: very_low|low|medium|high|very_high
+  introduced_in: telemetry-registry-v1
+- id: defenseclaw.ai.component.install_count
+  type: int64
+  brief: Distinct install evidences contributing to the component rollup
+  examples: [2]
+  stability: stable
+  owner: defenseclaw
+  field_class: metadata
+  sensitivity: safe
+  cardinality: bounded
+  normalization:
+    id: numeric-range-v1
+    overrides: {min: 0, max: 9223372036854775807}
+    notes: Nonnegative bounded count
+  introduced_in: telemetry-registry-v1
+- id: defenseclaw.ai.component.workspace_count
+  type: int64
+  brief: Distinct workspace hashes contributing to the component rollup
+  examples: [2]
+  stability: stable
+  owner: defenseclaw
+  field_class: metadata
+  sensitivity: safe
+  cardinality: bounded
+  normalization:
+    id: numeric-range-v1
+    overrides: {min: 0, max: 9223372036854775807}
+    notes: Nonnegative count; workspace identifiers are not exported here
+  introduced_in: telemetry-registry-v1
+- id: defenseclaw.ai.component.detector_count
+  type: int64
+  brief: Distinct detectors contributing to the component rollup
+  examples: [3]
+  stability: stable
+  owner: defenseclaw
+  field_class: metadata
+  sensitivity: safe
+  cardinality: bounded
+  normalization:
+    id: numeric-range-v1
+    overrides: {min: 0, max: 9223372036854775807}
+    notes: Nonnegative bounded count
+  introduced_in: telemetry-registry-v1
+- id: defenseclaw.ai.component.policy_version
+  type: int64
+  brief: Confidence policy version used to score the component
+  examples: [1]
+  stability: stable
+  owner: defenseclaw
+  field_class: metadata
+  sensitivity: safe
+  cardinality: low
+  normalization:
+    id: numeric-range-v1
+    overrides: {min: 1, max: 9223372036854775807}
+    notes: Positive confidence-policy schema version
+  introduced_in: telemetry-registry-v1
+- id: defenseclaw.agent.discovery.source
+  type: string
+  brief: Trusted source of a connector agent-discovery report
+  examples: [cli]
+  stability: stable
+  owner: defenseclaw
+  field_class: metadata
+  sensitivity: safe
+  cardinality: low
+  normalization:
+    id: enum-v1
+    overrides:
+      enum: [cli, tui, api, unknown]
+    notes: cli|tui|api|unknown
+  introduced_in: telemetry-registry-v1
+- id: defenseclaw.agent.discovery.cache_hit
+  type: boolean
+  brief: Whether the connector discovery report came from a local cache
+  examples: [false]
+  stability: stable
+  owner: defenseclaw
+  field_class: metadata
+  sensitivity: safe
+  cardinality: low
+  normalization:
+    id: identity-v1
+    notes: Boolean
+  introduced_in: telemetry-registry-v1
+- id: defenseclaw.agent.discovery.result
+  type: string
+  brief: Validation result for the connector discovery report
+  examples: [ok]
+  stability: stable
+  owner: defenseclaw
+  field_class: metadata
+  sensitivity: safe
+  cardinality: low
+  normalization:
+    id: enum-v1
+    overrides:
+      enum: [ok, malformed, rejected]
+    notes: ok|malformed|rejected
+  introduced_in: telemetry-registry-v1
+- id: defenseclaw.agent.discovery.duration_ms
+  type: int64
+  brief: CLI-reported duration of connector discovery
+  examples: [12]
+  stability: stable
+  owner: defenseclaw
+  field_class: metadata
+  sensitivity: safe
+  cardinality: bounded
+  normalization:
+    id: numeric-range-v1
+    overrides: {min: 0, max: 9223372036854775807}
+    notes: Nonnegative milliseconds
+  introduced_in: telemetry-registry-v1
+- id: defenseclaw.agent.discovery.agents_total
+  type: int64
+  brief: Known connector signals accepted from the report
+  examples: [4]
+  stability: stable
+  owner: defenseclaw
+  field_class: metadata
+  sensitivity: safe
+  cardinality: bounded
+  normalization:
+    id: numeric-range-v1
+    overrides: {min: 0, max: 32}
+    notes: Endpoint-enforced bounded connector count
+  introduced_in: telemetry-registry-v1
+- id: defenseclaw.agent.discovery.installed_total
+  type: int64
+  brief: Accepted connector signals reporting installed state
+  examples: [2]
+  stability: stable
+  owner: defenseclaw
+  field_class: metadata
+  sensitivity: safe
+  cardinality: bounded
+  normalization:
+    id: numeric-range-v1
+    overrides: {min: 0, max: 32}
+    notes: Endpoint-enforced bounded connector count
+  introduced_in: telemetry-registry-v1
+- id: defenseclaw.agent.discovery.connector
+  type: string
+  brief: Registered connector represented by one agent-discovery signal
+  examples: [codex]
+  stability: stable
+  owner: defenseclaw
+  field_class: identifier
+  sensitivity: internal
+  cardinality: low
+  normalization:
+    id: identifier-v1
+    overrides: {max_utf8_bytes: 128}
+    notes: Registry-validated connector name
+  introduced_in: telemetry-registry-v1
+- id: defenseclaw.agent.discovery.installed
+  type: boolean
+  brief: Whether the connector is installed
+  examples: [true]
+  stability: stable
+  owner: defenseclaw
+  field_class: metadata
+  sensitivity: safe
+  cardinality: low
+  normalization: {id: identity-v1, notes: Boolean}
+  introduced_in: telemetry-registry-v1
+- id: defenseclaw.agent.discovery.has_config
+  type: boolean
+  brief: Whether a sanitized connector configuration signal exists
+  examples: [true]
+  stability: stable
+  owner: defenseclaw
+  field_class: metadata
+  sensitivity: safe
+  cardinality: low
+  normalization: {id: identity-v1, notes: Boolean; no configuration value or path is carried}
+  introduced_in: telemetry-registry-v1
+- id: defenseclaw.agent.discovery.has_binary
+  type: boolean
+  brief: Whether a sanitized connector binary signal exists
+  examples: [true]
+  stability: stable
+  owner: defenseclaw
+  field_class: metadata
+  sensitivity: safe
+  cardinality: low
+  normalization: {id: identity-v1, notes: Boolean; no binary path is carried}
+  introduced_in: telemetry-registry-v1
+- id: defenseclaw.agent.discovery.probe_status
+  type: string
+  brief: Bounded connector version-probe status
+  examples: [ok]
+  stability: stable
+  owner: defenseclaw
+  field_class: metadata
+  sensitivity: safe
+  cardinality: low
+  normalization:
+    id: enum-v1
+    overrides:
+      enum: [ok, timeout, nonzero_exit, empty_output, probe_failed, not_probed, unknown, other]
+    notes: Bounded status class only; never raw stdout or stderr
+  introduced_in: telemetry-registry-v1
 - id: defenseclaw.telemetry.signal
   type: string
   brief: Telemetry signal
@@ -485,6 +1110,91 @@ attributes:
   normalization:
     id: bounded-v1
     notes: registered error reason
+  introduced_in: telemetry-registry-v1
+- id: defenseclaw.telemetry.payload_format
+  type: string
+  brief: Wire format of the received telemetry payload
+  examples: [protobuf]
+  stability: stable
+  owner: defenseclaw
+  field_class: metadata
+  sensitivity: safe
+  cardinality: low
+  normalization:
+    id: enum-v1
+    overrides:
+      enum: [json, protobuf, unknown]
+    notes: json|protobuf|unknown
+  introduced_in: telemetry-registry-v1
+- id: defenseclaw.telemetry.resource_count
+  type: int64
+  brief: OTel resource groups in the received payload
+  examples: [2]
+  stability: stable
+  owner: defenseclaw
+  field_class: metadata
+  sensitivity: safe
+  cardinality: bounded
+  normalization:
+    id: numeric-range-v1
+    overrides: {min: 0, max: 9223372036854775807}
+    notes: Nonnegative bounded count
+  introduced_in: telemetry-registry-v1
+- id: defenseclaw.telemetry.wire_bytes
+  type: int64
+  brief: Bytes received on the wire before normalization
+  examples: [4096]
+  stability: stable
+  owner: defenseclaw
+  field_class: metadata
+  sensitivity: safe
+  cardinality: bounded
+  normalization:
+    id: numeric-range-v1
+    overrides: {min: 0, max: 9223372036854775807}
+    notes: Nonnegative byte count; payload content is never retained
+  introduced_in: telemetry-registry-v1
+- id: defenseclaw.telemetry.normalized_bytes
+  type: int64
+  brief: Bytes in the canonical normalized representation
+  examples: [3584]
+  stability: stable
+  owner: defenseclaw
+  field_class: metadata
+  sensitivity: safe
+  cardinality: bounded
+  normalization:
+    id: numeric-range-v1
+    overrides: {min: 0, max: 9223372036854775807}
+    notes: Nonnegative byte count; normalized payload content is never retained
+  introduced_in: telemetry-registry-v1
+- id: defenseclaw.telemetry.latency_ms
+  type: int64
+  brief: Receiver processing latency in milliseconds
+  examples: [8]
+  stability: stable
+  owner: defenseclaw
+  field_class: metadata
+  sensitivity: safe
+  cardinality: bounded
+  normalization:
+    id: numeric-range-v1
+    overrides: {min: 0, max: 9223372036854775807}
+    notes: Nonnegative milliseconds
+  introduced_in: telemetry-registry-v1
+- id: defenseclaw.telemetry.rejection_reason_class
+  type: string
+  brief: Bounded content-free telemetry rejection class
+  examples: [schema_validation_failed]
+  stability: stable
+  owner: defenseclaw
+  field_class: metadata
+  sensitivity: internal
+  cardinality: low
+  normalization:
+    id: bounded-v1
+    overrides: {max_utf8_bytes: 128}
+    notes: Registered class only; never decoder text, payload fragments, endpoints, or credentials
   introduced_in: telemetry-registry-v1
 - id: defenseclaw.destination.id
   type: string
@@ -663,6 +1373,132 @@ attributes:
   normalization:
     id: digest-v1
     notes: versioned keyed digest
+  introduced_in: telemetry-registry-v1
+- id: defenseclaw.admin.actor_ref
+  type: string
+  brief: Canonical actor reference for an administrative operation
+  examples: [principal:operator]
+  stability: stable
+  owner: defenseclaw
+  field_class: identifier
+  sensitivity: sensitive
+  cardinality: high
+  normalization:
+    id: identifier-v1
+    overrides: {max_utf8_bytes: 512}
+    notes: Authenticated or trusted subsystem reference only; never bearer material or an unbounded subject claim
+  introduced_in: telemetry-registry-v1
+- id: defenseclaw.admin.origin
+  type: string
+  brief: Trusted origin of an administrative operation
+  examples: [api]
+  stability: stable
+  owner: defenseclaw
+  field_class: metadata
+  sensitivity: safe
+  cardinality: low
+  normalization:
+    id: bounded-v1
+    overrides: {max_utf8_bytes: 64}
+    notes: Producer-normalized origin such as api, cli, config_file, migration, scheduler, or internal
+  introduced_in: telemetry-registry-v1
+- id: defenseclaw.admin.target_ref
+  type: string
+  brief: Stable reference to the administrative mutation target
+  examples: [config:observability]
+  stability: stable
+  owner: defenseclaw
+  field_class: identifier
+  sensitivity: sensitive
+  cardinality: high
+  normalization:
+    id: identifier-v1
+    overrides: {max_utf8_bytes: 1024}
+    notes: Bounded reference only; never a raw config document, request body, token, or secret value
+  introduced_in: telemetry-registry-v1
+- id: defenseclaw.admin.before_summary
+  type: string
+  brief: Sanitized bounded summary of pre-change state
+  examples: [profile=legacy-v7; destinations=1]
+  stability: stable
+  owner: defenseclaw
+  field_class: metadata
+  sensitivity: internal
+  cardinality: bounded
+  normalization:
+    id: bounded-v1
+    overrides: {max_utf8_bytes: 2048}
+    notes: Producer must supply a secret-free allowlisted summary or digest; raw config values and content are forbidden
+  introduced_in: telemetry-registry-v1
+- id: defenseclaw.admin.after_summary
+  type: string
+  brief: Sanitized bounded summary of resulting state
+  examples: [profile=none; destinations=2]
+  stability: stable
+  owner: defenseclaw
+  field_class: metadata
+  sensitivity: internal
+  cardinality: bounded
+  normalization:
+    id: bounded-v1
+    overrides: {max_utf8_bytes: 2048}
+    notes: Producer must supply a secret-free allowlisted summary or digest; raw config values and content are forbidden
+  introduced_in: telemetry-registry-v1
+- id: defenseclaw.admin.reason
+  type: string
+  brief: Bounded reason code for the administrative operation
+  examples: [operator_request]
+  stability: stable
+  owner: defenseclaw
+  field_class: metadata
+  sensitivity: internal
+  cardinality: bounded
+  normalization:
+    id: bounded-v1
+    overrides: {max_utf8_bytes: 256}
+    notes: Registered reason code only; never free-form request, config, credential, or exception content
+  introduced_in: telemetry-registry-v1
+- id: defenseclaw.admin.revision
+  type: string
+  brief: Requested or resulting control-plane revision
+  examples: [revision:42]
+  stability: stable
+  owner: defenseclaw
+  field_class: identifier
+  sensitivity: internal
+  cardinality: high
+  normalization:
+    id: identifier-v1
+    overrides: {max_utf8_bytes: 256}
+    notes: Bounded opaque revision identifier
+  introduced_in: telemetry-registry-v1
+- id: defenseclaw.admin.current_revision
+  type: string
+  brief: Current control-plane revision observed while applying the operation
+  examples: [revision:41]
+  stability: stable
+  owner: defenseclaw
+  field_class: identifier
+  sensitivity: internal
+  cardinality: high
+  normalization:
+    id: identifier-v1
+    overrides: {max_utf8_bytes: 256}
+    notes: Bounded opaque revision identifier; useful for optimistic-concurrency rejection evidence
+  introduced_in: telemetry-registry-v1
+- id: defenseclaw.admin.change_count
+  type: int64
+  brief: Number of sanitized change entries represented by the operation
+  examples: [3]
+  stability: stable
+  owner: defenseclaw
+  field_class: metadata
+  sensitivity: safe
+  cardinality: bounded
+  normalization:
+    id: numeric-range-v1
+    overrides: {min: 0, max: 9223372036854775807}
+    notes: Count only; no changed values
   introduced_in: telemetry-registry-v1
 - id: defenseclaw.diagnostic.component
   type: string
@@ -2025,6 +2861,22 @@ groups:
     requirement_level: recommended
   - ref: defenseclaw.asset.resulting_state
     requirement_level: recommended
+  - ref: defenseclaw.asset.target_ref
+    requirement_level: recommended
+  - ref: defenseclaw.asset.target_path
+    requirement_level: recommended
+  - ref: defenseclaw.asset.transition_reason
+    requirement_level: recommended
+  - ref: defenseclaw.asset.transition_code
+    requirement_level: recommended
+  - ref: defenseclaw.asset.transition_initiator
+    requirement_level: recommended
+  - ref: defenseclaw.asset.install_action
+    requirement_level: recommended
+  - ref: defenseclaw.asset.file_action
+    requirement_level: recommended
+  - ref: defenseclaw.asset.runtime_action
+    requirement_level: recommended
   body_fields: []
 - id: telemetry.ingest
   type: attribute_group
@@ -2040,6 +2892,18 @@ groups:
   - ref: defenseclaw.telemetry.byte_count
     requirement_level: recommended
   - ref: defenseclaw.telemetry.rejection_reason
+    requirement_level: recommended
+  - ref: defenseclaw.telemetry.payload_format
+    requirement_level: recommended
+  - ref: defenseclaw.telemetry.resource_count
+    requirement_level: recommended
+  - ref: defenseclaw.telemetry.wire_bytes
+    requirement_level: recommended
+  - ref: defenseclaw.telemetry.normalized_bytes
+    requirement_level: recommended
+  - ref: defenseclaw.telemetry.latency_ms
+    requirement_level: recommended
+  - ref: defenseclaw.telemetry.rejection_reason_class
     requirement_level: recommended
   body_fields: []
 - id: telemetry.destination
@@ -2075,6 +2939,24 @@ groups:
     requirement_level: recommended
   - ref: defenseclaw.admin.change_set_hash
     requirement_level: recommended
+  - ref: defenseclaw.admin.actor_ref
+    requirement_level: recommended
+  - ref: defenseclaw.admin.origin
+    requirement_level: recommended
+  - ref: defenseclaw.admin.target_ref
+    requirement_level: recommended
+  - ref: defenseclaw.admin.before_summary
+    requirement_level: recommended
+  - ref: defenseclaw.admin.after_summary
+    requirement_level: recommended
+  - ref: defenseclaw.admin.reason
+    requirement_level: recommended
+  - ref: defenseclaw.admin.revision
+    requirement_level: recommended
+  - ref: defenseclaw.admin.current_revision
+    requirement_level: recommended
+  - ref: defenseclaw.admin.change_count
+    requirement_level: recommended
   body_fields: []
 - id: body.compliance.activity
   type: body_group
@@ -2090,6 +2972,26 @@ groups:
   - ref: defenseclaw.admin.principal_ref
     requirement_level: conditional
     conditional: admin-principal-known-v1
+  - ref: defenseclaw.admin.actor_ref
+    requirement_level: recommended
+  - ref: defenseclaw.admin.origin
+    requirement_level: recommended
+  - ref: defenseclaw.admin.target_ref
+    requirement_level: recommended
+  - ref: defenseclaw.admin.before_summary
+    requirement_level: recommended
+  - ref: defenseclaw.admin.after_summary
+    requirement_level: recommended
+  - ref: defenseclaw.admin.reason
+    requirement_level: recommended
+  - ref: defenseclaw.admin.revision
+    requirement_level: recommended
+  - ref: defenseclaw.admin.current_revision
+    requirement_level: recommended
+  - ref: defenseclaw.admin.change_count
+    requirement_level: recommended
+  - ref: defenseclaw.admin.change_set_hash
+    requirement_level: recommended
 - id: body.asset.lifecycle
   type: body_group
   brief: Actual asset lifecycle transition body.
@@ -2101,11 +3003,33 @@ groups:
   body_fields:
   - ref: defenseclaw.asset.id
     requirement_level: required
+  - ref: defenseclaw.asset.type
+    requirement_level: recommended
   - ref: defenseclaw.asset.transition
     requirement_level: required
+  - ref: defenseclaw.asset.target_ref
+    requirement_level: recommended
+  - ref: defenseclaw.asset.target_path
+    requirement_level: recommended
+  - ref: defenseclaw.asset.transition_reason
+    requirement_level: recommended
+  - ref: defenseclaw.asset.transition_code
+    requirement_level: recommended
+  - ref: defenseclaw.asset.transition_initiator
+    requirement_level: recommended
+  - ref: defenseclaw.asset.previous_state
+    requirement_level: recommended
+  - ref: defenseclaw.asset.resulting_state
+    requirement_level: recommended
+  - ref: defenseclaw.asset.install_action
+    requirement_level: recommended
+  - ref: defenseclaw.asset.file_action
+    requirement_level: recommended
+  - ref: defenseclaw.asset.runtime_action
+    requirement_level: recommended
 - id: body.ai.discovery
   type: body_group
-  brief: Continuous AI component discovery body.
+  brief: Sanitized continuous AI component discovery signal body.
   stability: stable
   introduced_in: telemetry-registry-v1
   extends: []
@@ -2121,6 +3045,104 @@ groups:
     requirement_level: recommended
   - ref: defenseclaw.ai.discovery.confidence
     requirement_level: recommended
+  - ref: defenseclaw.ai.discovery.scan_id
+    requirement_level: recommended
+  - ref: defenseclaw.ai.discovery.signal_id
+    requirement_level: recommended
+  - ref: defenseclaw.ai.discovery.source
+    requirement_level: recommended
+  - ref: defenseclaw.ai.component.vendor
+    requirement_level: recommended
+  - ref: defenseclaw.ai.component.product
+    requirement_level: recommended
+  - ref: defenseclaw.ai.component.identity_score
+    requirement_level: recommended
+  - ref: defenseclaw.ai.component.identity_band
+    requirement_level: recommended
+  - ref: defenseclaw.ai.component.presence_score
+    requirement_level: recommended
+  - ref: defenseclaw.ai.component.presence_band
+    requirement_level: recommended
+  - ref: defenseclaw.ai.component.install_count
+    requirement_level: recommended
+  - ref: defenseclaw.ai.component.workspace_count
+    requirement_level: recommended
+  - ref: defenseclaw.ai.component.detector_count
+    requirement_level: recommended
+  - ref: defenseclaw.ai.component.policy_version
+    requirement_level: recommended
+- id: body.ai.discovery.run
+  type: body_group
+  brief: Sanitized continuous AI discovery scan summary body.
+  stability: stable
+  introduced_in: telemetry-registry-v1
+  extends: []
+  attributes: []
+  body_fields:
+  - ref: defenseclaw.ai.discovery.scan_id
+    requirement_level: required
+  - ref: defenseclaw.ai.discovery.source
+    requirement_level: required
+  - ref: defenseclaw.ai.discovery.privacy_mode
+    requirement_level: required
+  - ref: defenseclaw.ai.discovery.result
+    requirement_level: required
+  - ref: defenseclaw.ai.discovery.duration_ms
+    requirement_level: required
+  - ref: defenseclaw.ai.discovery.signals_total
+    requirement_level: required
+  - ref: defenseclaw.ai.discovery.active_signals
+    requirement_level: required
+  - ref: defenseclaw.ai.discovery.new_signals
+    requirement_level: required
+  - ref: defenseclaw.ai.discovery.changed_signals
+    requirement_level: required
+  - ref: defenseclaw.ai.discovery.gone_signals
+    requirement_level: required
+  - ref: defenseclaw.ai.discovery.files_scanned
+    requirement_level: required
+  - ref: defenseclaw.ai.discovery.dedupe_suppressed
+    requirement_level: required
+  - ref: defenseclaw.ai.discovery.errors
+    requirement_level: required
+- id: body.agent.discovery.run
+  type: body_group
+  brief: Sanitized connector installation discovery summary body.
+  stability: stable
+  introduced_in: telemetry-registry-v1
+  extends: []
+  attributes: []
+  body_fields:
+  - ref: defenseclaw.agent.discovery.source
+    requirement_level: recommended
+  - ref: defenseclaw.agent.discovery.cache_hit
+    requirement_level: recommended
+  - ref: defenseclaw.agent.discovery.result
+    requirement_level: recommended
+  - ref: defenseclaw.agent.discovery.duration_ms
+    requirement_level: recommended
+  - ref: defenseclaw.agent.discovery.agents_total
+    requirement_level: recommended
+  - ref: defenseclaw.agent.discovery.installed_total
+    requirement_level: recommended
+- id: body.agent.discovery.signal
+  type: body_group
+  brief: Sanitized per-connector installation discovery signal body.
+  stability: stable
+  introduced_in: telemetry-registry-v1
+  extends: []
+  attributes: []
+  body_fields:
+  - ref: defenseclaw.agent.discovery.connector
+    requirement_level: required
+  - ref: defenseclaw.agent.discovery.installed
+    requirement_level: required
+  - ref: defenseclaw.agent.discovery.has_config
+    requirement_level: required
+  - ref: defenseclaw.agent.discovery.has_binary
+    requirement_level: required
+  - ref: defenseclaw.agent.discovery.probe_status
+    requirement_level: required
 - id: body.telemetry.ingest
   type: body_group
   brief: Inbound telemetry batch acceptance/rejection body; raw payload is forbidden.
@@ -2136,6 +3158,18 @@ groups:
     requirement_level: required
   - ref: defenseclaw.telemetry.byte_count
     requirement_level: required
+  - ref: defenseclaw.telemetry.payload_format
+    requirement_level: recommended
+  - ref: defenseclaw.telemetry.resource_count
+    requirement_level: recommended
+  - ref: defenseclaw.telemetry.wire_bytes
+    requirement_level: recommended
+  - ref: defenseclaw.telemetry.normalized_bytes
+    requirement_level: recommended
+  - ref: defenseclaw.telemetry.latency_ms
+    requirement_level: recommended
+  - ref: defenseclaw.telemetry.rejection_reason_class
+    requirement_level: recommended
 - id: body.platform.health
   type: body_group
   brief: Bounded platform health transition/failure body.
@@ -2386,7 +3420,7 @@ groups:
   introduced_in: telemetry-registry-v1
   extends:
   - span.core
-  - correlation.security
+  - security.scan
   - error.core
   attributes: []
   body_fields: []
@@ -2429,7 +3463,7 @@ groups:
   introduced_in: telemetry-registry-v1
   extends:
   - span.core
-  - correlation.security
+  - security.scan
   - error.core
   attributes: []
   body_fields: []
@@ -2475,6 +3509,10 @@ groups:
   - lifecycle.asset
   - error.core
   attributes:
+  - ref: defenseclaw.asset.id
+    requirement_level: required
+  - ref: defenseclaw.asset.type
+    requirement_level: recommended
   - ref: defenseclaw.asset.transition
     requirement_level: required
   body_fields: []
@@ -2522,7 +3560,7 @@ groups:
   extends:
   - span.core
   - transport.http
-  - correlation.security
+  - security.network.egress
   - error.core
   attributes:
   - ref: http.request.method
@@ -2570,7 +3608,33 @@ groups:
   extends:
   - span.core
   - error.core
-  attributes: []
+  attributes:
+  - ref: defenseclaw.ai.discovery.scan_id
+    requirement_level: recommended
+  - ref: defenseclaw.ai.discovery.source
+    requirement_level: recommended
+  - ref: defenseclaw.ai.discovery.privacy_mode
+    requirement_level: recommended
+  - ref: defenseclaw.ai.discovery.result
+    requirement_level: recommended
+  - ref: defenseclaw.ai.discovery.duration_ms
+    requirement_level: recommended
+  - ref: defenseclaw.ai.discovery.signals_total
+    requirement_level: recommended
+  - ref: defenseclaw.ai.discovery.active_signals
+    requirement_level: recommended
+  - ref: defenseclaw.ai.discovery.new_signals
+    requirement_level: recommended
+  - ref: defenseclaw.ai.discovery.changed_signals
+    requirement_level: recommended
+  - ref: defenseclaw.ai.discovery.gone_signals
+    requirement_level: recommended
+  - ref: defenseclaw.ai.discovery.files_scanned
+    requirement_level: recommended
+  - ref: defenseclaw.ai.discovery.dedupe_suppressed
+    requirement_level: recommended
+  - ref: defenseclaw.ai.discovery.errors
+    requirement_level: recommended
   body_fields: []
   span:
     name_pattern: defenseclaw.ai.discovery
@@ -2610,7 +3674,17 @@ groups:
   extends:
   - span.core
   - error.core
-  attributes: []
+  attributes:
+  - ref: defenseclaw.ai.discovery.scan_id
+    requirement_level: recommended
+  - ref: defenseclaw.ai.discovery.detector
+    requirement_level: required
+  - ref: defenseclaw.ai.discovery.duration_ms
+    requirement_level: recommended
+  - ref: defenseclaw.ai.discovery.signals_total
+    requirement_level: recommended
+  - ref: defenseclaw.ai.discovery.files_scanned
+    requirement_level: recommended
   body_fields: []
   span:
     name_pattern: defenseclaw.ai.discovery.detector
@@ -2655,6 +3729,14 @@ groups:
   attributes:
   - ref: http.request.method
     requirement_level: required
+  - ref: defenseclaw.telemetry.signal
+    requirement_level: recommended
+  - ref: defenseclaw.telemetry.payload_format
+    requirement_level: recommended
+  - ref: defenseclaw.telemetry.wire_bytes
+    requirement_level: recommended
+  - ref: defenseclaw.telemetry.latency_ms
+    requirement_level: recommended
   body_fields: []
   span:
     name_pattern: '{http.request.method} telemetry'
@@ -2700,6 +3782,20 @@ groups:
   attributes:
   - ref: defenseclaw.telemetry.signal
     requirement_level: required
+  - ref: defenseclaw.telemetry.payload_format
+    requirement_level: recommended
+  - ref: defenseclaw.telemetry.record_count
+    requirement_level: recommended
+  - ref: defenseclaw.telemetry.resource_count
+    requirement_level: recommended
+  - ref: defenseclaw.telemetry.wire_bytes
+    requirement_level: recommended
+  - ref: defenseclaw.telemetry.normalized_bytes
+    requirement_level: recommended
+  - ref: defenseclaw.telemetry.latency_ms
+    requirement_level: recommended
+  - ref: defenseclaw.telemetry.rejection_reason_class
+    requirement_level: recommended
   body_fields: []
   span:
     name_pattern: telemetry.normalize {defenseclaw.telemetry.signal}
@@ -2914,6 +4010,31 @@ groups:
       disposition: preserved
       details:
         missing_data: never fabricate absent values
+- id: log.ai.discovery.completed
+  type: log
+  brief: Canonical completed continuous AI discovery scan summary.
+  stability: stable
+  introduced_in: telemetry-registry-v1
+  extends:
+  - body.ai.discovery.run
+  attributes: []
+  body_fields: []
+  log:
+    event_name: ai.discovery.completed
+  x-defenseclaw:
+    bucket: ai.discovery
+    family_schema_version: 1
+    outcome_requirement: required
+    allowed_outcomes:
+    - completed
+    - partial
+    route_selector: true
+    mandatory_floor: []
+    compatibility_profiles:
+    - local-observability-v1
+    legacy_bindings:
+    - source: internal/inventory/ai_discovery.go
+      disposition: preserved
 - id: log.ai_component.changed
   type: log
   brief: Canonical ai_component.changed log identity.
@@ -3005,6 +4126,93 @@ groups:
     - local-observability-v1
     legacy_bindings:
     - source: internal/observability/event_registry.go
+      disposition: preserved
+- id: log.agent.discovery.completed
+  type: log
+  brief: Canonical accepted connector installation discovery summary.
+  stability: stable
+  introduced_in: telemetry-registry-v1
+  extends:
+  - body.agent.discovery.run
+  attributes: []
+  body_fields:
+  - ref: defenseclaw.agent.discovery.source
+    requirement_level: required
+  - ref: defenseclaw.agent.discovery.cache_hit
+    requirement_level: required
+  - ref: defenseclaw.agent.discovery.result
+    requirement_level: required
+  - ref: defenseclaw.agent.discovery.duration_ms
+    requirement_level: required
+  - ref: defenseclaw.agent.discovery.agents_total
+    requirement_level: required
+  - ref: defenseclaw.agent.discovery.installed_total
+    requirement_level: required
+  log:
+    event_name: agent.discovery.completed
+  x-defenseclaw:
+    bucket: agent.lifecycle
+    family_schema_version: 1
+    outcome_requirement: required
+    allowed_outcomes:
+    - completed
+    route_selector: true
+    mandatory_floor: []
+    compatibility_profiles:
+    - local-observability-v1
+    legacy_bindings:
+    - source: internal/telemetry/metrics.go
+      disposition: preserved
+- id: log.agent.discovery.rejected
+  type: log
+  brief: Canonical rejected or malformed connector installation discovery summary.
+  stability: stable
+  introduced_in: telemetry-registry-v1
+  extends:
+  - body.agent.discovery.run
+  attributes: []
+  body_fields:
+  - ref: defenseclaw.agent.discovery.source
+    requirement_level: required
+  - ref: defenseclaw.agent.discovery.result
+    requirement_level: required
+  log:
+    event_name: agent.discovery.rejected
+  x-defenseclaw:
+    bucket: agent.lifecycle
+    family_schema_version: 1
+    outcome_requirement: required
+    allowed_outcomes:
+    - rejected
+    route_selector: true
+    mandatory_floor: []
+    compatibility_profiles:
+    - local-observability-v1
+    legacy_bindings:
+    - source: internal/gateway/agent_discovery.go
+      disposition: preserved
+- id: log.agent.discovery.signal
+  type: log
+  brief: Canonical sanitized per-connector installation discovery signal.
+  stability: stable
+  introduced_in: telemetry-registry-v1
+  extends:
+  - body.agent.discovery.signal
+  attributes: []
+  body_fields: []
+  log:
+    event_name: agent.discovery.signal
+  x-defenseclaw:
+    bucket: agent.lifecycle
+    family_schema_version: 1
+    outcome_requirement: forbidden
+    allowed_outcomes: []
+    route_selector: true
+    mandatory_floor: []
+    compatibility_profiles:
+    - local-observability-v1
+    legacy_bindings:
+    - source: internal/telemetry/metrics.go
       disposition: preserved
 - id: log.alert.acknowledgement.requested
   type: log
@@ -6419,6 +7627,15 @@ groups:
 producer_identity_sets:
 - id: identity_set.agent_lifecycle
   identities:
+  - event_name: agent.discovery.completed
+    bucket: agent.lifecycle
+    family: log.agent.discovery.completed
+  - event_name: agent.discovery.rejected
+    bucket: agent.lifecycle
+    family: log.agent.discovery.rejected
+  - event_name: agent.discovery.signal
+    bucket: agent.lifecycle
+    family: log.agent.discovery.signal
   - event_name: compact_end
     bucket: agent.lifecycle
     family: log.compat.compact_end
@@ -6469,6 +7686,9 @@ producer_identity_sets:
     family: log.compat.turn_start
 - id: identity_set.ai_discovery
   identities:
+  - event_name: ai.discovery.completed
+    bucket: ai.discovery
+    family: log.ai.discovery.completed
   - event_name: ai_component.changed
     bucket: ai.discovery
     family: log.ai_component.changed
@@ -7224,6 +8444,15 @@ producer_identity_sets:
     compatibility_only: true
 - id: identity_set.lifecycle_control_health
   identities:
+  - event_name: agent.discovery.completed
+    bucket: agent.lifecycle
+    family: log.agent.discovery.completed
+  - event_name: agent.discovery.rejected
+    bucket: agent.lifecycle
+    family: log.agent.discovery.rejected
+  - event_name: agent.discovery.signal
+    bucket: agent.lifecycle
+    family: log.agent.discovery.signal
   - event_name: alert.acknowledgement.requested
     bucket: compliance.activity
     family: log.alert.acknowledgement.requested

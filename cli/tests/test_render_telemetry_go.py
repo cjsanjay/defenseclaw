@@ -70,37 +70,37 @@ def test_real_candidate_renders_exact_complete_deterministic_outputs(
     assert repeated == rendered
     assert tuple(item.path for item in rendered.outputs) == coordinator.EXACT_GO_OUTPUT_PATHS
     assert tuple(item.path for item in rendered.declaration_inventory) == coordinator.EXACT_GO_OUTPUT_PATHS
-    assert len(rendered.expected_declaration_keys) == 1789
+    assert len(rendered.expected_declaration_keys) == 1897
     assert tuple(len(item.declaration_keys) for item in rendered.declaration_inventory) == (
-        905,
+        1005,
         0,
         0,
         282,
         212,
-        390,
+        398,
         0,
     )
     assert all(isinstance(item, coordinator.RenderedGoOutput) for item in rendered.outputs)
     assert all(isinstance(item, coordinator.GoFileDeclarationInventory) for item in rendered.declaration_inventory)
 
     payloads = {item.path: item.payload for item in rendered.outputs}
-    assert payloads[coordinator.EXACT_GO_OUTPUT_PATHS[0]].count(b"\n\tTelemetry") == 905
+    assert payloads[coordinator.EXACT_GO_OUTPUT_PATHS[0]].count(b"\n\tTelemetry") == 1005
     catalog = payloads[coordinator.EXACT_GO_OUTPUT_PATHS[1]]
-    assert catalog.count(b" familyDescriptorContract() familyDescriptorContract {") == 243
+    assert catalog.count(b" familyDescriptorContract() familyDescriptorContract {") == 247
     assert catalog.count(b" familyTraceContract() familyTraceContract {") == 25
     assert catalog.count(b" familyMetricContract() familyMetricContract {") == 131
     producer = payloads[coordinator.EXACT_GO_OUTPUT_PATHS[2]]
-    assert producer.count(b"generatedProducerIdentity{") >= 8038
+    assert producer.count(b"generatedProducerIdentity{") >= 8075
     domains = b"".join(payloads[path] for path in coordinator.EXACT_GO_OUTPUT_PATHS[3:6])
-    assert domains.count(b"func (builder *FamilyBuilder) Build") == 243
+    assert domains.count(b"func (builder *FamilyBuilder) Build") == 247
     assert domains.count(b"func New") == 179
     assert domains.count(b"func ValidateTelemetryResourceAttributes") == 1
-    assert domains.count(b"type ") >= 460
+    assert domains.count(b"type ") >= 464
     fixtures = payloads[coordinator.EXACT_GO_OUTPUT_PATHS[6]]
-    assert fixtures.count(b"func TestGeneratedTelemetry") == 427
+    assert fixtures.count(b"func TestGeneratedTelemetry") == 432
     assert b"const generatedFamilyBuilderMethodContractsJSON = " in fixtures
-    assert fixtures.count(b'\\"receiver_type\\":\\"FamilyBuilder\\"') == 243
-    assert fixtures.count(b'\\"input_named_struct\\":true') == 243
+    assert fixtures.count(b'\\"receiver_type\\":\\"FamilyBuilder\\"') == 247
+    assert fixtures.count(b'\\"input_named_struct\\":true') == 247
     assert all(b"func init(" not in payload for payload in payloads.values())
     current_registry_symbols = (
         b"registeredEventNameSet",

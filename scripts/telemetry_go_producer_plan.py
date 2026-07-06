@@ -245,9 +245,9 @@ _SHA256: Final = re.compile(r"^[0-9a-f]{64}$")
 _TOKEN: Final = re.compile(r"^[a-z][a-z0-9_.:/#-]{0,511}$")
 _EVENT_NAME: Final = re.compile(r"^[a-z][a-z0-9_.-]{0,255}$")
 _SOURCE: Final = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:/#-]{0,511}$")
-_MAX_ROWS: Final = 8038
-_EXPECTED_ROWS: Final = 8038
-_EXPECTED_FAMILY_ROWS: Final = 1781
+_MAX_ROWS: Final = 8075
+_EXPECTED_ROWS: Final = 8075
+_EXPECTED_FAMILY_ROWS: Final = 1818
 _EXPECTED_GROUPS: Final = 202
 _EXPECTED_GROUPS_BY_KIND: Final = {"gateway_event": 14, "audit_action": 188}
 _PRODUCER_KINDS: Final = frozenset(_EXPECTED_GROUPS_BY_KIND)
@@ -881,7 +881,7 @@ def compile_go_producer_plan(index: object) -> GoProducerPlanIR:
         _MAX_ROWS,
     )
     if len(raw_rows) != _EXPECTED_ROWS:
-        raise GoProducerPlanError("expanded producer rows: exact 8,038-row inventory is required")
+        raise GoProducerPlanError("expanded producer rows: exact 8,075-row inventory is required")
     rows = tuple(_row(raw, position) for position, raw in enumerate(raw_rows))
     if len({row.row_id for row in rows}) != len(rows):
         raise GoProducerPlanError("expanded producer rows: duplicate row ID")

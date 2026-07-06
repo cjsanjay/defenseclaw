@@ -148,9 +148,7 @@ GENERATED_PREFIX: Final = "schemas/telemetry/generated"
 _SCHEMA_OUTPUT_PATH: Final = f"{GENERATED_PREFIX}/telemetry.schema.json"
 _CATALOG_OUTPUT_PATH: Final = f"{GENERATED_PREFIX}/catalog.json"
 _CATALOG_MARKDOWN_OUTPUT_PATH: Final = f"{GENERATED_PREFIX}/catalog.md"
-_V7_EXPORTER_SELECTION_OUTPUT_PATH: Final = (
-    f"{GENERATED_PREFIX}/compatibility/v7-exporter-selection.json"
-)
+_V7_EXPORTER_SELECTION_OUTPUT_PATH: Final = f"{GENERATED_PREFIX}/compatibility/v7-exporter-selection.json"
 _EXAMPLE_MANIFEST_OUTPUT_PATH: Final = f"{GENERATED_PREFIX}/examples/manifest.json"
 _OTLP_MANIFEST_OUTPUT_PATH: Final = f"{GENERATED_PREFIX}/otlp-fixtures/manifest.json"
 _BASE_CANDIDATE_OUTPUT_PATHS: Final = (
@@ -407,9 +405,9 @@ _GO_SYMBOL_KIND_ORDER: Final = (
     "span_link_constructor",
 )
 _GO_SYMBOL_KIND_COUNTS: Final = {
-    "attribute": 335,
-    "family": 243,
-    "log_event": 87,
+    "attribute": 427,
+    "family": 247,
+    "log_event": 91,
     "span_event": 15,
     "link_relation": 4,
     "metric_instrument": 131,
@@ -427,20 +425,20 @@ _GO_SYMBOL_KIND_COUNTS: Final = {
     "resource_attributes_constructor": 1,
     "resource_attributes_attach": 1,
     "resource_attributes_validator": 1,
-    "family_input": 243,
-    "family_builder": 243,
+    "family_input": 247,
+    "family_builder": 247,
     "span_event_input": 61,
     "span_event_constructor": 61,
     "span_link_input": 100,
     "span_link_constructor": 100,
 }
 _GO_SYMBOL_DECLARATION_COUNTS: Final = {
-    "exported_const": 905,
-    "exported_type": 460,
+    "exported_const": 1005,
+    "exported_type": 464,
     "exported_function": 181,
-    "family_builder_method": 243,
+    "family_builder_method": 247,
 }
-_GO_SYMBOL_DOMAIN_COUNTS: Final = {"ids": 905, "genai": 282, "security": 212, "operations": 390}
+_GO_SYMBOL_DOMAIN_COUNTS: Final = {"ids": 1005, "genai": 282, "security": 212, "operations": 398}
 _GO_SYMBOL_DECLARATION_BY_KIND: Final = {
     "attribute": "exported_const",
     "family": "exported_const",
@@ -469,9 +467,9 @@ _GO_SYMBOL_DECLARATION_BY_KIND: Final = {
     "span_link_input": "exported_type",
     "span_link_constructor": "exported_function",
 }
-_GO_SYMBOL_ROW_COUNT: Final = 1789
+_GO_SYMBOL_ROW_COUNT: Final = 1897
 _GO_SYMBOL_TABLE_DIGEST_DOMAIN: Final = b"DefenseClaw GoSymbolTableIR v1\x00"
-_GO_SYMBOL_TABLE_SHA256: Final = "1063fecb9fbed0fa854da6ee58a0b808a9db98f3c2e1db5c7a57aed868441970"
+_GO_SYMBOL_TABLE_SHA256: Final = "7663bcaa86e8307990ba1d64cee1f783881b9a9ff7dd86ad01dab1db623a7c1f"
 
 
 def _normalized_candidate_path(raw: str) -> str:
@@ -1823,8 +1821,7 @@ def _validate_v7_exporter_selection_materialized(
         selection["schema_version"] != 1
         or selection["source_config_version"] != 7
         or selection["projection_profile"] != "legacy-v7"
-        or selection["local_observability"]
-        != {"complete": True, "profile_id": "local-observability-v1"}
+        or selection["local_observability"] != {"complete": True, "profile_id": "local-observability-v1"}
     ):
         raise CandidateRenderError("materialized v7 exporter selection metadata is invalid")
 
@@ -1837,9 +1834,7 @@ def _validate_v7_exporter_selection_materialized(
     }
     mappings = [mapping for domain in domains for mapping in domain.producer_mappings]
     audit_actions = sorted(mapping["key"] for mapping in mappings if mapping["producer"] == "audit_action")
-    gateway_mappings = {
-        mapping["key"]: mapping for mapping in mappings if mapping["producer"] == "gateway_event"
-    }
+    gateway_mappings = {mapping["key"]: mapping for mapping in mappings if mapping["producer"] == "gateway_event"}
 
     def identity_names(mapping: Mapping[str, FrozenJSON]) -> set[str]:
         identities: list[Mapping[str, FrozenJSON]] = []
@@ -1857,15 +1852,9 @@ def _validate_v7_exporter_selection_materialized(
             raise CandidateRenderError("materialized v7 producer identities are incomplete")
         return {name for name in names if isinstance(name, str)}
 
-    gateway_event_names = sorted(
-        {name for mapping in gateway_mappings.values() for name in identity_names(mapping)}
-    )
+    gateway_event_names = sorted({name for mapping in gateway_mappings.values() for name in identity_names(mapping)})
     forwarded_event_names = sorted(
-        {
-            name
-            for key in _V7_AUDIT_GATEWAY_EVENT_KEYS
-            for name in identity_names(gateway_mappings[key])
-        }
+        {name for key in _V7_AUDIT_GATEWAY_EVENT_KEYS for name in identity_names(gateway_mappings[key])}
     )
     known_events.update(gateway_event_names)
     exporters = selection["exporters"]
@@ -1884,12 +1873,17 @@ def _validate_v7_exporter_selection_materialized(
         if not isinstance(raw, list) or not 1 <= len(raw) <= 256:
             raise CandidateRenderError("materialized v7 selector inventory is invalid")
         for selector in raw:
-            if not isinstance(selector, dict) or not selector or not set(selector) <= {
-                "buckets",
-                "sources",
-                "actions",
-                "event_names",
-            }:
+            if (
+                not isinstance(selector, dict)
+                or not selector
+                or not set(selector)
+                <= {
+                    "buckets",
+                    "sources",
+                    "actions",
+                    "event_names",
+                }
+            ):
                 raise CandidateRenderError("materialized v7 selector shape is invalid")
             for name, values in selector.items():
                 if (
@@ -1898,15 +1892,15 @@ def _validate_v7_exporter_selection_materialized(
                     or len(values) != len(set(values))
                     or (name != "buckets" and values != sorted(values))
                     or any(
-                        not isinstance(value, str)
-                        or value == "*"
-                        or _V7_COMPATIBILITY_TOKEN.fullmatch(value) is None
+                        not isinstance(value, str) or value == "*" or _V7_COMPATIBILITY_TOKEN.fullmatch(value) is None
                         for value in values
                     )
                 ):
                     raise CandidateRenderError("materialized v7 selector values are invalid")
-                allowed = buckets if name == "buckets" else (
-                    set(audit_actions) if name == "actions" else known_events if name == "event_names" else None
+                allowed = (
+                    buckets
+                    if name == "buckets"
+                    else (set(audit_actions) if name == "actions" else known_events if name == "event_names" else None)
                 )
                 if allowed is not None and not set(values) <= allowed:
                     raise CandidateRenderError("materialized v7 selector references are invalid")
@@ -1918,9 +1912,7 @@ def _validate_v7_exporter_selection_materialized(
         for selectors in profile.values():
             validate_selectors(selectors)
     expected_gateway_selector = [{"event_names": gateway_event_names}]
-    span_event_names = sorted(
-        group_id for group_id, group in groups.items() if group.get("type") == "span"
-    )
+    span_event_names = sorted(group_id for group_id, group in groups.items() if group.get("type") == "span")
     expected_all_bucket_selector = [{"buckets": list(_V7_BUCKETS)}]
     expected_all_span_selector = [{"event_names": span_event_names}]
     collection = selection["collection"]
@@ -1952,8 +1944,7 @@ def _validate_v7_exporter_selection_materialized(
     if (
         exporters["gateway_jsonl"]["logs"] != expected_gateway_selector
         or exporters["gateway_console"]["logs"] != expected_gateway_selector
-        or exporters["audit_sink"]["logs"]
-        != [{"actions": audit_actions}, {"event_names": forwarded_event_names}]
+        or exporters["audit_sink"]["logs"] != [{"actions": audit_actions}, {"event_names": forwarded_event_names}]
         or exporters["generic_otlp"]["logs"] != expected_all_bucket_selector
         or exporters["generic_otlp"]["traces"] != expected_all_span_selector
         or exporters["generic_otlp"]["metrics"] != expected_all_bucket_selector
@@ -3639,7 +3630,7 @@ def _go_declaration_values(
             continue
         value = row.source_id.split("#", 1)[1] if row.kind == "structured_member" else row.source_id
         declarations.append(GoDeclarationValue(row.kind, row.source_id, row.symbol, "string", "string", value))
-    if len(declarations) != 905 or Counter(item.kind for item in declarations) != {
+    if len(declarations) != 1005 or Counter(item.kind for item in declarations) != {
         kind: count
         for kind, count in _GO_SYMBOL_KIND_COUNTS.items()
         if _GO_SYMBOL_DECLARATION_BY_KIND[kind] == "exported_const"
@@ -4209,9 +4200,9 @@ def _enriched_field_descriptors(
                     origin=f"structured_types.{type_id}.canonical_json.{arm_id}",
                 )
                 order += 1
-    if len(descriptors) != 3099:
+    if len(descriptors) != 3643:
         raise CandidateRenderError(
-            f"enriched field descriptor inventory is incomplete: expected 3099, got {len(descriptors)}"
+            f"enriched field descriptor inventory is incomplete: expected 3643, got {len(descriptors)}"
         )
     return MappingProxyType({key: descriptors[key] for key in sorted(descriptors)})
 
@@ -4678,7 +4669,7 @@ def _enriched_family_descriptors(
                 family_field_ids,
                 tuple(_freeze(_plain_ir(item)) for item in family["metric_projections"]),
             )
-    if len(enriched_families) != 243 or len(traces) != 25 or len(metrics) != 131:
+    if len(enriched_families) != 247 or len(traces) != 25 or len(metrics) != 131:
         raise CandidateRenderError("enriched family descriptor inventory is incomplete")
     return (
         MappingProxyType(enriched_families),
@@ -4760,8 +4751,11 @@ def _expanded_producer_mappings(
                         compatibility=_freeze(compatibility),
                     )
                 )
-    if len(rows) != 8038 or sum(row.family_id is not None for row in rows) != 1781:
-        raise CandidateRenderError("expanded producer identity row inventory is incomplete")
+    canonical_rows = sum(row.family_id is not None for row in rows)
+    if len(rows) != 8075 or canonical_rows != 1818:
+        raise CandidateRenderError(
+            f"expanded producer identity row inventory is incomplete: rows={len(rows)} canonical={canonical_rows}"
+        )
     return tuple(rows)
 
 
@@ -6085,8 +6079,7 @@ def _resource_uses_schema(model: CandidateRenderIndex, group: Mapping[str, Froze
     if not isinstance(dynamic, Mapping) or set(dynamic) != _RESOURCE_DYNAMIC_MEMBERS_FIELDS:
         raise CandidateRenderError("candidate resource dynamic-member contract is malformed")
     if not isinstance(raw_aliases, tuple) or any(
-        not isinstance(item, Mapping) or set(item) != _RESOURCE_COMPATIBILITY_ALIAS_FIELDS
-        for item in raw_aliases
+        not isinstance(item, Mapping) or set(item) != _RESOURCE_COMPATIBILITY_ALIAS_FIELDS for item in raw_aliases
     ):
         raise CandidateRenderError("candidate resource alias contract is malformed")
     aliases = tuple(raw_aliases)
@@ -6100,9 +6093,7 @@ def _resource_uses_schema(model: CandidateRenderIndex, group: Mapping[str, Froze
         properties[alias_name] = schema
 
     exact_excluded = tuple(properties) + tuple(dynamic["reserved_keys"])
-    normalized_excluded = tuple(
-        item.replace(".", "_").replace("-", "_") for item in exact_excluded
-    )
+    normalized_excluded = tuple(item.replace(".", "_").replace("-", "_") for item in exact_excluded)
     excluded = exact_excluded + normalized_excluded
     if len(excluded) != len(set(excluded)):
         raise CandidateRenderError("resource dynamic schema exclusion inventory contains duplicates")
@@ -6145,9 +6136,7 @@ def _resource_uses_schema(model: CandidateRenderIndex, group: Mapping[str, Froze
                 "duplicate_key_policy": dynamic["duplicate_key_policy"],
                 "fixed_key_collision_policy": dynamic["fixed_key_collision_policy"],
                 "prometheus_key_normalization": dynamic["prometheus_key_normalization"],
-                "prometheus_normalized_collision_policy": dynamic[
-                    "prometheus_normalized_collision_policy"
-                ],
+                "prometheus_normalized_collision_policy": dynamic["prometheus_normalized_collision_policy"],
                 "reserved_keys": list(dynamic["reserved_keys"]),
                 "forbidden_key_segments": list(dynamic["forbidden_key_segments"]),
                 "forbidden_value_classes": list(dynamic["forbidden_value_classes"]),

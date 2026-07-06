@@ -1,6 +1,6 @@
 {
   "x-defenseclaw-generated": {
-    "artifact": "otlp-fixtures/cases/valid-security-finding-with-derived-evidence.json",
+    "artifact": "otlp-fixtures/cases/invalid-finding-workflow-status.json",
     "authority": "candidate-not-public-authority",
     "generator": "defenseclaw-telemetry-candidate-renderer-v1",
     "materialized_view_sha256": "473d6b37f58a9c4430a62dd75e44c044b0a39780bd1c217403a110e769453af8",
@@ -14,6 +14,7 @@
       "defenseclaw.finding.id": "finding-001",
       "defenseclaw.finding.remediation": "Review the declared capability and restrict or quarantine the asset.",
       "defenseclaw.finding.rule_id": "SKILL-001",
+      "defenseclaw.finding.status": "open",
       "defenseclaw.finding.target_ref": "asset:skill/example",
       "defenseclaw.guardrail.evidence_summary": "Static rule SKILL-001 matched the normalized manifest capability set.",
       "defenseclaw.security.severity": "HIGH"
@@ -32,6 +33,7 @@
       "/defenseclaw.finding.id": "identifier",
       "/defenseclaw.finding.remediation": "reason",
       "/defenseclaw.finding.rule_id": "identifier",
+      "/defenseclaw.finding.status": "metadata",
       "/defenseclaw.finding.target_ref": "identifier",
       "/defenseclaw.guardrail.evidence_summary": "evidence",
       "/defenseclaw.security.severity": "metadata"
@@ -78,16 +80,12 @@
     "scope": "canonical-schema-comparison-only"
   },
   "expect": {
-    "accepted": true,
-    "projection": {
-      "mode": "projected_record_json_string",
-      "projected_record_json": "{\"body\":{\"defenseclaw.finding.category\":\"unsafe_capability\",\"defenseclaw.finding.confidence\":0.98,\"defenseclaw.finding.fingerprint\":\"hmac-sha256:0123456789abcdef\",\"defenseclaw.finding.id\":\"finding-001\",\"defenseclaw.finding.remediation\":\"Review the declared capability and restrict or quarantine the asset.\",\"defenseclaw.finding.rule_id\":\"SKILL-001\",\"defenseclaw.finding.target_ref\":\"asset:skill/example\",\"defenseclaw.guardrail.evidence_summary\":\"Static rule SKILL-001 matched the normalized manifest capability set.\",\"defenseclaw.security.severity\":\"HIGH\"},\"bucket\":\"security.finding\",\"bucket_catalog_version\":1,\"correlation\":{\"finding_occurrence_id\":\"finding-001\",\"scan_id\":\"scan-001\"},\"event_name\":\"finding.observed\",\"field_classes\":{\"/defenseclaw.finding.category\":\"metadata\",\"/defenseclaw.finding.confidence\":\"metadata\",\"/defenseclaw.finding.fingerprint\":\"identifier\",\"/defenseclaw.finding.id\":\"identifier\",\"/defenseclaw.finding.remediation\":\"reason\",\"/defenseclaw.finding.rule_id\":\"identifier\",\"/defenseclaw.finding.target_ref\":\"identifier\",\"/defenseclaw.guardrail.evidence_summary\":\"evidence\",\"/defenseclaw.security.severity\":\"metadata\"},\"mandatory\":false,\"provenance\":{\"binary_version\":\"8.0.0\",\"config_generation\":8,\"producer\":\"defenseclaw\",\"registry_schema_version\":1},\"record_id\":\"rec-finding-001\",\"schema_version\":1,\"severity\":\"HIGH\",\"signal\":\"logs\",\"source\":\"skill_scanner\",\"timestamp\":\"2026-07-03T12:00:02Z\"}",
-      "request_root": "resourceLogs"
-    }
+    "accepted": false,
+    "error_code": "finding_body_field_not_registered"
   },
   "family": "log.finding.observed",
   "fixture_format": "defenseclaw-otlp-fixture-v1",
-  "id": "valid-security-finding-with-derived-evidence",
+  "id": "invalid-finding-workflow-status",
   "materialized_view_sha256": "473d6b37f58a9c4430a62dd75e44c044b0a39780bd1c217403a110e769453af8",
   "signal": "logs"
 }

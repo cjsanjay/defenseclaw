@@ -607,6 +607,22 @@ attributes:
     id: redacted-content-v1
     notes: NFC; centrally redacted; bounded
   introduced_in: telemetry-registry-v1
+- id: defenseclaw.judge.error_summary
+  type: string
+  brief: Bounded judge provider, empty-response, or parse failure summary
+  examples:
+  - provider unavailable
+  stability: stable
+  owner: defenseclaw
+  field_class: error
+  sensitivity: sensitive
+  cardinality: bounded
+  normalization:
+    id: redacted-content-v1
+    overrides:
+      max_utf8_bytes: 65536
+    notes: Source-backed failure text; centrally redacted; never populated for successful judge results
+  introduced_in: telemetry-registry-v1
 - id: defenseclaw.finding.rule_id
   type: string
   brief: Stable finding rule ID
@@ -682,10 +698,11 @@ attributes:
   introduced_in: telemetry-registry-v1
 - id: defenseclaw.finding.status
   type: string
-  brief: Finding workflow status
+  brief: Reserved legacy finding workflow status; forbidden on observation families
   examples:
   - open
-  stability: stable
+  stability: deprecated
+  deprecated_in: telemetry-registry-v1
   owner: defenseclaw
   field_class: metadata
   sensitivity: safe
@@ -713,6 +730,180 @@ attributes:
   normalization:
     id: redacted-content-v1
     notes: producer supplied or deterministic rule-catalog text; never fabricated
+  introduced_in: telemetry-registry-v1
+- id: defenseclaw.finding.title
+  type: string
+  brief: Bounded source-supplied finding title
+  examples:
+  - Potential prompt injection
+  stability: stable
+  owner: defenseclaw
+  field_class: evidence
+  sensitivity: sensitive
+  cardinality: bounded
+  normalization:
+    id: redacted-content-v1
+    overrides:
+      max_utf8_bytes: 4096
+    notes: Scanner or detector supplied and centrally redacted; never synthesized by the telemetry adapter
+  introduced_in: telemetry-registry-v1
+- id: defenseclaw.finding.description
+  type: string
+  brief: Bounded source-supplied finding description
+  examples:
+  - A detector matched a potentially unsafe instruction pattern.
+  stability: stable
+  owner: defenseclaw
+  field_class: evidence
+  sensitivity: sensitive
+  cardinality: high
+  normalization:
+    id: redacted-content-v1
+    overrides:
+      max_utf8_bytes: 65536
+    notes: Exact producer description after central redaction; distinct from a generated evidence summary
+  introduced_in: telemetry-registry-v1
+- id: defenseclaw.finding.location
+  type: string
+  brief: Centrally projected finding location without raw evidence
+  examples:
+  - ~/workspace/skill.yaml
+  stability: stable
+  owner: defenseclaw
+  field_class: path
+  sensitivity: sensitive
+  cardinality: high
+  normalization:
+    id: path-v1
+    overrides:
+      max_utf8_bytes: 8192
+    notes: Source location after path-mode projection; query strings and raw matched evidence are forbidden
+  introduced_in: telemetry-registry-v1
+- id: defenseclaw.finding.line_number
+  type: int64
+  brief: One-based source line for the finding
+  examples:
+  - 42
+  stability: stable
+  owner: defenseclaw
+  field_class: metadata
+  sensitivity: safe
+  cardinality: bounded
+  normalization:
+    id: numeric-range-v1
+    overrides:
+      min: 1
+      max: 9223372036854775807
+    notes: Present only when the producer supplied a meaningful one-based line
+  introduced_in: telemetry-registry-v1
+- id: defenseclaw.finding.tags
+  type: string[]
+  brief: Bounded source-supplied finding tags
+  examples:
+  - - secret
+    - credential
+  stability: stable
+  owner: defenseclaw
+  field_class: metadata
+  sensitivity: internal
+  cardinality: bounded
+  normalization:
+    id: bounded-v1
+    overrides:
+      max_utf8_bytes: 16384
+      max_item_utf8_bytes: 256
+      max_items: 64
+    notes: Stable scanner labels; empty tags are omitted
+  introduced_in: telemetry-registry-v1
+- id: defenseclaw.finding.data_axes
+  type: string[]
+  brief: Lethal-trifecta data-axis labels attached to the finding
+  examples:
+  - - ingress_untrusted
+    - sensitive_access
+  stability: stable
+  owner: defenseclaw
+  field_class: metadata
+  sensitivity: internal
+  cardinality: low
+  normalization:
+    id: bounded-v1
+    overrides:
+      max_utf8_bytes: 256
+      max_item_utf8_bytes: 64
+      min_items: 1
+      max_items: 3
+    notes: Each item is ingress_untrusted, sensitive_access, or egress_external; producer order is preserved
+  introduced_in: telemetry-registry-v1
+- id: defenseclaw.finding.tool_capability_class
+  type: string
+  brief: Tool capability class correlated with the finding
+  examples:
+  - exec_shell
+  stability: stable
+  owner: defenseclaw
+  field_class: metadata
+  sensitivity: safe
+  cardinality: low
+  normalization:
+    id: enum-v1
+    overrides:
+      enum:
+      - read_fs
+      - write_fs
+      - exec_shell
+      - network_fetch
+      - send_message
+    notes: read_fs|write_fs|exec_shell|network_fetch|send_message
+  introduced_in: telemetry-registry-v1
+- id: defenseclaw.finding.external_endpoint
+  type: string
+  brief: Centrally projected endpoint associated with a network-touching finding
+  examples:
+  - webhook.example
+  stability: stable
+  owner: defenseclaw
+  field_class: identifier
+  sensitivity: sensitive
+  cardinality: high
+  normalization:
+    id: bounded-v1
+    overrides:
+      max_utf8_bytes: 4096
+    notes: Host or scrubbed URL; userinfo, query, and fragment are forbidden
+  introduced_in: telemetry-registry-v1
+- id: defenseclaw.finding.decision_path
+  type: string
+  brief: Bounded structured explanation of severity and decision derivation
+  examples:
+  - '[{"stage":"regex","rule_id":"INJ-001"}]'
+  stability: stable
+  owner: defenseclaw
+  field_class: evidence
+  sensitivity: sensitive
+  cardinality: high
+  normalization:
+    id: redacted-content-v1
+    overrides:
+      max_utf8_bytes: 65536
+    notes: Canonical JSON text from scanner.Finding.DecisionPath; centrally redacted and never synthesized
+  introduced_in: telemetry-registry-v1
+- id: defenseclaw.finding.content_fingerprint
+  type: string
+  brief: Legacy short correlation fingerprint over already-redacted finding evidence
+  examples:
+  - 0123abcd
+  stability: stable
+  owner: defenseclaw
+  field_class: identifier
+  sensitivity: internal
+  cardinality: high
+  normalization:
+    id: bounded-v1
+    overrides:
+      max_utf8_bytes: 8
+      pattern: ^[0-9a-f]{8}$
+    notes: Exact current scanner.Finding.ContentFingerprint; not a keyed digest and not a substitute for defenseclaw.finding.fingerprint
   introduced_in: telemetry-registry-v1
 - id: defenseclaw.enforcement.requested_action
   type: string
@@ -961,6 +1152,240 @@ attributes:
       - persist
     notes: enumerate|fetch|unpack|analyze|correlate|persist
   introduced_in: telemetry-registry-v1
+- id: defenseclaw.scan.target_ref
+  type: string
+  brief: Route-projectable scan target reference
+  examples:
+  - asset:skill/example
+  stability: stable
+  owner: defenseclaw
+  field_class: identifier
+  sensitivity: sensitive
+  cardinality: high
+  normalization:
+    id: bounded-v1
+    overrides:
+      max_utf8_bytes: 8192
+    notes: File, asset, tool, message-surface, or scrubbed endpoint reference after central projection
+  introduced_in: telemetry-registry-v1
+- id: defenseclaw.scan.target_type
+  type: string
+  brief: Canonical scan target type
+  examples:
+  - skill
+  stability: stable
+  owner: defenseclaw
+  field_class: metadata
+  sensitivity: safe
+  cardinality: low
+  normalization:
+    id: enum-v1
+    overrides:
+      enum:
+      - file
+      - skill
+      - mcp
+      - plugin
+      - aibom
+      - tool_call
+      - prompt
+      - completion
+      - tool_response
+      - inspect
+    notes: Exact NormalizeTargetTypeEnum vocabulary
+  introduced_in: telemetry-registry-v1
+- id: defenseclaw.scan.duration_ms
+  type: int64
+  brief: Scan or runtime inspection duration in milliseconds
+  examples:
+  - 42
+  stability: stable
+  owner: defenseclaw
+  field_class: metadata
+  sensitivity: safe
+  cardinality: bounded
+  normalization:
+    id: numeric-range-v1
+    overrides:
+      min: 0
+      max: 9223372036854775807
+    notes: Nonnegative source-reported duration
+  introduced_in: telemetry-registry-v1
+- id: defenseclaw.scan.finding_count
+  type: int64
+  brief: Total findings produced by the scan
+  examples:
+  - 3
+  stability: stable
+  owner: defenseclaw
+  field_class: metadata
+  sensitivity: safe
+  cardinality: bounded
+  normalization:
+    id: numeric-range-v1
+    overrides:
+      min: 0
+      max: 9223372036854775807
+    notes: Exact length of the source finding collection
+  introduced_in: telemetry-registry-v1
+- id: defenseclaw.scan.critical_count
+  type: int64
+  brief: CRITICAL findings produced by the scan
+  examples:
+  - 1
+  stability: stable
+  owner: defenseclaw
+  field_class: metadata
+  sensitivity: safe
+  cardinality: bounded
+  normalization:
+    id: numeric-range-v1
+    overrides:
+      min: 0
+      max: 9223372036854775807
+    notes: Exact nonnegative severity count
+  introduced_in: telemetry-registry-v1
+- id: defenseclaw.scan.high_count
+  type: int64
+  brief: HIGH findings produced by the scan
+  examples:
+  - 1
+  stability: stable
+  owner: defenseclaw
+  field_class: metadata
+  sensitivity: safe
+  cardinality: bounded
+  normalization:
+    id: numeric-range-v1
+    overrides:
+      min: 0
+      max: 9223372036854775807
+    notes: Exact nonnegative severity count
+  introduced_in: telemetry-registry-v1
+- id: defenseclaw.scan.medium_count
+  type: int64
+  brief: MEDIUM findings produced by the scan
+  examples:
+  - 1
+  stability: stable
+  owner: defenseclaw
+  field_class: metadata
+  sensitivity: safe
+  cardinality: bounded
+  normalization:
+    id: numeric-range-v1
+    overrides:
+      min: 0
+      max: 9223372036854775807
+    notes: Exact nonnegative severity count
+  introduced_in: telemetry-registry-v1
+- id: defenseclaw.scan.low_count
+  type: int64
+  brief: LOW findings produced by the scan
+  examples:
+  - 0
+  stability: stable
+  owner: defenseclaw
+  field_class: metadata
+  sensitivity: safe
+  cardinality: bounded
+  normalization:
+    id: numeric-range-v1
+    overrides:
+      min: 0
+      max: 9223372036854775807
+    notes: Exact nonnegative severity count
+  introduced_in: telemetry-registry-v1
+- id: defenseclaw.scan.info_count
+  type: int64
+  brief: INFO findings produced by the scan
+  examples:
+  - 0
+  stability: stable
+  owner: defenseclaw
+  field_class: metadata
+  sensitivity: safe
+  cardinality: bounded
+  normalization:
+    id: numeric-range-v1
+    overrides:
+      min: 0
+      max: 9223372036854775807
+    notes: Exact nonnegative severity count
+  introduced_in: telemetry-registry-v1
+- id: defenseclaw.scan.severity_max
+  type: string
+  brief: Maximum finding severity observed in the scan
+  examples:
+  - HIGH
+  stability: stable
+  owner: defenseclaw
+  field_class: metadata
+  sensitivity: safe
+  cardinality: low
+  normalization:
+    id: enum-v1
+    overrides:
+      enum:
+      - INFO
+      - LOW
+      - MEDIUM
+      - HIGH
+      - CRITICAL
+    notes: Canonical scan severity ladder; clean scans may report INFO
+  introduced_in: telemetry-registry-v1
+- id: defenseclaw.scan.verdict
+  type: string
+  brief: Source-backed security verdict for the scan
+  examples:
+  - block
+  stability: stable
+  owner: defenseclaw
+  field_class: metadata
+  sensitivity: safe
+  cardinality: low
+  normalization:
+    id: enum-v1
+    overrides:
+      enum:
+      - clean
+      - warn
+      - block
+    notes: Exact NormalizeVerdictEnum vocabulary; technical result remains the canonical outcome
+  introduced_in: telemetry-registry-v1
+- id: defenseclaw.scan.exit_code
+  type: int64
+  brief: Scanner process exit code when available
+  examples:
+  - 0
+  stability: stable
+  owner: defenseclaw
+  field_class: metadata
+  sensitivity: safe
+  cardinality: bounded
+  normalization:
+    id: numeric-range-v1
+    overrides:
+      min: -2147483648
+      max: 2147483647
+    notes: Includes -1 for launch failure and zero for successful completion
+  introduced_in: telemetry-registry-v1
+- id: defenseclaw.scan.error_summary
+  type: string
+  brief: Bounded scanner execution failure summary
+  examples:
+  - scanner timed out
+  stability: stable
+  owner: defenseclaw
+  field_class: error
+  sensitivity: sensitive
+  cardinality: bounded
+  normalization:
+    id: redacted-content-v1
+    overrides:
+      max_utf8_bytes: 65536
+    notes: Source ScanError after central redaction; absent on successful scans
+  introduced_in: telemetry-registry-v1
 - id: defenseclaw.network.target_ref
   type: string
   brief: Safe outbound target reference
@@ -974,6 +1399,176 @@ attributes:
   normalization:
     id: identifier-v1
     notes: normalized and route-projected
+  introduced_in: telemetry-registry-v1
+- id: defenseclaw.network.target_path
+  type: string
+  brief: Sanitized outbound URL path without query or fragment
+  examples:
+  - /v1/chat/completions
+  stability: stable
+  owner: defenseclaw
+  field_class: path
+  sensitivity: sensitive
+  cardinality: high
+  normalization:
+    id: path-v1
+    overrides:
+      max_utf8_bytes: 4096
+    notes: Path only; userinfo, query, and fragment are forbidden before telemetry construction
+  introduced_in: telemetry-registry-v1
+- id: defenseclaw.network.policy_outcome
+  type: string
+  brief: Human-readable source policy outcome
+  examples:
+  - Denied by default network policy
+  stability: stable
+  owner: defenseclaw
+  field_class: reason
+  sensitivity: sensitive
+  cardinality: bounded
+  normalization:
+    id: redacted-content-v1
+    overrides:
+      max_utf8_bytes: 4096
+    notes: Source NetworkEgressEvent.PolicyOutcome after central redaction
+  introduced_in: telemetry-registry-v1
+- id: defenseclaw.network.decision
+  type: string
+  brief: Machine-readable egress policy decision
+  examples:
+  - block
+  stability: stable
+  owner: defenseclaw
+  field_class: metadata
+  sensitivity: safe
+  cardinality: low
+  normalization:
+    id: enum-v1
+    overrides:
+      enum:
+      - allow
+      - block
+    notes: allow|block; derived from Blocked only when the source exposes that Boolean instead
+  introduced_in: telemetry-registry-v1
+- id: defenseclaw.network.decision_code
+  type: string
+  brief: Stable egress decision code
+  examples:
+  - NETWORK_DENY_DEFAULT
+  stability: stable
+  owner: defenseclaw
+  field_class: identifier
+  sensitivity: internal
+  cardinality: bounded
+  normalization:
+    id: identifier-v1
+    overrides:
+      max_utf8_bytes: 256
+    notes: Source-owned machine token; never derived from free text
+  introduced_in: telemetry-registry-v1
+- id: defenseclaw.network.reason
+  type: string
+  brief: Bounded source reason for an egress decision
+  examples:
+  - unknown-host-no-shape
+  stability: stable
+  owner: defenseclaw
+  field_class: reason
+  sensitivity: sensitive
+  cardinality: bounded
+  normalization:
+    id: redacted-content-v1
+    overrides:
+      max_utf8_bytes: 512
+    notes: Gateway EgressPayload.Reason after central redaction
+  introduced_in: telemetry-registry-v1
+- id: defenseclaw.network.branch
+  type: string
+  brief: Egress policy branch that observed the request
+  examples:
+  - shape
+  stability: stable
+  owner: defenseclaw
+  field_class: metadata
+  sensitivity: safe
+  cardinality: low
+  normalization:
+    id: enum-v1
+    overrides:
+      enum:
+      - known
+      - shape
+      - passthrough
+      - chat
+    notes: Includes the direct chat target guard in addition to the three passthrough branches
+  introduced_in: telemetry-registry-v1
+- id: defenseclaw.network.source
+  type: string
+  brief: Runtime layer that observed the egress request
+  examples:
+  - go
+  stability: stable
+  owner: defenseclaw
+  field_class: metadata
+  sensitivity: safe
+  cardinality: low
+  normalization:
+    id: enum-v1
+    overrides:
+      enum:
+      - go
+      - ts
+    notes: Go gateway or authenticated TypeScript interceptor
+  introduced_in: telemetry-registry-v1
+- id: defenseclaw.network.body_shape
+  type: string
+  brief: Bounded LLM request body-shape classification
+  examples:
+  - messages
+  stability: stable
+  owner: defenseclaw
+  field_class: metadata
+  sensitivity: safe
+  cardinality: low
+  normalization:
+    id: enum-v1
+    overrides:
+      enum:
+      - none
+      - messages
+      - prompt
+      - input
+      - contents
+      - unknown
+    notes: Shape classification only; never includes request content
+  introduced_in: telemetry-registry-v1
+- id: defenseclaw.network.looks_like_llm
+  type: boolean
+  brief: Whether provider or body-shape classification identified LLM traffic
+  examples:
+  - true
+  stability: stable
+  owner: defenseclaw
+  field_class: metadata
+  sensitivity: safe
+  cardinality: low
+  normalization:
+    id: identity-v1
+    notes: Source Boolean; false is meaningful and must not be treated as absent
+  introduced_in: telemetry-registry-v1
+- id: defenseclaw.network.blocked
+  type: boolean
+  brief: Whether policy actively prevented the outbound request
+  examples:
+  - true
+  stability: stable
+  owner: defenseclaw
+  field_class: metadata
+  sensitivity: safe
+  cardinality: low
+  normalization:
+    id: identity-v1
+    notes: Source Blocked Boolean or exact decision=block derivation; false is meaningful
   introduced_in: telemetry-registry-v1
 groups:
 - id: correlation.security
@@ -1078,7 +1673,7 @@ groups:
   body_fields: []
 - id: security.finding
   type: attribute_group
-  brief: Authoritative finding occurrence, evidence provenance and workflow status.
+  brief: Authoritative finding occurrence and source-backed evidence context.
   stability: stable
   introduced_in: telemetry-registry-v1
   extends:
@@ -1096,13 +1691,126 @@ groups:
     requirement_level: recommended
   - ref: defenseclaw.finding.fingerprint
     requirement_level: recommended
-  - ref: defenseclaw.finding.status
-    requirement_level: recommended
   - ref: defenseclaw.guardrail.evidence_summary
     requirement_level: recommended
   - ref: defenseclaw.finding.remediation
     requirement_level: recommended
+  - ref: defenseclaw.finding.title
+    requirement_level: recommended
+  - ref: defenseclaw.finding.description
+    requirement_level: recommended
+  - ref: defenseclaw.finding.location
+    requirement_level: recommended
+  - ref: defenseclaw.finding.line_number
+    requirement_level: recommended
+  - ref: defenseclaw.finding.tags
+    requirement_level: recommended
+  - ref: defenseclaw.finding.data_axes
+    requirement_level: recommended
+  - ref: defenseclaw.finding.tool_capability_class
+    requirement_level: recommended
+  - ref: defenseclaw.finding.external_endpoint
+    requirement_level: recommended
+  - ref: defenseclaw.finding.decision_path
+    requirement_level: recommended
+  - ref: defenseclaw.finding.content_fingerprint
+    requirement_level: recommended
+  - ref: defenseclaw.scan.scanner
+    requirement_level: recommended
   body_fields: []
+- id: security.scan
+  type: attribute_group
+  brief: Source-backed scan target, timing, result, finding-count, and failure context shared by scan logs and spans.
+  stability: stable
+  introduced_in: telemetry-registry-v1
+  extends:
+  - correlation.security
+  attributes:
+  - ref: defenseclaw.scan.scanner
+    requirement_level: recommended
+  - ref: defenseclaw.scan.phase
+    requirement_level: recommended
+  - ref: defenseclaw.scan.target_ref
+    requirement_level: recommended
+  - ref: defenseclaw.scan.target_type
+    requirement_level: recommended
+  - ref: defenseclaw.scan.duration_ms
+    requirement_level: recommended
+  - ref: defenseclaw.scan.finding_count
+    requirement_level: recommended
+  - ref: defenseclaw.scan.critical_count
+    requirement_level: recommended
+  - ref: defenseclaw.scan.high_count
+    requirement_level: recommended
+  - ref: defenseclaw.scan.medium_count
+    requirement_level: recommended
+  - ref: defenseclaw.scan.low_count
+    requirement_level: recommended
+  - ref: defenseclaw.scan.info_count
+    requirement_level: recommended
+  - ref: defenseclaw.scan.severity_max
+    requirement_level: recommended
+  - ref: defenseclaw.scan.verdict
+    requirement_level: recommended
+  - ref: defenseclaw.scan.exit_code
+    requirement_level: recommended
+  - ref: defenseclaw.scan.error_summary
+    requirement_level: recommended
+  body_fields: []
+  x-defenseclaw:
+    legacy_bindings:
+    - source: internal/scanner.ScanResult and internal/gatewaylog.ScanPayload
+      disposition: preserved_without_fabrication
+      details:
+        result: canonical envelope outcome
+        counts: exact total and INFO|LOW|MEDIUM|HIGH|CRITICAL source counts
+        missing_data: omit rather than derive from unrelated fields
+- id: security.network.egress
+  type: attribute_group
+  brief: Source-backed egress policy, request-shape, sanitized target, and enforcement context shared by egress logs and spans.
+  stability: stable
+  introduced_in: telemetry-registry-v1
+  extends:
+  - correlation.security
+  attributes:
+  - ref: defenseclaw.network.target_ref
+    requirement_level: recommended
+  - ref: defenseclaw.network.target_path
+    requirement_level: recommended
+  - ref: defenseclaw.network.policy_outcome
+    requirement_level: recommended
+  - ref: defenseclaw.network.decision
+    requirement_level: recommended
+  - ref: defenseclaw.network.decision_code
+    requirement_level: recommended
+  - ref: defenseclaw.network.reason
+    requirement_level: recommended
+  - ref: defenseclaw.network.branch
+    requirement_level: recommended
+  - ref: defenseclaw.network.source
+    requirement_level: recommended
+  - ref: defenseclaw.network.body_shape
+    requirement_level: recommended
+  - ref: defenseclaw.network.looks_like_llm
+    requirement_level: recommended
+  - ref: defenseclaw.network.blocked
+    requirement_level: recommended
+  - ref: url.scheme
+    requirement_level: recommended
+  - ref: server.address
+    requirement_level: recommended
+  - ref: server.port
+    requirement_level: recommended
+  body_fields: []
+  x-defenseclaw:
+    legacy_bindings:
+    - source: internal/audit.NetworkEgressEvent and internal/gatewaylog.EgressPayload
+      disposition: preserved_without_fabrication
+      details:
+        policy_outcome: present only on NetworkEgressEvent
+        branch_and_shape: present only on EgressPayload
+        sanitized_path: query, fragment, and userinfo forbidden
+        blocked: source Boolean or exact decision=block derivation
 - id: security.approval
   type: attribute_group
   brief: Approval resolution and route-projected command context.
@@ -1168,6 +1876,16 @@ groups:
   - ref: defenseclaw.judge.parse_error
     requirement_level: conditional
     conditional: judge-output-parse-failed-v1
+  - ref: defenseclaw.judge.error_summary
+    requirement_level: recommended
+  x-defenseclaw:
+    legacy_bindings:
+    - source: internal/gatewaylog.JudgePayload
+      disposition: preserved_without_fabrication
+      details:
+        error_summary: ParseError carries provider, empty-response, and parse failures when action is error
+        parse_error: populated only when the producer identifies an output parse failure
+        outcome: action error maps to failed; allow maps to allowed; block maps to blocked
 - id: body.hook.decision
   type: body_group
   brief: Final connector-facing hook decision with technical handling result and optional evaluation correlation.
@@ -1230,7 +1948,7 @@ groups:
     requirement_level: required
 - id: body.security.finding
   type: body_group
-  brief: Authoritative security finding body.
+  brief: Authoritative observed-finding body containing only source-backed observation facts.
   stability: stable
   introduced_in: telemetry-registry-v1
   extends:
@@ -1244,8 +1962,13 @@ groups:
     requirement_level: required
   - ref: defenseclaw.security.severity
     requirement_level: required
-  - ref: defenseclaw.finding.status
-    requirement_level: required
+  x-defenseclaw:
+    legacy_bindings:
+    - source: internal/scanner.Finding and internal/gatewaylog.ScanFindingPayload
+      disposition: preserved_without_fabrication
+      details:
+        evidence_summary: source Description or already-redacted evidence only
+        remediation: source text or deterministic rule-catalog text only
 - id: body.enforcement.action
   type: body_group
   brief: Enforcement attempt and outcome body.
@@ -1266,7 +1989,7 @@ groups:
   stability: stable
   introduced_in: telemetry-registry-v1
   extends:
-  - correlation.security
+  - security.scan
   attributes: []
   body_fields:
   - ref: defenseclaw.scan.id
@@ -1281,17 +2004,11 @@ groups:
   stability: stable
   introduced_in: telemetry-registry-v1
   extends:
-  - correlation.security
+  - security.network.egress
   attributes: []
   body_fields:
   - ref: defenseclaw.network.target_ref
     requirement_level: required
-  - ref: url.scheme
-    requirement_level: recommended
-  - ref: server.address
-    requirement_level: recommended
-  - ref: server.port
-    requirement_level: recommended
 - id: event.tool.flagged
   type: span_event
   brief: Bounded tool.flagged milestone; full durable record remains authoritative.
@@ -1387,7 +2104,8 @@ groups:
   brief: Bounded security.finding.observed milestone; full durable record remains authoritative.
   stability: stable
   introduced_in: telemetry-registry-v1
-  extends: []
+  extends:
+  - security.finding
   attributes:
   - ref: defenseclaw.finding.id
     requirement_level: recommended
@@ -2358,6 +3076,7 @@ groups:
     allowed_outcomes:
     - allowed
     - blocked
+    - failed
     route_selector: true
     mandatory_floor: []
     compatibility_profiles:

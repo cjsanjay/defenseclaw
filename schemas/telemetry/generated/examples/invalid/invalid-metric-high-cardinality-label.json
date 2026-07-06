@@ -3,7 +3,7 @@
     "artifact": "examples/invalid/invalid-metric-high-cardinality-label.json",
     "authority": "candidate-not-public-authority",
     "generator": "defenseclaw-telemetry-candidate-renderer-v1",
-    "materialized_view_sha256": "8906e863763b2847efa595e90fb6a5ccfce6d5808d4be79677c2b67433eb0423",
+    "materialized_view_sha256": "473d6b37f58a9c4430a62dd75e44c044b0a39780bd1c217403a110e769453af8",
     "registry_version": 1
   },
   "base_example": "valid-hook-latency-metric",
@@ -48,7 +48,7 @@
   "family": "metric.defenseclaw.connector.hook.latency",
   "field_classes": {},
   "id": "invalid-metric-high-cardinality-label",
-  "materialized_view_sha256": "8906e863763b2847efa595e90fb6a5ccfce6d5808d4be79677c2b67433eb0423",
+  "materialized_view_sha256": "473d6b37f58a9c4430a62dd75e44c044b0a39780bd1c217403a110e769453af8",
   "mutation": {
     "changes": [
       {

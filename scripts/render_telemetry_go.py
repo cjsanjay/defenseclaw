@@ -739,9 +739,7 @@ def _conditions_literal(bindings: Any) -> str:
     lines = ["familyConditionFacts{"]
     for condition_id, selector, optional_source in items:
         predicate = (
-            f"value, present := input.{selector}.Get(); present && value"
-            if optional_source
-            else f"input.{selector}"
+            f"value, present := input.{selector}.Get(); present && value" if optional_source else f"input.{selector}"
         )
         lines.extend(
             (
@@ -1272,9 +1270,7 @@ def _render_resource_validator(resource: Any, symbol: str, path: str) -> list[st
         "\tfixed := []familyFieldDescriptor{",
     ]
     for position, descriptor in enumerate(fixed):
-        lines.append(
-            f"\t\t{_field_descriptor_literal(descriptor, f'{path}.fixed_descriptors[{position}]')},"
-        )
+        lines.append(f"\t\t{_field_descriptor_literal(descriptor, f'{path}.fixed_descriptors[{position}]')},")
     lines.extend(
         (
             "\t}",
@@ -1398,9 +1394,7 @@ def _render_resource_helpers(resource: Any, path: str) -> list[str]:
     ):
         raise GoRenderError(f"{path}: unsupported custom resource field class")
     exact_forbidden = fixed + alias_keys + reserved
-    normalized_forbidden = tuple(
-        item.replace(".", "_").replace("-", "_") for item in exact_forbidden
-    )
+    normalized_forbidden = tuple(item.replace(".", "_").replace("-", "_") for item in exact_forbidden)
     lines = [
         "func generatedTelemetryResourceExactKeyForbidden(key string) bool {",
         "\tswitch key {",
@@ -1453,7 +1447,7 @@ def _render_resource_helpers(resource: Any, path: str) -> list[str]:
         "}",
         "",
         "func generatedTelemetryResourceContains(value, target string) bool {",
-        "\tif target == \"\" { return true }",
+        '\tif target == "" { return true }',
         "\tfor index := 0; index+len(target) <= len(value); index++ {",
         "\t\tif value[index:index+len(target)] == target { return true }",
         "\t}",
@@ -1464,7 +1458,7 @@ def _render_resource_helpers(resource: Any, path: str) -> list[str]:
         f"\tif len(key) < 1 || len(key) > {max_key} || !generatedTelemetryResourceASCIIAlpha(key[0]) {{",
         "\t\treturn false",
         "\t}",
-        "\tprevious := \"\"",
+        '\tprevious := ""',
         "\tstart := 0",
         "\tfor index := 0; index <= len(key); index++ {",
         "\t\tif index < len(key) {",
@@ -1475,7 +1469,7 @@ def _render_resource_helpers(resource: Any, path: str) -> list[str]:
         "\t\t\tif character != '.' && character != '_' && character != '-' { return false }",
         "\t\t}",
         "\t\tsegment := generatedTelemetryResourceASCIILower(key[start:index])",
-        "\t\tif generatedTelemetryResourceSegmentForbidden(segment) || previous == \"api\" && segment == \"key\" {",
+        '\t\tif generatedTelemetryResourceSegmentForbidden(segment) || previous == "api" && segment == "key" {',
         "\t\t\treturn false",
         "\t\t}",
         "\t\tprevious = segment",
@@ -1487,18 +1481,18 @@ def _render_resource_helpers(resource: Any, path: str) -> list[str]:
         "func generatedTelemetryResourceValueForbidden(value string) bool {",
         "\tvalue = generatedTelemetryResourceTrimmed(value)",
         "\tlower := generatedTelemetryResourceASCIILower(value)",
-        "\tif generatedTelemetryResourceHasPrefix(value, \"/\") ||",
-        "\t\tgeneratedTelemetryResourceHasPrefix(value, \"~/\") ||",
+        '\tif generatedTelemetryResourceHasPrefix(value, "/") ||',
+        '\t\tgeneratedTelemetryResourceHasPrefix(value, "~/") ||',
         "\t\tgeneratedTelemetryResourceHasPrefix(value, `\\\\`) ||",
-        "\t\tgeneratedTelemetryResourceHasPrefix(lower, \"file://\") ||",
+        '\t\tgeneratedTelemetryResourceHasPrefix(lower, "file://") ||',
         "\t\tlen(value) >= 3 && generatedTelemetryResourceASCIIAlpha(value[0]) && value[1] == ':' &&",
         "\t\t\t(value[2] == '/' || value[2] == '\\\\') {",
         "\t\treturn true",
         "\t}",
-        "\tif generatedTelemetryResourceContains(lower, \"private key\") &&",
-        "\t\tgeneratedTelemetryResourceContains(lower, \"-----begin\") ||",
-        "\t\tgeneratedTelemetryResourceHasPrefix(lower, \"bearer \") ||",
-        "\t\tgeneratedTelemetryResourceHasPrefix(lower, \"basic \") {",
+        '\tif generatedTelemetryResourceContains(lower, "private key") &&',
+        '\t\tgeneratedTelemetryResourceContains(lower, "-----begin") ||',
+        '\t\tgeneratedTelemetryResourceHasPrefix(lower, "bearer ") ||',
+        '\t\tgeneratedTelemetryResourceHasPrefix(lower, "basic ") {',
         "\t\treturn true",
         "\t}",
         "\tif scheme := generatedTelemetryResourceSchemeBoundary(lower); scheme >= 0 {",
@@ -1513,7 +1507,7 @@ def _render_resource_helpers(resource: Any, path: str) -> list[str]:
         "",
         "func generatedTelemetryResourceSchemeBoundary(value string) int {",
         "\tfor index := 1; index+2 < len(value); index++ {",
-        "\t\tif value[index:index+3] == \"://\" { return index }",
+        '\t\tif value[index:index+3] == "://" { return index }',
         "\t}",
         "\treturn -1",
         "}",
@@ -1535,7 +1529,7 @@ def _render_resource_helpers(resource: Any, path: str) -> list[str]:
         "\t\t\tend = index + width",
         "\t\t}",
         "\t}",
-        "\tif start < 0 { return \"\" }",
+        '\tif start < 0 { return "" }',
         "\treturn value[start:end]",
         "}",
         "",
@@ -2622,10 +2616,10 @@ def render_go_candidate(index: Any, plan: Any | None = None) -> GoRenderCandidat
     )
     files = _validate_file_plans(plan, declarations)
     _validate_private_declaration_coverage(plan, files)
-    if len(declarations) != 1789:
-        raise GoRenderError("GoAPIPlanIR.declarations: exact 1,789-declaration inventory is required")
-    if len(_sequence(_read(plan, "private_declarations", "GoAPIPlanIR"), "private declarations", maximum=4096)) != 741:
-        raise GoRenderError("GoAPIPlanIR.private_declarations: exact 741-declaration inventory is required")
+    if len(declarations) != 1897:
+        raise GoRenderError("GoAPIPlanIR.declarations: exact 1,897-declaration inventory is required")
+    if len(_sequence(_read(plan, "private_declarations", "GoAPIPlanIR"), "private declarations", maximum=4096)) != 749:
+        raise GoRenderError("GoAPIPlanIR.private_declarations: exact 749-declaration inventory is required")
     producer = compile_go_producer_plan(index)
     fixture = compile_go_fixture_plan(index)
     expected_projections = {

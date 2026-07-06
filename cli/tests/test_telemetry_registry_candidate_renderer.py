@@ -114,6 +114,8 @@ def _span_record_for_family(
     for key, attribute_schema in allowed_attributes.items():
         if "const" in attribute_schema:
             record["body"]["attributes"][key] = attribute_schema["const"]
+    if family_id == "span.ai.discovery.detector":
+        record["body"]["attributes"]["defenseclaw.ai.discovery.detector"] = "process"
     record["body"]["kind"] = body_overlay["properties"]["kind"]["enum"][0]
     record["body"].pop("events", None)
     record["bucket"] = metadata["bucket"]
@@ -285,8 +287,8 @@ def test_public_candidate_render_index_is_identity_bound_deterministic_and_recur
     assert first.schema_version == 1
     assert first.registry_version == 1
     assert first.bucket_catalog_version == 1
-    assert len(first.families) == 243
-    assert len(first.attributes) == 331
+    assert len(first.families) == 247
+    assert len(first.attributes) == 427
     assert len(first.domains) == 3
     assert sum(len(domain.producer_mappings) for domain in first.domains) == 202
     assert first.family_domains["span.model.chat"] == "genai"
@@ -375,14 +377,14 @@ def test_candidate_enrichment_is_complete_typed_and_recursively_immutable(
     assert index.materialized_view_sha256 == index.digest == view.typed_canonical_json_sha256
     assert index.candidate_render_index_sha256 != index.materialized_view_sha256
     assert len(index.candidate_render_index_sha256) == 64
-    assert len(index.enriched_fields) == 3099
+    assert len(index.enriched_fields) == 3643
     assert Counter(item.context for item in index.enriched_fields.values()) == {
-        "log": 1703,
-        "span": 938,
+        "log": 2128,
+        "span": 1036,
         "metric": 346,
         "resource": 14,
         "scope": 2,
-        "event": 48,
+        "event": 69,
         "link": 1,
         "structured": 47,
     }
@@ -419,24 +421,24 @@ def test_candidate_enrichment_is_complete_typed_and_recursively_immutable(
         owner_orders.setdefault((item.context, item.owner_id), []).append(item.order)
     assert all(sorted(orders) == list(range(len(orders))) for orders in owner_orders.values())
 
-    assert len(index.enriched_families) == 243
+    assert len(index.enriched_families) == 247
     assert len(index.enriched_traces) == 25
     assert len(index.enriched_metrics) == 131
-    assert len(index.mandatory_programs) == 87
+    assert len(index.mandatory_programs) == 91
     assert sum(bool(program.rule_ids) for program in index.mandatory_programs.values()) == 42
-    assert sum(not program.rule_ids for program in index.mandatory_programs.values()) == 45
+    assert sum(not program.rule_ids for program in index.mandatory_programs.values()) == 49
     assert sum(len(program.rule_ids) for program in index.mandatory_programs.values()) == 43
     assert all(
         (family.mandatory_program_id == family.id) == (family.signal == "logs")
         for family in index.enriched_families.values()
     )
 
-    assert len(index.expanded_producer_mappings) == 8038
+    assert len(index.expanded_producer_mappings) == 8075
     assert Counter(row.identity_origin for row in index.expanded_producer_mappings) == {
         "default": 188,
-        "allowed_context": 7850,
+        "allowed_context": 7887,
     }
-    assert sum(row.family_id is not None for row in index.expanded_producer_mappings) == 1781
+    assert sum(row.family_id is not None for row in index.expanded_producer_mappings) == 1818
     assert all(
         (row.selected_mandatory_program_id == row.family_id)
         if row.family_id is not None
@@ -445,13 +447,13 @@ def test_candidate_enrichment_is_complete_typed_and_recursively_immutable(
     )
     assert all(row.family_id is not None or row.compatibility_only for row in index.expanded_producer_mappings)
 
-    assert len(index.go_declaration_values) == 905
+    assert len(index.go_declaration_values) == 1005
     const_rows = tuple(row for row in index.go_symbol_table.rows if row.declaration_form == "exported_const")
     assert tuple((item.kind, item.source_id, item.symbol) for item in index.go_declaration_values) == tuple(
         (row.kind, row.source_id, row.symbol) for row in const_rows
     )
-    assert Counter(item.literal_kind for item in index.go_declaration_values) == {"string": 893, "integer": 12}
-    assert Counter(item.go_type for item in index.go_declaration_values) == {"string": 893, "int": 12}
+    assert Counter(item.literal_kind for item in index.go_declaration_values) == {"string": 993, "integer": 12}
+    assert Counter(item.go_type for item in index.go_declaration_values) == {"string": 993, "int": 12}
     assert (
         next(
             item for item in index.go_declaration_values if item.kind == "phase_code" and item.source_id == "session"
@@ -741,7 +743,7 @@ def test_candidate_renderer_is_deterministic_complete_and_in_memory(
     assert {path: artifact.payload for path, artifact in from_index.items()} == {
         path: artifact.payload for path, artifact in artifacts.items()
     }
-    assert len(artifacts) == 56
+    assert len(artifacts) == 58
     assert {
         f"{PREFIX}/telemetry.schema.json",
         f"{PREFIX}/catalog.json",
@@ -751,8 +753,8 @@ def test_candidate_renderer_is_deterministic_complete_and_in_memory(
         f"{PREFIX}/otlp-fixtures/manifest.json",
     }.issubset(artifacts)
     assert sum("/examples/valid/" in path for path in artifacts) == 7
-    assert sum("/examples/invalid/" in path for path in artifacts) == 5
-    assert sum("/otlp-fixtures/cases/" in path for path in artifacts) == 12
+    assert sum("/examples/invalid/" in path for path in artifacts) == 6
+    assert sum("/otlp-fixtures/cases/" in path for path in artifacts) == 13
     with pytest.raises(TypeError):
         artifacts["new"] = artifacts[next(iter(artifacts))]  # type: ignore[index]
     for path, artifact in artifacts.items():
@@ -772,9 +774,7 @@ def test_v7_exporter_selection_is_schema_valid_exact_and_non_wildcard(
     artifacts: Mapping[str, Any],
 ) -> None:
     document = _json(artifacts, "compatibility/v7-exporter-selection.json")
-    schema = json.loads(
-        (ROOT / "schemas/telemetry/v8/compatibility/v7-exporter-selection.schema.json").read_bytes()
-    )
+    schema = json.loads((ROOT / "schemas/telemetry/v8/compatibility/v7-exporter-selection.schema.json").read_bytes())
     jsonschema.Draft202012Validator.check_schema(schema)
     jsonschema.Draft202012Validator(schema).validate(document)
 
@@ -782,7 +782,7 @@ def test_v7_exporter_selection_is_schema_valid_exact_and_non_wildcard(
     console_events = document["exporters"]["gateway_console"]["logs"][0]["event_names"]
     audit_actions = document["exporters"]["audit_sink"]["logs"][0]["actions"]
     assert gateway_events == console_events == sorted(gateway_events)
-    assert len(gateway_events) == 168
+    assert len(gateway_events) == 172
     assert len(audit_actions) == 188
     assert {
         "guardrail.evaluation.completed",
@@ -815,7 +815,7 @@ def test_v7_exporter_selection_is_schema_valid_exact_and_non_wildcard(
     log_families = [family for family in catalog["families"] if family["signal"] == "logs"]
     span_families = [family for family in catalog["families"] if family["signal"] == "traces"]
     metric_families = [family for family in catalog["families"] if family["signal"] == "metrics"]
-    assert len(log_families) == 87
+    assert len(log_families) == 91
     assert len(span_families) == 25
     assert len(metric_families) == 131
     assert {family["bucket"] for family in log_families} == set(metric_buckets)
@@ -855,20 +855,20 @@ def test_candidate_index_consumes_reviewed_go_symbol_contract_immutably_and_pres
         "otel": "OTel",
     }
     assert index.go_symbol_overrides == ()
-    assert len(table.rows) == 1789
-    assert table.table_sha256 == "1063fecb9fbed0fa854da6ee58a0b808a9db98f3c2e1db5c7a57aed868441970"
+    assert len(table.rows) == 1897
+    assert table.table_sha256 == "7663bcaa86e8307990ba1d64cee1f783881b9a9ff7dd86ad01dab1db623a7c1f"
     assert table.kind_counts == renderer._GO_SYMBOL_KIND_COUNTS
     assert table.declaration_form_counts == {
-        "exported_const": 905,
-        "exported_type": 460,
+        "exported_const": 1005,
+        "exported_type": 464,
         "exported_function": 181,
-        "family_builder_method": 243,
+        "family_builder_method": 247,
     }
     assert rows[("family", "span.model.chat")].symbol == "TelemetryFamilyModelChat"
     assert rows[("span_event", "model.retry")].symbol == "TelemetrySpanEventModelRetry"
     assert rows[("structured_type", "gen_ai.canonical_json")].declaration_form == "exported_type"
     assert rows[("span_link_constructor", "span.model.chat#caused_by")].symbol == ("NewSpanModelChatCausedByLink")
-    assert len(artifacts) == 55
+    assert len(artifacts) == 58
     with pytest.raises(TypeError):
         index.go_symbol_policy.brand_spellings["otel"] = "Otel"  # type: ignore[index]
     with pytest.raises(TypeError):
@@ -1239,7 +1239,7 @@ def test_public_views_have_exact_live_portable_inventory_and_no_staged_paths(
     planned_paths = tuple(path for entry in plan.views for path in entry.target_paths)
     staged_paths = {f"{PREFIX}/public-views/{path}" for path in public_paths}
 
-    assert len(artifacts) == 55
+    assert len(artifacts) == 58
     assert len(plan.views) == 21
     assert renderer.PUBLIC_VIEW_GENERATED_AUTHORITY == "generated"
     assert len(public_paths) == 26
@@ -1501,8 +1501,8 @@ def test_bundle_is_complete_draft_2020_12_and_examples_have_exact_dispositions(
 
     assert schema["$schema"] == "https://json-schema.org/draft/2020-12/schema"
     assert schema["$id"] == "https://defenseclaw.dev/schemas/telemetry/v8/telemetry.schema.json"
-    assert len(schema["oneOf"]) == 243
-    assert len(schema["$defs"]) == 621
+    assert len(schema["oneOf"]) == 247
+    assert len(schema["$defs"]) == 721
     assert set(schema["x-defenseclaw-conditions"][0]) == {"description", "enforcement", "false_requirement", "id"}
     assert "$type" not in json.dumps(schema["x-defenseclaw-conditions"])
     assert len(schema["x-defenseclaw-conditions"]) == 9
@@ -1602,7 +1602,7 @@ def test_bundle_is_complete_draft_2020_12_and_examples_have_exact_dispositions(
                 "mandatory_facts": [],
                 "occurrence": None,
             }
-    assert observed == {True: 7, False: 5}
+    assert observed == {True: 7, False: 6}
 
 
 def test_custom_resource_schema_and_semantic_contract_are_exact(
@@ -1637,9 +1637,7 @@ def test_custom_resource_schema_and_semantic_contract_are_exact(
     ir = generator.compile_registry(ROOT)
     groups = {group.id: group for domain in ir.domains for group in domain.groups}
     local = {attribute.id: attribute for domain in ir.domains for attribute in domain.attributes}
-    extensions = {
-        extension.ref: extension for domain in ir.domains for extension in domain.attribute_extensions
-    }
+    extensions = {extension.ref: extension for domain in ir.domains for extension in domain.attribute_extensions}
     upstream = {
         attribute.id: (dependency.id, attribute)
         for dependency in ir.dependencies
@@ -2607,8 +2605,8 @@ def test_catalog_contains_portable_family_privacy_condition_lifecycle_and_compat
 ) -> None:
     catalog = _json(artifacts, "catalog.json")
     assert catalog["format"] == "defenseclaw-telemetry-catalog-v1"
-    assert len(catalog["families"]) == 243
-    assert len(catalog["attributes"]) == 331
+    assert len(catalog["families"]) == 247
+    assert len(catalog["attributes"]) == 427
     assert {item["signal"] for item in catalog["families"]} == {"logs", "traces", "metrics"}
     assert {item["id"] for item in catalog["compatibility_manifests"]} == {
         "galileo-rich-v2",
@@ -2679,7 +2677,7 @@ def test_normalized_example_and_otlp_manifests_cover_the_same_cases(
     assert examples["conformance"]["scope"] == "canonical-schema-comparison-only"
     assert fixtures["conformance"]["builder_parity"] == "pending-source-inputs"
     assert [item["id"] for item in examples["cases"]] == [item["id"] for item in fixtures["cases"]]
-    assert len(examples["cases"]) == 12
+    assert len(examples["cases"]) == 13
     assert fixtures["canonical_to_otlp"]["json_mapping"] == "opentelemetry_proto_json_v1"
     assert "$type" not in json.dumps(fixtures["canonical_to_otlp"])
 

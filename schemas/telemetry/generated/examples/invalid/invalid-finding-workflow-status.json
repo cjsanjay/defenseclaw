@@ -1,23 +1,20 @@
 {
   "x-defenseclaw-generated": {
-    "artifact": "examples/valid/valid-security-finding-with-derived-evidence.json",
+    "artifact": "examples/invalid/invalid-finding-workflow-status.json",
     "authority": "candidate-not-public-authority",
     "generator": "defenseclaw-telemetry-candidate-renderer-v1",
     "materialized_view_sha256": "473d6b37f58a9c4430a62dd75e44c044b0a39780bd1c217403a110e769453af8",
     "registry_version": 1
   },
-  "base_example": null,
+  "base_example": "valid-security-finding-with-derived-evidence",
   "builder_context": {
     "condition_facts": [],
     "inheritance": {
-      "base_example": null,
-      "mode": "explicit"
+      "base_example": "valid-security-finding-with-derived-evidence",
+      "mode": "exact_base"
     },
     "mandatory_facts": [],
-    "occurrence": {
-      "record_id": "rec-finding-001",
-      "timestamp": "2026-07-03T12:00:02Z"
-    }
+    "occurrence": null
   },
   "conformance": {
     "builder_parity": "pending-source-inputs",
@@ -46,23 +43,27 @@
     ],
     "scope": "canonical-schema-comparison-only"
   },
-  "description": "Evidence summary and remediation are bounded producer or rule-catalog facts; an observation does not fabricate workflow status.",
-  "expected_error": null,
+  "description": "An observed finding cannot claim workflow status because current observation producers have no authoritative finding-case lifecycle state.",
+  "expected_error": "finding_body_field_not_registered",
   "family": "log.finding.observed",
-  "field_classes": {
-    "/defenseclaw.finding.category": "metadata",
-    "/defenseclaw.finding.confidence": "metadata",
-    "/defenseclaw.finding.fingerprint": "identifier",
-    "/defenseclaw.finding.id": "identifier",
-    "/defenseclaw.finding.remediation": "reason",
-    "/defenseclaw.finding.rule_id": "identifier",
-    "/defenseclaw.finding.target_ref": "identifier",
-    "/defenseclaw.guardrail.evidence_summary": "evidence",
-    "/defenseclaw.security.severity": "metadata"
-  },
-  "id": "valid-security-finding-with-derived-evidence",
+  "field_classes": {},
+  "id": "invalid-finding-workflow-status",
   "materialized_view_sha256": "473d6b37f58a9c4430a62dd75e44c044b0a39780bd1c217403a110e769453af8",
-  "mutation": null,
+  "mutation": {
+    "changes": [
+      {
+        "op": "add",
+        "path": "/record/body/defenseclaw.finding.status",
+        "value": "open"
+      },
+      {
+        "op": "add",
+        "path": "/record/field_classes/~1defenseclaw.finding.status",
+        "value": "metadata"
+      }
+    ],
+    "kind": "finding_body_field_not_registered"
+  },
   "record": {
     "body": {
       "defenseclaw.finding.category": "unsafe_capability",
@@ -71,6 +72,7 @@
       "defenseclaw.finding.id": "finding-001",
       "defenseclaw.finding.remediation": "Review the declared capability and restrict or quarantine the asset.",
       "defenseclaw.finding.rule_id": "SKILL-001",
+      "defenseclaw.finding.status": "open",
       "defenseclaw.finding.target_ref": "asset:skill/example",
       "defenseclaw.guardrail.evidence_summary": "Static rule SKILL-001 matched the normalized manifest capability set.",
       "defenseclaw.security.severity": "HIGH"
@@ -89,6 +91,7 @@
       "/defenseclaw.finding.id": "identifier",
       "/defenseclaw.finding.remediation": "reason",
       "/defenseclaw.finding.rule_id": "identifier",
+      "/defenseclaw.finding.status": "metadata",
       "/defenseclaw.finding.target_ref": "identifier",
       "/defenseclaw.guardrail.evidence_summary": "evidence",
       "/defenseclaw.security.severity": "metadata"
@@ -110,5 +113,5 @@
   "registry_version": 1,
   "schema_version": 1,
   "signal": "logs",
-  "valid": true
+  "valid": false
 }

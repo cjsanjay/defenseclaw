@@ -86,7 +86,7 @@ _CANONICAL_OUTCOME_ORDER = (
     "timed_out",
     "validated",
 )
-_REAL_FAMILY_OUTCOME_CONTRACT_DIGEST = "8cd00e119000c51f734d9948fa0df8cd06a0b91ceea5d7d210c33fe8ae79f078"
+_REAL_FAMILY_OUTCOME_CONTRACT_DIGEST = "d75e3e7809e6e264a432ca5e45f84cd7e6d4e2864292d3c97cf8f16ee7608bd1"
 _CANONICAL_AGENT_PHASES = (
     "session",
     "planning",
@@ -668,7 +668,7 @@ def _domain_sources() -> dict[str, dict[str, Any]]:
             next(item for item in canonical_operations["attribute_extensions"] if item["ref"] == "service.version")
         )
     )
-    for index in range(74):
+    for index in range(78):
         operations["groups"].append(
             {
                 "id": f"fixture.log.{index}",
@@ -847,12 +847,8 @@ def _fixture_root(tmp_path: Path) -> Path:
     schema_source = ROOT / "schemas/telemetry/v8/output-manifest.schema.json"
     schema_bytes = schema_source.read_bytes()
     (telemetry / "output-manifest.schema.json").write_bytes(schema_bytes)
-    compatibility_schema_source = (
-        ROOT / "schemas/telemetry/v8/compatibility/v7-exporter-selection.schema.json"
-    )
-    compatibility_schema_target = (
-        telemetry / "compatibility/v7-exporter-selection.schema.json"
-    )
+    compatibility_schema_source = ROOT / "schemas/telemetry/v8/compatibility/v7-exporter-selection.schema.json"
+    compatibility_schema_target = telemetry / "compatibility/v7-exporter-selection.schema.json"
     compatibility_schema_target.parent.mkdir(parents=True)
     compatibility_schema_target.write_bytes(compatibility_schema_source.read_bytes())
     for schema_baseline_source in (ROOT / "schemas/telemetry/v8/baselines/output-manifest").glob("*.schema.json"):
@@ -1708,9 +1704,9 @@ def test_real_candidate_outputs_validate_as_one_complete_manifest_inventory(
     records = manifest["ownership_inventory"]["artifacts"]
     record_by_path = {record["path"]: record for record in records}
 
-    assert len(outputs) - len(module.GO_CANDIDATE_OUTPUT_PATHS) - 1 == 56
-    assert len(records) == 63
-    assert len(desired) == len(manifest["outputs"]) == 64
+    assert len(outputs) - len(module.GO_CANDIDATE_OUTPUT_PATHS) - 1 == 58
+    assert len(records) == 65
+    assert len(desired) == len(manifest["outputs"]) == 66
     assert live_outputs == tuple(sorted(expected_live))
     assert not any(path.startswith(module.PUBLIC_VIEW_STAGED_PREFIX) for path in manifest["outputs"])
     assert expected_live <= set(record_by_path)
@@ -3235,7 +3231,7 @@ def test_compiler_ir_preserves_every_validated_public_contract(tmp_path: Path) -
             "allowed_outcomes": ["completed", "failed"],
             "link_relations": ["caused_by"],
             "route_selector": False,
-            "compatibility_profiles": ["local-observability-v1"],
+            "compatibility_profiles": ["galileo-rich-v2", "local-observability-v1"],
             "legacy_bindings": [
                 {
                     "source": "fixture.span",
@@ -3379,7 +3375,10 @@ def test_compiler_ir_preserves_every_validated_public_contract(tmp_path: Path) -
     assert span_ir.link_relations == ("caused_by",)
     assert span_ir.mandatory_floor is None
     assert span_ir.route_selector is False
-    assert span_ir.compatibility_profiles == ("local-observability-v1",)
+    assert span_ir.compatibility_profiles == (
+        "galileo-rich-v2",
+        "local-observability-v1",
+    )
     assert span_ir.family_schema_version == 1
     assert span_ir.bucket == "model.io"
     assert span_ir.legacy_bindings is not None
@@ -3562,12 +3561,12 @@ def test_group_runtime_vocabularies_are_closed(
 
 
 @pytest.mark.parametrize(
-        ("requirement_level", "include_clause", "expected"),
-        [
-            ("conditional", False, "required for conditional fields"),
-            ("required", True, "allowed only for conditional or optional fields"),
-            ("recommended", True, "allowed only for conditional or optional fields"),
-        ],
+    ("requirement_level", "include_clause", "expected"),
+    [
+        ("conditional", False, "required for conditional fields"),
+        ("required", True, "allowed only for conditional or optional fields"),
+        ("recommended", True, "allowed only for conditional or optional fields"),
+    ],
 )
 def test_attribute_use_conditional_clause_is_exactly_coupled_to_level(
     tmp_path: Path,
@@ -3686,9 +3685,9 @@ def test_real_family_outcome_contract_matrix_is_exact() -> None:
     families = [group for domain in ir.domains for group in domain.groups if group.type in {"log", "span"}]
 
     assert outcome_order == _CANONICAL_OUTCOME_ORDER
-    assert sum(group.type == "log" for group in families) == 87
+    assert sum(group.type == "log" for group in families) == 91
     assert sum(group.type == "span" for group in families) == 25
-    assert len(families) == len({group.id for group in families}) == 112
+    assert len(families) == len({group.id for group in families}) == 116
     assert all(group.outcome_requirement is not None for group in families)
     assert all(group.allowed_outcomes is not None for group in families)
 
@@ -3701,8 +3700,8 @@ def test_real_family_outcome_contract_matrix_is_exact() -> None:
         for requirement in {item[0] for item in matrix}
     }
 
-    assert len(matrix) == 46
-    assert family_counts == {"forbidden": 10, "required": 102}
+    assert len(matrix) == 47
+    assert family_counts == {"forbidden": 11, "required": 105}
     assert _outcome_contract_digest(contracts) == _REAL_FAMILY_OUTCOME_CONTRACT_DIGEST
 
 
@@ -6127,6 +6126,184 @@ def test_asset_state_log_families_preserve_enforcement_state_change_floor() -> N
     }
 
 
+def test_operations_families_preserve_lossless_control_plane_discovery_and_ingest_facts() -> None:
+    module = _load_generator_module("telemetry_registry_operations_lossless_facts")
+    ir = module.compile_registry(ROOT)
+    groups = {group.id: group for domain in ir.domains for group in domain.groups}
+    attributes = {attribute.id: attribute for domain in ir.domains for attribute in domain.attributes}
+
+    def uses(family_id: str) -> dict[str, Any]:
+        return {use.ref: use for use in groups[family_id].resolved_uses}
+
+    admin_fields = {
+        "defenseclaw.admin.actor_ref",
+        "defenseclaw.admin.origin",
+        "defenseclaw.admin.target_ref",
+        "defenseclaw.admin.before_summary",
+        "defenseclaw.admin.after_summary",
+        "defenseclaw.admin.reason",
+        "defenseclaw.admin.revision",
+        "defenseclaw.admin.current_revision",
+        "defenseclaw.admin.change_count",
+        "defenseclaw.admin.change_set_hash",
+    }
+    assert admin_fields <= set(uses("operation.admin"))
+    assert admin_fields <= set(uses("body.compliance.activity"))
+    assert admin_fields <= set(uses("span.admin.operation"))
+    for field_id in ("defenseclaw.admin.before_summary", "defenseclaw.admin.after_summary"):
+        attribute = attributes[field_id]
+        assert attribute.field_class == "metadata"
+        assert attribute.sensitivity == "internal"
+        assert attribute.normalization.id == "bounded-v1"
+        assert attribute.normalization.effective_constraints["max_utf8_bytes"] == 2048
+    assert attributes["defenseclaw.admin.target_ref"].field_class == "identifier"
+    assert attributes["defenseclaw.admin.reason"].field_class == "metadata"
+
+    asset_fields = {
+        "defenseclaw.asset.id",
+        "defenseclaw.asset.type",
+        "defenseclaw.asset.target_ref",
+        "defenseclaw.asset.target_path",
+        "defenseclaw.asset.transition",
+        "defenseclaw.asset.transition_reason",
+        "defenseclaw.asset.transition_code",
+        "defenseclaw.asset.transition_initiator",
+        "defenseclaw.asset.previous_state",
+        "defenseclaw.asset.resulting_state",
+        "defenseclaw.asset.install_action",
+        "defenseclaw.asset.file_action",
+        "defenseclaw.asset.runtime_action",
+    }
+    for family_id in (
+        "span.asset.transition",
+        "log.asset.activated",
+        "log.asset.admitted",
+        "log.asset.disabled",
+        "log.asset.discovered",
+        "log.asset.quarantined",
+        "log.asset.registered",
+        "log.asset.released",
+        "log.asset.removed",
+        "log.asset.updated",
+    ):
+        family_uses = uses(family_id)
+        assert asset_fields <= set(family_uses)
+        assert family_uses["defenseclaw.asset.id"].requirement_level == "required"
+        assert family_uses["defenseclaw.asset.type"].requirement_level == "recommended"
+        assert groups[family_id].compatibility_profiles == ("local-observability-v1",)
+    assert attributes["defenseclaw.asset.target_path"].field_class == "path"
+    assert groups["span.asset.scan"].extends == ("span.core", "security.scan", "error.core")
+    assert groups["span.asset.scan.phase"].extends == ("span.core", "security.scan", "error.core")
+    assert groups["span.network.request"].extends == (
+        "span.core",
+        "transport.http",
+        "security.network.egress",
+        "error.core",
+    )
+
+    ai_run_fields = {
+        "defenseclaw.ai.discovery.scan_id",
+        "defenseclaw.ai.discovery.source",
+        "defenseclaw.ai.discovery.privacy_mode",
+        "defenseclaw.ai.discovery.result",
+        "defenseclaw.ai.discovery.duration_ms",
+        "defenseclaw.ai.discovery.signals_total",
+        "defenseclaw.ai.discovery.active_signals",
+        "defenseclaw.ai.discovery.new_signals",
+        "defenseclaw.ai.discovery.changed_signals",
+        "defenseclaw.ai.discovery.gone_signals",
+        "defenseclaw.ai.discovery.files_scanned",
+        "defenseclaw.ai.discovery.dedupe_suppressed",
+        "defenseclaw.ai.discovery.errors",
+    }
+    assert ai_run_fields <= set(uses("span.ai.discovery"))
+    assert ai_run_fields <= set(uses("log.ai.discovery.completed"))
+    assert groups["log.ai.discovery.completed"].allowed_outcomes == ("completed", "partial")
+    detector_fields = {
+        "defenseclaw.ai.discovery.detector",
+        "defenseclaw.ai.discovery.duration_ms",
+        "defenseclaw.ai.discovery.signals_total",
+        "defenseclaw.ai.discovery.files_scanned",
+    }
+    assert detector_fields <= set(uses("span.ai.discovery.detector"))
+    component_fields = {
+        "defenseclaw.ai.component.vendor",
+        "defenseclaw.ai.component.product",
+        "defenseclaw.ai.component.identity_score",
+        "defenseclaw.ai.component.identity_band",
+        "defenseclaw.ai.component.presence_score",
+        "defenseclaw.ai.component.presence_band",
+        "defenseclaw.ai.component.install_count",
+        "defenseclaw.ai.component.workspace_count",
+        "defenseclaw.ai.component.detector_count",
+        "defenseclaw.ai.component.policy_version",
+    }
+    for family_id in (
+        "log.ai_component.changed",
+        "log.ai_component.confidence.changed",
+        "log.ai_component.discovered",
+        "log.ai_component.removed",
+    ):
+        assert component_fields <= set(uses(family_id))
+        assert groups[family_id].compatibility_profiles == ("local-observability-v1",)
+
+    agent_summary = {
+        "defenseclaw.agent.discovery.source",
+        "defenseclaw.agent.discovery.cache_hit",
+        "defenseclaw.agent.discovery.result",
+        "defenseclaw.agent.discovery.duration_ms",
+        "defenseclaw.agent.discovery.agents_total",
+        "defenseclaw.agent.discovery.installed_total",
+    }
+    for family_id, allowed_outcomes in (
+        ("log.agent.discovery.completed", ("completed",)),
+        ("log.agent.discovery.rejected", ("rejected",)),
+    ):
+        assert agent_summary == set(uses(family_id))
+        assert groups[family_id].bucket == "agent.lifecycle"
+        assert groups[family_id].allowed_outcomes == allowed_outcomes
+    completed_uses = uses("log.agent.discovery.completed")
+    assert all(completed_uses[field_id].requirement_level == "required" for field_id in agent_summary)
+    rejected_uses = uses("log.agent.discovery.rejected")
+    assert rejected_uses["defenseclaw.agent.discovery.source"].requirement_level == "required"
+    assert rejected_uses["defenseclaw.agent.discovery.result"].requirement_level == "required"
+    assert all(
+        rejected_uses[field_id].requirement_level == "recommended"
+        for field_id in agent_summary - {"defenseclaw.agent.discovery.source", "defenseclaw.agent.discovery.result"}
+    )
+    assert set(uses("log.agent.discovery.signal")) == {
+        "defenseclaw.agent.discovery.connector",
+        "defenseclaw.agent.discovery.installed",
+        "defenseclaw.agent.discovery.has_config",
+        "defenseclaw.agent.discovery.has_binary",
+        "defenseclaw.agent.discovery.probe_status",
+    }
+    assert groups["log.agent.discovery.signal"].outcome_requirement == "forbidden"
+
+    telemetry_fields = {
+        "defenseclaw.telemetry.signal",
+        "defenseclaw.telemetry.payload_format",
+        "defenseclaw.telemetry.record_count",
+        "defenseclaw.telemetry.resource_count",
+        "defenseclaw.telemetry.wire_bytes",
+        "defenseclaw.telemetry.normalized_bytes",
+        "defenseclaw.telemetry.latency_ms",
+        "defenseclaw.telemetry.rejection_reason_class",
+    }
+    for family_id in (
+        "span.telemetry.receive",
+        "span.telemetry.normalize",
+        "log.telemetry.batch.accepted",
+        "log.telemetry.batch.normalized",
+        "log.telemetry.batch.rejected",
+    ):
+        assert telemetry_fields <= set(uses(family_id))
+        assert groups[family_id].compatibility_profiles == ("local-observability-v1",)
+    assert uses("body.telemetry.ingest")["defenseclaw.telemetry.byte_count"].requirement_level == "required"
+    assert attributes["defenseclaw.telemetry.rejection_reason_class"].field_class == "metadata"
+    assert attributes["defenseclaw.telemetry.rejection_reason_class"].sensitivity == "internal"
+
+
 def test_trace_and_metric_builder_contexts_forbid_mandatory_facts(tmp_path: Path) -> None:
     root = _fixture_root(tmp_path)
     module = _load_generator_module("telemetry_registry_non_log_mandatory_facts")
@@ -7978,7 +8155,7 @@ def test_v7_exporter_selection_is_derived_from_exhaustive_producer_mappings() ->
     console_events = selection["exporters"]["gateway_console"]["logs"][0]["event_names"]
     audit_actions = selection["exporters"]["audit_sink"]["logs"][0]["actions"]
     assert gateway_events == console_events == tuple(sorted(gateway_events))
-    assert len(gateway_events) == 168
+    assert len(gateway_events) == 172
     assert len(audit_actions) == 188
     assert {
         "guardrail.evaluation.completed",
@@ -8000,12 +8177,10 @@ def test_v7_exporter_selection_is_derived_from_exhaustive_producer_mappings() ->
     log_groups = [group for domain in ir.domains for group in domain.groups if group.type == "log"]
     span_groups = [group for domain in ir.domains for group in domain.groups if group.type == "span"]
     metric_buckets = tuple(
-        bucket
-        for bucket in module.EXPECTED_BUCKET_ORDER
-        if any(group.bucket == bucket for group in metric_groups)
+        bucket for bucket in module.EXPECTED_BUCKET_ORDER if any(group.bucket == bucket for group in metric_groups)
     )
     assert len(metric_groups) == 131
-    assert len(log_groups) == 87
+    assert len(log_groups) == 91
     assert len(span_groups) == 25
     assert len(metric_buckets) == 14
     assert selection["collection"]["always"]["logs"] == tuple(module.EXPECTED_BUCKET_ORDER)
@@ -8014,12 +8189,8 @@ def test_v7_exporter_selection_is_derived_from_exhaustive_producer_mappings() ->
     assert selection["collection"]["otel.metrics"]["metrics"] == metric_buckets
     expected_span_names = tuple(sorted(group.id for group in span_groups))
     for exporter in ("generic_otlp", "local_observability"):
-        assert selection["exporters"][exporter]["logs"] == (
-            {"buckets": tuple(module.EXPECTED_BUCKET_ORDER)},
-        )
-        assert selection["exporters"][exporter]["traces"] == (
-            {"event_names": expected_span_names},
-        )
+        assert selection["exporters"][exporter]["logs"] == ({"buckets": tuple(module.EXPECTED_BUCKET_ORDER)},)
+        assert selection["exporters"][exporter]["traces"] == ({"event_names": expected_span_names},)
     assert selection["exporters"]["generic_otlp"]["metrics"] == ({"buckets": metric_buckets},)
     assert selection["exporters"]["local_observability"]["metrics"] == ({"buckets": metric_buckets},)
 
@@ -8046,9 +8217,7 @@ def test_v7_exporter_selection_rejects_hand_maintained_gateway_selector(tmp_path
     root = _fixture_root(tmp_path)
     inventory_path = root / "docs/design/observability-v8/current-state-inventory.yaml"
     inventory = yaml.safe_load(inventory_path.read_text(encoding="utf-8"))
-    inventory["classes"]["v7_exporter_selection"]["exporters"]["gateway_jsonl"]["logs"] = [
-        {"buckets": ["diagnostic"]}
-    ]
+    inventory["classes"]["v7_exporter_selection"]["exporters"]["gateway_jsonl"]["logs"] = [{"buckets": ["diagnostic"]}]
     _write_yaml(inventory_path, inventory)
 
     module = _load_generator_module("telemetry_registry_v7_manual_selector")
@@ -9586,16 +9755,16 @@ def test_canonical_go_symbol_table_matches_digest_addressed_reviewed_baseline(
     table = ir.go_symbol_table
     baseline_digest = module._validate_reviewed_go_symbol_baseline(ROOT, table)
 
-    assert len(table.rows) == 1789
+    assert len(table.rows) == 1897
     assert dict(table.kind_counts) == module.EXPECTED_GO_SYMBOL_KIND_COUNTS
     assert dict(table.declaration_form_counts) == {
-        "exported_const": 905,
-        "exported_type": 460,
+        "exported_const": 1005,
+        "exported_type": 464,
         "exported_function": 181,
-        "family_builder_method": 243,
+        "family_builder_method": 247,
     }
-    assert table.table_sha256 == "1063fecb9fbed0fa854da6ee58a0b808a9db98f3c2e1db5c7a57aed868441970"
-    assert baseline_digest.sha256 == "0633fe15ff0d86c8943c9a6be781fde0e23c5fb8a2718610ba63c62d505d5756"
+    assert table.table_sha256 == "7663bcaa86e8307990ba1d64cee1f783881b9a9ff7dd86ad01dab1db623a7c1f"
+    assert baseline_digest.sha256 == "75ae4cf2b5440b3f423fc87dafde36b77be058e834093f2fbe485a2188562ee3"
     assert baseline_digest.path.endswith(f"/{baseline_digest.sha256}.json")
     rank = {kind: index for index, kind in enumerate(module.GO_SYMBOL_KIND_ORDER)}
     assert list(table.rows) == sorted(
@@ -9659,7 +9828,7 @@ def test_go_symbol_file_domain_ownership_counts_are_frozen(
         else:
             family_id = row.source_id.split("#", 1)[0]
             ownership[family_domains[family_id]] += 1
-    assert ownership == {"ids": 905, "genai": 282, "security": 212, "operations": 390}
+    assert ownership == {"ids": 1005, "genai": 282, "security": 212, "operations": 398}
 
 
 def test_go_symbol_policy_and_table_are_materialized_and_row_order_is_digest_significant(

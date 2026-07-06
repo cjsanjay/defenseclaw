@@ -339,9 +339,9 @@ GO_SYMBOL_KIND_ORDER: Final = (
     "span_link_constructor",
 )
 EXPECTED_GO_SYMBOL_KIND_COUNTS: Final = {
-    "attribute": 335,
-    "family": 243,
-    "log_event": 87,
+    "attribute": 427,
+    "family": 247,
+    "log_event": 91,
     "span_event": 15,
     "link_relation": 4,
     "metric_instrument": 131,
@@ -359,24 +359,24 @@ EXPECTED_GO_SYMBOL_KIND_COUNTS: Final = {
     "resource_attributes_constructor": 1,
     "resource_attributes_attach": 1,
     "resource_attributes_validator": 1,
-    "family_input": 243,
-    "family_builder": 243,
+    "family_input": 247,
+    "family_builder": 247,
     "span_event_input": 61,
     "span_event_constructor": 61,
     "span_link_input": 100,
     "span_link_constructor": 100,
 }
 EXPECTED_GO_SYMBOL_DECLARATION_COUNTS: Final = {
-    "exported_const": 905,
-    "exported_type": 460,
+    "exported_const": 1005,
+    "exported_type": 464,
     "exported_function": 181,
-    "family_builder_method": 243,
+    "family_builder_method": 247,
 }
-EXPECTED_GO_SYMBOL_COUNT: Final = 1789
-EXPECTED_GO_SYMBOL_TABLE_SHA256: Final = "1063fecb9fbed0fa854da6ee58a0b808a9db98f3c2e1db5c7a57aed868441970"
+EXPECTED_GO_SYMBOL_COUNT: Final = 1897
+EXPECTED_GO_SYMBOL_TABLE_SHA256: Final = "7663bcaa86e8307990ba1d64cee1f783881b9a9ff7dd86ad01dab1db623a7c1f"
 GO_SYMBOL_TABLE_BASELINES: Final = Path("schemas/telemetry/v8/baselines/go-symbol-table")
 GO_SYMBOL_TABLE_BASELINE_FORMAT: Final = "defenseclaw-go-symbol-table-baseline-v1"
-EXPECTED_GO_SYMBOL_TABLE_BASELINE_SHA256: Final = "0633fe15ff0d86c8943c9a6be781fde0e23c5fb8a2718610ba63c62d505d5756"
+EXPECTED_GO_SYMBOL_TABLE_BASELINE_SHA256: Final = "75ae4cf2b5440b3f423fc87dafde36b77be058e834093f2fbe485a2188562ee3"
 _GO_IDENTIFIER = re.compile(r"^[A-Za-z][A-Za-z0-9]*$")
 _GO_SOURCE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:/#-]{0,511}$")
 _GO_SOURCE_ID_PART = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,255}$")
@@ -658,23 +658,23 @@ EXPECTED_SEMANTIC_PROFILE: Final = {
     "galileo_compatibility_profile": "galileo-rich-v2",
 }
 EXPECTED_BUCKET_ORDER: Final = (
-        "compliance.activity",
-        "security.finding",
-        "guardrail.evaluation",
-        "enforcement.action",
-        "model.io",
-        "tool.activity",
-        "asset.scan",
-        "asset.lifecycle",
-        "network.egress",
-        "agent.lifecycle",
-        "ai.discovery",
-        "telemetry.ingest",
-        "platform.health",
-        "diagnostic",
+    "compliance.activity",
+    "security.finding",
+    "guardrail.evaluation",
+    "enforcement.action",
+    "model.io",
+    "tool.activity",
+    "asset.scan",
+    "asset.lifecycle",
+    "network.egress",
+    "agent.lifecycle",
+    "ai.discovery",
+    "telemetry.ingest",
+    "platform.health",
+    "diagnostic",
 )
 EXPECTED_BUCKETS: Final = frozenset(EXPECTED_BUCKET_ORDER)
-EXPECTED_DOTTED_LOG_IDENTITIES: Final = 75
+EXPECTED_DOTTED_LOG_IDENTITIES: Final = 79
 EXPECTED_SPAN_FAMILIES: Final = 25
 EXPECTED_METRIC_FAMILIES: Final = 131
 EXPECTED_COMPATIBILITY_LOG_IDENTITIES: Final = frozenset(
@@ -707,9 +707,7 @@ OUTPUT_MANIFEST_MARKER: Final = b'"generated_by": "scripts/generate_telemetry_re
 OUTPUT_MANIFEST_MODE: Final = 0o644
 OUTPUT_MANIFEST_MAX_BYTES: Final = 8 * 1024 * 1024
 OUTPUT_MANIFEST_SCHEMA_MAX_BYTES: Final = 64 * 1024
-V7_EXPORTER_SELECTION_SCHEMA: Final = Path(
-    "schemas/telemetry/v8/compatibility/v7-exporter-selection.schema.json"
-)
+V7_EXPORTER_SELECTION_SCHEMA: Final = Path("schemas/telemetry/v8/compatibility/v7-exporter-selection.schema.json")
 V7_EXPORTER_SELECTION_SCHEMA_MAX_BYTES: Final = 128 * 1024
 PUBLIC_VIEW_BASELINE_MAX_BYTES: Final = 8 * 1024 * 1024
 PUBLIC_VIEW_PREDECESSOR_MAX_BYTES: Final = 8 * 1024 * 1024
@@ -771,9 +769,7 @@ _STRUCTURAL_FIELD_TYPE: Final = frozenset(
         "metric_number",
     }
 )
-STRUCTURAL_SEMANTIC_FORMATS: Final = frozenset(
-    {"otel-trace-id-v1", "otel-span-id-v1", "w3c-tracestate-v1"}
-)
+STRUCTURAL_SEMANTIC_FORMATS: Final = frozenset({"otel-trace-id-v1", "otel-span-id-v1", "w3c-tracestate-v1"})
 TRACE_DERIVATION_BINDINGS: Final = (
     (
         "trace-bucket-equality-v1",
@@ -2693,9 +2689,7 @@ def _parse_producer_inventory(
     if selection["migration_disposition"] != "preserve_compatibility_floor":
         raise RegistryError(f"{normalized}.classes.v7_exporter_selection.migration_disposition: unexpected value")
     selection_payload = {
-        key: value
-        for key, value in selection.items()
-        if key not in {"source", "migration_disposition"}
+        key: value for key, value in selection.items() if key not in {"source", "migration_disposition"}
     }
     return result, metric_inventory, _freeze_mapping(selection_payload), InputDigest(normalized, _sha256(raw))
 
@@ -2765,9 +2759,7 @@ def _materialize_v7_exporter_selection(
     if None in metric_instruments or metric_instruments != set(metric_inventory):
         raise RegistryError("v7 exporter selection metrics: current metric inventory is incomplete")
     metric_buckets = list(EXPECTED_BUCKET_ORDER)
-    span_event_names = sorted(
-        group.id for domain in domains for group in domain.groups if group.type == "span"
-    )
+    span_event_names = sorted(group.id for domain in domains for group in domain.groups if group.type == "span")
     if len(metric_groups) != EXPECTED_METRIC_FAMILIES or len(span_event_names) != EXPECTED_SPAN_FAMILIES:
         raise RegistryError("v7 exporter selection metrics: canonical family coverage is incomplete")
 
@@ -2775,9 +2767,7 @@ def _materialize_v7_exporter_selection(
     always = collection.get("always") if isinstance(collection, dict) else None
     always_logs = always.get("logs") if isinstance(always, dict) else None
     if always_logs != {"derive_buckets_from": "local_log_producers"}:
-        raise RegistryError(
-            "v7 exporter selection collection.always.logs: expected local_log_producers derivation"
-        )
+        raise RegistryError("v7 exporter selection collection.always.logs: expected local_log_producers derivation")
     always["logs"] = list(EXPECTED_BUCKET_ORDER)
     for condition, signal in (("otel.logs", "logs"), ("otel.traces", "traces")):
         policy = collection.get(condition) if isinstance(collection, dict) else None
@@ -2809,9 +2799,7 @@ def _materialize_v7_exporter_selection(
             () if mapping.default_identity is None else (mapping.default_identity,)
         ) + mapping.allowed_context_identities
         if not identities:
-            raise RegistryError(
-                f"v7 exporter selection gateway_event/{mapping.key}: no reachable canonical identity"
-            )
+            raise RegistryError(f"v7 exporter selection gateway_event/{mapping.key}: no reachable canonical identity")
         gateway_event_names.update(identity.event_name for identity in identities)
     if not gateway_event_names:
         raise RegistryError("v7 exporter selection gateway_event: empty canonical identity set")
@@ -2823,13 +2811,9 @@ def _materialize_v7_exporter_selection(
         traces = profile.get("traces") if isinstance(profile, dict) else None
         metrics = profile.get("metrics") if isinstance(profile, dict) else None
         if logs != {"derive_buckets_from": "catalog_v1"}:
-            raise RegistryError(
-                f"v7 exporter selection exporters.{exporter}.logs: expected catalog_v1 derivation"
-            )
+            raise RegistryError(f"v7 exporter selection exporters.{exporter}.logs: expected catalog_v1 derivation")
         if traces != {"derive_event_names_from": "span_families"}:
-            raise RegistryError(
-                f"v7 exporter selection exporters.{exporter}.traces: expected span_families derivation"
-            )
+            raise RegistryError(f"v7 exporter selection exporters.{exporter}.traces: expected span_families derivation")
         if metrics != {"derive_buckets_from": "emitted_metrics"}:
             raise RegistryError(
                 f"v7 exporter selection exporters.{exporter}.metrics: expected emitted_metrics derivation"
@@ -2860,9 +2844,7 @@ def _materialize_v7_exporter_selection(
         raise RegistryError(
             "v7 exporter selection exporters.audit_sink.logs: expected the closed audit/gateway derivation declaration"
         )
-    gateway_mapping_by_key = {
-        mapping.key: mapping for mapping in mappings_by_producer["gateway_event"]
-    }
+    gateway_mapping_by_key = {mapping.key: mapping for mapping in mappings_by_producer["gateway_event"]}
     forwarded_event_names: set[str] = set()
     for key in expected_audit_gateway_keys:
         mapping = gateway_mapping_by_key.get(key)
@@ -2946,9 +2928,7 @@ def _validate_v7_exporter_selection(
         if not set(selector.get("actions", ())).issubset(canonical_actions):
             raise RegistryError("v7 exporter selection references an unknown audit action")
 
-    for exporter, profile, signals in (
-        ("galileo", "galileo-rich-v2", ("traces",)),
-    ):
+    for exporter, profile, signals in (("galileo", "galileo-rich-v2", ("traces",)),):
         for signal in signals:
             group_type = {"logs": "log", "traces": "span", "metrics": "metric"}[signal]
             selected_groups: set[str] = set()
@@ -2972,13 +2952,10 @@ def _validate_v7_exporter_selection(
                 if profile not in (groups[group_id].compatibility_profiles or ())
             )
             if ineligible:
-                raise RegistryError(
-                    f"v7 exporter selection {exporter}.{signal}: families lack {profile} compatibility"
-                )
+                raise RegistryError(f"v7 exporter selection {exporter}.{signal}: families lack {profile} compatibility")
 
     route_count = sum(
-        len(signal_selectors)
-        for signal_selectors in document["exporters"]["generic_otlp"].values()
+        len(signal_selectors) for signal_selectors in document["exporters"]["generic_otlp"].values()
     ) + len(document["features"]["otel_individual_findings"])
     if route_count > 256:
         raise RegistryError("v7 exporter selection exceeds the generic OTel route limit")
@@ -6711,9 +6688,7 @@ def _parse_group(value: Any, path: str, mandatory_rule_ids: frozenset[str]) -> G
         )
         if "custom_resource_attributes" in extension:
             if group_type != "resource" or group_id != "resource.core":
-                raise RegistryError(
-                    f"{path}.x-defenseclaw.custom_resource_attributes: allowed only on resource.core"
-                )
+                raise RegistryError(f"{path}.x-defenseclaw.custom_resource_attributes: allowed only on resource.core")
             resource_dynamic_members = _parse_resource_dynamic_members(
                 extension["custom_resource_attributes"],
                 f"{path}.x-defenseclaw.custom_resource_attributes",
@@ -6782,9 +6757,19 @@ def _parse_group(value: Any, path: str, mandatory_rule_ids: frozenset[str]) -> G
             raise RegistryError(f"{path}.x-defenseclaw.family_schema_version: required for signal families")
     if group_id == "resource.core":
         production_fixed = {
-            "service.name", "service.version", "service.namespace", "service.instance.id",
-            "deployment.environment.name", "host.name", "host.arch", "os.type", "tenant.id", "workspace.id",
-            "defenseclaw.deployment.mode", "defenseclaw.claw.mode", "defenseclaw.instance.id",
+            "service.name",
+            "service.version",
+            "service.namespace",
+            "service.instance.id",
+            "deployment.environment.name",
+            "host.name",
+            "host.arch",
+            "os.type",
+            "tenant.id",
+            "workspace.id",
+            "defenseclaw.deployment.mode",
+            "defenseclaw.claw.mode",
+            "defenseclaw.instance.id",
             "defenseclaw.device.public_key_fingerprint",
         }
         if (resource_dynamic_members is None) != (resource_compatibility_aliases is None):
@@ -7568,10 +7553,7 @@ def _resource_dynamic_fields(
     alias_sources = {item.alias: item.canonical for item in aliases}
     registered = set(uses) | set(alias_sources)
     custom: list[tuple[str, str]] = []
-    normalized = {
-        key.replace(".", "_").replace("-", "_")
-        for key in registered | set(contract.reserved_keys)
-    }
+    normalized = {key.replace(".", "_").replace("-", "_") for key in registered | set(contract.reserved_keys)}
     for reference, value in payload.items():
         canonical = alias_sources.get(reference, reference)
         use = uses.get(canonical)
@@ -7628,7 +7610,8 @@ def _resource_dynamic_fields(
             or re.match(r"^[A-Za-z]:[\\/]", trimmed) is not None
         )
         credential_like = (
-            "private key" in lower and "-----begin" in lower
+            "private key" in lower
+            and "-----begin" in lower
             or lower.startswith(("bearer ", "basic "))
             or parsed.username is not None
         )
@@ -7647,8 +7630,7 @@ def _resource_dynamic_fields(
             errors.add("family_required_attribute_missing")
     if (
         len(custom) > contract.max_items
-        or sum(len(key.encode()) + len(value.encode()) for key, value in custom)
-        > contract.max_aggregate_utf8_bytes
+        or sum(len(key.encode()) + len(value.encode()) for key, value in custom) > contract.max_aggregate_utf8_bytes
     ):
         errors.add("dynamic_attribute_value_invalid")
     return len(errors.codes) == initial_error_count
@@ -8080,10 +8062,11 @@ def _validate_example_field_classes(
                 raise RegistryError(f"{path}: dynamic attribute names must be strings")
             reference = projections.get(wire_name, wire_name)
             if reference not in references:
-                alias_sources = {
-                    item.alias: item.canonical
-                    for item in (resource_group.resource_compatibility_aliases or ())
-                } if resource_group is not None else {}
+                alias_sources = (
+                    {item.alias: item.canonical for item in (resource_group.resource_compatibility_aliases or ())}
+                    if resource_group is not None
+                    else {}
+                )
                 alias_reference = alias_sources.get(reference)
                 if alias_reference in references:
                     reference = alias_reference
@@ -9022,9 +9005,7 @@ def _validate_structural_contract_bindings(
                     or constraints.get("max_utf8_bytes") != 512
                     or "pattern" in constraints
                 ):
-                    raise RegistryError(
-                        f"structural contract {object_ir.id}.{field.name}: semantic-format mismatch"
-                    )
+                    raise RegistryError(f"structural contract {object_ir.id}.{field.name}: semantic-format mismatch")
                 continue
             expected_max, expected_pattern = semantic_format_contract[field.semantic_format]
             constraints = field.normalization.effective_constraints if field.normalization is not None else {}
@@ -9917,12 +9898,8 @@ def compile_registry(root: Path) -> RegistryIR:
     if lock_relative != "schemas/telemetry/v8/semconv.lock.yaml":
         raise RegistryError("registry.dependency_lock: unexpected path")
     dependencies, lock_digest, structural_documents, structural_input_digests = _parse_lock(root, lock_relative)
-    producer_inventory, metric_inventory, v7_exporter_selection, inventory_digest = (
-        _parse_producer_inventory(root)
-    )
-    v7_exporter_selection_schema, v7_exporter_selection_schema_digest = (
-        _read_v7_exporter_selection_schema(root)
-    )
+    producer_inventory, metric_inventory, v7_exporter_selection, inventory_digest = _parse_producer_inventory(root)
+    v7_exporter_selection_schema, v7_exporter_selection_schema_digest = _read_v7_exporter_selection_schema(root)
     normalizers = _parse_normalizer_catalog(registry["normalizers"], "registry.normalizers")
     normalizers_by_id = {item.id: item for item in normalizers}
     structured_types = _parse_structured_types(

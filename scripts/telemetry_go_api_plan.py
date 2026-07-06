@@ -598,7 +598,7 @@ class GoAPIPlanIR:
 
 _GO_API_PLAN_DIGEST_DOMAIN: Final = b"DefenseClaw GoAPIPlanIR v1\x00"
 _GO_SYMBOL_TABLE_DIGEST_DOMAIN: Final = b"DefenseClaw GoSymbolTableIR v1\x00"
-_CANONICAL_SYMBOL_TABLE_SHA256: Final = "1063fecb9fbed0fa854da6ee58a0b808a9db98f3c2e1db5c7a57aed868441970"
+_CANONICAL_SYMBOL_TABLE_SHA256: Final = "7663bcaa86e8307990ba1d64cee1f783881b9a9ff7dd86ad01dab1db623a7c1f"
 _SHA256: Final = re.compile(r"^[0-9a-f]{64}$")
 _GO_IDENTIFIER: Final = re.compile(r"^[A-Za-z][A-Za-z0-9]*$")
 
@@ -694,10 +694,10 @@ GO_OUTPUT_FILES: Final = (
     _FIXTURES_FILE,
 )
 _EXPECTED_REVIEWED_PARTITION: Final = {
-    _IDS_FILE: 905,
+    _IDS_FILE: 1005,
     _DOMAIN_FILES["genai"]: 282,
     _DOMAIN_FILES["security"]: 212,
-    _DOMAIN_FILES["operations"]: 390,
+    _DOMAIN_FILES["operations"]: 398,
 }
 _EXPECTED_LEGACY_FIXTURE_PARTITION: Final = {
     _IDS_FILE: 901,
@@ -706,8 +706,8 @@ _EXPECTED_LEGACY_FIXTURE_PARTITION: Final = {
     _DOMAIN_FILES["operations"]: 386,
 }
 _EXPECTED_CANONICAL_PUBLIC_VALUES: Final = {
-    "log": 1703,
-    "span": 788,
+    "log": 2128,
+    "span": 886,
     "resource": 325,
     "metric": 346,
 }
@@ -3226,7 +3226,7 @@ def _file_assignments(
         raise GoAPIPlanError("Go declaration file assignment is incomplete or duplicated")
     expected_partition = {
         1781: _EXPECTED_LEGACY_FIXTURE_PARTITION,
-        1789: _EXPECTED_REVIEWED_PARTITION,
+        1897: _EXPECTED_REVIEWED_PARTITION,
     }.get(len(rows))
     if expected_partition is not None:
         counts = {path: len(assigned[path]) for path in expected_partition}
@@ -3638,8 +3638,8 @@ def _validate_canonical_counts(
             "canonical public value occurrence counts disagree: "
             f"expected {_EXPECTED_CANONICAL_PUBLIC_VALUES}, got {observed}"
         )
-    if len(producer_ids) != 8038:
-        raise GoAPIPlanError("canonical expanded producer row count is not 8038")
+    if len(producer_ids) != 8075:
+        raise GoAPIPlanError("canonical expanded producer row count is not 8075")
 
 
 def _plain_json(value: Any, path: str) -> Any:
@@ -3722,11 +3722,7 @@ def _compile_resource_attributes(
         groups = {
             "resource.core": {
                 "attribute_refs": tuple(
-                    sorted(
-                        field.semantic_source_id
-                        for field in fields.values()
-                        if field.component == "resource"
-                    )
+                    sorted(field.semantic_source_id for field in fields.values() if field.component == "resource")
                 ),
                 "resource_dynamic_members": None,
                 "resource_compatibility_aliases": None,
@@ -3761,13 +3757,34 @@ def _compile_resource_attributes(
             "duplicate_key_policy": "reject",
             "fixed_key_collision_policy": "reject",
             "forbidden_key_segments": (
-                "authorization", "credential", "credentials", "password", "passwd", "secret", "token",
-                "apikey", "cookie", "cwd", "dir", "directory", "file", "filepath", "home", "path", "workdir",
+                "authorization",
+                "credential",
+                "credentials",
+                "password",
+                "passwd",
+                "secret",
+                "token",
+                "apikey",
+                "cookie",
+                "cwd",
+                "dir",
+                "directory",
+                "file",
+                "filepath",
+                "home",
+                "path",
+                "workdir",
             ),
             "reserved_keys": (
-                "defenseclaw.claw.home_dir", "defenseclaw.gateway.host", "defenseclaw.gateway.port",
-                "defenseclaw.preset", "defenseclaw.preset_name", "discovery.source", "telemetry.sdk.language",
-                "telemetry.sdk.name", "telemetry.sdk.version",
+                "defenseclaw.claw.home_dir",
+                "defenseclaw.gateway.host",
+                "defenseclaw.gateway.port",
+                "defenseclaw.preset",
+                "defenseclaw.preset_name",
+                "discovery.source",
+                "telemetry.sdk.language",
+                "telemetry.sdk.name",
+                "telemetry.sdk.version",
             ),
             "forbidden_value_classes": ("filesystem_path", "credential_material"),
         }
@@ -3926,9 +3943,7 @@ def _compile_resource_attributes(
         max_aggregate_utf8_bytes=_integer(
             _read(dynamic, "max_aggregate_utf8_bytes", owner_id), "resource aggregate bytes", minimum=1
         ),
-        duplicate_key_policy=_string(
-            _read(dynamic, "duplicate_key_policy", owner_id), "resource duplicate policy"
-        ),
+        duplicate_key_policy=_string(_read(dynamic, "duplicate_key_policy", owner_id), "resource duplicate policy"),
         fixed_key_collision_policy=_string(
             _read(dynamic, "fixed_key_collision_policy", owner_id), "resource collision policy"
         ),
@@ -3962,8 +3977,14 @@ def _compile_resource_attributes(
         or plan.prometheus_key_normalization != "dot_dash_to_underscore"
         or plan.prometheus_normalized_collision_policy != "reject"
         or plan.key_pattern != r"^[A-Za-z][A-Za-z0-9_.-]{0,127}$"
-        or (plan.max_items, plan.max_key_ascii_bytes, plan.min_value_utf8_bytes,
-            plan.max_value_utf8_bytes, plan.max_aggregate_utf8_bytes) != (64, 128, 1, 1024, 16384)
+        or (
+            plan.max_items,
+            plan.max_key_ascii_bytes,
+            plan.min_value_utf8_bytes,
+            plan.max_value_utf8_bytes,
+            plan.max_aggregate_utf8_bytes,
+        )
+        != (64, 128, 1, 1024, 16384)
         or plan.duplicate_key_policy != "reject"
         or plan.fixed_key_collision_policy != "reject"
         or plan.forbidden_value_classes != ("filesystem_path", "credential_material")

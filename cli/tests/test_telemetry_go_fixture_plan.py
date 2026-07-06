@@ -529,10 +529,10 @@ def test_real_candidate_has_total_bounded_family_and_callable_coverage(
     api = real_candidate.go_api_plan
 
     assert len(result.curated_cases) == len(real_candidate.examples)
-    assert len(result.covered_family_ids) == len(api.descriptors) == 243
-    assert len(result.covered_callable_keys) == len(api.callables) == 421
-    assert len(result.family_builder_methods) == 243
-    assert len(result.generated_coverage_cases) <= 421
+    assert len(result.covered_family_ids) == len(api.descriptors) == 247
+    assert len(result.covered_callable_keys) == len(api.callables) == 425
+    assert len(result.family_builder_methods) == 247
+    assert len(result.generated_coverage_cases) <= 425
     assert len(result.file.functions) == len(result.curated_cases) + len(result.generated_coverage_cases)
     assert result.schema_only_example_ids
     assert all(case.base_example is None for case in api.fixtures) is False

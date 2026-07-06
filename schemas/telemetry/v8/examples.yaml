@@ -241,7 +241,7 @@ examples:
   valid: true
   signal: logs
   family: log.finding.observed
-  description: Evidence summary and remediation are bounded producer/rule-catalog facts; status open means unresolved workflow state.
+  description: Evidence summary and remediation are bounded producer or rule-catalog facts; an observation does not fabricate workflow status.
   builder_context:
     inheritance: {mode: explicit}
     occurrence: {timestamp: '2026-07-03T12:00:02Z', record_id: rec-finding-001}
@@ -274,7 +274,6 @@ examples:
       defenseclaw.finding.confidence: 0.98
       defenseclaw.finding.target_ref: asset:skill/example
       defenseclaw.finding.fingerprint: hmac-sha256:0123456789abcdef
-      defenseclaw.finding.status: open
       defenseclaw.guardrail.evidence_summary: Static rule SKILL-001 matched the normalized manifest capability set.
       defenseclaw.finding.remediation: Review the declared capability and restrict or quarantine the asset.
     field_classes:
@@ -285,7 +284,6 @@ examples:
       /defenseclaw.finding.confidence: metadata
       /defenseclaw.finding.target_ref: identifier
       /defenseclaw.finding.fingerprint: identifier
-      /defenseclaw.finding.status: metadata
       /defenseclaw.guardrail.evidence_summary: evidence
       /defenseclaw.finding.remediation: reason
 - id: valid-guardrail-judge-payload-log
@@ -762,7 +760,6 @@ examples:
       defenseclaw.finding.confidence: 0.98
       defenseclaw.finding.target_ref: asset:skill/example
       defenseclaw.finding.fingerprint: hmac-sha256:0123456789abcdef
-      defenseclaw.finding.status: open
       defenseclaw.guardrail.evidence_summary: Static rule SKILL-001 matched the normalized manifest capability set.
       defenseclaw.finding.remediation: Review the declared capability and restrict or quarantine the asset.
       raw_prompt: Unprojected producer content must not be copied into a finding.
@@ -774,10 +771,63 @@ examples:
       /defenseclaw.finding.confidence: metadata
       /defenseclaw.finding.target_ref: identifier
       /defenseclaw.finding.fingerprint: identifier
-      /defenseclaw.finding.status: metadata
       /defenseclaw.guardrail.evidence_summary: evidence
       /defenseclaw.finding.remediation: reason
       /raw_prompt: content
+  expected_error: finding_body_field_not_registered
+- id: invalid-finding-workflow-status
+  valid: false
+  signal: logs
+  family: log.finding.observed
+  base_example: valid-security-finding-with-derived-evidence
+  builder_context: {inheritance: {mode: exact_base, base_example: valid-security-finding-with-derived-evidence}}
+  mutation:
+    kind: finding_body_field_not_registered
+    changes:
+    - {op: add, path: /record/body/defenseclaw.finding.status, value: open}
+    - {op: add, path: /record/field_classes/~1defenseclaw.finding.status, value: metadata}
+  description: An observed finding cannot claim workflow status because current observation producers have no authoritative finding-case lifecycle state.
+  record:
+    schema_version: 1
+    bucket_catalog_version: 1
+    timestamp: '2026-07-03T12:00:02Z'
+    record_id: rec-finding-001
+    bucket: security.finding
+    signal: logs
+    event_name: finding.observed
+    severity: HIGH
+    source: skill_scanner
+    mandatory: false
+    correlation:
+      scan_id: scan-001
+      finding_occurrence_id: finding-001
+    provenance:
+      producer: defenseclaw
+      binary_version: 8.0.0
+      registry_schema_version: 1
+      config_generation: 8
+    body:
+      defenseclaw.finding.id: finding-001
+      defenseclaw.finding.rule_id: SKILL-001
+      defenseclaw.finding.category: unsafe_capability
+      defenseclaw.security.severity: HIGH
+      defenseclaw.finding.confidence: 0.98
+      defenseclaw.finding.target_ref: asset:skill/example
+      defenseclaw.finding.fingerprint: hmac-sha256:0123456789abcdef
+      defenseclaw.finding.status: open
+      defenseclaw.guardrail.evidence_summary: Static rule SKILL-001 matched the normalized manifest capability set.
+      defenseclaw.finding.remediation: Review the declared capability and restrict or quarantine the asset.
+    field_classes:
+      /defenseclaw.finding.id: identifier
+      /defenseclaw.finding.rule_id: identifier
+      /defenseclaw.finding.category: metadata
+      /defenseclaw.security.severity: metadata
+      /defenseclaw.finding.confidence: metadata
+      /defenseclaw.finding.target_ref: identifier
+      /defenseclaw.finding.fingerprint: identifier
+      /defenseclaw.finding.status: metadata
+      /defenseclaw.guardrail.evidence_summary: evidence
+      /defenseclaw.finding.remediation: reason
   expected_error: finding_body_field_not_registered
 - id: invalid-legacy-audit-as-canonical-family
   valid: false

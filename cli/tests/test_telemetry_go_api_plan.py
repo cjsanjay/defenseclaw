@@ -592,25 +592,23 @@ def test_real_candidate_index_compiles_complete_semantic_plan() -> None:
     second = plan.compile_go_api_plan(index)
 
     assert first == second
-    assert first.api_plan_sha256 == "a18f33d144c242b313d72bd133d1726d134f735906c3789d4a0504a766a450a7"
-    assert len(first.declarations) == 1789
-    assert len(first.inputs) == len(first.callables) == 421
-    assert len(first.descriptors) == 243
+    assert first.api_plan_sha256 == "7221c07ea77918b3874da48a6ccf89e02a7118ef9e38ea846c7d285c00375d4a"
+    assert len(first.declarations) == 1897
+    assert len(first.inputs) == len(first.callables) == 425
+    assert len(first.descriptors) == 247
     assert len(first.structured) == 21
-    assert len(first.fixtures) == 12
-    assert sum(len(item.fields) for item in first.inputs) == 5046
-    assert len(first.private_declarations) == 741
+    assert len(first.fixtures) == 13
+    assert sum(len(item.fields) for item in first.inputs) == 5710
+    assert len(first.private_declarations) == 749
     assert first.resource_attributes.validator_symbol == "ValidateTelemetryResourceAttributes"
     assert len(first.resource_attributes.fixed_descriptors) == 14
-    assert sum(
-        descriptor.requirement == "required"
-        for descriptor in first.resource_attributes.fixed_descriptors
-    ) == 6
-    assert next(
-        declaration
-        for declaration in first.declarations
-        if declaration.kind == "resource_attributes_validator"
-    ).symbol == "ValidateTelemetryResourceAttributes"
+    assert sum(descriptor.requirement == "required" for descriptor in first.resource_attributes.fixed_descriptors) == 6
+    assert (
+        next(
+            declaration for declaration in first.declarations if declaration.kind == "resource_attributes_validator"
+        ).symbol
+        == "ValidateTelemetryResourceAttributes"
+    )
     assert tuple(helper.symbol for helper in first.kernel_helpers) == (
         "buildGeneratedMetric",
         "buildGeneratedResolvedLog",
@@ -633,8 +631,8 @@ def test_real_candidate_index_compiles_complete_semantic_plan() -> None:
             "structured_encoder",
         }
     } == {
-        "family_descriptor_type": 243,
-        "family_descriptor_method": 243,
+        "family_descriptor_type": 247,
+        "family_descriptor_method": 247,
         "family_trace_method": 25,
         "family_metric_method": 131,
         "event_contract_helper": 61,
@@ -764,12 +762,12 @@ def test_real_candidate_index_compiles_complete_semantic_plan() -> None:
     owned = [descriptor_id for file in first.files for descriptor_id in file.private_descriptor_ids]
     catalog = next(file for file in first.files if file.path.endswith("zz_generated_telemetry_catalog.go"))
     assert owned == list(catalog.private_descriptor_ids)
-    assert len(owned) == len(set(owned)) == 264
+    assert len(owned) == len(set(owned)) == 268
     counts = {item.path: len(item.declarations) for item in first.files}
-    assert counts["internal/observability/zz_generated_telemetry_ids.go"] == 905
+    assert counts["internal/observability/zz_generated_telemetry_ids.go"] == 1005
     assert counts["internal/observability/zz_generated_telemetry_builders_genai.go"] == 282
     assert counts["internal/observability/zz_generated_telemetry_builders_security.go"] == 212
-    assert counts["internal/observability/zz_generated_telemetry_builders_operations.go"] == 390
+    assert counts["internal/observability/zz_generated_telemetry_builders_operations.go"] == 398
     assert all(
         file.private_declarations == tuple(item for item in first.private_declarations if item.output_file == file.path)
         for file in first.files
@@ -1465,9 +1463,7 @@ def test_reported_cost_condition_is_derived_from_the_public_present_selector() -
         family_input = input_by_source(compiled, family_id)
         selectors = {field.selector: field for field in family_input.fields}
         assert selectors["DefenseClawTelemetryCanary"].type_ref == plan._optional_type(plan._builtin("bool"))
-        assert selectors["DefenseClawTelemetryCanaryOperation"].type_ref == plan._optional_type(
-            plan._builtin("string")
-        )
+        assert selectors["DefenseClawTelemetryCanaryOperation"].type_ref == plan._optional_type(plan._builtin("string"))
         assert selectors["DefenseClawTelemetryCanaryDestination"].type_ref == plan._optional_type(
             plan._builtin("string")
         )

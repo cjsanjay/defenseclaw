@@ -3,7 +3,7 @@
     "artifact": "otlp-fixtures/cases/invalid-finding-whole-raw-evidence.json",
     "authority": "candidate-not-public-authority",
     "generator": "defenseclaw-telemetry-candidate-renderer-v1",
-    "materialized_view_sha256": "8906e863763b2847efa595e90fb6a5ccfce6d5808d4be79677c2b67433eb0423",
+    "materialized_view_sha256": "473d6b37f58a9c4430a62dd75e44c044b0a39780bd1c217403a110e769453af8",
     "registry_version": 1
   },
   "canonical_record": {
@@ -14,7 +14,6 @@
       "defenseclaw.finding.id": "finding-001",
       "defenseclaw.finding.remediation": "Review the declared capability and restrict or quarantine the asset.",
       "defenseclaw.finding.rule_id": "SKILL-001",
-      "defenseclaw.finding.status": "open",
       "defenseclaw.finding.target_ref": "asset:skill/example",
       "defenseclaw.guardrail.evidence_summary": "Static rule SKILL-001 matched the normalized manifest capability set.",
       "defenseclaw.security.severity": "HIGH",
@@ -34,7 +33,6 @@
       "/defenseclaw.finding.id": "identifier",
       "/defenseclaw.finding.remediation": "reason",
       "/defenseclaw.finding.rule_id": "identifier",
-      "/defenseclaw.finding.status": "metadata",
       "/defenseclaw.finding.target_ref": "identifier",
       "/defenseclaw.guardrail.evidence_summary": "evidence",
       "/defenseclaw.security.severity": "metadata",
@@ -88,6 +86,6 @@
   "family": "log.finding.observed",
   "fixture_format": "defenseclaw-otlp-fixture-v1",
   "id": "invalid-finding-whole-raw-evidence",
-  "materialized_view_sha256": "8906e863763b2847efa595e90fb6a5ccfce6d5808d4be79677c2b67433eb0423",
+  "materialized_view_sha256": "473d6b37f58a9c4430a62dd75e44c044b0a39780bd1c217403a110e769453af8",
   "signal": "logs"
 }
