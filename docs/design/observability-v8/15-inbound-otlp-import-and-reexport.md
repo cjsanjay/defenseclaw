@@ -51,22 +51,28 @@ Every binding has the following closed properties:
 
 | Property | Contract |
 |---|---|
-| `id` | Stable identifier matching `^otlp\.[a-z0-9][a-z0-9._-]{0,127}$` |
+| `class_id` | Stable binding-class identifier matching `^otlp\.[a-z0-9][a-z0-9._-]{0,127}$` |
+| `variant_id` | Stable class-local exact discriminator variant; authored for finite aliases and compiler-derived from the exact family/instrument ID for native expansions |
 | `signal` | Exactly one of `logs`, `traces`, or `metrics` |
 | `sources` | One or more authenticated receiver source IDs, or the explicit token `any_authenticated` |
 | `mode` | Exactly `import`, `derive`, or `import_and_derive` |
 | `discriminator` | Exact resource/scope/schema URL/instrument/event/attribute predicates; no substring, suffix, case-folded guess, or first-match order |
-| `target_families` | One or more registered canonical families; an `import` binding has exactly one primary target |
+| `target_families` | One or more registered canonical families materialized as separate one-target descriptors; an `import` match has exactly one primary target while `derive`/`import_and_derive` may have explicit augmentation targets |
 | `field_bindings` | Exact typed source-to-target mappings, normalization, absence behavior, and source precedence |
 | `time_rule` | Exact source timestamp and fallback rule |
 | `outcome_rule` | Exact fixed or status-derived canonical outcome, when the target family requires one |
 | `unknown_fields` | Always `drop_and_count` for v8 |
 | `native_round_trip` | Boolean allowed only when the compiler proves the OTLP representation is reversible for the supported leaf shape |
 
-The compiler MUST prove that discriminators are mutually exclusive for the same
-signal and authenticated source. Zero matches is `unsupported_identity`; more than
-one match is `ambiguous_identity`. Neither case may fall back to a generic log,
-span, metric, bucket, family, or raw-body record.
+The compiler MUST materialize two levels. One generated **match descriptor** owns
+one exact discriminator and is identified by `class_id + variant_id`. One or more
+generated **target descriptors** reference that match and each owns exactly one
+canonical target; a target ID is `match_id + target_family_id`. Ambiguity is
+evaluated among match descriptors, never among the explicit targets of one match.
+The compiler MUST prove that match discriminators are mutually exclusive for the
+same signal and authenticated source. Zero matches is `unsupported_identity`;
+more than one match is `ambiguous_identity`. Neither case may fall back to a
+generic log, span, metric, bucket, family, or raw-body record.
 
 The target family is the sole bucket, event/family/instrument name, schema version,
 allowed outcome, field type, and field-class authority. Payload attributes named
@@ -75,16 +81,27 @@ allowed outcome, field type, and field-class authority. Payload attributes named
 MUST equal the generated target. They never classify a non-native leaf.
 
 An authored row described as a **binding class** below is compiler shorthand, not
-one wildcard runtime binding. The compiler MUST expand it into one exact generated
-binding and one `inbound-otlp.json` entry per eligible target family/instrument.
-Each expanded entry has one primary target and a stable ID formed from the class ID
-plus the exact target family ID. For example, the log class produces
-`otlp.native.log.v8.log.model.request`, not a runtime `any registered log` branch.
-The generated discriminator includes the target's exact event/family/instrument
-identity and schema/version/shape rules. Generation fails on missing eligible
-coverage, duplicate expanded IDs, overlapping expanded discriminators, a target
-not owned by the same materialized view, or a sender value that can choose a target
-outside the generated expansion.
+one wildcard runtime binding. The compiler MUST expand it into exact generated
+match and target entries in `inbound-otlp.json`. For native expansions the exact
+family/instrument supplies the compiler-derived variant; for finite external
+aliases, such as the five duration instrument names, each exact alias has an
+authored variant so two wire identities targeting the same family cannot collide.
+For example, the native log class produces a match such as
+`otlp.native.log.v8.log.model.request` and a separate one-target descriptor, not a
+runtime `any registered log` branch. A GenAI operation match may own its imported
+span target plus the explicit elapsed-time duration augmentation without becoming
+two ambiguous matches. The generated discriminator includes the target's exact
+event/family/instrument identity and schema/version/shape rules. Generation fails
+on missing eligible coverage, duplicate match or target IDs, overlapping match
+discriminators, a target not owned by the same materialized view, or a sender value
+that can choose a target outside the generated expansion.
+
+Before match evaluation, the compiler-generated recognizer classifies the reserved
+DefenseClaw marker set as exactly `native_exact`, `native_malformed`, or `external`.
+Native bindings require `native_exact`; connector and standard GenAI bindings
+require `external`. Any partial, inconsistent, or malformed reserved marker set is
+`native_malformed` and cannot fall through to an external binding merely because
+it also carries a standard GenAI or connector discriminator.
 
 The compiler also generates one exact **self-echo recognizer** per registered
 native outbound family, including non-reversible histogram families. A recognizer
@@ -111,10 +128,10 @@ code heuristic.
 | `otlp.genai.span.operation.v1` | Authenticated source; exact pinned `gen_ai.operation.name`; valid ended span and IDs | Compiler expands one binding per operation/target: `invoke_agent` with required `defenseclaw.agent.type` to `span.agent.invoke`; `chat` with required `gen_ai.request.model` to `span.model.chat`; `embeddings` with required request model to `span.model.embeddings`; `execute_tool` with required `gen_ai.tool.name` to `span.tool.execute`; `retrieval` with required `defenseclaw.retrieval.source.id` to `span.retrieval.search`; `invoke_workflow` with exact `gen_ai.workflow.name` normalized into required `defenseclaw.workflow.name` to `span.workflow.run` |
 | `otlp.codex.user_prompt.v1` | Authenticated source `codex`; exact `event.name=codex.user_prompt` | Import `log.model.request`, fixed outcome `attempted`; map only the exact content and correlation aliases in section 2.3 |
 | `otlp.claudecode.user_prompt.v1` | Authenticated source `claudecode`; exact `event.name=claude_code.user_prompt` | Import `log.model.request`, fixed outcome `attempted`; map only the exact content and correlation aliases in section 2.3 |
-| `otlp.codex.response_completed.v1` | Authenticated source `codex`; exact `event.name=codex.sse_event` and exact `event.kind=response.completed` | Import `log.model.response`, fixed outcome `completed`, and derive supported token/duration observations from the same leaf |
+| `otlp.codex.response_completed.v1` | Authenticated source `codex`; exact `event.name=codex.sse_event` and exact `event.kind=response.completed` | One match imports `log.model.response`, fixed outcome `completed`, and owns explicit token/duration augmentation targets from the same leaf |
 | `otlp.claudecode.token_usage.v1` | Authenticated source `claudecode`; exact instrument `claude_code.token.usage`; Sum or Gauge point; exact supported `type` | Derive `metric.gen_ai.client.token.usage`. The source metric is not imported as though it were already that canonical histogram |
 | `otlp.genai.duration.metric.v1` | Exact instrument name in `{gen_ai.client.operation.duration, gen_ai.operation.duration, llm.operation.duration, claude_code.operation.duration, codex.operation.duration}` | Derive `metric.gen_ai.client.operation.duration`; no substring fallback. Gauge/Sum values normalize by exact unit. A histogram point derives one explicitly mean-valued observation from `sum/count`; the source aggregate is not imported or described as lossless |
-| `otlp.genai.duration.span.v1` | A span accepted by `otlp.genai.span.operation.v1` | In addition to the imported span, derive one `metric.gen_ai.client.operation.duration` observation from `end-start` |
+| `otlp.genai.duration.span.v1` | Target augmentation on a match accepted by `otlp.genai.span.operation.v1`; it is not an independent discriminator match | In addition to the imported span, derive one `metric.gen_ai.client.operation.duration` observation from `end-start` |
 
 The standard GenAI span binding MUST NOT infer PR #403 lifecycle, execution,
 root-agent, parent-agent, turn, tool-call, or phase IDs. It preserves those facts
@@ -512,7 +529,7 @@ removing locally generated record/observed timestamps.
 
 | ID | Required test/proof | Expected result |
 |---|---|---|
-| `OTLP-A01` | `TestOTLPInboundGeneratedBindingsAreClosedAndUnambiguous` | Every required class expands to one stable exact entry per eligible target; expanded coverage/IDs/discriminators are complete and unambiguous; class wildcard execution, overlap, hand runtime binding, unknown target, or non-generated field map fails generation |
+| `OTLP-A01` | `TestOTLPInboundGeneratedBindingsAreClosedAndUnambiguous` | Every required class expands to stable exact match IDs and separate one-target IDs; explicit augmentations share one match; finite same-target aliases remain distinct variants; native-exact/native-malformed/external shapes cannot fall through; expanded coverage/discriminators are complete and unambiguous; class wildcard execution, overlap, hand runtime binding, unknown target, or non-generated field map fails generation |
 | `OTLP-A02` | `TestOTLPInboundJSONProtobufParity` | All three signals normalize identically; unknown JSON/protobuf fields and duplicate keys fail before leaf mapping |
 | `OTLP-A03` | `TestOTLPInboundNativeLogRoundTripOtherInstance` | Every registered log-family fixture imports through its builder with a new local ID and upstream provenance; no raw body survives |
 | `OTLP-A04` | `TestOTLPInboundNativeSpanRoundTripOtherInstance` | Every reversible span fixture preserves topology, exact registered fields/events/links/status/counts, and gets a new local record ID |
