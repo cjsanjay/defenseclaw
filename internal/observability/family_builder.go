@@ -141,6 +141,9 @@ func (builder *FamilyBuilder) buildResolvedGeneratedLog(
 		return Record{}, err
 	}
 	recordInput := familyRecordInput(input.envelope, contract.identity)
+	if input.importProvenance != nil {
+		recordInput.Provenance.Import = cloneImportProvenance(input.importProvenance)
+	}
 	recordInput.Severity = severity
 	recordInput.LogLevel = logLevel
 	if outcome, present := input.outcome.Get(); present {
@@ -154,7 +157,7 @@ func (builder *FamilyBuilder) buildResolvedGeneratedLog(
 	if err := preflightGeneratedLogRecord(recordInput, resolvedContract); err != nil {
 		return Record{}, err
 	}
-	recordInput, err = builder.recordInput(recordInput)
+	recordInput, err = builder.recordInputAt(recordInput, input.timestamp)
 	if err != nil {
 		return Record{}, err
 	}
@@ -565,7 +568,17 @@ func preflightGeneratedLogRecord(
 // reported with a stable, value-free occurrence error rather than gaplessly
 // retrying or exposing the rejected candidate.
 func (builder *FamilyBuilder) recordInput(input RecordInput) (RecordInput, error) {
-	timestamp := builder.clock.Now()
+	return builder.recordInputAt(input, Absent[time.Time]())
+}
+
+// recordInputAt is used only after a private accepted-record constructor has
+// validated the selected upstream timestamp against its local receipt time.
+// Ordinary generated producers cannot set it and continue to use the clock.
+func (builder *FamilyBuilder) recordInputAt(input RecordInput, selected Optional[time.Time]) (RecordInput, error) {
+	timestamp, present := selected.Get()
+	if !present {
+		timestamp = builder.clock.Now()
+	}
 	if timestamp.IsZero() {
 		return RecordInput{}, familyBuildFailure(FamilyBuildOccurrence)
 	}

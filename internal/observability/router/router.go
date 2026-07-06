@@ -15,6 +15,7 @@ package router
 
 import (
 	"fmt"
+	"reflect"
 
 	"github.com/defenseclaw/defenseclaw/internal/config"
 	"github.com/defenseclaw/defenseclaw/internal/observability"
@@ -117,6 +118,42 @@ func NewClassifiedLogMetadata(
 	}
 	if resolved.Severity.Present {
 		metadata.severity = resolved.Severity.Severity
+		metadata.hasSeverity = true
+	}
+	if err := metadata.validate(); err != nil {
+		return Metadata{}, err
+	}
+	return metadata, nil
+}
+
+// NewInboundImportedLogMetadata constructs ordinary-only metadata from the
+// exact target/context capability pair returned by the validated inbound
+// catalog. Imported logs can never acquire the local mandatory floor.
+func NewInboundImportedLogMetadata(
+	target observability.InboundTarget,
+	context observability.InboundImportContext,
+	severity *observability.Severity,
+	authenticatedSource string,
+) (Metadata, error) {
+	expectedContext, ok := target.ImportContext()
+	if !ok || expectedContext != context || target.Signal() != observability.SignalLogs ||
+		target.Role() != observability.InboundTargetImport ||
+		target.Bucket() != context.Bucket() || target.EventName() != context.EventName() ||
+		target.DescriptorID() != context.FamilyDescriptorID() ||
+		!target.AcceptsAuthenticatedSource(authenticatedSource) ||
+		context.ConstructionMode() != "ordinary_import_only" ||
+		!reflect.DeepEqual(context.Capabilities(), []string{"validate", "construct_ordinary"}) {
+		return Metadata{}, fmt.Errorf("inbound imported-log metadata requires a validated target context")
+	}
+	metadata := Metadata{
+		identity: observability.EventIdentity{
+			Bucket: target.Bucket(), Signal: target.Signal(), Name: target.EventName(),
+		},
+		source: observability.SourceOTelReceiver, connector: authenticatedSource,
+		mandatory: false,
+	}
+	if severity != nil {
+		metadata.severity = *severity
 		metadata.hasSeverity = true
 	}
 	if err := metadata.validate(); err != nil {

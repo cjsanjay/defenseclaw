@@ -400,6 +400,11 @@ type familyLogBuildInput struct {
 	outcome    Optional[Outcome]
 	values     familyFieldValues
 	conditions familyConditionFacts
+	// timestamp and importProvenance are package-private accepted-record facts.
+	// Generated producer wrappers leave both unset, so ordinary production keeps
+	// using the builder clock and cannot attach inbound provenance accidentally.
+	timestamp        Optional[time.Time]
+	importProvenance *ImportProvenance
 }
 
 type familyTraceBuildInput struct {
